@@ -21,6 +21,7 @@ npm install --include=optional --ignore-scripts   # install dependencies
 npm run check                                      # tsc --noEmit (type check)
 npm run build                                      # vite build -> dist/index.html
 npm run dev                                        # dev server
+npm run test                                       # vitest run (unit tests)
 ```
 
 ## Core Module Map
@@ -124,7 +125,7 @@ menu --> codex/settings/createRoom/rules
 
 ## Notes for AI Agents
 
-- **No tests exist yet.** If adding tests, start with `core/EventProcessor.ts` and `action/resolvers/`.
+- **Tests exist for core modules.** 38 tests across EventProcessor (17), AttackResolver (11), MoveGeneralResolver (10). Add more tests alongside existing ones in `src/**/*.test.ts`.
 - **State sync is critical.** Always update both engine state and Zustand store via the established adapter pattern.
 - **Card identity.** Use `getRuntimeCardId()` from `utils/runtimeIdentity` for all card ID lookups.
 - **Excel import.** The `importer/` module requires `exceljs` -- verify .xlsx parsing after dependency changes.

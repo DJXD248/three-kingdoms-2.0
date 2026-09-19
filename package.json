@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "react-vite-tailwind",
   "private": true,
   "version": "2.0.0",
@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "npm install --include=optional --ignore-scripts && vite build",
     "preview": "vite preview",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@types/file-saver": "^2.0.7",
@@ -15,22 +17,26 @@
     "exceljs": "^4.4.0",
     "file-saver": "^2.0.5",
     "react": "^19.2.6",
-    "uuid": "^11.1.1",
     "react-dom": "^19.2.6",
     "tailwind-merge": "^3.4.0",
+    "uuid": "^11.1.1",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.17",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "22.19.17",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.1",
+    "jsdom": "^30.1.0",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
     "vite": "7.3.6",
-    "vite-plugin-singlefile": "2.3.0"
+    "vite-plugin-singlefile": "2.3.0",
+    "vitest": "^5.0.1"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "4.62.2"
