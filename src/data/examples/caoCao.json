@@ -1,0 +1,10 @@
+
+{
+  "id": "cao_cao",
+  "name": "曹操",
+  "faction": "魏",
+  "hp": 4,
+  "skills": [
+    "jianxiong"
+  ]
+}

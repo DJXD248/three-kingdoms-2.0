@@ -1,0 +1,328 @@
+// 三国杀界限突破·标准包武将 + 晋势力武将
+// 将领体力上限3点及以下为文将，4点及以上为武将
+// 武将默认近战攻击力2远程攻击力1，文将默认近战攻击力1远程攻击力2
+// 多势力或可转换势力的将领均视为群势力
+
+export type Faction = '魏' | '蜀' | '吴' | '群' | '晋';
+
+export type SkillTag = '锁定技' | '限定技' | '登场技' | '遗计技' | '觉醒技';
+
+export const allSkillTags: SkillTag[] = ['锁定技', '限定技', '登场技', '遗计技', '觉醒技'];
+
+export const skillTagColors: Record<SkillTag, string> = {
+  '锁定技': '#ef4444',
+  '限定技': '#f59e0b',
+  '登场技': '#22c55e',
+  '遗计技': '#8b5cf6',
+  '觉醒技': '#ec4899',
+};
+
+// ── 技能触发时机系统 ──
+
+export type SkillTriggerType =
+  | 'onDeploy'           // 将领登场时
+  | 'onOtherDeploy'      // 其他将领登场时
+  | 'onTurnStart'        // 回合开始时
+  | 'onTurnEnd'          // 回合结束时
+  | 'onBecomingTarget'   // 成为攻击目标时
+  | 'onDamageTaken'      // 受到伤害后
+  | 'onTargetConfirmed'  // 确定攻击目标时（攻击方视角）
+  | 'onDamageDealt'      // 造成伤害后
+  | 'onKill'             // 击杀将领时
+  | 'onDeath'            // 自身被击杀时
+  | 'modifyAttack'       // 攻击结算前修改伤害值
+  | 'modifyDefense'      // 受击结算前修改受到的伤害值
+  | 'onBaseTargetedAtk'  // 本营成为攻击目标时
+  | 'onBaseTargetedSkill'// 本营成为技能目标时
+  | 'onBaseDamaged'      // 本营受到伤害时
+  | 'onOtherSkillActivated' // 其他将领技能发动时
+  | 'activeSelf'         // 己方回合任意发动
+  | 'activeOther'        // 其他玩家回合任意发动
+  | 'passive'            // 全局生效（在场时持续）
+  | 'untilExpire';       // 直到X前生效
+
+// 各触发时机的细分子选项
+export type DeploySubType = 'selfDeploy' | 'allyDeploy' | 'enemyDeploy';
+export type TurnSubType = 'selfTurn' | 'otherTurn';
+export type DamageSubType = 'attackDamage' | 'skillDamage' | 'allDamage';
+export type KillSubType = 'killAlly' | 'killEnemy';
+export type ExpireCondition =
+  | 'untilSelfTurnStart' | 'untilSelfTurnEnd'
+  | 'untilOtherTurnStart' | 'untilOtherTurnEnd'
+  | 'untilDeath' | 'untilLeaveField';
+
+export interface SkillTriggerConfig {
+  type: SkillTriggerType;
+  deploySubType?: DeploySubType;         // onOtherDeploy 细分
+  turnSubType?: TurnSubType;             // onTurnStart/onTurnEnd 细分
+  damageSubType?: DamageSubType;         // onDamageTaken/onDamageDealt/onBaseDamaged 细分
+  killSubType?: KillSubType;             // onKill 细分
+  expireCondition?: ExpireCondition;     // untilExpire 细分
+}
+
+// 触发时机的中文名称映射
+export const triggerTypeLabels: Record<SkillTriggerType, string> = {
+  onDeploy: '将领登场时',
+  onOtherDeploy: '其他将领登场时',
+  onTurnStart: '回合开始时',
+  onTurnEnd: '回合结束时',
+  onBecomingTarget: '成为攻击目标时',
+  onDamageTaken: '受到伤害后',
+  onTargetConfirmed: '确定攻击目标时',
+  onDamageDealt: '造成伤害后',
+  onKill: '击杀将领时',
+  onDeath: '自身被击杀时',
+  modifyAttack: '攻击结算前修改伤害值',
+  modifyDefense: '受击结算前修改受到的伤害值',
+  onBaseTargetedAtk: '本营成为攻击目标时',
+  onBaseTargetedSkill: '本营成为技能目标时',
+  onBaseDamaged: '本营受到伤害时',
+  onOtherSkillActivated: '其他将领技能发动时',
+  activeSelf: '己方回合任意发动',
+  activeOther: '其他玩家回合任意发动',
+  passive: '全局生效（在场时持续）',
+  untilExpire: '直到X前生效',
+};
+
+export const allTriggerTypes: SkillTriggerType[] = Object.keys(triggerTypeLabels) as SkillTriggerType[];
+
+// 子选项标签
+export const deploySubLabels: Record<DeploySubType, string> = {
+  selfDeploy: '自身登场', allyDeploy: '己方其他将领登场', enemyDeploy: '其他玩家将领登场',
+};
+export const turnSubLabels: Record<TurnSubType, string> = {
+  selfTurn: '己方回合', otherTurn: '其他玩家回合',
+};
+export const damageSubLabels: Record<DamageSubType, string> = {
+  attackDamage: '攻击伤害', skillDamage: '技能伤害', allDamage: '所有伤害类型',
+};
+export const killSubLabels: Record<KillSubType, string> = {
+  killAlly: '击杀己方将领', killEnemy: '击杀其他玩家将领',
+};
+export const expireLabels: Record<ExpireCondition, string> = {
+  untilSelfTurnStart: '到下个己方回合开始前', untilSelfTurnEnd: '到下个己方回合结束前',
+  untilOtherTurnStart: '到下个其他玩家回合开始前', untilOtherTurnEnd: '到下个其他玩家回合结束前',
+  untilDeath: '直到将领被击杀前', untilLeaveField: '直到将领离开场上前',
+};
+
+// 哪些触发类型需要哪些细分选项
+export function getTriggerSubOptions(type: SkillTriggerType): 'deploy' | 'turn' | 'damage' | 'kill' | 'expire' | null {
+  switch (type) {
+    case 'onOtherDeploy': return 'deploy';
+    case 'onTurnStart': case 'onTurnEnd': return 'turn';
+    case 'onDamageTaken': case 'onDamageDealt': case 'onBaseDamaged': return 'damage';
+    case 'onKill': return 'kill';
+    case 'untilExpire': return 'expire';
+    default: return null;
+  }
+}
+
+/** 技能内的单个效果 */
+export interface SkillEffect {
+  id: string;                    // 效果唯一ID (如 "e1", "e2")
+  label?: string;                // 效果简短标注 (如 "效果一", "伤害触发")
+  description?: string;          // 效果描述
+  trigger?: SkillTriggerConfig;  // 该效果的触发时机
+}
+
+/**
+ * effectMode:
+ *   'all'    — 所有效果独立生效（各自按触发时机生效）
+ *   'choice' — 同一触发时刻只能选择其一执行
+ */
+export type SkillEffectMode = 'all' | 'choice';
+
+export const effectModeLabels: Record<SkillEffectMode, string> = {
+  all: '全部生效（各效果独立触发）',
+  choice: '选择其一（同时触发时选择一项）',
+};
+
+export interface Skill {
+  name: string;
+  description?: string;
+  tag?: SkillTag;
+  trigger?: SkillTriggerConfig;       // 单效果技能的触发时机（向后兼容）
+  effects?: SkillEffect[];            // 多效果列表
+  effectMode?: SkillEffectMode;       // 多效果模式
+  forced?: boolean;                   // 强制发动：满足触发条件后自动发动，需满足代价才发动，否则不发动
+}
+
+export interface General {
+  id: string;
+  name: string;
+  faction: Faction;
+  hp: number;
+  type: '武将' | '文将';
+  meleeAtk: number;
+  rangedAtk: number;
+  armor: number;
+  skills: Skill[];
+  title?: string;
+}
+
+function createGeneral(id: string, name: string, faction: Faction, hp: number, skills: string[], title?: string): General {
+  const type = hp >= 4 ? '武将' : '文将';
+  return {
+    id,
+    name,
+    faction,
+    hp,
+    type,
+    meleeAtk: type === '武将' ? 2 : 1,
+    rangedAtk: type === '武将' ? 1 : 2,
+    armor: 0,
+    skills: skills.map(s => ({ name: s })),
+    title,
+  };
+}
+
+// 魏势力 - 界限突破标准包
+const weiGenerals: General[] = [
+  createGeneral('wei_001', '曹操', '魏', 4, ['奸雄', '护驾'], '魏武帝'),
+  createGeneral('wei_002', '司马懿', '魏', 3, ['反馈', '鬼才'], '狼顾之鬼'),
+  createGeneral('wei_003', '夏侯惇', '魏', 4, ['刚烈'], '独眼的罗刹'),
+  createGeneral('wei_004', '张辽', '魏', 4, ['突袭'], '前将军'),
+  createGeneral('wei_005', '许褚', '魏', 4, ['裸衣'], '虎痴'),
+  createGeneral('wei_006', '郭嘉', '魏', 3, ['天妒', '遗计'], '早终的先知'),
+  createGeneral('wei_007', '甄姬', '魏', 3, ['倾国', '洛神'], '薄幸的美人'),
+  createGeneral('wei_008', '夏侯渊', '魏', 4, ['神速'], '疾行的猎豹'),
+  createGeneral('wei_009', '张郃', '魏', 4, ['巧变'], '料敌机先'),
+  createGeneral('wei_010', '徐晃', '魏', 4, ['断粮'], '周亚夫之风'),
+  createGeneral('wei_011', '曹仁', '魏', 4, ['据守'], '大将军'),
+  createGeneral('wei_012', '典韦', '魏', 4, ['强袭'], '古之恶来'),
+  createGeneral('wei_013', '荀彧', '魏', 3, ['驱虎', '节命'], '王佐之才'),
+  createGeneral('wei_014', '曹丕', '魏', 3, ['行殇', '放逐'], '霸业的继承者'),
+  createGeneral('wei_015', '邓艾', '魏', 4, ['屯田', '凿险'], '矫然的壮士'),
+  createGeneral('wei_016', '钟会', '魏', 3, ['权计', '自立'], '桀骜的野心家'),
+  createGeneral('wei_017', '王异', '魏', 3, ['贞烈', '秘计'], '决意的巾帼'),
+  createGeneral('wei_018', '荀攸', '魏', 3, ['奇策', '智愚'], '曹操的谋主'),
+  createGeneral('wei_019', '李典', '魏', 3, ['恂恂', '忘隙'], '愿从谦风'),
+  createGeneral('wei_020', '满宠', '魏', 3, ['峻刑', '御策'], '严毅的督军'),
+  createGeneral('wei_021', '张春华', '魏', 3, ['绝情', '伤逝'], '冷血皇后'),
+];
+
+// 蜀势力 - 界限突破标准包
+const shuGenerals: General[] = [
+  createGeneral('shu_001', '刘备', '蜀', 4, ['仁德', '激将'], '乱世的枭雄'),
+  createGeneral('shu_002', '关羽', '蜀', 4, ['武圣'], '美髯公'),
+  createGeneral('shu_003', '张飞', '蜀', 4, ['咆哮'], '万夫不当'),
+  createGeneral('shu_004', '诸葛亮', '蜀', 3, ['观星', '空城'], '迟暮的丞相'),
+  createGeneral('shu_005', '赵云', '蜀', 4, ['龙胆', '涯角'], '少年将军'),
+  createGeneral('shu_006', '马超', '蜀', 4, ['马术', '铁骑'], '一骑当千'),
+  createGeneral('shu_007', '黄月英', '蜀', 3, ['集智', '奇才'], '归隐的杰女'),
+  createGeneral('shu_008', '黄忠', '蜀', 4, ['烈弓'], '老当益壮'),
+  createGeneral('shu_009', '魏延', '蜀', 4, ['狂骨'], '嗜血的独狼'),
+  createGeneral('shu_010', '姜维', '蜀', 4, ['挑衅', '志继'], '龙的衣钵'),
+  createGeneral('shu_011', '刘禅', '蜀', 3, ['享乐', '放权'], '无为的真命主'),
+  createGeneral('shu_012', '卧龙诸葛亮', '蜀', 3, ['八阵', '火计', '看破'], '卧龙'),
+  createGeneral('shu_013', '庞统', '蜀', 3, ['连环', '涅槃'], '凤雏'),
+  createGeneral('shu_014', '徐庶', '蜀', 3, ['举荐', '无言'], '忠孝的侠士'),
+  createGeneral('shu_015', '马谡', '蜀', 3, ['心战', '挥泪'], '言过其实'),
+  createGeneral('shu_016', '关兴张苞', '蜀', 4, ['父魂'], '虎父之犬子'),
+  createGeneral('shu_017', '刘封', '蜀', 4, ['陷嗣'], '被放逐的继承人'),
+  createGeneral('shu_018', '关平', '蜀', 4, ['龙吟'], '忠臣之后'),
+  createGeneral('shu_019', '廖化', '蜀', 4, ['当先', '伏枥'], '蜀汉的脊梁'),
+  createGeneral('shu_020', '马良', '蜀', 3, ['自书', '白眉'], '眉间的智者'),
+  createGeneral('shu_021', '祝融', '蜀', 4, ['巨象', '烈刃'], '野性的女王'),
+  createGeneral('shu_022', '孟获', '蜀', 4, ['祸首', '再起'], '南蛮王'),
+];
+
+// 吴势力 - 界限突破标准包
+const wuGenerals: General[] = [
+  createGeneral('wu_001', '孙权', '吴', 4, ['制衡', '救援'], '年轻的贤君'),
+  createGeneral('wu_002', '甘宁', '吴', 4, ['奇袭'], '锦帆游侠'),
+  createGeneral('wu_003', '吕蒙', '吴', 4, ['克己'], '白衣渡江'),
+  createGeneral('wu_004', '黄盖', '吴', 4, ['苦肉', '诈降'], '轻身为国'),
+  createGeneral('wu_005', '周瑜', '吴', 3, ['英姿', '反间'], '大都督'),
+  createGeneral('wu_006', '大乔', '吴', 3, ['国色', '流离'], '矜持之花'),
+  createGeneral('wu_007', '陆逊', '吴', 3, ['谦逊', '连营'], '儒生雄才'),
+  createGeneral('wu_008', '孙尚香', '吴', 3, ['结姻', '枭姬'], '弓腰姬'),
+  createGeneral('wu_009', '小乔', '吴', 3, ['天香', '红颜'], '矫情之花'),
+  createGeneral('wu_010', '太史慈', '吴', 4, ['天义'], '笃烈之士'),
+  createGeneral('wu_011', '周泰', '吴', 4, ['不屈', '奋激'], '历战之躯'),
+  createGeneral('wu_012', '鲁肃', '吴', 3, ['好施', '缔盟'], '独断的外交家'),
+  createGeneral('wu_013', '张昭张纮', '吴', 3, ['直谏', '固政'], '经天纬地'),
+  createGeneral('wu_014', '凌统', '吴', 4, ['旋风'], '豪情烈胆'),
+  createGeneral('wu_015', '徐盛', '吴', 4, ['破军'], '江东的铁壁'),
+  createGeneral('wu_016', '孙策', '吴', 4, ['激昂', '魂姿'], '江东小霸王'),
+  createGeneral('wu_017', '吕范', '吴', 3, ['调度', '典财'], '忠实的管家'),
+  createGeneral('wu_018', '步练师', '吴', 3, ['安恤', '追忆'], '皇后之仪'),
+  createGeneral('wu_019', '诸葛恪', '吴', 3, ['傲才', '名君'], '兴家赤族'),
+  createGeneral('wu_020', '丁奉', '吴', 4, ['短兵', '奋迅'], '清侧重臣'),
+  createGeneral('wu_021', '吴国太', '吴', 3, ['甘露', '补益'], '武烈皇后'),
+];
+
+// 群势力 - 仅保留原本势力即为"群"的将领
+const qunGenerals: General[] = [
+  createGeneral('qun_001', '华佗', '群', 3, ['急救', '青囊'], '神医'),
+  createGeneral('qun_002', '吕布', '群', 4, ['无双'], '武的化身'),
+  createGeneral('qun_003', '貂蝉', '群', 3, ['离间', '闭月'], '绝世的舞姬'),
+  createGeneral('qun_004', '董卓', '群', 4, ['酒池', '肉林', '崩坏'], '魔王'),
+  createGeneral('qun_005', '袁绍', '群', 4, ['乱击'], '高贵的名门'),
+  createGeneral('qun_006', '颜良文丑', '群', 4, ['双雄'], '虎狼兄弟'),
+  createGeneral('qun_007', '张角', '群', 3, ['雷公', '鬼道'], '天公将军'),
+  createGeneral('qun_008', '于吉', '群', 3, ['蛊惑'], '太平道人'),
+  createGeneral('qun_009', '公孙瓒', '群', 4, ['义从'], '白马将军'),
+  createGeneral('qun_010', '庞德', '群', 4, ['马术', '猛进'], '人马一体'),
+  createGeneral('qun_011', '袁术', '群', 4, ['妄尊', '同疾'], '仲家帝'),
+  createGeneral('qun_012', '蔡文姬', '群', 3, ['悲歌', '断肠'], '异乡的孤女'),
+  createGeneral('qun_013', '贾诩', '群', 3, ['帷幕', '乱武', '完杀'], '最强的谋士'),
+  createGeneral('qun_014', '左慈', '群', 3, ['化身', '新生'], '迷之仙人'),
+  createGeneral('qun_015', '陈宫', '群', 3, ['明策', '智迟'], '刚直的谋臣'),
+  createGeneral('qun_016', '高顺', '群', 4, ['陷阵', '禁酒'], '攻城拔寨'),
+];
+
+// 晋势力
+const jinGenerals: General[] = [
+  createGeneral('jin_001', '司马懿', '晋', 3, ['巧变', '大权'], '晋宣帝'),
+  createGeneral('jin_002', '司马师', '晋', 3, ['鹰视', '夺嫡'], '铁腕摄政'),
+  createGeneral('jin_003', '司马昭', '晋', 3, ['赵染', '司敌'], '路人皆知'),
+  createGeneral('jin_004', '贾充', '晋', 3, ['帷幄', '矫诏'], '弑君的权臣'),
+  createGeneral('jin_005', '张春华', '晋', 3, ['慧眼', '秘置'], '毒辣的国母'),
+  createGeneral('jin_006', '钟会', '晋', 3, ['权计', '自立'], '野心的终局'),
+  createGeneral('jin_007', '邓艾', '晋', 4, ['屯田', '凿险'], '偷渡阴平'),
+  createGeneral('jin_008', '王元姬', '晋', 3, ['英慧', '颂威'], '贤明的皇后'),
+  createGeneral('jin_009', '杜预', '晋', 3, ['拓略', '破竹'], '文武全才'),
+  createGeneral('jin_010', '羊祜', '晋', 3, ['清德', '垦荒'], '仁德的将军'),
+  createGeneral('jin_011', '乐綝', '晋', 4, ['奋威', '临阵'], '威震边疆'),
+  createGeneral('jin_012', '文鸯', '晋', 4, ['单骑', '奋勇'], '骁勇的猛将'),
+  createGeneral('jin_013', '贾南风', '晋', 3, ['乱政', '戮杀'], '毒后'),
+  createGeneral('jin_014', '司马炎', '晋', 3, ['并吞', '封赏'], '晋武帝'),
+  createGeneral('jin_015', '诸葛诞', '晋', 4, ['举兵', '死节'], '忠义的叛将'),
+];
+
+export const allGenerals: General[] = [
+  ...weiGenerals,
+  ...shuGenerals,
+  ...wuGenerals,
+  ...qunGenerals,
+  ...jinGenerals,
+];
+
+export const factionColors: Record<Faction, string> = {
+  '魏': '#2563eb', // 蓝色
+  '蜀': '#dc2626', // 红色
+  '吴': '#16a34a', // 绿色
+  '群': '#eab308', // 黄色
+  '晋': '#9333ea', // 紫色
+};
+
+export const factionBgColors: Record<Faction, string> = {
+  '魏': '#1e40af',
+  '蜀': '#991b1b',
+  '吴': '#166534',
+  '群': '#a16207',
+  '晋': '#6b21a8',
+};
+
+export const factionLightColors: Record<Faction, string> = {
+  '魏': '#dbeafe',
+  '蜀': '#fee2e2',
+  '吴': '#dcfce7',
+  '群': '#fef9c3',
+  '晋': '#f3e8ff',
+};
+
+export function getGeneralsByFaction(faction: Faction): General[] {
+  return allGenerals.filter(g => g.faction === faction);
+}
