@@ -60,7 +60,7 @@ describe('DeployGeneralResolver', () => {
       const state = createTestState([player]);
       const action = createAction('DEPLOY_GENERAL', 1, {} as any);
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('INVALID_DEPLOY_PAYLOAD');
     });
@@ -74,7 +74,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [{ id: 'c1' }],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('GENERAL_NOT_IN_HAND');
     });
@@ -92,7 +92,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('GENERAL_ALREADY_IN_POOL');
     });
@@ -114,7 +114,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('GENERAL_ALREADY_DEPLOYED');
     });
@@ -129,7 +129,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('INVALID_CAMP_SLOT');
     });
@@ -152,7 +152,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('CAMP_SLOT_OCCUPIED');
     });
@@ -167,7 +167,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('INVALID_DEPLOY_COST');
     });
@@ -185,7 +185,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [consumeCard, consumeCard],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('DUPLICATE_CONSUMED_CARD');
     });
@@ -200,7 +200,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [{ id: 'c1' }],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('CONSUMED_CARD_NOT_IN_HAND');
     });
@@ -215,7 +215,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [generalCard],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('GENERAL_CANNOT_CONSUME_SELF');
     });
@@ -235,7 +235,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards: [consumeCard],
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events.length).toBe(1);
       expect(events[0].type).toBe('GENERAL_DEPLOYED');
       expect((events[0].data as any).general).toEqual(generalCard);
@@ -256,7 +256,7 @@ describe('DeployGeneralResolver', () => {
         consumeCards,
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('GENERAL_DEPLOYED');
       expect((events[0].data as any).consumeCards).toHaveLength(3);
     });
@@ -276,7 +276,7 @@ describe('DeployGeneralResolver', () => {
           consumeCards: [consumeCard],
         });
 
-        const events = resolver.resolve(state, action);
+        const events = resolver.resolve(state, action as any);
         expect(events[0].type).toBe('GENERAL_DEPLOYED');
         expect((events[0].data as any).slot).toBe(slot);
       }

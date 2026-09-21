@@ -75,7 +75,7 @@ describe('MoveGeneralResolver', () => {
     it('should reject move with missing payload', () => {
       const state = createTestState([createTestPlayer(1)]);
       const action = createAction('MOVE_GENERAL', 1);
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
 
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('ACTION_REJECTED');
@@ -90,7 +90,7 @@ describe('MoveGeneralResolver', () => {
         target: { zone: 'front', slot: 0, areaOwnerId: 1 },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('GENERAL_NOT_ON_FIELD');
     });
@@ -105,7 +105,7 @@ describe('MoveGeneralResolver', () => {
         target: { zone: 'front', slot: 0, areaOwnerId: 1 },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('GENERAL_ALREADY_MOVED');
     });
@@ -120,7 +120,7 @@ describe('MoveGeneralResolver', () => {
         target: { zone: 'battle', slot: 0, areaOwnerId: null },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('INVALID_MOVE_TARGET');
     });
@@ -137,7 +137,7 @@ describe('MoveGeneralResolver', () => {
         target: { zone: 'front', slot: 0, areaOwnerId: 1 },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
 
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('GENERAL_MOVED');
@@ -159,7 +159,7 @@ describe('MoveGeneralResolver', () => {
         target: { zone: 'front', slot: 0, areaOwnerId: 1 },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('SCHOLAR_REQUIRES_MOVE_COST');
     });
@@ -175,7 +175,7 @@ describe('MoveGeneralResolver', () => {
         consumeCard: { id: 'c1' },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('WARRIOR_MOVE_HAS_NO_COST');
     });
@@ -196,7 +196,7 @@ describe('MoveGeneralResolver', () => {
         consumeCard: costCard,
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('GENERAL_MOVED');
     });

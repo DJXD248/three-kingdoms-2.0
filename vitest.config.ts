@@ -22,11 +22,13 @@ export default defineConfig({
         'src/vite-env.d.ts',
         'src/App.tsx',
       ],
+      // Ratchet baseline: floors sit just below current coverage so CI fails
+      // on regression and can only be raised as new tests land.
       thresholds: {
-        lines: 0,
-        functions: 0,
-        branches: 0,
-        statements: 0,
+        lines: 13,
+        functions: 7,
+        branches: 10,
+        statements: 11,
       },
     },
   },

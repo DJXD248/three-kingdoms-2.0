@@ -23,7 +23,7 @@ export default function Codex() {
 
   // Get edited version of a general
   const getEdited = (g: General): General => {
-    let result = { ...g };
+    const result = { ...g };
     const gEdit = generalEdits[g.id];
     if (gEdit) {
       if (gEdit.name) result.name = gEdit.name;

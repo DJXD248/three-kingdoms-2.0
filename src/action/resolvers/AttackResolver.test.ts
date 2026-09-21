@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { AttackResolver } from './AttackResolver';
 import { createAction } from '../ActionTypes';
 import type { EngineState, EnginePlayer } from '../../core/GameState';
@@ -75,7 +75,7 @@ describe('AttackResolver', () => {
     it('should reject attack with missing payload', () => {
       const state = createTestState([createTestPlayer(1)]);
       const action = createAction('ATTACK', 1);
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
 
       expect(events).toHaveLength(1);
       expect(events[0].type).toBe('ACTION_REJECTED');
@@ -94,7 +94,7 @@ describe('AttackResolver', () => {
         consumeCard: { id: 'c1' },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('ATTACKER_NOT_CONTROLLED');
     });
@@ -111,7 +111,7 @@ describe('AttackResolver', () => {
         consumeCard: { id: 'c1' },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('GENERAL_IS_ARMING');
     });
@@ -128,7 +128,7 @@ describe('AttackResolver', () => {
         consumeCard: { id: 'c1' },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('GENERAL_ALREADY_ATTACKED');
     });
@@ -144,7 +144,7 @@ describe('AttackResolver', () => {
         ranged: false,
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('ATTACK_REQUIRES_CARD_COST');
     });
@@ -168,7 +168,7 @@ describe('AttackResolver', () => {
         consumeCard,
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
 
       expect(events.map(e => e.type)).toEqual([
         'BEFORE_DAMAGE',
@@ -195,7 +195,7 @@ describe('AttackResolver', () => {
         consumeCard: { id: 'c1' },
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
     });
   });
@@ -217,7 +217,7 @@ describe('AttackResolver', () => {
         consumeCard,
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
 
       const eventTypes = events.map(e => e.type);
       expect(eventTypes).toContain('DAMAGE');
@@ -239,7 +239,7 @@ describe('AttackResolver', () => {
         consumeCard,
       });
 
-      const events = resolver.resolve(state, action);
+      const events = resolver.resolve(state, action as any);
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('INVALID_ATTACK_TARGET');
     });

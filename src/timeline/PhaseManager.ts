@@ -30,7 +30,7 @@ export class PhaseManager {
       };
     }
 
-    let phase = definition.next;
+    const phase = definition.next;
     let turn = state.turn;
     let round = state.round;
     let playerId = state.currentPlayerId;

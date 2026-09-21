@@ -599,7 +599,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   surrender:(id)=>{
     const state = get();
-    let { engineState } = dispatchStoreAction(state, createAction('SURRENDER', id));
+    const { engineState } = dispatchStoreAction(state, createAction('SURRENDER', id));
 
     // Test arena is an instrumentation sandbox: surrender should immediately
     // advance to the next live player without leaving the arena or opening the
@@ -638,7 +638,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const activePlayer=get().players[currentPlayerIndex];
     if(!activePlayer) return;
 
-    let { engineState } = dispatchStoreAction(
+    const { engineState } = dispatchStoreAction(
       get(),
       createAction('END_TURN', activePlayer.id),
     );
@@ -784,7 +784,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   getGeneralWithEdits: general => {
     const { skillEdits, generalEdits } = get();
-    let result = { ...general };
+    const result = { ...general };
     const gEdits = generalEdits[general.id];
     if (gEdits) {
       if (gEdits.name) result.name = gEdits.name;

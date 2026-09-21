@@ -55,7 +55,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const getEditedGeneral = useCallback((g: General) => {
     const gEdit = generalEdits[g.id];
     const sEdit = skillEdits[g.id];
-    let result = { ...g };
+    const result = { ...g };
     if (gEdit) {
       if (gEdit.name) result.name = gEdit.name;
       if (gEdit.faction) result.faction = gEdit.faction;
@@ -456,8 +456,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             if (sheetHasData) sheetCount++;
           }
 
-          try { localStorage.setItem('three_kingdoms_skill_edits', JSON.stringify(sEdits)); } catch {}
-          try { localStorage.setItem('three_kingdoms_general_edits', JSON.stringify(gEdits)); } catch {}
+          try { localStorage.setItem('three_kingdoms_skill_edits', JSON.stringify(sEdits)); } catch { /* storage unavailable; in-memory edits still applied */ }
+          try { localStorage.setItem('three_kingdoms_general_edits', JSON.stringify(gEdits)); } catch { /* storage unavailable; in-memory edits still applied */ }
           useGameStore.setState({ skillEdits: sEdits, generalEdits: gEdits });
 
           setImportResult(`✅ 从 ${sheetCount} 个工作表导入 ${count} 名将领${skipped > 0 ? `，跳过 ${skipped} 名无变化` : ''}`);
