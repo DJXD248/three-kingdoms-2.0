@@ -346,3 +346,31 @@ baseline_scope=Qoder independent 1.x branch; not merged into GPT 5.35.x mainline
 
 ### Next route
 与 HandOff 第 13 节一致：技能系统唯一化 > 最小可玩闭环端到端 > Legacy 安全清理 > UI/移动端收敛 > 在线化。
+
+---
+
+## Qoder 2.0.1：xlsx(SheetJS) 高危漏洞修复
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `95b3540`（附注标签 `v2.0`）
+**branch_scope：** `Qoder/2.0` 仓库
+
+### 目标与根因
+1.29.2 记录的结论"xlsx 漏洞因无可用修复版本仍存在"仅在 npm 注册表视角成立。根因：SheetJS 社区版不再向 npm 发布，注册表永久停在 0.18.5，其中 GHSA-4r6h-8v6p-xvw6（原型污染）与 GHSA-5pgg-2g8v-p4x9（ReDoS）均为 high；官方修复版仅经 SheetJS CDN（cdn.sheetjs.com）分发。
+
+### 修复方法
+- 调用面核查：全仓库唯一使用点 `src/components/SkillEditor.tsx`，仅走只读路径 `XLSX.read(data,{type:'array'})` + `XLSX.utils.sheet_to_json(sheet,{header:1})`。
+- `npm install https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz --ignore-scripts`；package.json 记录 URL 直锁，lock 含 integrity；API 与类型定义向后兼容，源码零改动。
+- 版本号 2.0.0 -> 2.0.1（`npm version`）。
+
+### 验证（会话内独立执行）
+- `npm run check` = 0 错误；`npm run test` = 128/128；`npm run lint` = 0 err / 32 warn（与技术债基线一致）；`npm run build` 成功（单文件 1843 kB）。
+- `npm audit`：修复前 3 项（1 high + 2 moderate）-> 修复后 2 moderate（exceljs 传递依赖 uuid 链，属既有延期项，本轮不处理）。
+
+### Unresolved / Risk
+- exceljs -> uuid 2 项 moderate 仍延期。
+- exceljs 版本两仓库不一致：1.29 线 `^3.4.0`（解析 3.10.0）vs 2.0 线 `^4.4.0`，待统一决策。
+- 技能编辑器真实 .xlsx 导入回归需用户运行验证，当前 PENDING；本轮 VERIFIED 仅指静态验证。
+
+### Next route
+若强制清零 uuid 链，评估 exceljs 版本统一方案（对齐 1.29.2 的 ^3.4.0 策略或等待上游修复）。
