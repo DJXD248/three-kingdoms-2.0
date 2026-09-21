@@ -403,3 +403,31 @@ baseline_scope=Qoder independent 1.x branch; not merged into GPT 5.35.x mainline
 
 ### Next route
 xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统唯一化。
+
+---
+
+## Qoder 2.0.3：依赖安全清零（uuid overrides + exceljs 统一，audit 历史首次 0 漏洞）
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `31f2551`（附注标签 `v2.0.2`）
+**branch_scope：** `Qoder/2.0` 仓库（同步变更 `Qoder/1.29` 仓库 -> `v1.29.4`）
+
+### 决策与依据
+- 前期两项延期登记（exceljs→uuid 2 moderate；两仓库 exceljs ^3.4.0 vs ^4.4.0 不一致）经影响面核查后合并解决：
+  - exceljs 4.4.0 仅 1 个文件使用 uuid（`lib/xlsx/xform/sheet/cf-ext/cf-rule-ext-xform.js`，`const {v4: uuidv4} = require('uuid')`，用途是导出条件格式扩展规则时生成 ID）；uuid 8→11 的 `v4` 命名导出接口不变。
+  - 结论：npm `overrides` 强制 `uuid: ^11.1.1` 是低风险平替；exceljs 统一取 `^4.4.0`（2.0 线原版本，回归面最小），1.29 线由 ^3.4.0 升上来与 2.0 对齐。
+
+### 变更
+- 两仓库 package.json 各 +3 行 overrides；`npm install` 移除嵌套 uuid@8.3.2（2.0 侧 "removed 1 package"）；版本 2.0 线 2.0.2 -> 2.0.3，1.29 线 1.29.3 -> 1.29.4。
+
+### 验证（会话内独立执行）
+- `npm audit`：**found 0 vulnerabilities**（修复前 2 moderate）；`--audit-level=high` exit=0。
+- 冒烟：exceljs 建簿（含 addConditionalFormatting）→ writeBuffer 导出 → SheetJS CDN 0.20.3 读回 → 行数据逐值一致，SMOKE OK。
+- `npm run check` = 0；131/131 测试；lint 0 err / 32 warn（基线）；build ok（dist 已含新依赖树重建）。
+
+### Unresolved / Risk
+- 冒烟未直接执行 cf-ext 分支（需要带扩展条件格式的真实文件触发）；该路径仅调用 uuid v4，接口经源码核对兼容。用户真机 Excel 导出/导入回归仍为 OPTIONAL。
+- 维护备注已写入 AGENTS.md / HandOff：升级 exceljs 时复查 uuid override。
+
+### Next route
+依赖安全议题全部闭环。主线回到：技能系统唯一化。
