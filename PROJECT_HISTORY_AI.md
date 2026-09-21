@@ -336,7 +336,7 @@ baseline_scope=Qoder independent 1.x branch; not merged into GPT 5.35.x mainline
 - R4 `6dcea25` + `57bc460`：GitHub Actions 工作流（check/test/build）；Deploy/Supply/Surrender 解析器 +38 测试。验证：76 pass。Supply 测试首轮 3 例失败，根因是对 `inEnemyTerritory`（battle 区域恒为 false，extraCost=0）的公式误解，修正预期后通过。
 - R5 `51365e5` + `ed6adc5` + `2ee6c45`：Node 18/20/22 测试矩阵 + Pages 自动部署 workflow；ESLint 10 flat config + @vitest/coverage-v8 覆盖率报告（text/html/lcov/json-summary）。验证：矩阵 76 pass，lint 0 errors（遗留架构违规降级为 warn）。
 - R6 `530fecf`：+52 测试至 128（Armor 14 / Turn 11 / Draw 8 / BeginDraw 6 / ConfirmDraw 8 / ResolveBaseLoss 5）；覆盖率棘轮阈值入 vitest.config.ts；auto-fix prefer-const（6）、注释豁免 no-empty（2）；对测试文件首次全量 tsc，暴露并修复 3 个旧测试文件的 18 个潜伏类型错误（故意不完整的 payload 断言 `action as any`）。验证：check=0、128 pass、coverage 阈值通过、lint 0 err / 32 warn、build OK。
-- 标签：附注标签 `v2.0` 指向 `530fecf`（git show 含 Tagger/Date/说明）。同期补齐 1.29 仓库未提交的 1.29.2 依赖安全修复：提交 `2cfcbbf` + 附注标签 `v1.29.2`；exceljs `^4.4.0 -> ^3.4.0` 经锁文件一致性（解析 3.10.0 + integrity）核实为有意变更。
+- 标签：附注标签 `v2.0` 现指向文档同步提交 `95b3540`（初指代码里程碑 `530fecf`，为使标签包含完整交接文档而后移；git show 含 Tagger/Date/说明）。同期补齐 1.29 仓库未提交的 1.29.2 依赖安全修复：提交 `2cfcbbf` + 附注标签 `v1.29.2`；exceljs `^4.4.0 -> ^3.4.0` 经锁文件一致性（解析 3.10.0 + integrity）核实为有意变更。
 
 ### Unresolved / Risk
 - GitHub Actions 已配置但从未实际运行（无远程仓库）；Pages Source 待推送后在仓库设置中选择 "GitHub Actions"。

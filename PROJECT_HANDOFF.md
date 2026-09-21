@@ -60,7 +60,7 @@
 Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 分支记录必须明确 `baseline_from` / `branch_scope`。
 
-当前最新 Qoder 版本：`2.0.0`（独立仓库 `Qoder/2.0`，附注标签 `v2.0` -> 提交 `530fecf`）
+当前最新 Qoder 版本：`2.0.0`（独立仓库 `Qoder/2.0`，附注标签 `v2.0` -> 提交 `95b3540`）
 本轮调整（2.0）：基于 1.29.2 源码生成 2.0.0；引入 Vitest（128 测试，覆盖全部 action resolvers + EventProcessor）与覆盖率阈值棘轮；引入 ESLint flat config 0-errors 门禁；配置 GitHub Actions lint / Node 18,20,22 测试矩阵 / build / Pages 部署工作流；新增 `npm run test` / `test:coverage` / `lint` / `lint:fix` 验证命令。CI 因未配置远程仓库属"已配置未验证"。
 上一轮（1.29.2）：修复依赖安全漏洞，升级 uuid 与 vite，exceljs 有意调整为 `^3.4.0`（锁文件解析至 3.10.0）；验证 npm run check/build 通过；xlsx 漏洞因无可用修复版本仍存在。
 
@@ -69,7 +69,7 @@ Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 ### Git 管理状态
 从 Qoder 1.29 开始，当前版本目录已作为独立 Git 仓库管理。旧的 `Qoder/1.0`～`Qoder/1.29` 文件夹暂时保留为备份，不再通过复制文件夹创建新版本。
 
-`Qoder/2.0` 是与 `Qoder/1.29` 相互独立的另一个 Git 仓库，两者不共享提交历史：1.29 仓库最新为 `2cfcbbf`（附注标签 `v1.29.2`），2.0 仓库里程碑为 `530fecf`（附注标签 `v2.0`）。两个仓库目前均未配置远程（remote），GitHub Actions 工作流在推送到 GitHub 之前不会实际运行。
+`Qoder/2.0` 是与 `Qoder/1.29` 相互独立的另一个 Git 仓库，两者不共享提交历史：1.29 仓库最新为 `2cfcbbf`（附注标签 `v1.29.2`），2.0 仓库里程碑为 `95b3540`（附注标签 `v2.0`，代码里程碑 `530fecf`）。两个仓库目前均未配置远程（remote），GitHub Actions 工作流在推送到 GitHub 之前不会实际运行。
 
 常用命令：
 - 查看当前状态：`git status`
