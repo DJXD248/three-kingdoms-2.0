@@ -22,6 +22,9 @@ npm run check                                      # tsc --noEmit (type check)
 npm run build                                      # vite build -> dist/index.html
 npm run dev                                        # dev server
 npm run test                                       # vitest run (unit tests)
+npm run test:coverage                              # vitest run --coverage -> coverage/
+npm run lint                                       # eslint . (flat config)
+npm run lint:fix                                   # eslint . --fix
 ```
 
 ## Core Module Map
@@ -125,8 +128,9 @@ menu --> codex/settings/createRoom/rules
 
 ## Notes for AI Agents
 
-- **Tests exist for core modules.** 38 tests across EventProcessor (17), AttackResolver (11), MoveGeneralResolver (10). Add more tests alongside existing ones in `src/**/*.test.ts`.
+- **Tests exist for core modules.** 76 tests across EventProcessor (17), AttackResolver (11), MoveGeneralResolver (10), DeployGeneralResolver (15), SupplyResolver (17), SurrenderResolver (6). Add more tests alongside existing ones in `src/**/*.test.ts`. Run `npm run test:coverage` to see per-file coverage (coverage/ is gitignored).
 - **State sync is critical.** Always update both engine state and Zustand store via the established adapter pattern.
 - **Card identity.** Use `getRuntimeCardId()` from `utils/runtimeIdentity` for all card ID lookups.
 - **Excel import.** The `importer/` module requires `exceljs` -- verify .xlsx parsing after dependency changes.
 - **Build output.** Single-file HTML via `vite-plugin-singlefile` -- everything inlines to `dist/index.html`.
+- **Lint is advisory for legacy code.** ESLint flat config downgrades pre-existing react-hooks/rules-of-hooks, static-components, set-state-in-effect, prefer-const, no-empty violations to warnings (40 warnings, 0 errors) so CI passes. New code should aim for zero warnings; clean up legacy warnings incrementally.
