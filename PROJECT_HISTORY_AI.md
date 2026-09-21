@@ -319,3 +319,30 @@ baseline_scope=Qoder independent 1.x branch; not merged into GPT 5.35.x mainline
 ### CURRENT REVIEW STATUS
 - Qoder 1.26 is reviewable as an independent branch but is not promoted to GPT mainline authoritative baseline by this audit.
 - Main unresolved architectural priority: canonicalize the live Skill Runtime and isolate/remove legacy skill/card/status/turn modules only after call-graph verification.
+
+---
+
+## Qoder 2.0：工程体系与质量门禁建设（六轮迭代）
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** Qoder 1.29.2 工作树源码（生成 2.0.0 初始提交 `540bd7b`）
+**branch_scope：** `Qoder/2.0` 独立仓库（新 init，不与 1.29 仓库共享历史）
+
+### 逐轮记录
+
+- R1 `540bd7b`：1.x 审计与 2.0 生成。清理后的 1.29.2 源码 -> 2.0.0；`.gitignore` 排除 node_modules/dist/coverage。验证：check/build 通过。
+- R2 `8099ede`：AI 指令层。AGENTS.md：技术栈表、模块地图、验证命令、数据导入流程、架构与行动流说明。
+- R3 `28ef4ea` + `a04de5c` + `8adb2c2`：Vitest 5.0（jsdom）+ 首批 38 测试（EventProcessor / Attack / Move 等核心）；start.bat 一键启动；修复 PowerShell 写入 package.json 携带 UTF-8 BOM 导致的构建失败。验证：38 pass、build 恢复。
+- R4 `6dcea25` + `57bc460`：GitHub Actions 工作流（check/test/build）；Deploy/Supply/Surrender 解析器 +38 测试。验证：76 pass。Supply 测试首轮 3 例失败，根因是对 `inEnemyTerritory`（battle 区域恒为 false，extraCost=0）的公式误解，修正预期后通过。
+- R5 `51365e5` + `ed6adc5` + `2ee6c45`：Node 18/20/22 测试矩阵 + Pages 自动部署 workflow；ESLint 10 flat config + @vitest/coverage-v8 覆盖率报告（text/html/lcov/json-summary）。验证：矩阵 76 pass，lint 0 errors（遗留架构违规降级为 warn）。
+- R6 `530fecf`：+52 测试至 128（Armor 14 / Turn 11 / Draw 8 / BeginDraw 6 / ConfirmDraw 8 / ResolveBaseLoss 5）；覆盖率棘轮阈值入 vitest.config.ts；auto-fix prefer-const（6）、注释豁免 no-empty（2）；对测试文件首次全量 tsc，暴露并修复 3 个旧测试文件的 18 个潜伏类型错误（故意不完整的 payload 断言 `action as any`）。验证：check=0、128 pass、coverage 阈值通过、lint 0 err / 32 warn、build OK。
+- 标签：附注标签 `v2.0` 指向 `530fecf`（git show 含 Tagger/Date/说明）。同期补齐 1.29 仓库未提交的 1.29.2 依赖安全修复：提交 `2cfcbbf` + 附注标签 `v1.29.2`；exceljs `^4.4.0 -> ^3.4.0` 经锁文件一致性（解析 3.10.0 + integrity）核实为有意变更。
+
+### Unresolved / Risk
+- GitHub Actions 已配置但从未实际运行（无远程仓库）；Pages Source 待推送后在仓库设置中选择 "GitHub Actions"。
+- 32 条 react-hooks 遗留警告记录为技术债。GameBoard 的 `if (!cp) return null` 早返回位于后续 hooks 之前，是真实的 rules-of-hooks 隐患，需专门重构，不得批量抑制。
+- 整体覆盖率约 13.6%（棘轮只防回退不促提升）；skills / rules / network / store 等模块暂无测试。
+- 玩法行为未获得用户运行时验证；上述 VERIFIED 仅指静态验证（typecheck / test / build / lint）。
+
+### Next route
+与 HandOff 第 13 节一致：技能系统唯一化 > 最小可玩闭环端到端 > Legacy 安全清理 > UI/移动端收敛 > 在线化。

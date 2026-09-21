@@ -52,24 +52,24 @@
 ### GPT 主线
 当前已知基线：`Phase 5.35.26.4.1`
 
-### GPT 主线
-当前已知基线：`Phase 5.35.26.4.1`
-
 最近：
 - 5.35.26.4：runtime general identity、随机抽取后的实际实例移除、跨势力边框修复。
 - 5.35.26.4.1：修复 `cloneWithRuntimeInstance` 缺失 import 导致的 TS2304。
 
 ### Qoder 分支
-Qoder 使用独立 `1.x` 版本号，不等同于 GPT `5.35.x`。
+Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 分支记录必须明确 `baseline_from` / `branch_scope`。
 
-当前最新 Qoder 版本：`1.29.2`
-本轮调整：修复依赖安全漏洞，升级 uuid、vite、xlsx 版本；备份 package.json 和 package-lock.json；验证 npm run check/build 通过；依赖审计警告已减少，xlsx 漏洞因无可用修复版本仍存在。
+当前最新 Qoder 版本：`2.0.0`（独立仓库 `Qoder/2.0`，附注标签 `v2.0` -> 提交 `530fecf`）
+本轮调整（2.0）：基于 1.29.2 源码生成 2.0.0；引入 Vitest（128 测试，覆盖全部 action resolvers + EventProcessor）与覆盖率阈值棘轮；引入 ESLint flat config 0-errors 门禁；配置 GitHub Actions lint / Node 18,20,22 测试矩阵 / build / Pages 部署工作流；新增 `npm run test` / `test:coverage` / `lint` / `lint:fix` 验证命令。CI 因未配置远程仓库属"已配置未验证"。
+上一轮（1.29.2）：修复依赖安全漏洞，升级 uuid 与 vite，exceljs 有意调整为 `^3.4.0`（锁文件解析至 3.10.0）；验证 npm run check/build 通过；xlsx 漏洞因无可用修复版本仍存在。
 
 版本号不能单独用于判断跨模型分支的先后关系。
 
 ### Git 管理状态
 从 Qoder 1.29 开始，当前版本目录已作为独立 Git 仓库管理。旧的 `Qoder/1.0`～`Qoder/1.29` 文件夹暂时保留为备份，不再通过复制文件夹创建新版本。
+
+`Qoder/2.0` 是与 `Qoder/1.29` 相互独立的另一个 Git 仓库，两者不共享提交历史：1.29 仓库最新为 `2cfcbbf`（附注标签 `v1.29.2`），2.0 仓库里程碑为 `530fecf`（附注标签 `v2.0`）。两个仓库目前均未配置远程（remote），GitHub Actions 工作流在推送到 GitHub 之前不会实际运行。
 
 常用命令：
 - 查看当前状态：`git status`
@@ -300,6 +300,8 @@ Controllers 目标位置：
 - Git 迁移：1.29 已初始化独立仓库，加入 `.gitignore`，完成首个基线提交并打上 `v1.29` 标签；旧版本文件夹保留为备份。
 - 下一阶段：继续完善真实服务器连接、重连和技能运行时收敛；本机保存不等同于在线同步。
 - 已知风险：依赖审计问题仍延期，尚未执行强制升级。
+- 2.0（本地独立验证于会话内执行）：`npm run check` = 0 错误；`npm run test` = 128 通过；`npm run test:coverage` 达到棘轮阈值（lines>=13 / statements>=11 / branches>=10 / functions>=7）；`npm run lint` = 0 错误 / 32 条 react-hooks 遗留警告（技术债，见 AGENTS.md）；`npm run build` 成功。
+- 2.0：GitHub Actions（lint / Node 18,20,22 矩阵 test / build / Pages 部署）已配置但从未运行——仓库无远程；推送到 GitHub 后需在仓库 Settings -> Pages -> Source 选择 "GitHub Actions"。
 
 ## 9. 文档职责：规则与记录彻底分离
 
@@ -386,10 +388,12 @@ Controllers 目标位置：
 
 推荐：
 1. `npm run check`
-2. `npm run build`
-3. 关键流程实际运行
-4. 回归验证
-5. 用户验证
+2. `npm run test` / `npm run test:coverage`
+3. `npm run lint`
+4. `npm run build`
+5. 关键流程实际运行
+6. 回归验证
+7. 用户验证
 
 注意：
 - 类型检查 / 构建通过 ≠ 玩法已验证。
