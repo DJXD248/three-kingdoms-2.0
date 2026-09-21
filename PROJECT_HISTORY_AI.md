@@ -374,3 +374,32 @@ baseline_scope=Qoder independent 1.x branch; not merged into GPT 5.35.x mainline
 
 ### Next route
 若强制清零 uuid 链，评估 exceljs 版本统一方案（对齐 1.29.2 的 ^3.4.0 策略或等待上游修复）。
+
+---
+
+## Qoder 2.0.2：xlsx 漏洞修复收尾（COMPLETE 判定）
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `2d7cabf`（附注标签 `v2.0.1`）
+**branch_scope：** `Qoder/2.0` 仓库（同步变更 `Qoder/1.29` 仓库）
+
+### 完全修复判定清单（逐条验证）
+1. 依赖层：xlsx 指向 SheetJS 官方 CDN 0.20.3（v2.0.1 完成；npm 注册表终版 0.18.5 含高危漏洞）。
+2. 运行时证据：新增 `src/components/xlsxSecureReader.test.ts`（3 例）+ 真实夹具 `src/components/__fixtures__/skills-sample.xlsx`（exceljs 生成，6513 字节，含中文与空洞单元格）。jsdom 下解析与生产 vite 打包同一 browser 构建：`XLSX.read` + `sheet_to_json(header:1)` 逐值断言通过；另有版本断言（不得回 0.18.5）。
+3. 防回归门禁：`.github/workflows/ci.yml` lint job 新增 `npm audit --audit-level=high` 步骤（本地实测 exit=0）。
+4. 锁文件与产物：package-lock 记录 CDN URL + integrity；dist 以 0.20.3 重建（1843.55 kB 单文件）。
+5. 全仓清查：2.0 与 1.29 的唯一 xlsx 消费面均为 SkillEditor 只读导入路径；1.29 生产线同步切换 CDN 0.20.3（提交 + 附注标签 `v1.29.3`，check/build 通过）；`Qoder/1.0`~`1.28` 按项目"备份只读"规则不处理。
+
+### 踩坑记录
+- 测试初版在 jsdom 内用 exceljs `writeBuffer()` 现场生成字节失败（"Cannot read properties of undefined (reading '0')"）：jsdom/vite 将 exceljs 解析为 browser 构建，Buffer 语义与 node 不同。改为落盘真实夹具 + `node:fs` 读取，更贴近应用真实输入。
+- `new URL('./fixture', import.meta.url)` 导致 vitest 收集阶段崩溃（0 test）：Vite 转换后 `import.meta.url` 非 file: URL。改用 `process.cwd()` 拼接（vitest 以项目根为 cwd）。
+
+### 验证（会话内独立执行）
+`npm run check` = 0；`npm run test` = 131/131（13 文件）；`test:coverage` 棘轮通过；`lint` 0 err / 32 warn（基线不变）；`build` ok；`npm audit --audit-level=high` exit=0（剩 2 moderate = exceljs→uuid 链，既有延期项）。
+
+### Unresolved / Risk
+- uuid 链 2 moderate、两仓库 exceljs 版本不一致（^3.4.0 vs ^4.4.0）：继续登记延期。
+- 用户真机浏览器 Excel 导入实测：OPTIONAL（jsdom 同构建回归已覆盖核心路径）。
+
+### Next route
+xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统唯一化。

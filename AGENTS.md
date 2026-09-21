@@ -128,7 +128,7 @@ menu --> codex/settings/createRoom/rules
 
 ## Notes for AI Agents
 
-- **Tests cover all action resolvers + core.** 128 tests across EventProcessor (17), AttackResolver (11), MoveGeneralResolver (10), DeployGeneralResolver (15), SupplyResolver (17), SurrenderResolver (6), ArmorResolver (14), TurnResolver (11), DrawResolver (8), BeginDrawResolver (6), ConfirmDrawResolver (8), ResolveBaseLossResolver (5). Add more alongside existing ones in `src/**/*.test.ts`. Run `npm run test:coverage` for per-file coverage; thresholds in vitest.config.ts act as a ratchet (lines>=13, statements>=11, branches>=10, functions>=7) and fail CI on regression.
+- **Tests cover all action resolvers + core.** 131 tests across 13 files: EventProcessor (17), AttackResolver (11), MoveGeneralResolver (10), DeployGeneralResolver (15), SupplyResolver (17), SurrenderResolver (6), ArmorResolver (14), TurnResolver (11), DrawResolver (8), BeginDrawResolver (6), ConfirmDrawResolver (8), ResolveBaseLossResolver (5), xlsxSecureReader (3, real-.xlsx fixture regression guarding the SheetJS CDN dependency). ci.yml also gates `npm audit --audit-level=high`. Add more alongside existing ones in `src/**/*.test.ts`. Run `npm run test:coverage` for per-file coverage; thresholds in vitest.config.ts act as a ratchet (lines>=13, statements>=11, branches>=10, functions>=7) and fail CI on regression.
 - **State sync is critical.** Always update both engine state and Zustand store via the established adapter pattern.
 - **Card identity.** Use `getRuntimeCardId()` from `utils/runtimeIdentity` for all card ID lookups.
 - **Excel import.** The `importer/` module requires `exceljs` -- verify .xlsx parsing after dependency changes.

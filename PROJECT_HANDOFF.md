@@ -60,9 +60,10 @@
 Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 分支记录必须明确 `baseline_from` / `branch_scope`。
 
-当前最新 Qoder 版本：`2.0.1`（独立仓库 `Qoder/2.0`，附注标签 `v2.0.1`；里程碑标签 `v2.0` -> 提交 `95b3540`）
-本轮调整（2.0.1）：修复 xlsx(SheetJS) 高危漏洞。npm 注册表的 xlsx 永久停在含漏洞的 0.18.5（GHSA-4r6h-8v6p-xvw6 原型污染 + GHSA-5pgg-2g8v-p4x9 ReDoS），官方修复版只发布在 SheetJS CDN；依赖已切换为 `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`，无需改动业务源码（唯一消费方 SkillEditor 仅用 XLSX.read / sheet_to_json 只读 API，版本兼容）。`npm audit` 由 3 项（含 1 high）降至 2 moderate（exceljs 传递依赖 uuid，维持延期）；check/test/lint/build 全量通过。
-上一轮（2.0）：基于 1.29.2 源码生成 2.0.0；引入 Vitest（128 测试，覆盖全部 action resolvers + EventProcessor）与覆盖率阈值棘轮；引入 ESLint flat config 0-errors 门禁；配置 GitHub Actions lint / Node 18,20,22 测试矩阵 / build / Pages 部署工作流；新增 `npm run test` / `test:coverage` / `lint` / `lint:fix` 验证命令。CI 因未配置远程仓库属"已配置未验证"。
+当前最新 Qoder 版本：`2.0.2`（独立仓库 `Qoder/2.0`，附注标签 `v2.0.2`；里程碑标签 `v2.0` -> 提交 `95b3540`）
+本轮调整（2.0.2）：xlsx 漏洞修复收尾，判定 COMPLETE。新增真实 .xlsx 夹具回归测试 `src/components/xlsxSecureReader.test.ts`（3 例，夹具 `src/components/__fixtures__/skills-sample.xlsx`，jsdom 下以与生产一致的 browser 构建解析成功，覆盖 SkillEditor 导入路径）；CI lint job 增加 `npm audit --audit-level=high` 硬门禁；dist 以 0.20.3 重建；1.29 生产线同步完成 CDN 切换（tag `v1.29.3`）。测试总数 131（13 文件）。
+上一轮（2.0.1）：修复 xlsx(SheetJS) 高危漏洞。npm 注册表的 xlsx 永久停在含漏洞的 0.18.5（GHSA-4r6h-8v6p-xvw6 原型污染 + GHSA-5pgg-2g8v-p4x9 ReDoS），官方修复版只发布在 SheetJS CDN；依赖已切换为 `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`，无需改动业务源码（唯一消费方 SkillEditor 仅用 XLSX.read / sheet_to_json 只读 API，版本兼容）。`npm audit` 由 3 项（含 1 high）降至 2 moderate（exceljs 传递依赖 uuid，维持延期）；check/test/lint/build 全量通过。
+更早（2.0）：基于 1.29.2 源码生成 2.0.0；引入 Vitest（128 测试，覆盖全部 action resolvers + EventProcessor）与覆盖率阈值棘轮；引入 ESLint flat config 0-errors 门禁；配置 GitHub Actions lint / Node 18,20,22 测试矩阵 / build / Pages 部署工作流；新增 `npm run test` / `test:coverage` / `lint` / `lint:fix` 验证命令。CI 因未配置远程仓库属"已配置未验证"。
 更早（1.29.2）：修复依赖安全漏洞，升级 uuid 与 vite，exceljs 有意调整为 `^3.4.0`（锁文件解析至 3.10.0）；验证 npm run check/build 通过；xlsx 漏洞因无可用修复版本仍存在。
 
 版本号不能单独用于判断跨模型分支的先后关系。
@@ -305,6 +306,7 @@ Controllers 目标位置：
 - 2.0：GitHub Actions（lint / Node 18,20,22 矩阵 test / build / Pages 部署）已配置但从未运行——仓库无远程；推送到 GitHub 后需在仓库 Settings -> Pages -> Source 选择 "GitHub Actions"。
 - 2.0.1：xlsx(SheetJS) 高危漏洞经 SheetJS CDN 0.20.3 修复（会话内独立验证：check=0 / 128 pass / lint 0 err / build ok / audit 剩 2 moderate）。技能编辑器 Excel 导入的真实文件回归待用户验证（PENDING）。
 - 剩余依赖风险：exceljs 传递依赖 uuid 的 2 项 moderate 维持延期；且 1.29 线 exceljs 为 `^3.4.0` 而 2.0 线为 `^4.4.0`，两仓库不一致，待后续统一决策。
+- 2.0.2：xlsx 修复判定 COMPLETE——依赖/产物/锁文件三层无漏洞版本，自动化回归（jsdom browser 构建 + 真实夹具）+ CI audit high 门禁 + 版本断言测试防回退；1.29 线同步修复（`v1.29.3`，check/build 通过）。用户端浏览器真机实测欢迎但不再阻塞（jsdom 回归已覆盖同一构建路径）。`npm audit --audit-level=high` 实测 exit=0。
 
 ## 9. 文档职责：规则与记录彻底分离
 
