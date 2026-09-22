@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -34,7 +34,9 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        node-version: [18, 20, 22]
+        # Node 18/20 dropped after first real CI run: Vitest 5 needs node:inspector/promises
+        # (missing on 18) and jsdom's undici needs webidl.markAsUncloneable (Node >=22.5).
+        node-version: [22, 24]
       fail-fast: false
 
     steps:
@@ -59,7 +61,7 @@ jobs:
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
-        if: matrix.node-version == 20
+        if: matrix.node-version == 22
         with:
           name: coverage
           path: coverage/
@@ -76,7 +78,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 

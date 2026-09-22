@@ -60,9 +60,10 @@
 Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 分支记录必须明确 `baseline_from` / `branch_scope`。
 
-当前最新 Qoder 版本：`2.0.3`（独立仓库 `Qoder/2.0`，附注标签 `v2.0.3`；里程碑标签 `v2.0` -> 提交 `95b3540`）
-本轮调整（2.0.3）：依赖安全清零。以 npm `overrides` 强制传递依赖 uuid `^11.1.1`（消除 exceljs 内置 uuid@8.3.2 的 2 项 moderate）；与 1.29 线统一 exceljs `^4.4.0`（同时终结两仓库版本不一致问题）。`npm audit` = found 0 vulnerabilities（历史首次全绿）；exceljs 导出→SheetJS 读回冒烟测试（含条件格式）通过；check/test(131)/lint/build 全通过。1.29 仓库同步发布 `v1.29.4`。
-上一轮（2.0.2）：xlsx 漏洞修复收尾，判定 COMPLETE。新增真实 .xlsx 夹具回归测试 `src/components/xlsxSecureReader.test.ts`（3 例，夹具 `src/components/__fixtures__/skills-sample.xlsx`，jsdom 下以与生产一致的 browser 构建解析成功，覆盖 SkillEditor 导入路径）；CI lint job 增加 `npm audit --audit-level=high` 硬门禁；dist 以 0.20.3 重建；1.29 生产线同步完成 CDN 切换（tag `v1.29.3`）。测试总数 131（13 文件）。
+当前最新 Qoder 版本：`2.0.4`（独立仓库 `Qoder/2.0`，附注标签 `v2.0.4`；里程碑标签 `v2.0` -> 提交 `95b3540`）
+本轮调整（2.0.4）：接入 GitHub 私有远程并完成 CI 首轮真实运行。两仓库推送至 `DJXD248/three-kingdoms-2.0` 与 `DJXD248/three-kingdoms-1.29`（均 private）。首轮 CI 暴露环境兼容问题并已修复：测试矩阵 Node 18/20/22 -> 22/24（Vitest 5 需 `node:inspector/promises`，jsdom 的 undici 需 `webidl.markAsUncloneable`，均不在旧版运行时）；lint/build job 统一 Node 22；Pages 部署工作流改为仅手动触发（`workflow_dispatch`），因 Pages 源尚未启用且当前不打算公开网页。修复后 CI 运行结果见本节末"当前验证状态"。
+上一轮（2.0.3）：依赖安全清零。以 npm `overrides` 强制传递依赖 uuid `^11.1.1`（消除 exceljs 内置 uuid@8.3.2 的 2 项 moderate）；与 1.29 线统一 exceljs `^4.4.0`（同时终结两仓库版本不一致问题）。`npm audit` = found 0 vulnerabilities（历史首次全绿）；exceljs 导出→SheetJS 读回冒烟测试（含条件格式）通过；check/test(131)/lint/build 全通过。1.29 仓库同步发布 `v1.29.4`。
+更早（2.0.2）：xlsx 漏洞修复收尾，判定 COMPLETE。新增真实 .xlsx 夹具回归测试 `src/components/xlsxSecureReader.test.ts`（3 例，夹具 `src/components/__fixtures__/skills-sample.xlsx`，jsdom 下以与生产一致的 browser 构建解析成功，覆盖 SkillEditor 导入路径）；CI lint job 增加 `npm audit --audit-level=high` 硬门禁；dist 以 0.20.3 重建；1.29 生产线同步完成 CDN 切换（tag `v1.29.3`）。测试总数 131（13 文件）。
 更早（2.0.1）：修复 xlsx(SheetJS) 高危漏洞。npm 注册表的 xlsx 永久停在含漏洞的 0.18.5（GHSA-4r6h-8v6p-xvw6 原型污染 + GHSA-5pgg-2g8v-p4x9 ReDoS），官方修复版只发布在 SheetJS CDN；依赖已切换为 `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`，无需改动业务源码（唯一消费方 SkillEditor 仅用 XLSX.read / sheet_to_json 只读 API，版本兼容）。`npm audit` 由 3 项（含 1 high）降至 2 moderate（exceljs 传递依赖 uuid，维持延期）；check/test/lint/build 全量通过。
 更早（2.0）：基于 1.29.2 源码生成 2.0.0；引入 Vitest（128 测试，覆盖全部 action resolvers + EventProcessor）与覆盖率阈值棘轮；引入 ESLint flat config 0-errors 门禁；配置 GitHub Actions lint / Node 18,20,22 测试矩阵 / build / Pages 部署工作流；新增 `npm run test` / `test:coverage` / `lint` / `lint:fix` 验证命令。CI 因未配置远程仓库属"已配置未验证"。
 更早（1.29.2）：修复依赖安全漏洞，升级 uuid 与 vite，exceljs 有意调整为 `^3.4.0`（锁文件解析至 3.10.0）；验证 npm run check/build 通过；xlsx 漏洞因无可用修复版本仍存在。
@@ -72,7 +73,7 @@ Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 ### Git 管理状态
 从 Qoder 1.29 开始，当前版本目录已作为独立 Git 仓库管理。旧的 `Qoder/1.0`～`Qoder/1.29` 文件夹暂时保留为备份，不再通过复制文件夹创建新版本。
 
-`Qoder/2.0` 是与 `Qoder/1.29` 相互独立的另一个 Git 仓库，两者不共享提交历史：1.29 仓库最新为 `2cfcbbf`（附注标签 `v1.29.2`），2.0 仓库里程碑为 `95b3540`（附注标签 `v2.0`，代码里程碑 `530fecf`）。两个仓库目前均未配置远程（remote），GitHub Actions 工作流在推送到 GitHub 之前不会实际运行。
+`Qoder/2.0` 是与 `Qoder/1.29` 相互独立的另一个 Git 仓库，两者不共享提交历史：2.0 仓库里程碑为 `95b3540`（附注标签 `v2.0`，代码里程碑 `530fecf`），1.29 仓库最新为 `v1.29.4`。自 2.0.4 起两仓库均已配置 GitHub 私有远程（`origin` -> `https://github.com/DJXD248/three-kingdoms-2.0` / `https://github.com/DJXD248/three-kingdoms-1.29`，visibility=private，非公开不可被他人访问），master 与全部标签已推送；2.0 的 GitHub Actions 已实际运行（首轮 Node 18/20 失败已按上文修复），1.29 仓库无工作流文件、仅作为代码托管与备份。日常验证命令：本地 `npm run check/test/lint/build` 之后 `git push`，CI 绿灯即视为远端验证通过。
 
 常用命令：
 - 查看当前状态：`git status`
