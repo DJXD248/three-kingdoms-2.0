@@ -276,7 +276,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     // The same definition/name may exist across seats or be intentionally
     // duplicated by test tooling, so definitionId alone must never be used
     // as runtime identity.
-    const draftedPool=selectedDraftGenerals.map(g=>cloneWithRuntimeInstance(g));
+    // Drafted cards carry the editor's merged definition (skill edits like
+    // DIY 摸牌 skills and stat edits), so syncPlayerSkills compiles them.
+    const draftedPool=selectedDraftGenerals.map(g=>cloneWithRuntimeInstance(get().getGeneralWithEdits(g)));
     u[draftPlayerIndex]={...u[draftPlayerIndex],generalPool:draftedPool};
     const ni=draftPlayerIndex+1;
     if(ni>=players.length){
