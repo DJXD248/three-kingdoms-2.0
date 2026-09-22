@@ -22,18 +22,23 @@ npm run build                                     # 生产构建 -> dist/index.h
 origin -> https://github.com/DJXD248/three-kingdoms-2.0
 ```
 
-### 本机代理配置（重要）
+### 网络与代理（推送连不上 GitHub 时看这里）
 
-本开发机直连 `github.com:443` 会超时，需要通过本机代理 `127.0.0.1:10808`（系统代理，浏览器访问 GitHub 同走此口）。已为本仓库写入 Git 配置：
+本开发机到 GitHub 的链路会波动：有时直连可用，有时只有经本机代理 `127.0.0.1:10808`（系统代理，浏览器访问 GitHub 同走此口）才通。**不要**把代理写死进 Git 配置（代理软件关闭时反而推不动），按下面顺序处理：
 
 ```bash
-git config http.proxy http://127.0.0.1:10808
-git config https.proxy http://127.0.0.1:10808
+# 1) 先直接推
+git push origin master
+
+# 2) 若报 "Failed to connect to github.com:443"，改走代理推（一次性，不留配置）
+git -c http.proxy=http://127.0.0.1:10808 push origin master
+
+# 快速自检哪条路通（200 即可用）：
+curl -sI --max-time 10 https://github.com -o /dev/null -w "direct: %{http_code}\n"
+curl -sI --max-time 10 -x http://127.0.0.1:10808 https://github.com -o /dev/null -w "proxy: %{http_code}\n"
 ```
 
-- 查看：`git config --get http.proxy`
-- 临时不走代理（代理软件未开启且直连可用时）：`git -c http.proxy= -c https.proxy= push origin master`
-- 用 gh CLI（如查看 CI）时需带环境变量：`HTTPS_PROXY=http://127.0.0.1:10808 gh run list`
+- 用 gh CLI（如查看 CI）同理，代理不通时不带变量、代理可用时加 `HTTPS_PROXY=http://127.0.0.1:10808`。
 - gh 登录采用设备码流程：`gh auth login --hostname github.com --git-protocol https --web`，按提示在 `https://github.com/login/device` 输入验证码；推送 `.github/workflows/` 文件需要 token 具备 `workflow` 权限（`gh auth refresh --hostname github.com --scopes workflow`）。
 
 ### 日常迭代流程
