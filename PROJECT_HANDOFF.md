@@ -60,8 +60,9 @@
 Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 分支记录必须明确 `baseline_from` / `branch_scope`。
 
-当前最新 Qoder 版本：`2.0.4`（独立仓库 `Qoder/2.0`，附注标签 `v2.0.4`；里程碑标签 `v2.0` -> 提交 `95b3540`）
-本轮调整（2.0.4）：接入 GitHub 私有远程并完成 CI 首轮真实运行。两仓库推送至 `DJXD248/three-kingdoms-2.0` 与 `DJXD248/three-kingdoms-1.29`（均 private）。首轮 CI 暴露环境兼容问题并已修复：测试矩阵 Node 18/20/22 -> 22/24（Vitest 5 需 `node:inspector/promises`，jsdom 的 undici 需 `webidl.markAsUncloneable`，均不在旧版运行时）；lint/build job 统一 Node 22；Pages 部署工作流改为仅手动触发（`workflow_dispatch`），因 Pages 源尚未启用且当前不打算公开网页。修复后 CI 运行结果见本节末"当前验证状态"。
+当前最新 Qoder 版本：`2.1.0`（独立仓库 `Qoder/2.0`，附注标签 `v2.1.0`；里程碑标签 `v2.0` -> 提交 `95b3540`）
+本轮调整（2.1.0）：技能系统唯一化收敛（§13 路线第 1 项落地）。全项目现在只有一条技能运行时链路：`data/generals.ts Skill(+runtime 载荷) → skills/skillCompiler.ts → DataSkillDefinition → skills/SkillTriggerBridge（触发条件+效果翻译） → TriggerEngine → core/GameEngine 事件链 → EventProcessor 结算`。修复了两个根本断点：(a) 每次 dispatch 重建 GameEngine 导致注册丢失——现由 `syncPlayerSkills` 在 `engineExecutionBridge.dispatchStoreAction` 内每次派生注册（随快照/读档天然一致）；(b) 没有任何业务把玩家将领导出成技能定义——现由编译器统一导出。同时删除了经二次调用图复核为零引用的第二套实现（skills/SkillEngine・EffectResolver・SkillRegistry・types・effectTypes，card/、actions/、status/ 三目录，timeline 除 PrioritySystem 外全部，rules/CardRule・TurnRule，data/skillEffects.ts 硬编码注册表），`SkillActivation` 类型收编至 `skills/dataTypes.ts`。行为口径：只有带结构化 `runtime` 载荷的效果会被执行，内置武将仍是纯描述文本（不参与结算，不发明玩法）；本轮真实新增结算能力=技能摸牌（EventProcessor DRAW 支持按数量从共享牌堆抽取、不足洗坟场）与技能伤害（DAMAGE 事件 damageType:'skill' 走与普攻同一 applyArmorDamage 规则，该函数提取至 `core/armorDamage.ts` 共享）。诚实边界（PENDING，见 §12）：DIY 编辑器尚无 runtime 数值录入入口；HEAL/GAIN_ARMOR、modify*/onBase*/passive/active*/untilExpire 等 14 种触发未接入；回合结束技能询问窗口（§4 冻结规则）仍未挂接；技能致命伤不产生 DEATH 事件即 onKill 对技能伤不触发。验证：check 0 错误 / 152 测试通过（新增 21 例技能链路闭环测试，此前技能链覆盖率=0）/ 覆盖率棘轮上调 lines 18・functions 11・branches 15・statements 17 / lint 0 错误 32 遗留警告（与基线一致）/ build 成功。
+上一轮（2.0.4）：接入 GitHub 私有远程并完成 CI 首轮真实运行。两仓库推送至 `DJXD248/three-kingdoms-2.0` 与 `DJXD248/three-kingdoms-1.29`（均 private）。首轮 CI 暴露环境兼容问题并已修复：测试矩阵 Node 18/20/22 -> 22/24（Vitest 5 需 `node:inspector/promises`，jsdom 的 undici 需 `webidl.markAsUncloneable`，均不在旧版运行时）；lint/build job 统一 Node 22；Pages 部署工作流改为仅手动触发（`workflow_dispatch`），因 Pages 源尚未启用且当前不打算公开网页。修复后 CI 运行结果见本节末"当前验证状态"。
 上一轮（2.0.3）：依赖安全清零。以 npm `overrides` 强制传递依赖 uuid `^11.1.1`（消除 exceljs 内置 uuid@8.3.2 的 2 项 moderate）；与 1.29 线统一 exceljs `^4.4.0`（同时终结两仓库版本不一致问题）。`npm audit` = found 0 vulnerabilities（历史首次全绿）；exceljs 导出→SheetJS 读回冒烟测试（含条件格式）通过；check/test(131)/lint/build 全通过。1.29 仓库同步发布 `v1.29.4`。
 更早（2.0.2）：xlsx 漏洞修复收尾，判定 COMPLETE。新增真实 .xlsx 夹具回归测试 `src/components/xlsxSecureReader.test.ts`（3 例，夹具 `src/components/__fixtures__/skills-sample.xlsx`，jsdom 下以与生产一致的 browser 构建解析成功，覆盖 SkillEditor 导入路径）；CI lint job 增加 `npm audit --audit-level=high` 硬门禁；dist 以 0.20.3 重建；1.29 生产线同步完成 CDN 切换（tag `v1.29.3`）。测试总数 131（13 文件）。
 更早（2.0.1）：修复 xlsx(SheetJS) 高危漏洞。npm 注册表的 xlsx 永久停在含漏洞的 0.18.5（GHSA-4r6h-8v6p-xvw6 原型污染 + GHSA-5pgg-2g8v-p4x9 ReDoS），官方修复版只发布在 SheetJS CDN；依赖已切换为 `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`，无需改动业务源码（唯一消费方 SkillEditor 仅用 XLSX.read / sheet_to_json 只读 API，版本兼容）。`npm audit` 由 3 项（含 1 high）降至 2 moderate（exceljs 传递依赖 uuid，维持延期）；check/test/lint/build 全量通过。
@@ -125,7 +126,7 @@ Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 - 一个回合包含回合开始、回合内、回合结束三个阶段。
 - 回合开始先处理该回合固定抽卡及将领池为空导致的本营掉血；完成抽卡后进入行动阶段。
 - 回合内可以进行任意次合法行动；在没有伤害或技能正在执行/结算时，可以随时结束回合。
-- 回合结束如存在可发动的将领技能，应进入对应技能询问/结算窗口，确认不发动后再完成回合结束结算。
+- 回合结束如存在可发动的将领技能，应进入对应技能询问/结算窗口，确认不发动后再完成回合结束结算。（规则本身有效；实现为 PENDING——`ReactionWindow` 类已存在但回合结束流程尚未调用，见 §12 第 9 条 c。2.1.0 收敛时经用户主线授权明确暂缓，不得视为已履行。）
 - 检视手牌、墓地、场上将领不算行动，属于行动外查看。
 
 ### 消耗
@@ -251,8 +252,8 @@ Controllers 目标位置：
 - 已确认的 canonical 系统不得再建立同义第二套运行时。
 - 代码行数最少不是重构目标；行为、规则权威和边界清晰优先。
 - 兼容 re-export 可以保留，但必须注明 canonical 实现位置。
-- 当前审查发现的高优先级 legacy 候选包括：`src/skills/SkillEngine.ts`、`src/skills/EffectResolver.ts`、`src/card/*`、`src/actions/*`、`src/status/*`、`src/timeline/TurnManager.ts` / `PhaseManager.ts`；这些目前不应被当作 canonical 规则入口。删除前仍需再次做调用图确认。
-- 当前唯一明确的技能执行目标为 `TriggerEngine + SkillTriggerBridge`；但 1.26 源码中尚未发现 `registerPlayerSkills` 的实际业务调用，因此技能系统目前应标记为“架构骨架已存在、正式玩法运行时尚未闭环”，不得宣称技能系统已经完成。
+- 2.1.0 已完成这批清理：`src/skills/SkillEngine.ts`、`EffectResolver.ts`、`SkillRegistry.ts`、`types.ts`、`effectTypes.ts`、`src/card/*`、`src/actions/*`、`src/status/*`、`src/timeline/*`（仅保留 canonical 的 `PrioritySystem.ts`）、`src/rules/CardRule.ts`、`TurnRule.ts`、`src/data/skillEffects.ts` 经双轮 import/call-graph 复核零引用后删除；`USE_SKILL` 动作类型（无任何 resolver 处理）一并移除。
+- 技能执行权威唯一：`GameEngine + TriggerEngine + SkillTriggerBridge + skillCompiler`。2.1.0 起 `registerPlayerSkills` 已由 `syncPlayerSkills` 在每次 store dispatch 时实际调用并有端到端测试，此前"骨架已存在、运行时尚未闭环"的口径升级为：**核心链已闭环并有回归测试**；但技能系统整体仍未完成（DIY 数值录入 UI、其余效果/触发原语、询问窗口均未接入），对外表述仍须附此边界，不得宣称技能系统全部完成。
 
 ## 8. 多模型协作规则
 
@@ -307,6 +308,7 @@ Controllers 目标位置：
 - 下一阶段：继续完善真实服务器连接、重连和技能运行时收敛；本机保存不等同于在线同步。
 - 已知风险：依赖审计问题仍延期，尚未执行强制升级。
 - 2.0（本地独立验证于会话内执行）：`npm run check` = 0 错误；`npm run test` = 128 通过；`npm run test:coverage` 达到棘轮阈值（lines>=13 / statements>=11 / branches>=10 / functions>=7）；`npm run lint` = 0 错误 / 32 条 react-hooks 遗留警告（技术债，见 AGENTS.md）；`npm run build` 成功。
+- 2.1.0（本地会话内验证）：`npm run check` = 0 错误；`npm run test` = 152 通过（15 文件，含新增 `src/skills/skillCompiler.test.ts` 13 例与 `src/skills/skillPipeline.test.ts` 8 例端到端闭环：回合开始摸牌、奸雄型受伤摸牌、拥有者/将领双重条件隔离、技能伤害按护甲规则结算、攻/技伤害筛选、抽牌不重复实例、store 桥多次 dispatch 依然生效）；`npm run test:coverage` 通过新棘轮（lines>=18 / functions>=11 / branches>=15 / statements>=17，skills 目录 72.9% 语句）；`npm run lint` = 0 错误 / 32 条遗留 react-hooks 警告（数量与基线一致，本轮零新增）；`npm run build` 成功（单文件 dist）。CI 远端复验=本轮推送后执行。
 - 2.0.4：两仓库已推送 GitHub 私有远程（`DJXD248/three-kingdoms-2.0` / `three-kingdoms-1.29`）。CI 首轮真实运行暴露 Node 18（缺 `node:inspector/promises`）与 Node 20（jsdom/undici 缺 `webidl.markAsUncloneable`）不兼容，矩阵调整为 22/24 后复跑 **全绿**（run 35724339303：lint+audit / 22 与 24 矩阵 test+coverage / check / build，2m31s）。Pages 部署改为仅手动触发（`workflow_dispatch`），启用公开网页前需 Settings -> Pages -> Source = "GitHub Actions"；当前定位：私有托管 + CI 验证，不公开。
 - 2.0.1：xlsx(SheetJS) 高危漏洞经 SheetJS CDN 0.20.3 修复（会话内独立验证：check=0 / 128 pass / lint 0 err / build ok / audit 剩 2 moderate）。技能编辑器 Excel 导入的真实文件回归待用户验证（PENDING）。
 - 2.0.3：上述两项依赖风险均已销案——两仓库统一 exceljs `^4.4.0`，npm overrides 强制 uuid `^11.1.1`，`npm audit` 全绿（0 漏洞）。维护备注：今后升级 exceljs 时需复查 overrides 中 uuid 的版本约束是否仍适用（uuid 8→11 的 `v4` 接口兼容，exceljs 仅 cf-rule-ext-xform.js 一处使用）。
@@ -431,17 +433,17 @@ Controllers 目标位置：
 1. 5.35.26.4 跨势力 / 群势力外框最终视觉。
 2. 将领池随机长期样本。
 3. 非棋盘页面响应式 / 移动端体验。
-4. Skill Runtime 最终唯一化与旧系统清理。
+4. Skill Runtime 最终唯一化与旧系统清理（2.1.0 已完成核心收敛；剩余见第 9 条）。
 5. 真正在线 WebSocket / Session / DB / 生产服务。
 6. Qoder 分支如需合并，必须基于实际源码独立审查，不能仅凭日志判断。
 7. Qoder 1.29 `package-lock.json` 已与 `package.json` 版本号保持一致，并明确记录 Rollup Linux 可选依赖；Git 已通过 `.gitignore` 排除 `node_modules/`、`dist/`、`.env` 和 `*.log`。
 8. 本机存档恢复和坏档清理仍需实际用户回归验证。
-9. 技能系统仍存在多套数据/运行时结构；canonical 路径尚未被实际业务调用闭环。
+9. （2.1.0 已销案：多套并存的运行时结构已删除，canonical 路径已被实际业务调用并有端到端回归。）技能系统当前真实边界，PENDING 待办：a) SkillEditor 尚无结构化效果数值（runtime 载荷）录入与 Excel 列，DIY 技能暂不能产生可结算效果；b) HEAL / GAIN_ARMOR 效果与 modify* / onBase* / passive / active* / untilExpire / onOtherDeploy / onTurnEnd / onBecomingTarget / onTargetConfirmed / onOtherSkillActivated 等触发未接入原语；c) 回合结束技能询问窗口（§4 冻结规则）中 `ReactionWindow.open` 仍无业务入口，规则本身不变、实现暂缓；d) 技能伤害致死由 EventProcessor 直接移除将领，不产生 DEATH 事件，故 onKill 对技能致命伤不触发。
 10. GPT 审计指出的 1.29 归档边界问题已纳入迁移规则：正式提交不得包含 `node_modules/`、`dist/` 或空的依赖目录。
 
 ## 13. 当前默认路线
 
-1. 技能系统唯一化。
+1. 技能系统唯一化。（2.1.0 完成：唯一运行时 + 注册接线 + 零引用旧栈删除 + 回归测试；后续推进归入第 9 条 a-d 待办。）
 2. 保持最小可玩闭环端到端可运行。
 3. 安全清理 Legacy / 重复系统。
 4. UI / Mobile convergence。

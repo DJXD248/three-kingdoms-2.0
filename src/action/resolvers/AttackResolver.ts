@@ -3,6 +3,7 @@ import type { GameAction } from '../ActionTypes';
 import type { EngineState } from '../../core/GameState';
 import type { GameEvent } from '../../core/Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
+import { applyArmorDamage } from '../../core/armorDamage';
 
 interface Position {
   zone: 'camp' | 'front' | 'battle';
@@ -66,28 +67,8 @@ function getAttackValue(attacker: any, ranged: boolean) {
   return ranged ? (hp >= 4 ? 1 : 2) : (hp >= 4 ? 2 : 1);
 }
 
-function applyArmorDamage(currentHp: number, currentArmor: number, rawDamage: number) {
-  let remainingDamage = Math.max(0, rawDamage);
-  let armor = Math.max(0, currentArmor);
-  let armorLost = 0;
-
-  // Existing game rule: 2 armor absorbs 1 damage; a single armor is insufficient
-  // to absorb a damage point and therefore remains in place until enough armor exists.
-  while (remainingDamage > 0 && armor >= 2) {
-    armor -= 2;
-    armorLost += 2;
-    remainingDamage -= 1;
-  }
-
-  const hpLost = Math.min(Math.max(0, currentHp), remainingDamage);
-  return {
-    hp: Math.max(0, currentHp - remainingDamage),
-    armor,
-    hpLost,
-    armorLost,
-    actualDamage: hpLost + armorLost,
-  };
-}
+// applyArmorDamage now lives in core/armorDamage.ts (shared with skill damage
+// settlement in EventProcessor) — single canonical implementation.
 
 export class AttackResolver implements ActionResolver {
   canResolve(action: GameAction): boolean {

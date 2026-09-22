@@ -3,6 +3,7 @@ import type { GameEvent } from './Event';
 import { cloneEngineState } from './GameState';
 import { getTurnStartDrawCount } from './turnRules';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { applyArmorDamage } from './armorDamage';
 
 const RESOURCE_TYPES = new Set(['粮草', '材料', '军备', 'SUPPLY', 'MATERIAL', 'ARMAMENT']);
 
@@ -199,12 +200,33 @@ export class EventProcessor {
           generalCards?: unknown[];
           cardCards?: unknown[];
           reshuffledCardCards?: unknown[];
+          count?: number;
+          value?: number;
         } | undefined;
         if (typeof data?.playerId !== 'number') return state;
 
         const generalCards = Array.isArray(data.generalCards) ? data.generalCards : [];
-        const cardCards = Array.isArray(data.cardCards) ? data.cardCards : [];
-        const reshuffledCardCards = Array.isArray(data.reshuffledCardCards) ? data.reshuffledCardCards : [];
+        let cardCards = Array.isArray(data.cardCards) ? data.cardCards : [];
+        let reshuffledCardCards = Array.isArray(data.reshuffledCardCards) ? data.reshuffledCardCards : [];
+
+        // Skill-triggered draws (DRAW_CARD effects) arrive as a bare count.
+        // Select concrete card instances at apply time from the shared deck
+        // (reshuffling the discard pile when it runs low) so chained draws
+        // can never duplicate card instances the way pre-selected slices could.
+        if (!Array.isArray(data.generalCards) && !Array.isArray(data.cardCards)) {
+          const requested = Math.max(0, Math.floor(Number(data.count ?? data.value ?? 0)));
+          if (requested === 0) return state;
+          const deckCards = Array.isArray(state.deck) ? state.deck : [];
+          const discardCards = Array.isArray(state.discardPile) ? state.discardPile : [];
+          cardCards = deckCards.slice(0, Math.min(requested, deckCards.length));
+          if (cardCards.length < requested && discardCards.length > 0) {
+            reshuffledCardCards = [...discardCards]
+              .sort(() => Math.random() - 0.5)
+              .slice(0, Math.min(requested - cardCards.length, discardCards.length));
+            cardCards = [...cardCards, ...reshuffledCardCards];
+          }
+        }
+
         const drawn = [...generalCards, ...cardCards];
 
         const remainingReshuffledIds = new Set(reshuffledCardCards.map(card => {
@@ -549,8 +571,21 @@ export class EventProcessor {
           target.armorCards = destroyedArmorIds.size > 0
             ? attachedArmor.filter((card: any) => !destroyedArmorIds.has(getRuntimeCardId(card as any)))
             : attachedArmor;
-          target.currentHp = Number(data?.newHp ?? target.currentHp);
-          target.currentArmor = Number(data?.newArmor ?? target.currentArmor);
+          // Attack resolvers pre-compute newHp/newArmor. Skill-triggered DAMAGE
+          // events (damageType: 'skill') only carry a value, so settle the hit
+          // here with the same canonical armor rule attacks use.
+          if (data?.newHp === undefined && data?.damageType === 'skill') {
+            const skillHit = applyArmorDamage(
+              Number(target.currentHp ?? 0),
+              Number(target.currentArmor ?? 0),
+              Number(data?.value ?? 0),
+            );
+            target.currentHp = skillHit.hp;
+            target.currentArmor = skillHit.armor;
+          } else {
+            target.currentHp = Number(data?.newHp ?? target.currentHp);
+            target.currentArmor = Number(data?.newArmor ?? target.currentArmor);
+          }
           destroyedArmorCardsForDiscard = destroyedArmorCards;
 
           if (data?.defeated === true || target.currentHp <= 0) {

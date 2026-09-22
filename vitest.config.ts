@@ -24,11 +24,12 @@ export default defineConfig({
       ],
       // Ratchet baseline: floors sit just below current coverage so CI fails
       // on regression and can only be raised as new tests land.
+      // Raised during the Phase 5 skill uniqueness convergence (skill chain tests).
       thresholds: {
-        lines: 13,
-        functions: 7,
-        branches: 10,
-        statements: 11,
+        lines: 18,
+        functions: 11,
+        branches: 15,
+        statements: 17,
       },
     },
   },

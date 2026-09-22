@@ -6,7 +6,7 @@ import { dispatchStoreAction } from './engineExecutionBridge';
 import { applyEngineStateToStore, buildDrawContext, describeDrawSubtitle, engineStateToStoreProjection, isRestorableEngineState, storeStateToEngineState } from './gameStateAdapter';
 import type { EngineState } from '../core/GameState';
 import { createAction } from '../action/ActionTypes';
-import type { SkillActivation } from '../data/skillEffects';
+import type { SkillActivation } from '../skills/dataTypes';
 import {
   loadPersistedSkillEdits,
   persistSkillEdits,

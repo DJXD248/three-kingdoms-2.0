@@ -464,3 +464,37 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 ### 2.0.4 补充（同轮）
 - 两仓库新增 `README.md`（快速开始 / Git 远程 / 推送网络处置 / 日常迭代流程）。
 - 本机到 GitHub 链路波动：先直推，超时再一次性借道系统代理 `git -c http.proxy=http://127.0.0.1:10808 push`；曾试验仓库级持久代理配置，因代理软件关闭时反致推送失败而撤销（不写死）。
+
+---
+
+## Qoder 2.1.0：技能系统唯一化收敛（注册接线 + 第二套运行栈删除 + 链路回归测试）
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `d1ff25c`（附注标签 `v2.0.4` 之后的 README 修订提交）
+**branch_scope：** `Qoder/2.0` 仓库
+
+### 决策与依据
+- HandOff §13 路线第 1 项。审计确认：canonical 链（TriggerEngine + SkillTriggerBridge + GameEngine）机制完好但存在两个根本断点——(a) `engineExecutionBridge.dispatchStoreAction` 每次 dispatch `new GameEngine(...)`，注册随实例即弃，`registerPlayerSkills` 零业务调用；(b) 没有任何装配路径把玩家在场将领导出成 `DataSkillDefinition`。因此技能系统此前只能标记"骨架已存在、未闭环"。
+- 口径坚持不发明玩法：内置武将技能保持纯描述文本，不自动获得结算能力；只有显式携带结构化 `runtime` 载荷的效果才编译进运行时。DIY 技能的可执行化留待编辑器录入 UI（PENDING）。
+
+### 变更
+- 新增 `src/skills/skillCompiler.ts`：`compileSkill/compileGeneralSkills`（20 种触发中支持 6 种事件型，逐效果编译，全部跳过路径带显式 reason）+ `syncPlayerSkills`（按 EngineState 每次派生注册，天然兼容快照/读档）。
+- `src/skills/SkillTriggerBridge.ts`：修复 `onDeploy` 错误映射到 CUSTOM（现绑 `GENERAL_DEPLOYED`）；首次加入逐触发条件（玩家归属 + 将领实例 + 伤害类别过滤）；效果翻译升级为可结算形态（DRAW {playerId,count}、DAMAGE {damageType:'skill'}）。
+- `src/core/armorDamage.ts`：`applyArmorDamage` 从 AttackResolver 提取为共享纯函数；`EventProcessor` 的 DAMAGE 分支对技能伤害按同一护甲规则现场结算，DRAW 分支支持按数量从共享牌堆抽牌（不足洗弃牌堆），选择发生在结算时点，杜绝链式抽牌复制实例。
+- `src/data/generals.ts`：`SkillEffect` 新增可选 `runtime?: SkillRuntimeEffect`（纯增量，不动内置数据）。
+- `src/store/engineExecutionBridge.ts`：dispatch 前调用 `syncPlayerSkills`。
+- 删除（均经双轮 import/call-graph 零引用复核 + 测试引用复核）：`skills/{SkillEngine,EffectResolver,SkillRegistry,types,effectTypes}.ts`、`card/*`、`actions/*`、`status/*`、`timeline/{PhaseManager,TurnManager,index,types}.ts`（保留 canonical `PrioritySystem.ts`）、`rules/{CardRule,TurnRule}.ts`（`RuleEngine/ActionValidator` 在用保留）、`data/skillEffects.ts`（硬编码注册表零调用方；`SkillActivation` 类型收编至 `skills/dataTypes.ts`，gameStore 引用切换）；`ActionTypes` 移除无 resolver 处理的 `USE_SKILL`。
+- 保留 `SkillDataRegistry`（importer 引用）与 `dataSkillExamples.ts`（接线夹具）。
+- `skills/index.ts` 重写为仅导出 canonical；`vitest.config.ts` 棘轮上调 13/7/10/11 -> 18/11/15/17；版本 2.0.4 -> 2.1.0。
+
+### 验证（本地会话内执行）
+- 失败证据（修复前）：新链路由测试直接暴露 `INVALID_ATTACK_PAYLOAD`（规则层要求攻击携带消耗牌，夹具修正）与编译器跳过序问题（NO_TRIGGER vs NO_RUNTIME_PAYLOAD）。
+- `npm run check` = 0 错误；`npm run test` = **152 通过**（13 文件 131 -> 15 文件 152；新增 skillCompiler.test 13 例 + skillPipeline.test 8 例，覆盖此前 0 覆盖的完整链路：回合开始摸牌 / 奸雄受伤摸牌 / 拥有者与将领双重条件隔离 / 技能伤害护甲结算 / 攻防伤害类别过滤 / 抽牌实例唯一 / store 桥多次 dispatch 注册再生效）。
+- `npm run test:coverage` 通过新棘轮（skills 目录语句覆盖 72.9%）；`npm run lint` = 0 错误 / 32 警告（stash 基线对照同为 32，零新增）；`npm run build` 单文件成功。
+- 技能删除项对玩家可见行为零影响（被删代码本就无调用方），但**正式玩法对局中新链路的实战表现仍属待用户回归**（当前无任何内置技能带 runtime 载荷，实战触发面为空）。
+
+### Unresolved / Risk（即 HandOff §12-9 a-d）
+- SkillEditor 无 runtime 数值录入 / Excel 列；HEAL、GAIN_ARMOR 与 14 种触发未接；回合结束询问窗口（冻结规则）实现暂缓；技能致命伤不发 DEATH 事件，onKill 对技能伤不触发。
+
+### Next route
+技能线下一刀在内容入口：SkillEditor 结构化效果录入（含 Excel 列）；或转 §13 第 2 项端到端最小可玩闭环回归。

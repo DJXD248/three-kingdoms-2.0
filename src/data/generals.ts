@@ -123,6 +123,19 @@ export interface SkillEffect {
   label?: string;                // 效果简短标注 (如 "效果一", "伤害触发")
   description?: string;          // 效果描述
   trigger?: SkillTriggerConfig;  // 该效果的触发时机
+  /**
+   * 结构化运行时载荷（可选）。只有带此载荷的效果才会被技能编译器
+   * 接入唯一运行时（skills/skillCompiler → SkillTriggerBridge → GameEngine）。
+   * 内置武将仅保留描述文本，不带载荷即不参与结算——不会凭空产生玩法。
+   */
+  runtime?: SkillRuntimeEffect;
+}
+
+/** 效果的结构化运行时载荷：类型 + 数值 + 目标角色 */
+export interface SkillRuntimeEffect {
+  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR';
+  value?: number;
+  target?: 'SELF' | 'ATTACKER' | 'TARGET';
 }
 
 /**

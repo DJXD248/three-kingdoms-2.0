@@ -9,7 +9,6 @@ export type ActionType =
   | 'ATTACK'
   | 'SUPPLY'
   | 'EQUIP_ARMOR'
-  | 'USE_SKILL'
   | 'END_TURN'
   | 'CONFIRM_DRAW'
   | 'BEGIN_DRAW'

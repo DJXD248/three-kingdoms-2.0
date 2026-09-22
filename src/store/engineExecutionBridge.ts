@@ -1,6 +1,7 @@
 import { GameEngine } from '../core/GameEngine';
 import { storeStateToEngineState } from './gameStateAdapter';
 import { cloneEngineState } from '../core/GameState';
+import { syncPlayerSkills } from '../skills/skillCompiler';
 import type { GameAction } from '../action/ActionTypes';
 import type { EngineState } from '../core/GameState';
 import type { GameEvent } from '../core/Event';
@@ -11,6 +12,11 @@ import type { GameEvent } from '../core/Event';
  * Thin adapter used while Zustand is being migrated to the authoritative
  * GameEngine. It deliberately does not contain game rules; it only translates
  * the current UI/store snapshot into EngineState and executes one Action.
+ *
+ * Skill uniqueness: data-driven skills are re-derived from the engine state
+ * on every dispatch (syncPlayerSkills), because the engine instance itself is
+ * per-dispatch. There is exactly one skill runtime: GameEngine + TriggerEngine
+ * + SkillTriggerBridge.
  */
 export function dispatchStoreAction(storeState: unknown, action: GameAction): {
   engineState: EngineState;
@@ -21,6 +27,7 @@ export function dispatchStoreAction(storeState: unknown, action: GameAction): {
     ? cloneEngineState(provided as EngineState)
     : storeStateToEngineState(storeState);
   const engine = new GameEngine(engineState);
+  syncPlayerSkills(engine, engineState);
   const events = engine.dispatch(action);
   return { engineState: engine.snapshot(), events };
 }
