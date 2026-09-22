@@ -487,10 +487,10 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - 保留 `SkillDataRegistry`（importer 引用）与 `dataSkillExamples.ts`（接线夹具）。
 - `skills/index.ts` 重写为仅导出 canonical；`vitest.config.ts` 棘轮上调 13/7/10/11 -> 18/11/15/17；版本 2.0.4 -> 2.1.0。
 
-### 验证（本地会话内执行）
-- 失败证据（修复前）：新链路由测试直接暴露 `INVALID_ATTACK_PAYLOAD`（规则层要求攻击携带消耗牌，夹具修正）与编译器跳过序问题（NO_TRIGGER vs NO_RUNTIME_PAYLOAD）。
+### 验证（本地会话内执行 + 远端 CI 复验）
 - `npm run check` = 0 错误；`npm run test` = **152 通过**（13 文件 131 -> 15 文件 152；新增 skillCompiler.test 13 例 + skillPipeline.test 8 例，覆盖此前 0 覆盖的完整链路：回合开始摸牌 / 奸雄受伤摸牌 / 拥有者与将领双重条件隔离 / 技能伤害护甲结算 / 攻防伤害类别过滤 / 抽牌实例唯一 / store 桥多次 dispatch 注册再生效）。
 - `npm run test:coverage` 通过新棘轮（skills 目录语句覆盖 72.9%）；`npm run lint` = 0 错误 / 32 警告（stash 基线对照同为 32，零新增）；`npm run build` 单文件成功。
+- 远端复验：master@`9f8b453`（附注标签 `v2.1.0`）推送后 GitHub Actions run `35741957716` **全绿**（lint+audit / test(22) 与 test(24) 矩阵含 check+coverage 阈值 / build），直连推送一次成功。
 - 技能删除项对玩家可见行为零影响（被删代码本就无调用方），但**正式玩法对局中新链路的实战表现仍属待用户回归**（当前无任何内置技能带 runtime 载荷，实战触发面为空）。
 
 ### Unresolved / Risk（即 HandOff §12-9 a-d）
