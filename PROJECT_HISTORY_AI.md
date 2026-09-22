@@ -526,3 +526,28 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 
 ### Next route
 技能线下一刀可选：9d（技能致命伤→DEATH 事件，使 onKill 对技能伤闭合，改动面小）；9b（HEAL/GAIN_ARMOR 结算原语，解锁编辑器已能录入的两类效果）；9c（回合结束询问窗口，`activeSelf` 等触发的使用前提）；或转 §13 第 2 项端到端最小可玩闭环回归。
+
+## Qoder 2.2.1：端到端最小可玩回归 + confirmDraft 编辑器改动断链修复
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `e3ee2e5`（v2.2.0 的最终文档登记提交）
+**branch_scope：** `Qoder/2.0` 仓库
+
+### 决策与依据
+- HandOff §13 路线第 2 项：真实浏览器逐项点击回归最小可玩闭环（①开局/选将 ②初始抽卡 ③部署 ④普攻护甲 ⑤阵亡 ⑥本营胜负 ⑦编辑器"摸牌"技能进局）。①-⑥ 通过；⑦ 首跑失败——编辑器保存"援军"（onTurnStart→DRAW_CARD）后新开对局征召文鸯、登场、回合开始无任何额外摸牌。
+- 根因：显示链路 `getGeneralWithEdits` 只作用于 UI；`confirmDraft` 把**原始** `allGenerals` 对象克隆进运行时池，EngineState 里技能永远是征召时点的裸数据。2.2.0 声称"持久化与游戏装配零改动、runtime 自然流到 syncPlayerSkills"是**错的**——装配点在征召，不合并编辑就永远到不了编译器。UI 显示已合并掩盖了断链（教训：显示链路与装配链路必须分别验证）。
+
+### 变更
+- `src/store/gameStore.ts` confirmDraft：`cloneWithRuntimeInstance(g)` → `cloneWithRuntimeInstance(get().getGeneralWithEdits(g))`（一行）。
+- 新增 `src/store/gameStore.draftEdits.test.ts` 3 例：skillEdits 进池且 compileGeneralSkills 产出 onTurnStart/DRAW_CARD 定义（含 runtime 身份 instanceId 仍逐卡唯一）；generalEdits 数值/改名进池；无编辑时裸数据原样、纯描述技能诚实 skip（NO_RUNTIME_PAYLOAD）不被凭空执行。
+- 版本 2.2.0 → 2.2.1（package.json + lock 仅 root 两处版本字段）。
+
+### 验证（本地会话内执行）
+- `npm run check` = 0 错误；`npm run test` = 176 通过（18 文件）；coverage 过棘轮（阈值未动，实测 lines 27.7）；`npm run lint` = 0 错误 / 30 遗留警告（零新增）；`vite build` 单文件成功。
+- 浏览器复测（修复后全新房间）：晋seat 征召文鸯 → R2 登场（消耗4张将领回池，手牌 11→6）→ R3 回合开始 手牌 6→**12**（常规 5 + 援军 1），抽牌堆 41→35 恰 -6。⑦ 判定 VERIFIED（真人点击路径 + 数值双向对账）。
+- 环境注意：后台标签页 setInterval 被 Chrome 限流，骰子动画卡住——页内注入同步补丁（ms≤100 立即跑满 21 tick）绕过；此为测试环境行为，非产品 bug，但提示低性能设备/后台窗口动画时长。
+
+### Unresolved / Risk
+- 回归为单场次样本；平衡/手感归用户日常回归。存档=征召时点快照，编辑器后续改动只对新房间生效（口径已写入 HandOff §9，UI 无提示，属可改进项）。
+- MainMenu 页脚版本串滞后"Qoder V1.28"（装饰文案）；移动提示残留、攻击按钮禁用无提示两项观察未修。
+- CI 远端复验推送后确认。
