@@ -305,7 +305,7 @@ Controllers 目标位置：
 - 下一阶段：继续完善真实服务器连接、重连和技能运行时收敛；本机保存不等同于在线同步。
 - 已知风险：依赖审计问题仍延期，尚未执行强制升级。
 - 2.0（本地独立验证于会话内执行）：`npm run check` = 0 错误；`npm run test` = 128 通过；`npm run test:coverage` 达到棘轮阈值（lines>=13 / statements>=11 / branches>=10 / functions>=7）；`npm run lint` = 0 错误 / 32 条 react-hooks 遗留警告（技术债，见 AGENTS.md）；`npm run build` 成功。
-- 2.0：GitHub Actions（lint / Node 18,20,22 矩阵 test / build / Pages 部署）已配置但从未运行——仓库无远程；推送到 GitHub 后需在仓库 Settings -> Pages -> Source 选择 "GitHub Actions"。
+- 2.0.4：两仓库已推送 GitHub 私有远程（`DJXD248/three-kingdoms-2.0` / `three-kingdoms-1.29`）。CI 首轮真实运行暴露 Node 18（缺 `node:inspector/promises`）与 Node 20（jsdom/undici 缺 `webidl.markAsUncloneable`）不兼容，矩阵调整为 22/24 后复跑 **全绿**（run 35724339303：lint+audit / 22 与 24 矩阵 test+coverage / check / build，2m31s）。Pages 部署改为仅手动触发（`workflow_dispatch`），启用公开网页前需 Settings -> Pages -> Source = "GitHub Actions"；当前定位：私有托管 + CI 验证，不公开。
 - 2.0.1：xlsx(SheetJS) 高危漏洞经 SheetJS CDN 0.20.3 修复（会话内独立验证：check=0 / 128 pass / lint 0 err / build ok / audit 剩 2 moderate）。技能编辑器 Excel 导入的真实文件回归待用户验证（PENDING）。
 - 2.0.3：上述两项依赖风险均已销案——两仓库统一 exceljs `^4.4.0`，npm overrides 强制 uuid `^11.1.1`，`npm audit` 全绿（0 漏洞）。维护备注：今后升级 exceljs 时需复查 overrides 中 uuid 的版本约束是否仍适用（uuid 8→11 的 `v4` 接口兼容，exceljs 仅 cf-rule-ext-xform.js 一处使用）。
 - 2.0.2：xlsx 修复判定 COMPLETE——依赖/产物/锁文件三层无漏洞版本，自动化回归（jsdom browser 构建 + 真实夹具）+ CI audit high 门禁 + 版本断言测试防回退；1.29 线同步修复（`v1.29.3`，check/build 通过）。用户端浏览器真机实测欢迎但不再阻塞（jsdom 回归已覆盖同一构建路径）。`npm audit --audit-level=high` 实测 exit=0。

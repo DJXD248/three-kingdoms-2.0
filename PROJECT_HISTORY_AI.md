@@ -431,3 +431,32 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 
 ### Next route
 依赖安全议题全部闭环。主线回到：技能系统唯一化。
+
+---
+
+## Qoder 2.0.4：接入 GitHub 私有远程，CI 首轮真实运行并修复环境矩阵
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `29b4eaa`（附注标签 `v2.0.3`）
+**branch_scope：** `Qoder/2.0` 仓库（远程接入同时覆盖 `Qoder/1.29` 仓库）
+
+### 决策与依据
+- 此前所有 CI/CD 均为"已配置未验证"（无远程）。用户确认推送，前提是**不公开资料**：两仓库均建为 GitHub private，Pages 公开部署保持不启用。
+- 登录采用 gh CLI device flow；推送 workflow 文件需 token 追加 `workflow` scope（GitHub 对自动化文件改动的保护规定）。
+
+### 变更
+- 远程：`origin` -> `https://github.com/DJXD248/three-kingdoms-2.0` / `https://github.com/DJXD248/three-kingdoms-1.29`（private），master + 全部标签已推送。
+- `ci.yml`：测试矩阵 18/20/22 -> **22/24**；lint/build Node 20 -> 22；coverage artifact 条件同步改 22。
+- `deploy.yml`：触发器 push -> 仅 `workflow_dispatch`（Pages 源未启用且当前无公开计划，避免每推必红）。
+- 版本 2.0.3 -> 2.0.4。
+
+### 验证（远端真实执行）
+- 首轮（旧矩阵）：Node 22 通过；Node 18 报 `No such built-in module: node:inspector/promises`（Vitest 5 不支持 18）；Node 20 报 jsdom/undici `webidl.util.markAsUncloneable is not a function`（需 Node >=22.5），13 个测试文件 worker 启动失败、coverage 0% 触发棘轮红线；Pages deploy 在 Setup Pages 步骤失败（源未配置，符合预期）。
+- 修复后复跑：run `35724339303` **completed success**（lint+audit / test 22 / test 24 / check / coverage 阈值 / build，2m31s）。
+
+### Unresolved / Risk
+- Node 18/20 用户环境不再被测试矩阵覆盖（两者均已 EOL）；如遇旧环境兼容需求需单独立项。
+- Pages 部署从未成功运行过（设计如此，手动触发 + 配置源后才验证）。
+
+### Next route
+"已配置未验证"销案。主线回到：技能系统唯一化。
