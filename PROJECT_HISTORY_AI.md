@@ -498,3 +498,31 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 
 ### Next route
 技能线下一刀在内容入口：SkillEditor 结构化效果录入（含 Excel 列）；或转 §13 第 2 项端到端最小可玩闭环回归。
+
+## Qoder 2.2.0：技能编辑器结构化录入（Runtime UI + Excel 6 列效果组 + 纯模块抽取）
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `93b528f`（v2.1.0 的最终文档登记提交）
+**branch_scope：** `Qoder/2.0` 仓库
+
+### 决策与依据
+- HandOff §13 技能线续刀，销 §12-9 a。2.1.0 核心链闭环后，内容侧没有入口——DIY 技能拿不到 `runtime` 载荷，编译器永远输出 skip。本轮把"录入→持久化→编译"打通。口径不变：编辑器只负责诚实录入与如实提示，不发明玩法；HEAL/GAIN_ARMOR 在 UI 标注"暂未接入结算"（数据可录入并往返，编译按 EFFECT_TYPE_UNSUPPORTED 跳过）。
+- 结构化录入有意只挂在多效果模式（编译器输入形态即 `SkillEffect.runtime`）；单效果模式保持纯描述，属范围限定非缺陷。
+
+### 变更
+- 新增纯模块 `src/skills/skillExcelFormat.ts`：触发字符串↔配置往返、`buildTriggerOptionStrings`、runtime 字段解析（中文标签/枚举双认、正整数校验）、效果列组序列化/解析与组宽检测（表头含"效果N效果类型"→6 列，否则按旧 3 列）。SkillEditor 删除同逻辑改为引用（组件内不再有 triggerToStr/strToTrigger/列组循环）。
+- SkillEditor：效果卡新增 `RuntimeEditor`（类型/数值/目标+清除+预览）；导出效果列组 3→6 列（标注|触发|效果类型|数值|目标|描述）并补类型/目标下拉；导入按组宽自动兼容旧文件；导入面板图例更新；`isSkillIncomplete`/`isIncompleteForExport` 计入"类型已选但数值空"。
+- 持久化与游戏装配零改动：`runtime` 随 `SkillEffect[]`（gameStore L90 类型已含）流经 skillEdits→localStorage→EngineState→`syncPlayerSkills`。
+- 覆盖率棘轮 18/11/15/17 → 27/16/19/23；版本 2.1.0 → 2.2.0（lock 仅改 root 两处版本字段）。
+
+### 验证（本地会话内执行）
+- 失败证据（修复前）：测试初稿误设下拉含"击杀将领时"裸标签（该触发全部带→细分后缀），跑红后修正断言；package-lock 版本替换用全局正则误改 archiver-utils 等依赖版本，回滚为"仅前两处"后 diff 复核 + JSON.parse 双文件验证，未流入提交。
+- `npm run check` = 0 错误；`npm run test` = **173 通过**（17 文件，+21：`skillExcelFormat.test.ts` 19 例含"Excel 单元格→parseEffectGroup→compileSkill 产出可执行定义/旧格式诚实 skip"两段链路断言；`SkillEditor.runtime.test.tsx` 2 例 @testing-library 真实点击：切多效果→选 摸牌→保存→store 中出现 `{type:'DRAW_CARD',value:1,target:'TARGET'}`，以及"纯描述回退→无 runtime"）；`npm run test:coverage` 通过新棘轮（实测 lines 31.0 / functions 19.4 / branches 22.3 / statements 26.4，skills 目录 84.9% 语句）；`npm run lint` = 0 错误 / 30 警告（基线 32，-2 来自删除组件内 useMemo 逻辑，零新增）；`npm run build` 单文件成功。
+- 编辑器录入→实战对局触发的玩家可见表现**待用户回归**（编译输入形态已被组件测试证明进入 store 并可被编译，但真人操作路径未验证）。
+
+### Unresolved / Risk
+- §12-9 b/c/d 原样 PENDING：HEAL/GAIN_ARMOR 与 14 种触发无结算原语；回合结束询问窗口未挂接（冻结规则）；技能致命伤不发 DEATH 即 onKill 对技能伤不闭合。
+- 旧 3 列文件兼容靠表头检测——若用户手改表头名（非"效果N效果类型"）会按 3 列错位解析，属格式契约内风险。
+
+### Next route
+技能线下一刀可选：9d（技能致命伤→DEATH 事件，使 onKill 对技能伤闭合，改动面小）；9b（HEAL/GAIN_ARMOR 结算原语，解锁编辑器已能录入的两类效果）；9c（回合结束询问窗口，`activeSelf` 等触发的使用前提）；或转 §13 第 2 项端到端最小可玩闭环回归。

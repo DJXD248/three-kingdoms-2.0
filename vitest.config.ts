@@ -25,11 +25,12 @@ export default defineConfig({
       // Ratchet baseline: floors sit just below current coverage so CI fails
       // on regression and can only be raised as new tests land.
       // Raised during the Phase 5 skill uniqueness convergence (skill chain tests).
+      // 2.2.0 (skillExcelFormat + editor runtime smoke): overall lines 31.0 / funcs 19.4 / branches 22.3 / stmts 26.4.
       thresholds: {
-        lines: 18,
-        functions: 11,
-        branches: 15,
-        statements: 17,
+        lines: 27,
+        functions: 16,
+        branches: 19,
+        statements: 23,
       },
     },
   },

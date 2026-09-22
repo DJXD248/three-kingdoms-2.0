@@ -10,10 +10,28 @@ import {
   KillSubType, killSubLabels,
   ExpireCondition, expireLabels,
   SkillEffect, SkillEffectMode, effectModeLabels,
+  SkillRuntimeEffect,
 } from '../data/generals';
+import {
+  triggerToStr,
+  strToTrigger,
+  buildTriggerOptionStrings,
+  detectEffectGroupWidth,
+  effectGroupHeaders,
+  parseEffectGroup,
+  serializeEffectGroup,
+  runtimeEffectTypeLabels,
+  runtimeTargetLabels,
+  SETTLEABLE_RUNTIME_TYPES,
+  RUNTIME_TYPE_LIST,
+  RUNTIME_TARGET_LIST,
+} from '../skills/skillExcelFormat';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+
+/** All trigger dropdown options (computed once; pure, module-level). */
+const allTriggerOptionStrings = buildTriggerOptionStrings();
 
 type SortBy = 'faction' | 'name' | 'type';
 
@@ -77,8 +95,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         if (!sk.trigger) return true;
         return false;
       }
-      // Multi-effect mode: check each effect
-      return sk.effects.some(eff => !eff.description || !eff.trigger);
+      // Multi-effect mode: check each effect (incl. structured runtime completeness)
+      return sk.effects.some(eff => !eff.description || !eff.trigger || (eff.runtime != null && eff.runtime.value == null));
     });
   }, []);
 
@@ -254,6 +272,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     const header = rows[0] || [];
     const noteColIndex = header.findIndex(h => String(h || '').trim() === '设定备注');
     const effectEndExclusive = noteColIndex === -1 ? header.length : noteColIndex; // don't parse 备注列
+    const groupWidth = detectEffectGroupWidth(header); // 3 (legacy) or 6 (structured runtime)
     const dataRows = rows.slice(1); // skip header
     const entries: { general: General; gEdit: Record<string,unknown>; skills: typeof editingSkills }[] = [];
     const facList = ['魏','蜀','吴','群','晋'] as Faction[];
@@ -307,21 +326,14 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       const effectMode = (sMode === '选择其一' || sMode === 'choice') ? 'choice' as SkillEffectMode
         : (sMode === '全部生效' || sMode === 'all') ? 'all' as SkillEffectMode : undefined;
 
-      // Parse sub-effects from col 11 onwards (groups of 3: label, trigger, desc)
+      // Parse sub-effects from col 11 onwards (groups of 3 for legacy files,
+      // groups of 6 — 标注/触发/效果类型/数值/目标/描述 — for the current format)
       const effects: SkillEffect[] = [];
       let col = 11;
-      while (col + 2 < effectEndExclusive) {
-        const eLabel = clean(String(row[col] || ''));
-        const eTrig = clean(String(row[col + 1] || ''));
-        const eDesc = clean(String(row[col + 2] || ''));
-        if (!eLabel && !eTrig && !eDesc) { col += 3; continue; }
-        effects.push({
-          id: `e${Date.now()}_${effects.length}`,
-          label: eLabel || undefined,
-          trigger: strToTrigger(eTrig),
-          description: eDesc || undefined,
-        });
-        col += 3;
+      while (col + groupWidth - 1 < effectEndExclusive) {
+        const fields = parseEffectGroup(row, col, groupWidth);
+        if (fields) effects.push({ id: `e${Date.now()}_${effects.length}`, ...fields });
+        col += groupWidth;
       }
 
       currentSkills.push({
@@ -476,62 +488,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     e.target.value = '';
   };
 
-  // ── Format trigger config to readable string ──
-  const triggerToStr = (t?: SkillTriggerConfig): string => {
-    if (!t) return '无';
-    let s = triggerTypeLabels[t.type] || t.type;
-    const sub = getTriggerSubOptions(t.type);
-    if (sub === 'deploy' && t.deploySubType) s += '→' + deploySubLabels[t.deploySubType];
-    if (sub === 'turn' && t.turnSubType) s += '→' + turnSubLabels[t.turnSubType];
-    if (sub === 'damage' && t.damageSubType) s += '→' + damageSubLabels[t.damageSubType];
-    if (sub === 'kill' && t.killSubType) s += '→' + killSubLabels[t.killSubType];
-    if (sub === 'expire' && t.expireCondition) s += '→' + expireLabels[t.expireCondition];
-    return s;
-  };
-
-  const allTriggerOptionStrings = useMemo(() => {
-    const opts = ['无'];
-    for (const type of allTriggerTypes) {
-      const main = triggerTypeLabels[type];
-      const subKind = getTriggerSubOptions(type);
-      if (!subKind) {
-        opts.push(main);
-        continue;
-      }
-      if (subKind === 'deploy') {
-        for (const label of Object.values(deploySubLabels)) opts.push(`${main}→${label}`);
-      } else if (subKind === 'turn') {
-        for (const label of Object.values(turnSubLabels)) opts.push(`${main}→${label}`);
-      } else if (subKind === 'damage') {
-        for (const label of Object.values(damageSubLabels)) opts.push(`${main}→${label}`);
-      } else if (subKind === 'kill') {
-        for (const label of Object.values(killSubLabels)) opts.push(`${main}→${label}`);
-      } else if (subKind === 'expire') {
-        for (const label of Object.values(expireLabels)) opts.push(`${main}→${label}`);
-      }
-    }
-    return opts;
-  }, []);
-
-  // ── Parse trigger string back to config ──
-  const strToTrigger = (s: string): SkillTriggerConfig | undefined => {
-    if (!s || s === '无') return undefined;
-    const parts = s.split('→');
-    const mainLabel = parts[0].trim();
-    const subLabel = parts[1]?.trim();
-    const type = (Object.entries(triggerTypeLabels) as [SkillTriggerType, string][]).find(([, v]) => v === mainLabel)?.[0];
-    if (!type) return undefined;
-    const cfg: SkillTriggerConfig = { type };
-    if (subLabel) {
-      const subKind = getTriggerSubOptions(type);
-      if (subKind === 'deploy') cfg.deploySubType = (Object.entries(deploySubLabels) as [DeploySubType, string][]).find(([, v]) => v === subLabel)?.[0];
-      if (subKind === 'turn') cfg.turnSubType = (Object.entries(turnSubLabels) as [TurnSubType, string][]).find(([, v]) => v === subLabel)?.[0];
-      if (subKind === 'damage') cfg.damageSubType = (Object.entries(damageSubLabels) as [DamageSubType, string][]).find(([, v]) => v === subLabel)?.[0];
-      if (subKind === 'kill') cfg.killSubType = (Object.entries(killSubLabels) as [KillSubType, string][]).find(([, v]) => v === subLabel)?.[0];
-      if (subKind === 'expire') cfg.expireCondition = (Object.entries(expireLabels) as [ExpireCondition, string][]).find(([, v]) => v === subLabel)?.[0];
-    }
-    return cfg;
-  };
+  // ── Trigger <-> string and Excel effect-group helpers live in the pure
+  // module src/skills/skillExcelFormat.ts (unit-tested there). ──
 
   const isIncompleteForExport = useCallback((g: General): string => {
     const reasons: string[] = [];
@@ -543,6 +501,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         for (const eff of sk.effects) {
           if (!eff.description) reasons.push(`${sk.name}/${eff.label||'效果'}:描述空`);
           if (!eff.trigger) reasons.push(`${sk.name}/${eff.label||'效果'}:触发未设`);
+          if (eff.runtime && eff.runtime.value == null) reasons.push(`${sk.name}/${eff.label||'效果'}:结构化数值空`);
         }
       }
     }
@@ -552,7 +511,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // ── Export to Excel using ExcelJS ──
   // Format: one row per SKILL (not per general). Each general occupies N rows (N = number of skills).
   // Multi-effect skills: sub-effects occupy additional columns within the skill row.
-  // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 效果1标注 | 效果1触发 | 效果1描述 | 效果2标注 | ... | 设定备注
+  // Effect group (6 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 — 只有填了效果类型(+数值)的效果
+  // 才会被技能编译器接入对局结算（见 skills/skillCompiler.ts）。
+  // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 效果1标注 | 效果1触发 | 效果1效果类型 | 效果1数值 | 效果1目标 | 效果1描述 | ... | 设定备注
   const handleExport = useCallback(async () => {
     try {
       const factionOrder: Faction[] = ['魏', '蜀', '吴', '群', '晋'];
@@ -581,10 +542,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
 
         // Build header
         const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述'];
-        for (let e = 0; e < maxEffects; e++) {
-          const n = String(e + 1);
-          header.push('效果' + n + '标注', '效果' + n + '触发', '效果' + n + '描述');
-        }
+        for (let e = 0; e < maxEffects; e++) header.push(...effectGroupHeaders(e + 1));
         header.push('设定备注');
 
         const hdr = ws.addRow(header);
@@ -621,14 +579,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               sk.description || '无',
             );
 
-            // Sub-effects
+            // Sub-effects (6-col groups incl. structured runtime fields)
             for (let e = 0; e < maxEffects; e++) {
-              const eff = sk.effects?.[e];
-              if (eff) {
-                row.push(eff.label || '无', triggerToStr(eff.trigger), eff.description || '无');
-              } else {
-                row.push('无', '无', '无');
-              }
+              row.push(...serializeEffectGroup(sk.effects?.[e], 6));
             }
 
             // Note (only on first skill row)
@@ -656,15 +609,17 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             ws.getCell(r, 9).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
             ws.getCell(r, 10).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${modeList}"`] };
             for (let ei = 0; ei < maxEffects; ei++) {
-              const triggerCol = 13 + ei * 3; // 效果1触发=13, 效果2触发=16 ...
-              ws.getCell(r, triggerCol).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
+              // v2 group layout (1-based): 标注=12+6n | 触发=13+6n | 类型=14+6n | 数值=15+6n | 目标=16+6n | 描述=17+6n
+              ws.getCell(r, 13 + ei * 6).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
+              ws.getCell(r, 14 + ei * 6).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
+              ws.getCell(r, 16 + ei * 6).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
             }
           }
         }
 
         // Column widths
         const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40];
-        for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 40);
+        for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40);
         widths.push(30);
         widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       }
@@ -678,7 +633,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       setImportResult('❌ 导出失败: ' + String(err));
       setTimeout(() => setImportResult(''), 5000);
     }
-  }, [getEditedGeneral, isIncompleteForExport, triggerToStr]);
+  }, [getEditedGeneral, isIncompleteForExport]);
 
   // Multi-select actions
   const toggleMultiSelect = () => {
@@ -732,8 +687,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           <div className="px-6 py-3 border-b border-purple-800/20 bg-purple-900/5 flex-shrink-0">
             <div className="mb-2 rounded-lg bg-black/30 border border-purple-800/20 p-3 text-xs text-purple-300/70 space-y-1">
               <p className="font-bold text-green-300">📤 导出格式（每行一个技能，可直接再导入）：</p>
-              <p>将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 效果1标注 | 效果1触发 | 效果1描述 | ...</p>
-              <p>同一将领的多个技能占多行，将领属性仅第一行填写。<span className="text-green-400">含下拉菜单和设定备注。</span></p>
+              <p>将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 效果1标注 | 效果1触发 | 效果1类型 | 效果1数值 | 效果1目标 | 效果1描述 | ...</p>
+              <p>同一将领的多个技能占多行，将领属性仅第一行填写。<span className="text-green-400">含下拉菜单和设定备注。</span>旧版3列效果组（标注/触发/描述）的文件仍兼容导入。</p>
+              <p><span className="text-emerald-300">⚡ 结构化效果：</span>效果组中填写<span className="text-emerald-300">效果类型（摸牌/伤害）+ 数值</span>后，该效果才会在对局中被引擎真实结算；不填＝纯描述。</p>
               <p className="font-bold text-purple-200 mt-1.5">📋 简单格式（也支持导入）：</p>
               <p>将领名称 | <span className="text-amber-300">技能名：描述</span> | <span className="text-amber-300">技能名：描述</span> | ...</p>
             </div>
@@ -1028,6 +984,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                                     className="text-[10px] text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded hover:bg-red-900/20">✕</button>
                                 </div>
                                 <TriggerEditor trigger={eff.trigger} onChange={t => updateEffect(ei, { trigger: t })} />
+                                <RuntimeEditor runtime={eff.runtime} onChange={rt => updateEffect(ei, { runtime: rt })} />
                                 <textarea value={eff.description || ''} onChange={e => updateEffect(ei, { description: e.target.value })}
                                   placeholder="该效果的描述..."
                                   className="w-full px-2 py-1 rounded bg-black/40 border border-orange-800/20 text-orange-100 text-[11px] h-12 resize-none focus:outline-none focus:border-orange-500" />
@@ -1216,6 +1173,79 @@ function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerConfig; on
           {subKind === 'damage' && trigger?.damageSubType && <span className="text-[10px] text-cyan-400/70">→ {damageSubLabels[trigger.damageSubType]}</span>}
           {subKind === 'kill' && trigger?.killSubType && <span className="text-[10px] text-cyan-400/70">→ {killSubLabels[trigger.killSubType]}</span>}
           {subKind === 'expire' && trigger?.expireCondition && <span className="text-[10px] text-cyan-400/70">→ {expireLabels[trigger.expireCondition]}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Structured runtime effect editor (类型 + 数值 + 目标) ──
+// Only effects carrying a runtime payload are compiled into the game runtime
+// (skills/skillCompiler.ts). Types outside SETTLEABLE_RUNTIME_TYPES are shown
+// but flagged as "not settleable yet" — the compiler will skip them honestly.
+const runtimeSelectCls = "px-2 py-1 rounded bg-black/50 border border-emerald-800/30 text-emerald-100 text-[11px] focus:outline-none focus:border-emerald-500";
+const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number) => string> = {
+  DRAW_CARD: v => `摸牌 ×${v}`,
+  DAMAGE: v => `造成 ${v} 点技能伤害`,
+  HEAL: v => `回复 ${v} 点体力`,
+  GAIN_ARMOR: v => `获得 ${v} 点护甲`,
+};
+
+function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEffect; onChange: (r: SkillRuntimeEffect | undefined) => void }) {
+  const currentType = runtime?.type || '';
+  const isSettleable = !currentType || (SETTLEABLE_RUNTIME_TYPES as readonly string[]).includes(currentType);
+
+  const handleTypeChange = (val: string) => {
+    if (!val) { onChange(undefined); return; }
+    onChange({
+      type: val as SkillRuntimeEffect['type'],
+      value: runtime?.value ?? 1,
+      target: runtime?.target ?? 'TARGET',
+    });
+  };
+
+  return (
+    <div className="rounded-lg border border-emerald-900/40 bg-emerald-950/15 p-2 space-y-1.5">
+      <div className="flex items-center gap-2">
+        <label className="text-[10px] text-emerald-400/70 font-bold whitespace-nowrap">⚡ 结构化效果</label>
+        <select value={currentType} onChange={e => handleTypeChange(e.target.value)} className={`${runtimeSelectCls} flex-1`}>
+          <option value="">纯描述（不参与对局结算）</option>
+          {SETTLEABLE_RUNTIME_TYPES.map(t => <option key={t} value={t}>{runtimeEffectTypeLabels[t]}</option>)}
+          {currentType && !isSettleable && (
+            <option value={currentType}>{runtimeEffectTypeLabels[currentType]}（暂未接入结算）</option>
+          )}
+        </select>
+        {runtime && (
+          <button onClick={() => onChange(undefined)}
+            className="text-[10px] text-gray-400 hover:text-red-300 px-1.5 py-0.5 rounded hover:bg-red-900/20 flex-shrink-0">
+            清除
+          </button>
+        )}
+      </div>
+
+      {runtime && (
+        <div className="flex items-center gap-2 pl-4">
+          <label className="text-[10px] text-emerald-400/50 whitespace-nowrap">└ 数值</label>
+          <input type="number" min={1} max={10} value={runtime.value ?? 1}
+            onChange={e => onChange({ ...runtime, value: Math.max(1, parseInt(e.target.value) || 1) })}
+            className={`${runtimeSelectCls} w-16`} />
+          <label className="text-[10px] text-emerald-400/50 whitespace-nowrap ml-2">目标</label>
+          <select value={runtime.target || 'TARGET'}
+            onChange={e => onChange({ ...runtime, target: e.target.value as NonNullable<SkillRuntimeEffect['target']> })}
+            className={`${runtimeSelectCls} flex-1`}>
+            {(Object.entries(runtimeTargetLabels) as [NonNullable<SkillRuntimeEffect['target']>, string][]).map(([k, v]) => (
+              <option key={k} value={k}>{v}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {runtime && (
+        <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
+          <span className="text-[9px] text-emerald-500/50">预览：</span>
+          <span className="text-[10px] text-emerald-300 font-bold">{runtimePreviewText[runtime.type](runtime.value ?? 1)}</span>
+          <span className="text-[10px] text-emerald-400/70">→ {runtimeTargetLabels[runtime.target || 'TARGET']}</span>
+          {!isSettleable && <span className="text-[10px] text-amber-400">⚠ 当前版本该类型不参与结算</span>}
         </div>
       )}
     </div>
