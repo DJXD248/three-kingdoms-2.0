@@ -752,3 +752,33 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - E2E 的 20 局 100%/0% 属小样本+自选阵容 vs 随机策略，不是平衡结论；平衡判断以 2000 局区间为准。
 - 死亡率整体 65–72% 偏高与随机策略"登场即送"相关——阶段四做人机难度标定时应以策略档重测基线。
 - 旧登记种子（2.2.4/2.2.7 引用的复现种子）在纯化池下行为改变，复现档案需重跑生成。
+
+## Qoder 2.2.9：AI 对战线阶段四——游戏内人机对战（生产 store 链路司机 + 全 AI 观战 + 席位档位）
+
+### 决策与依据
+- 用户指示"那接下来进行阶段四吧"：任何座位可设为 AI（保守/均衡/激进/随机），AI 自动征召、自动抽牌、自动出招，且**不得旁挂第二套玩法链路**——一切动作走生产 store 函数（与人类按钮同一批 `deployGeneral/attack/executeDraw/endTurn…`），规则校验、2.2.6 现场录像捕获、状态写回、动画天然与人类操作同路径。
+- 大脑零新代码：直接复用 2.2.7 `createStrategyPolicy`。关键约束=策略的抽牌窗口记账在闭包里 → **每座位整局必须共用一个 policy 实例**（`seatPolicies: Map<"${playerId}:${tier}">`），对局边界（phase 回 lobby）`resetAiControllers()` 清表。
+- 防呆护栏：策略零随机 ⇒ 同状态必选同动作；司机对每步记 `lastChoiceKey=${playerId}|${turn}|${type}|${JSON(payload)}`，紧邻重复→null→回退到恒合法动作（drawing→confirmDraw；playing→endTurn）。永不死循环、永不卡窗口。
+- 节奏：`AiDirector` 组件 700ms setInterval、每 tick 最多一个 store 动作（人类可见的"AI 出手中…"步进感）；`isTestMode` 直接跳过；#ai-battle 后台窗口因 App.tsx 早退分支不挂载司机，与演练窗完全隔离。
+- 全 AI 观战链：lobby 全 AI→自动 startGame；diceRoll 全 AI→立即 rollDice+setPhase(factionAssign)+assignFactions（跳过骰子动画、真实座次照算）；generalDraft AI 座→aiAutoDraft（固定 7 势力主+3 群，凑不满 10 回退人类界面）。混战局对人类阶段一律 hands-off（测试断言）。
+- 席位打戳形态：`isAi/aiTier` 挂在 Player 对象上而非旁表——经骰子重排展开、引擎 structuredClone、gameStateAdapter 映射、EnginePlayer 索引签名全程存活（专门回归测试锁定），AI 回合判定= store 座位 isAi 且 engineState.currentPlayerId 对账。
+- 主动放弃：不做 AI 中途换阵；不做"聪明的"征召（7+3 固定即可）；不做难度手感标定（映射判断归用户回归，文档已声明 700ms 节奏≠难度曲线）。
+
+### 变更
+- 新增 `src/ai/aiTurnDriver.ts`（runAiStep/pickPolicyAction/applyPolicyAction 十种 ActionType→store 调用映射/resetAiControllers/allSeatsAi/policyFor）、`src/ai/aiTurnDriver.test.ts` 8 例、`src/components/AiDirector.tsx`。
+- `src/setup/runtimeSetup.ts`：`AiSeatTier/AiSeatMode/AI_TIER_KEYS/AI_TIER_LABELS/defaultSeatModes/pickAiDraftPicks`；`SetupPlayerSeed.isAi?/aiTier?`；`createLobbyPlayers` 打戳+AI 座命名 `AI·档位`。
+- `src/store/gameStore.ts`：`Player.isAi?/aiTier?`、`seatModes` 状态、`setSeatMode`、`aiAutoDraft`；createRoom 透传 seatModes。
+- UI：`CreateRoom` "席位安排"区块（每座位 人类/AI 切换 + 四档芯片 + 悬停提示）；`GameBoard` 🤖 徽标 + 回合条"AI 出手中…"；`UnifiedDraw` AI 抽牌横幅"正在决定抽卡…"并隐藏人类分配控件；`App.tsx` 挂载 AiDirector。
+- 版本 2.2.8 → 2.2.9（package.json + lock 仅 root 版本字段）。
+
+### 验证
+- check 0 错误 / `npm run test` = 258 通过（32 文件，+8：含**纯 runAiStep 驱动两 AI 局打到 gameOver**、人机交错、全 AI 链、hands-off 断言）/ 覆盖率棘轮上调 lines46/funcs32/branches34/stmts41（实测 46.47/32.33/34.55/41.43，驱动测试跑整局引擎对局故跳升）/ lint 0 错误 30 遗留警告零新增 / build 单文件 1,914.95 kB（gzip 561.72 kB）。
+- 浏览器 E2E 两局真实点击（evaluate_script el.click，见 HANDOFF §12-13 环境注记）：①全 AI 观战（保守 vs 激进）lobby 起全自动至 gameOver（第 8 轮、胜方 seat2、本营 [0,6]），棋盘"回合：AI·激进"、双座 🤖、回合条"AI 出手中…"，结算窗含 2.2.6 录像行（默认名 人机演武-蜀-20260923-18）；②混战（人类 vs AI·均衡）——骰子后 AI 座自动征召（池=10）与自动初始抽牌（手牌 5），人类征召/抽牌界面司机零干预（页面捕获"AI·均衡 正在决定抽卡…"），人类真实点击完成全流程后投降→判负 AI·均衡。两局控制台 0 错误 0 警告。
+- CI 远端复验待回填（提交推送后经登录态浏览器确认，证据回填本节与 HANDOFF §3/§9）。
+
+### Unresolved & Risk
+- 700ms 节奏与档位→人类难度映射是工程取向，非玩法标定；强弱序证据只来自擂台（AI-vs-AI），人类体感待用户回归。
+- 热座规则未改：AI 回合棋盘仍显示该座手牌，人类可代打——与既有热座行为一致，如未来要"隐藏 AI 手牌"需另立需求。
+- seatModes 为会话态：不随存档持久化，刷新回全人类默认；跨房间"再来一局"沿用（已按特性登记）。
+- 司机每 tick 单动作+700ms ⇒ 长局观战耗时线性；若用户嫌慢可下调 AI_TICK_MS（单点常量），未做每 tick 多动作（会失去可读节奏）。
+- §12-9 b/c/d 旧边界（部分触发未接入、回合结束询问窗缺席、技能致命伤无 DEATH）对人机同样生效：AI 与人类受同一规则世界限制。
