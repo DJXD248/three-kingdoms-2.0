@@ -4,3 +4,5 @@ dist/
 *.log
 *.backup
 coverage/
+.ai-battle/
+ai-battle-failures/

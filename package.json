@@ -1,7 +1,7 @@
 {
   "name": "react-vite-tailwind",
   "private": true,
-  "version": "2.2.3",
+  "version": "2.2.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "ai-battle": "esbuild src/ai/battleCli.ts --bundle --platform=node --format=cjs --outfile=.ai-battle/ai-battle.cjs && node .ai-battle/ai-battle.cjs"
   },
   "dependencies": {
     "@types/file-saver": "^2.0.7",

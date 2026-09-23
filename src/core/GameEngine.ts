@@ -14,6 +14,13 @@ import { SnapshotManager } from '../replay/SnapshotManager';
 import { resolveTriggerChain } from './EngineDispatchFlow';
 import { getLegalActions } from '../rules/legalActions';
 
+export interface GameEngineOptions {
+  /** Record replay entries + state snapshots (default true). AI battle runs
+   * turn this off: thousands of deep clones per soak would exhaust memory,
+   * and headless runs log their own action lists instead. */
+  recordHistory?: boolean;
+}
+
 export class GameEngine {
   readonly events = new EventBus();
   readonly processor = new EventProcessor();
@@ -25,13 +32,18 @@ export class GameEngine {
   readonly replay = new ReplayRecorder();
   readonly snapshots = new SnapshotManager();
 
-  constructor(public state: EngineState) {
-    this.replay.start(state, String(state.metadata?.roomId ?? 'local'));
-    this.snapshots.capture(String(state.metadata?.roomId ?? 'local'), state, 0, 'initial');
+  private readonly recordHistory: boolean;
+
+  constructor(public state: EngineState, options: GameEngineOptions = {}) {
+    this.recordHistory = options.recordHistory !== false;
+    if (this.recordHistory) {
+      this.replay.start(state, String(state.metadata?.roomId ?? 'local'));
+      this.snapshots.capture(String(state.metadata?.roomId ?? 'local'), state, 0, 'initial');
+    }
   }
 
   dispatch(action: GameAction): GameEvent[] {
-    const beforeState = this.snapshot();
+    const beforeState = this.recordHistory ? this.snapshot() : this.state;
     const events: GameEvent[] = [];
     const validation = this.rules.validateAction(this.state, action);
     if (!validation.valid) {
@@ -40,7 +52,7 @@ export class GameEngine {
         data: { action, reason: validation.reason ?? 'INVALID_ACTION' },
       };
       this.events.emit(rejected);
-      this.replay.record(action, [rejected], beforeState, beforeState);
+      if (this.recordHistory) this.replay.record(action, [rejected], beforeState, beforeState);
       return [rejected];
     }
 
@@ -52,7 +64,7 @@ export class GameEngine {
         data: { action, reason: `NO_RESOLVER:${action.type}` },
       };
       this.events.emit(rejected);
-      this.replay.record(action, [rejected], beforeState, beforeState);
+      if (this.recordHistory) this.replay.record(action, [rejected], beforeState, beforeState);
       return [rejected];
     }
 
@@ -65,19 +77,21 @@ export class GameEngine {
 
     this.state = this.processor.process(this.state, events);
 
+    const afterState = this.recordHistory ? this.snapshot() : this.state;
     const changed: GameEvent = {
       type: 'STATE_CHANGED',
-      data: { action, snapshot: this.snapshot() },
+      data: { action, snapshot: afterState },
     };
     events.push(changed);
 
     for (const event of events) this.events.emit(event);
 
-    const afterState = this.snapshot();
-    const sequence = this.replay.export().length + 1;
-    this.replay.record(action, events, beforeState, afterState);
-    const roomId = String(afterState.metadata?.roomId ?? 'local');
-    this.snapshots.capture(roomId, afterState, sequence, 'action', action.id);
+    if (this.recordHistory) {
+      const sequence = this.replay.export().length + 1;
+      this.replay.record(action, events, beforeState, afterState);
+      const roomId = String(afterState.metadata?.roomId ?? 'local');
+      this.snapshots.capture(roomId, afterState, sequence, 'action', action.id);
+    }
     return events;
   }
 
