@@ -108,7 +108,14 @@ describe('parseAiBattleHash', () => {
     expect(parseAiBattleHash('#playing')).toBeNull();
     expect(parseAiBattleHash('')).toBeNull();
     const p = parseAiBattleHash('#ai-battle?games=99999&seed=abc&players=9&pool=1&deck=1&skill=2&maxSteps=1');
-    expect(p).toEqual({ games: 5000, seed: 1, players: 4, pool: 1, deck: 10, skill: 1, maxSteps: 50 });
+    expect(p).toEqual({ games: 5000, seed: 1, players: 4, pool: 1, deck: 10, skill: 1, maxSteps: 50, policies: ['random', 'random', 'random', 'random'] });
+  });
+
+  it('parses per-seat policy keys: trims, drops unknowns, pads to player count', () => {
+    const p = parseAiBattleHash('#ai-battle?players=3&policies=aggressive%2Cnope%2C%20balanced%20%2Cconservative');
+    expect(p?.policies).toEqual(['aggressive', 'balanced', 'conservative']);
+    const short = parseAiBattleHash('#ai-battle?players=2&policies=balanced');
+    expect(short?.policies).toEqual(['balanced', 'random']);
   });
 
   it('falls back to defaults for missing keys', () => {
@@ -120,6 +127,7 @@ describe('parseAiBattleHash', () => {
       deck: 60,
       skill: 0.35,
       maxSteps: 3000,
+      policies: ['random', 'random'],
     });
   });
 });

@@ -66,6 +66,9 @@ function winnerOf(state: EngineState): number | null {
 
 interface RunOptions {
   policy?: AiPolicy;
+  /** Per-seat overrides (index = playerId − 1) — the arena feeds different
+   * tiers per seat; seats beyond the array (or absent) fall back to `policy`. */
+  seatPolicies?: AiPolicy[];
   maxSteps?: number;
   /** Replay mode: dispatch these actions (after the opening BEGIN_DRAW) instead of policy picks. */
   recorded?: RecordedAction[];
@@ -77,7 +80,9 @@ interface RunOptions {
  * remaining players' initial draws itself.
  */
 export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchResult {
-  const policy = options.policy ?? randomPolicy;
+  const defaultPolicy = options.policy ?? randomPolicy;
+  const policyFor = (playerId: number): AiPolicy =>
+    options.seatPolicies?.[playerId - 1] ?? defaultPolicy;
   const maxSteps = options.maxSteps ?? 3000;
   const recorded = options.recorded ?? null;
 
@@ -136,7 +141,7 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
             : state.currentPlayerId ?? firstPlayerId;
         const engine = new GameEngine(state, { recordHistory: false });
         syncPlayerSkills(engine, state);
-        const picked = policy(engine, actor); // always consulted → identical RNG stream in replay mode
+        const picked = policyFor(actor)(engine, actor); // always consulted → identical RNG stream in replay mode
         let next = picked;
         if (recorded) {
           // actions[0] is always the runner-owned BEGIN_DRAW (both modes),
@@ -203,7 +208,11 @@ export function runBatch(options: BatchOptions): BatchSummary {
   for (let i = 0; i < options.games; i += 1) {
     const seed = options.seed + i;
     const config = defaultMatchConfig(seed, options.configOverrides);
-    const result = runMatch(config, { policy: options.policy, maxSteps: options.maxSteps });
+    const result = runMatch(config, {
+      policy: options.policy,
+      seatPolicies: options.seatPolicies,
+      maxSteps: options.maxSteps,
+    });
     summary.games += 1;
     summary.totalMs += result.durationMs;
     summary.slowestMs = Math.max(summary.slowestMs, result.durationMs);

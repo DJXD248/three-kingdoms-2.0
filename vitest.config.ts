@@ -37,11 +37,12 @@ export default defineConfig({
       // 2.2.2 (core gameplay flow tests, src/core/gameFlow.test.ts): stmts 29.87 / branch 25.13 / funcs 21.93 / lines 35.04.
       // Phase-1 AI (legalActions enumerator + consistency tests): stmts 33.2 / branch 27.63 / funcs 24.15 / lines 38.39.
       // 2.2.4 (AI-vs-AI battle runner: seeded matches, invariants, replay): stmts 35.63 / branch 29.52 / funcs 25.89 / lines 40.93.
+      // 2.2.7 (three-tier strategy policies + arena): stmts 37.11 / branch 31.36 / funcs 28.09 / lines 41.83.
       thresholds: {
-        lines: 39,
-        functions: 25,
-        branches: 28,
-        statements: 35,
+        lines: 40,
+        functions: 27,
+        branches: 30,
+        statements: 36,
       },
     },
   },

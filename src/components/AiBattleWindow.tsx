@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MatchResult } from '../ai/battleRunner';
 import { runMatch } from '../ai/battleRunner';
+import { policyByName, TIER_PROFILES } from '../ai/policies/strategyPolicy';
 import { defaultMatchConfig } from '../ai/matchSetup';
 import { buildFailureFiles, buildOperationLog, buildReplayBundle, summarizeMatches } from '../ai/battleReport';
 import { downloadFiles, saveToFolder, type ExportFile } from '../ai/browserExport';
@@ -50,10 +51,15 @@ export default function AiBattleWindow() {
     }
     void (async () => {
       append('═══ AI 自动对局（后台窗口） ═══');
+      const seatPolicies = params.policies.map(key => policyByName(key) ?? policyByName('random')!);
+      const policyLabel = params.policies
+        .map((key, i) => `座位${i + 1}=${key === 'random' ? '随机' : TIER_PROFILES[key as keyof typeof TIER_PROFILES]?.label ?? key}`)
+        .join(' · ');
       append(
         `配置：${params.players} 个 AI 混战 · ${params.games} 局 · 起始种子 ${params.seed} · ` +
           `将池 ${params.pool} · 牌堆 ${params.deck} · 技能注入 ${(params.skill * 100).toFixed(0)}% · 步数上限 ${params.maxSteps}`,
       );
+      append(`策略：${policyLabel}`);
       append('');
       const t0 = Date.now();
       for (let i = 0; i < params.games; i += 1) {
@@ -64,7 +70,7 @@ export default function AiBattleWindow() {
           deckSize: params.deck,
           skillInjection: params.skill,
         });
-        const result = runMatch(config, { maxSteps: params.maxSteps });
+        const result = runMatch(config, { maxSteps: params.maxSteps, seatPolicies });
         resultsRef.current.push(result);
         const mark = result.violations.length > 0 ? ` ❌x${result.violations.length}` : '';
         const pad = String(params.games).length;
