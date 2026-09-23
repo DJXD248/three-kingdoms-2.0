@@ -550,4 +550,30 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 ### Unresolved / Risk
 - 回归为单场次样本；平衡/手感归用户日常回归。存档=征召时点快照，编辑器后续改动只对新房间生效（口径已写入 HandOff §9，UI 无提示，属可改进项）。
 - MainMenu 页脚版本串滞后"Qoder V1.28"（装饰文案）；移动提示残留、攻击按钮禁用无提示两项观察未修。
-- CI 远端复验推送后确认。
+- CI 远端复验已完成：run `35766373504` 全绿（CI #9，master@1633d09，2m36s，lint+audit / test 22 与 24 矩阵含 check+coverage / build）。
+
+## Qoder 2.2.2：核心玩法流程自动化测试套件（GameAction 直驱）
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `1633d09`（v2.2.1 的最终文档登记提交）
+**branch_scope：** `Qoder/2.0` 仓库
+
+### 决策与依据
+- v2.2.1 完成了浏览器真实点击回归；本轮补另一半——引擎层自动化回归，让"开局抽牌、部署、移动、攻击、结束回合、胜负判定"六条核心流程此后每次改动都有机器把关。用户硬约束：测试必须调用现有 GameAction 接口、不得绕过引擎直接改状态——全部用例走 `new GameEngine(state)` + `dispatch(createAction(...))`，引擎层零 React/zustand 依赖使其可直接裸驱动；手工拼装初始 EngineState 仅作夹具，玩法推进一律走 action。
+- 写测试前通读 ActionTypes / ActionValidator / 八个 resolver / EventProcessor / armorDamage / turnRules 建立口径，并沉淀一条关键引擎事实（已写进测试文件头注释）：EventProcessor 内联追加的后续事件（PLAYER_DEFEATED、GAME_OVER、补偿 DRAW_REQUIRED）**不出现在 dispatch() 的返回数组里**——断言必须改看 `engine.state`（phase 'gameOver'、timelinePhase 'GAME_OVER'、metadata.winnerId、drawState）；DEATH 与 TURN_* 链则在返回事件中可见。
+- 前置闭环：2.2.1 CI 远端复验 run `35766373504` 全绿（经已登录浏览器确认），证据回填 HANDOFF §3/§9。
+
+### 变更
+- 新增 `src/core/gameFlow.test.ts`（约 640 行 / 14 例，9 个 describe）：①开局抽牌（BEGIN_DRAW initial→DRAW→CONFIRM_DRAW 链、非抽牌玩家被拒）②部署将领（登场消耗=HP、消耗将领回池、只能落本方营地、六类拒绝路径）③移动（四条合法路线、每回合一次、文将必须耗卡/武将不得耗卡）④攻击与护甲扣伤（近/远程射程矩阵、每 2 点护甲挡 1 点、每回合一次攻击）⑤将领阵亡与补偿抽牌（DEATH→补偿 DRAW_REQUIRED→结算后恢复原阶段与原行动玩家）⑥本营伤害与胜负判定（本营血量归零→GAME_OVER/winnerId、RESOLVE_BASE_LOSS 正误两态）⑦结束回合推进（TURN_END→TURN_START→TURN_ACTIONS_RESET→DRAW_REQUIRED 链、将池抽空跳抽改为扣本营血）⑧投降判负 ⑨完整一局冒烟（mock `Math.random`=0.99 使抽牌堆洗牌成恒等排列→初始抽卡→部署→行军→两回合打穿本营分出胜者；总账对账放在致胜一击**之前**，因 PLAYER_DEFEATED 会合法清空败方手牌与场上）。所有拒绝路径同时断言 `expect(engine.state).toEqual(structuredClone(before))`——被拒动作必须零副作用。
+- 覆盖率棘轮 27/16/19/23 → 34/21/24/29（实测 lines 35.04 / functions 21.93 / branches 25.13 / statements 29.87）。
+- 版本 2.2.1 → 2.2.2（package.json + lock 仅 root 两处版本字段，计数守卫替换、git diff 复核）。
+
+### 验证（本地会话内执行）
+- 失败证据（编写期三处预期被真实引擎行为纠正，全部按引擎为准修改）：①护甲误设"2 甲挡 2 伤"，实测规则"每 2 点护甲挡 1 点、余伤进血"（hpLost 1）；②整局冒烟第一次 END_TURN 后忘了对手也要过回合，MOVE 吃到 NOT_DRAW_PLAYER；③卡牌总账把将池重复计入（140 vs 160），且校验点误放在击杀后。另修一处 TS2345（事件链数组补 `as const`）。
+- `npm run check` = 0 错误；`npm run test` = **190 通过**（19 文件，+14）；`npm run test:coverage` 过新棘轮；`npm run lint` = 0 错误 / 30 条遗留警告（零新增）；`npm run build` 单文件成功（1,853.51 kB / gzip 540.20 kB）。
+- CI 远端复验已完成：run `35801947056` 全绿（CI #10，master@6b20f8c，2m45s，lint+audit / test 22 与 24 矩阵含 check+coverage / build，经登录态浏览器确认）。
+
+### Unresolved / Risk
+- 本套件守的是**引擎层规则不变量**，不覆盖 UI 渲染、store 装配与浏览器真实点击路径——与 v2.2.1 手工回归互补而非互替；手感与平衡度仍归用户日常回归。
+- 整局冒烟的确定性依赖 `vi.spyOn(Math,'random')→0.99` 使 DrawResolver 的 Fisher-Yates 成恒等排列；若洗牌实现改变，该用例需随动改写（文件头注释已声明此依赖）。
+- 定时器/异步链路（骰子动画、超时兜底）不在引擎层测试范围内。
