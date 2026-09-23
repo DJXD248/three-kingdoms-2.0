@@ -694,3 +694,31 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - 存档恢复的对局只能从恢复点起捕获录像（动作历史在存档前丢失属预期，日志抬头步数会偏少）。
 - 长时间对局的捕获内存=O(步数×状态克隆)，与 GameEngine recordHistory 默认行为同量级；若未来要做"全程回放播放器"需再上快照差分。
 - 多文件连发下载浏览器可能弹"允许下载多个文件"授权；File System Access 仅 secure context 可用（localhost/https）。
+
+
+## Qoder 2.2.7：AI 对战线阶段三——三档策略 AI + 擂台互胜率（含一枚策略暴露的引擎占位真 bug）
+
+### 决策与依据
+- 用户批准 AI 线五阶段后明示"进行阶段三"：在 2.2.4 跑器上换装三档策略（保守/均衡/激进），以擂台互胜率校验强弱，硬门槛=全程零违例。
+- 策略架构沿袭既有不变量：**策略与规则彻底解耦**——候选一律来自 `engine.legalActions`（引擎同源裁判），策略只做"看一步"评估：每个候选在一次性引擎（`recordHistory:false`；GameEngine.dispatch 为函数式，不污染调用方）试探执行，`evaluateState` 零和估值（本营血/场上与阵亡将领/护甲/位置价值/抽牌预期按档位权重加总，本营濒危 +100 挂账）取 argmax，同分取枚举序最小。**不消耗随机数**→同种子跨档位严格可比。
+- 档位画像：保守 ownBase4/enemyBase1.5（重保全）、均衡 3/2.5、激进 ownBase3/enemyBase4/position1.6（重推进）。抽牌拆分独立打分并带稀缺上下文。
+- 擂台公平性：`runDuelSeries` 每局交换两座位抵消先手偏置；`npm run ai-arena` 任何违例 exit 1——擂台同时是策略路径的规则 soak。
+- 主动放弃：不做蒙特卡洛树/多步搜索（单步看一步已能拉开稳定强弱序，成本与确定性收益不匹配）；不做人类难度标定（留阶段四）。
+
+### 变更
+- 新增 `src/ai/policies/strategyPolicy.ts`（AiTier/TIER_PROFILES/parseTier 含中文名/positionValue/evaluateState/scoreDrawSplit/scoreLegalActions/createStrategyPolicy/policyByName）、`arena.ts`、`arenaCli.ts` + `npm run ai-arena` 脚本；`battleRunner.RunOptions.seatPolicies`（按座位装配，缺省回退全局 policy）。
+- `battleHash` 契约扩 `policies`（过滤非法键、缺位补 random、长度钉到 players）；`AiBattleConfig` 每座位策略下拉（默认座位1激进）；`AiBattleWindow` seatPolicies 接入 + 配置行显示"策略：座位N=…"。
+- **引擎修复**（独立提交）：`DeployGeneralResolver` 营地占位检查从"只扫登场者自己的 fieldGenerals"改为**全玩家扫描**——敌方入侵将领驻于我方营地时其记录挂在入侵者名下，旧检查不可见导致两将同格（不变量哨兵在激进 soak 首报：seed 902 camp|2|2、seed 7 camp|3|0；MOVE 侧 findAvailableSlot 与规则层 battlefieldRules 本就全局扫描，DEPLOY 是唯一漏网者）。回归测试：入侵者占 0 格→DEPLOY 到该格拒、换空格放行；两旧违例种子修复后 202/141 步正常终局零违例。
+- 开发期抓到的两处系统性事实（非引擎 bug、但决定策略形态，已固化进注释与测试）：①DRAW 不关闭抽牌窗口（phase 停在 drawing、totalCards 不递减直到 CONFIRM_DRAW）→无状态 argmax 死循环抽牌，修复=policy 闭包按 `${reason}:${playerId}:${turn}` 记账、每窗口抽一次随即确认；②激进档纯抽卡→全场零 DEPLOY/ATTACK，修复=抽牌打分稀缺上下文（场上 0 将→将领权重×2、资源≥4→卡牌权重×0.4）。
+
+### 验证
+- check 0 错误 / `npm run test` = 235 通过（29 文件，+16）/ 覆盖率棘轮上调 lines40/funcs27/branches30/stmts36（实测 41.83/28.09/31.36/37.11）/ lint 0 错误 30 遗留警告零新增 / build 单文件 1,900.95 kB（gzip 556.58 kB）。
+- 擂台：每对 500 局×6 对（seed 777 起）+ 四人混战 200 局（seed 555）+ 激进镜像 200 局（seed 9000）= **3400 局违例 0**；duel 强弱序完全成立：激进 vs 均衡 66.4/33.6、跨档其余对局均 100% 上位；ffa 胜率 激进 54.5% > 均衡 37.0% > 保守 4.0% > 随机 0%（混战步数耗尽 9 局属长局正常、非违例）。产物 `.ai-battle/arena-soak-500.json`（gitignore 内）。
+- 浏览器 E2E：`#ai-battle?policies=aggressive,balanced,conservative` 真跑 3 局——策略配置行正确、3 局全部分出胜负、违例 0。
+- CI 远端复验：PENDING（推送后补记）。
+
+### Unresolved & Risk
+- 档位强弱依赖当前手工权重与现行规则数值；规则若调数值需重跑 `npm run ai-arena` 验证序不塌。
+- 主菜单弹窗内策略下拉为开发者模式密码保护路径，本轮只经哈希链路+单测覆盖，未做该弹窗内真机点击复验（同一弹窗骨架 2.2.5 已验）。
+- 技能致命伤/主动技能询问窗口等 §12-9 旧边界对策略同样生效：策略看不见"不存在的动作"，无额外风险但也无补偿能力。
+- 阶段四需把擂台档位映射为玩家难度并做手感标定——AI"赢人类"与 AI"打赢另一档 AI"不是一回事。
