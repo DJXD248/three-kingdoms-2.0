@@ -715,7 +715,7 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - check 0 错误 / `npm run test` = 235 通过（29 文件，+16）/ 覆盖率棘轮上调 lines40/funcs27/branches30/stmts36（实测 41.83/28.09/31.36/37.11）/ lint 0 错误 30 遗留警告零新增 / build 单文件 1,900.95 kB（gzip 556.58 kB）。
 - 擂台：每对 500 局×6 对（seed 777 起）+ 四人混战 200 局（seed 555）+ 激进镜像 200 局（seed 9000）= **3400 局违例 0**；duel 强弱序完全成立：激进 vs 均衡 66.4/33.6、跨档其余对局均 100% 上位；ffa 胜率 激进 54.5% > 均衡 37.0% > 保守 4.0% > 随机 0%（混战步数耗尽 9 局属长局正常、非违例）。产物 `.ai-battle/arena-soak-500.json`（gitignore 内）。
 - 浏览器 E2E：`#ai-battle?policies=aggressive,balanced,conservative` 真跑 3 局——策略配置行正确、3 局全部分出胜负、违例 0。
-- CI 远端复验：PENDING（推送后补记）。
+- CI 远端复验已完成：run `35829214827` 全绿（CI #20，master@7c7d111，lint+audit / test 22 与 24 矩阵含 check+coverage / build）。
 
 ### Unresolved & Risk
 - 档位强弱依赖当前手工权重与现行规则数值；规则若调数值需重跑 `npm run ai-arena` 验证序不塌。
