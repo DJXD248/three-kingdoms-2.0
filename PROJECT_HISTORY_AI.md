@@ -782,3 +782,26 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - seatModes 为会话态：不随存档持久化，刷新回全人类默认；跨房间"再来一局"沿用（已按特性登记）。
 - 司机每 tick 单动作+700ms ⇒ 长局观战耗时线性；若用户嫌慢可下调 AI_TICK_MS（单点常量），未做每 tick 多动作（会失去可读节奏）。
 - §12-9 b/c/d 旧边界（部分触发未接入、回合结束询问窗缺席、技能致命伤无 DEATH）对人机同样生效：AI 与人类受同一规则世界限制。
+
+## Qoder 2.2.10：录像/日志自动保存治本改造（无人值守永不触发系统弹窗）
+
+### 决策与依据
+- 用户查明 v2.2.6 需求消息反复重投的根因=自动保存走浏览器下载→Windows"另存为"弹窗→远程无人点掉→挂起→消息重投（登记于 HANDOFF §12-12⑤，提交 228db30）。用户拍板"按治本方式做吧"：从产品侧消灭该弹窗，而非只给浏览器设置建议。
+- 口径：弹窗只能出现在**有用户手势且预期有交互**的路径（手动点"保存"）。自动保存属无人值守路径，任何"需要点掉才能继续"的系统界面都是设计缺陷。
+
+### 变更
+- `src/replay/replayStorage.ts`：`saveArtifacts(files, { unattended? })` 双路分流。unattended 仅经 `getSilentlyWritableReplayDirectory()`（只认 `queryPermission==='granted'`，绝不调 requestPermission）静默写目录；否则进模块级暂存队列（`PENDING_CAP=12`，丢最旧）返回新结局 `'pending'`。任何目录写成功（自动/手动）都 `flushPendingAutoSaves()` 补存。attended 路径原样：目录（可 requestPermission，有手势）→下载兜底。新增测试注入口 `__setDirectoryHandleForTests/__clearDirectoryHandleOverrideForTests`（覆盖"已记忆目录"，权限检查仍走真实代码；`checkReplayDirectoryPermission` 同步读注入口）。
+- `src/components/GameOverScreen.tsx`：两个自动保存作业传 `{ unattended: true }`；'pending' 文案"未授权保存目录，已暂存浏览器内存（不弹保存窗口），授权目录或点'保存'后自动补存"；面板说明改写。
+- `src/components/Settings.tsx`："选择文件夹"成功即 `flushPendingAutoSaves()` 并在提示里报补存份数；未选择/清除路径文案改为"自动保存暂存、手动才下载"。
+- 版本号 2.2.10。
+
+### 验证
+- check 0 错误；`npm run test` = 264 通过 / 32 文件（replayStorage.test +6：granted 静默写目录零下载零 requestPermission；prompt 态只暂存；授权后下一次保存自动补存且顺序=本次先/暂存后；手动无目录仍下载且不清暂存、flush=0；队列封顶 12 丢最旧；无 API 环境 unattended 不下载）。
+- coverage 棘轮维持 46/32/34/41（实测 lines 46.73 / funcs 32.54 / branches 34.49 / stmts 41.72）；lint 0 错误 / 30 遗留警告（零新增）；`vite build` 单文件成功（1,916.32 kB / gzip 562.27 kB）。
+- 浏览器 E2E（dev 页 `__TK__` 装配真实录像数据 + `HTMLAnchorElement.prototype.click` 下载探针计数，evaluate_script 全程 `\uXXXX` 转义）：①自动保存→结算横幅"已暂存"文案出现、探针 dl=0（无下载尝试=无系统弹窗可能）；②手动点"保存"→dl=1、"已按浏览器下载方式保存"（降级链路完好）；控制台 0 错误。
+- 功能提交 `babb57b`；CI 远端复验与推送 PENDING（用户侧代理未开，直推超时，提交留本地待"补推"）。
+
+### Unresolved & Risk
+- 暂存队列仅内存：刷新/关页即失。接受——触发前提（未授权目录+自动保存）本来就无处可写，正解是授权目录后自动补存。
+- 用户浏览器"下载前询问保存位置"设置仍会影响**手动**下载与其他网站下载，本轮边界=游戏自动保存绝不走下载。
+- 若未来出现第二个自动保存调用点，必须显式传 `{ unattended: true }`，否则默认是带下载兜底的手动语义。
