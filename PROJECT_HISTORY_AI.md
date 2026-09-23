@@ -799,7 +799,7 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - check 0 错误；`npm run test` = 264 通过 / 32 文件（replayStorage.test +6：granted 静默写目录零下载零 requestPermission；prompt 态只暂存；授权后下一次保存自动补存且顺序=本次先/暂存后；手动无目录仍下载且不清暂存、flush=0；队列封顶 12 丢最旧；无 API 环境 unattended 不下载）。
 - coverage 棘轮维持 46/32/34/41（实测 lines 46.73 / funcs 32.54 / branches 34.49 / stmts 41.72）；lint 0 错误 / 30 遗留警告（零新增）；`vite build` 单文件成功（1,916.32 kB / gzip 562.27 kB）。
 - 浏览器 E2E（dev 页 `__TK__` 装配真实录像数据 + `HTMLAnchorElement.prototype.click` 下载探针计数，evaluate_script 全程 `\uXXXX` 转义）：①自动保存→结算横幅"已暂存"文案出现、探针 dl=0（无下载尝试=无系统弹窗可能）；②手动点"保存"→dl=1、"已按浏览器下载方式保存"（降级链路完好）；控制台 0 错误。
-- 功能提交 `babb57b`；CI 远端复验与推送 PENDING（用户侧代理未开，直推超时，提交留本地待"补推"）。
+- 功能提交 `babb57b`；CI 远端复验已完成（用户开代理后补推）：run `35880374035` 全绿（CI #26，master@b005cb6，lint+audit / test 22 与 24 矩阵含 check+coverage（264/264）/ build，2m48s），经登录态浏览器确认；四提交（228db30/babb57b/d15eb61/b005cb6）+ 标签 v2.2.10→d15eb61 均已推送。E2E 教训：手动保存探针放行了真实下载，在用户连接的浏览器弹了一次"另存为"（已请用户点取消），登记 HANDOFF §12-13⑥——浏览器侧探针须拦截计数不调原 click。
 
 ### Unresolved & Risk
 - 暂存队列仅内存：刷新/关页即失。接受——触发前提（未授权目录+自动保存）本来就无处可写，正解是授权目录后自动补存。
