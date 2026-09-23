@@ -577,3 +577,32 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - 本套件守的是**引擎层规则不变量**，不覆盖 UI 渲染、store 装配与浏览器真实点击路径——与 v2.2.1 手工回归互补而非互替；手感与平衡度仍归用户日常回归。
 - 整局冒烟的确定性依赖 `vi.spyOn(Math,'random')→0.99` 使 DrawResolver 的 Fisher-Yates 成恒等排列；若洗牌实现改变，该用例需随动改写（文件头注释已声明此依赖）。
 - 定时器/异步链路（骰子动画、超时兜底）不在引擎层测试范围内。
+
+## Qoder 2.2.3：AI 对战线·阶段一——合法动作枚举器（getLegalActions）
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `eaa5d43`（v2.2.2 的最终文档登记提交）
+**branch_scope：** `Qoder/2.0` 仓库
+
+### 决策与依据
+- 用户公布 AI 线两目标：①本地 AI-vs-AI 随机对局测 bug（完成本地部署后不得再消耗代理额度→必须是 `npm run` 级本地脚本）②游戏内人机对战（暂定三档难度）。双方共同地基=引擎能回答"此刻该玩家所有合法动作"。经五阶段规划（枚举器→随机 AI+本地对局跑器→三档策略→游戏内接入→收尾），本提交=阶段一。
+- 核心设计决策：**枚举器零规则复制**。此前界面按钮的可用性判定散在组件里，若在枚举器里重写一套路由/射程/消耗规则会形成第三套真相（违反本项目一贯的唯一化收敛方向）。方案改为"候选生成 + 引擎同源试探"：候选只从状态枚举几何可能性（手牌将领×槽 0..2、场上将领×全部 zone/slot/areaOwnerId 组合、攻击×敌将+`base_<id>`×近远、补给/装备/窗口动作），合法性一律 `rules.validateAction` + `resolvers.getResolver(action).resolve(state, action)` 判定（返回含 ACTION_REJECTED 即非法）——与真实 dispatch 完全同一条裁判链。
+- 试探安全性论证：全部 resolver 为纯函数（注释明示"The EventProcessor owns all state mutation"，grep 确认除 DrawResolver 洗牌外无 Math.random、无写操作）；并加守卫测试"legalActions 前后 state 深相等"，未来若有 resolver 在 resolve 里改状态会当场报红。
+- 口径决策：BEGIN_DRAW 不进默认枚举（初始抽由对局装配显式发起，回合开始/补偿抽由引擎内联链发起；开放给策略层会允许 AI 无限重开抽牌窗口）。
+
+### 变更
+- 新增 `src/rules/legalActions.ts`（约 200 行）：抽牌窗口分支（DRAW 0..total 全分配 + CONFIRM_DRAW，非抽牌玩家空）；行动窗口分支（部署/移动含文将耗卡配卡/攻击/补给 1-2 卡/装备军备 1-2 卡/RESOLVE_BASE_LOSS/END_TURN/SURRENDER；gameOver/menu 返回空）。
+- `GameEngine` 新增 `legalActions(playerId)` 便捷方法（legalActions 对 GameEngine 仅 type-import，无循环依赖）。
+- 新增 `src/rules/legalActions.test.ts` 5 例：①试探零副作用 ②抽牌窗口形状+BEGIN_DRAW 缺席+非抽牌玩家空 ③**枚举⇒可执行对账**（每个枚举动作在全新引擎实例上真实 dispatch 均不被拒）+场景必备类型在场 ④典型非法不入列（无资源卡不攻击/不部署、已攻击不再攻击、占用槽不再部署、非当前玩家不给行动、gameOver 空）⑤双随机 AI 只凭清单自对局至 gameOver（自带 LCG 决策随机、Math.random 桩仅锁抽牌堆恒等排列，2000 步上限，54ms）。
+- 覆盖率棘轮 34/21/24/29 → 37/23/26/31；版本 2.2.2 → 2.2.3（lock 仅 root 两处）。
+
+### 验证（本地会话内执行）
+- 失败证据（修复前，按引擎为准修正）：测试初稿断言"战斗区不可远程攻本营"，枚举对账环节暴露引擎实际**接受** battle→base 远程攻击（AttackResolver `base_(\d+)` 分支），改断言为"应出现 base 候选"——枚举器与裁判一致，错在测试假设。另修一处自造 API（vi.spyOnGlobalRandom 不存在→vi.spyOn(Math,'random')）与一处未使用变量。
+- `npm run check` = 0 错误；`npm run test` = **195 通过**（20 文件，+5）；`npm run test:coverage` 过新棘轮（实测 38.39/24.15/27.63/33.2）；`npm run lint` = 0 错误 / 30 遗留警告（零新增）；`npm run build` 单文件成功（1,856.46 kB / gzip 540.86 kB）。
+- CI 远端复验待推送后确认（PENDING）。
+
+### Unresolved / Risk
+- 候选生成对"消耗卡选择"取手牌前缀（如部署取前 hp 张非自身卡）：合法存在性判定够用（resolver 只检查数量/去重/在手），但**不枚举所有消耗组合**——阶段二策略层若需"选哪些卡当费用"（如优先耗将回池）需扩候选或提供 `consumeCards` 变体生成器。
+- 军备/补给候选各限 1-2 张；SUPPLY 敌占区+1 附加成本由 resolver 裁决，候选最多 2 张在常规手牌下足够，极端手牌下可能漏更优厚赔方案（不影响合法性对账，影响策略丰富度，阶段二复评）。
+- 主动技能（activeSelf/activeOther）无询问窗口（§12-9c 旧欠账），枚举器与人类受同样限制，AI 线阶段二维持此边界。
+- 试探性能=每候选一次 validate+resolve（无克隆），实测 2 AI 一局 54ms；阶段二 soak（千局）前应复测最坏手牌（40+ 张、多将领）下的候选规模。
