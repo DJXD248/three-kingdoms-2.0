@@ -2,6 +2,73 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.11] - 2026-09-24
+
+Documentation / contract-freeze release. **No gameplay behavior, engine, or rule changes.**
+
+- Fixed long-standing doc drift: README test count (131 -> 264), AGENTS module map (removed stale `card/` and `status/` entries, corrected gameStore/EventProcessor line counts, updated coverage ratchet 46/32/34/41 and lint warning count), CHANGELOG version history below.
+- Corrected 2.0.0 cleanup claim: `start.bat` was never actually removed (it remains tracked as a local convenience launcher).
+- Added `PROJECT_ARCH_MAP.md` -- Architecture & Authority Map for the v2.2.10 baseline (module layer, responsibility, canonical status, authority boundary, lifecycle, determinism, verification level, known gaps).
+- `src/rules/legalActions.ts` contract wording renamed from "complete legal action list" to **candidate action enumeration** (doc-level only; behavior unchanged; legality authority remains `ActionValidator`/engine).
+- Registered decisions (from the 2026-09-24 external architecture review, see PROJECT_HANDOFF §12): persistent-GameEngine migration must share a single TransitionCore with reconstruction-mode validation (no two long-term execution paths); RNG will move into `EngineState` with recorded random outcomes in replays (replays never re-roll); old replays are read-only historical assets -- never rewrite events, use schema-versioned adapters instead; card-cost enumeration gated by per-action `CardSelectionPolicy` (EQUIVALENT / INSTANCE_REQUIRED) when identity-sensitive costs are introduced.
+- Registration discipline extended: README / AGENTS / CHANGELOG now checked against code at every version registration (PROJECT_RELEASE_PIPELINE.md).
+
+## [2.2.10] - 2026-09-23
+
+- Auto-save root fix: unattended saves never trigger browser downloads / OS "Save As" dialogs. Silent write to authorized directory only, else in-memory pending queue (cap 12) with automatic flush after authorization or a manual save. Manual save keeps the download fallback. 264 tests (6 new locking the no-download invariant).
+
+## [2.2.9] - 2026-09-23
+
+- Phase 4 human-vs-AI: per-seat AI toggle + strategy tier in room setup, production-store AI seat driver (draft/draw/play/end-turn), full-AI spectate mode, two browser E2E matches.
+
+## [2.2.8] - 2026-09-22
+
+- Faction balance stats (win/death/kill rates per faction, 2000-game baseline) and custom line-up selection for AI battles (repeatable, batch-locked via `seats` URL hash; per-seat faction-pure draft default).
+
+## [2.2.7] - 2026-09-22
+
+- Three-tier strategies (conservative / balanced / aggressive) + arena win-rate harness (`npm run ai-arena`, 3400 games, zero invariant violations; strength order aggressive > balanced > conservative > random).
+
+## [2.2.6] - 2026-09-21
+
+- Replay & operation-log saving at game over: rename row + save button, settings page "replay directory" (File System Access) + "auto-save each match" toggle, naming = room + faction + timestamp.
+
+## [2.2.5] - 2026-09-21
+
+- In-browser AI drill window (developer mode): runner control panel, log/replay export.
+
+## [2.2.4] - 2026-09-20
+
+- Seeded AI-vs-AI battle runner (`npm run ai-battle`) + invariant checker + report export; 1000-game local soak.
+
+## [2.2.3] - 2026-09-20
+
+- `getLegalActions` candidate enumerator in `src/rules/legalActions.ts` + engine-referee consistency tests (AI line phase 1).
+
+## [2.2.2] - 2026-09-20
+
+- Core game-flow automation tests driving real `GameAction`s (no engine bypass); coverage ratchet raised.
+
+## [2.2.1] - 2026-09-20
+
+- Draft merged-editing in `confirmDraft` (assembly invariant locked); editor->runtime gap found and fixed via browser E2E (saved skills now enter real matches).
+
+## [2.2.0] - 2026-09-19
+
+- Skill editor structured effect rows (type + value + target) and Excel import/export columns (skill convergence series 2.1.0-2.2.1 completed).
+
+## [2.1.0] - 2026-09-19
+
+- Skill system unique-runtime convergence: single runtime chain (compiler -> SkillTriggerBridge -> TriggerEngine), legacy skill runtime paths removed.
+
+## [2.0.3] - 2026-09-19
+
+- Dependency security zeroing: uuid via npm `overrides` (^11.1.1) + exceljs unified; audit-high clean baseline in CI.
+
+## [2.0.1] / [2.0.2] - 2026-09-19
+
+- xlsx (SheetJS) high-severity vulnerability fixed by vendoring the official CDN tarball (0.20.3; npm has no patched release), plus `xlsxSecureReader` regression tests.
+
 ## [2.0.0] - 2026-09-19
 
 ### Summary
@@ -31,7 +98,7 @@ Version 2.0 is a clean release based on the stable 1.29 codebase, with legacy cl
 - Removed dist/ directory (build artifacts should not be version-controlled)
 - Removed .git/ directory (re-initialized for clean 2.0 history)
 - Removed *.backup files
-- Removed start.bat (legacy startup script)
+- ~~Removed start.bat (legacy startup script)~~ CORRECTED in 2.2.11: start.bat was not actually removed; it remains tracked as a local convenience launcher
 
 ### Verification
 - npm install: 202 packages installed

@@ -12,6 +12,13 @@
 2. PROJECT_HISTORY_AI.md 技术章节（带模型标记）+ PROJECT_HISTORY_HUMAN.md 白话章节；
 3. Git：feat 功能提交 → docs 登记提交 → 对登记提交打附注标签 `git tag -a vX.Y.Z`。
 
+**登记纪律扩展（2.2.11 起，第四项）**：每轮登记必须核对周边文档与代码是否一致——
+`README.md`（测试数/命令清单）、`AGENTS.md`（模块地图/关键文件行数/覆盖率阈值/警告数）、
+`CHANGELOG.md`（补本轮年表条目）、`PROJECT_ARCH_MAP.md`（模块职责/权威/生命周期/债务表如受影响）。
+易变数字一律带"as of 版本"时点戳，防止下一个模型把旧数当现状。根因：2.2.11 外部架构评审实测发现
+README 停留在"131 例"、AGENTS 引用了已不存在的 status/ 模块、CHANGELOG 谎称删除过 start.bat——
+三方登记只覆盖核心三份文档时，周边文档必然饿死。
+
 ## Step 1 — 本地验证门槛（全绿才许进入登记）
 
 - `npm run check`（tsc --noEmit）0 错误；

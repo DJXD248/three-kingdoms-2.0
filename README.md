@@ -8,10 +8,12 @@ React + TypeScript 单页卡牌游戏。本仓库为主线开发仓库，与 `Qo
 npm install --include=optional --ignore-scripts   # 安装依赖
 npm run dev                                       # 本地开发服务器
 npm run check                                     # TypeScript 类型检查
-npm run test                                      # Vitest 单元测试（131 例）
+npm run test                                      # Vitest 单元测试（264 例 / 32 文件，2.2.11 时点）
 npm run test:coverage                             # 测试 + 覆盖率（含棘轮阈值门禁）
 npm run lint                                      # ESLint 检查
 npm run build                                     # 生产构建 -> dist/index.html
+npm run ai-battle                                 # AI 随机对局跑器（命令行，见 2.2.4+）
+npm run ai-arena                                  # 三档策略互胜率擂台（见 2.2.7）
 ```
 
 ## Git 远程与推送
@@ -44,7 +46,7 @@ curl -sI --max-time 10 -x http://127.0.0.1:10808 https://github.com -o /dev/null
 ### 日常迭代流程
 
 1. 本地验证：`npm run check` / `test` / `lint` / `build` 全通过。
-2. 提交并按三方登记规则更新 `PROJECT_HANDOFF.md`、`PROJECT_HISTORY_AI.md`、`PROJECT_HISTORY_HUMAN.md`。
+2. 提交并按登记规则更新：核心三份 `PROJECT_HANDOFF.md`、`PROJECT_HISTORY_AI.md`、`PROJECT_HISTORY_HUMAN.md`；同时核对周边三份 `README.md`、`AGENTS.md`、`CHANGELOG.md` 的数字与模块清单是否过时（2.2.11 起纪律，见 `PROJECT_RELEASE_PIPELINE.md`）。
 3. `git push origin master && git push origin --tags`。
 4. GitHub Actions 自动运行 CI（lint+audit / Node 22 与 24 测试矩阵 / build），绿灯即远端验证通过。
 5. Pages 网页公开部署默认关闭，仅手动触发（Actions 页面运行 "Deploy to GitHub Pages"，且需先在仓库 Settings -> Pages -> Source 选择 "GitHub Actions"）。
@@ -53,4 +55,7 @@ curl -sI --max-time 10 -x http://127.0.0.1:10808 https://github.com -o /dev/null
 
 - `PROJECT_HANDOFF.md` — 当前状态快照（规则、架构、版本、验证状态）
 - `PROJECT_HISTORY_AI.md` / `PROJECT_HISTORY_HUMAN.md` — 历史迭代记录（AI 版 / 人读版）
+- `PROJECT_ARCH_MAP.md` — 全项目地图：模块职责、权威边界、生命周期、确定性、验证级别（2.2.11 建，v2.2.10 基线）
+- `PROJECT_RELEASE_PIPELINE.md` — 版本收尾登记流水线（权威版）
 - `AGENTS.md` — AI 协作指令（技术栈、验证命令、模块地图）
+- `CHANGELOG.md` — 版本年表

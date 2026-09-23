@@ -55,7 +55,15 @@ function fieldOf(state: EngineState, playerId: number): any[] {
   return Array.isArray(player?.fieldGenerals) ? player.fieldGenerals : [];
 }
 
-/** Enumerate every action `playerId` can dispatch right now. */
+/**
+ * Candidate action enumeration for `playerId` (contract: CANDIDATES, not an
+ * exhaustive identity-level action space — see PROJECT_ARCH_MAP.md D-5).
+ * Legality authority stays with RuleEngine.validateAction + resolvers below.
+ * Equivalent resource cards are collapsed to a canonical representative
+ * (validator checks type/count, never runtimeId); if a future action needs
+ * "discard THIS specific card", gate it behind a per-action CardSelectionPolicy
+ * (INSTANCE_REQUIRED) instead of making every enumeration identity-explicit.
+ */
 export function getLegalActions(engine: GameEngine, playerId: number): GameAction[] {
   const state = engine.state;
   const out: GameAction[] = [];
