@@ -12,10 +12,19 @@ import GameOverScreen from './components/GameOverScreen';
 import DeveloperOverlay from './components/DeveloperOverlay';
 import TestArena from './components/TestArena';
 import Rules from './components/Rules';
+import AiBattleWindow from './components/AiBattleWindow';
+import AiBattleDock from './components/AiBattleDock';
 import { factionColors } from './data/generals';
+
+// Hash route for the background AI-battle window opened by developer mode.
+// Read once at module load: the hash never changes within a loaded document,
+// so hook order stays stable in both windows.
+const IS_AI_BATTLE_WINDOW =
+  typeof window !== 'undefined' && window.location.hash.startsWith('#ai-battle');
 
 export default function App() {
   const phase = useGameStore(s => s.phase);
+  if (IS_AI_BATTLE_WINDOW) return <AiBattleWindow />;
 
   let content: React.ReactNode;
   switch (phase) {
@@ -66,6 +75,7 @@ export default function App() {
     <div className="app-shell">
       {content}
       <DeveloperOverlay />
+      <AiBattleDock />
     </div>
   );
 }

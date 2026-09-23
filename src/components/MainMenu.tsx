@@ -1,11 +1,14 @@
 import { useGameStore } from '../store/gameStore';
 import { useState } from 'react';
 import { clearLocalGameSnapshot, readLocalGameSnapshot } from '../store/localGameSnapshot';
+import AiBattleConfig from './AiBattleConfig';
 
 export default function MainMenu() {
   const setPhase = useGameStore(s => s.setPhase);
+  const developerMode = useGameStore(s => s.developerMode);
   const [showStartOptions, setShowStartOptions] = useState(false);
   const [showOnlineMsg, setShowOnlineMsg] = useState(false);
+  const [showAiBattle, setShowAiBattle] = useState(false);
   const [hasSavedGame, setHasSavedGame] = useState(() => readLocalGameSnapshot() !== null);
 
   const continueGame = () => {
@@ -100,6 +103,11 @@ export default function MainMenu() {
             <MenuButton onClick={() => setPhase('settings')} icon="⚙️">
               游戏设置
             </MenuButton>
+            {developerMode && (
+              <MenuButton onClick={() => setShowAiBattle(true)} icon="🤖">
+                AI 对战演练
+              </MenuButton>
+            )}
             <MenuButton onClick={() => {}} icon="🚪" disabled>
               退出游戏
             </MenuButton>
@@ -136,6 +144,8 @@ export default function MainMenu() {
         <p className="text-amber-200/20 text-xs">三国卡牌对战模拟器</p>
         <p className="text-amber-200/20 text-xs">Qoder V1.28</p>
       </div>
+
+      {showAiBattle && <AiBattleConfig onClose={() => setShowAiBattle(false)} />}
     </div>
   );
 }

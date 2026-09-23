@@ -5,10 +5,18 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Node 24 + vitest 5.0.1: the default forks/threads worker bootstrap loses the
+// collector context ("Cannot read properties of undefined (reading 'config')"
+// in every describe). vmThreads runs modules in an in-process VM context where
+// the state is reachable, and the full suite passes there. Keep CI (Node 20/22)
+// on the default pool untouched by switching only on Node >= 24.
+const nodeMajor = Number(process.versions.node.split('.')[0] || 0);
+
 export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    pool: nodeMajor >= 24 ? 'vmThreads' : undefined,
     include: ['src/**/*.test.{ts,tsx}'],
     coverage: {
       provider: 'v8',
