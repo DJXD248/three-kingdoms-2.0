@@ -3,6 +3,19 @@
  * background battle window (`#ai-battle?...`). Kept out of the component files
  * so React Fast Refresh stays clean and vitest can import it directly.
  */
+import { allFactions, type Faction } from '../data/generals';
+
+/**
+ * One seat's chosen setup (2.2.8). Empty faction / empty generals list mean
+ * "random at match-build time"; duplicates across and inside seats are legal.
+ * Encoded in the hash as `seats=魏:wei_001,wei_002|蜀|` (per-seat entries
+ * joined by `|`), so the batch is frozen until it finishes.
+ */
+export interface AiBattleSeat {
+  faction: Faction | '';
+  generals: string[];
+}
+
 export interface AiBattleParams {
   games: number;
   seed: number;
@@ -18,6 +31,8 @@ export interface AiBattleParams {
    * aggressive bot and the other a random one for eyeball testing.
    */
   policies: string[];
+  /** Always exactly `players` long (empty entries = random seat). */
+  seats: AiBattleSeat[];
 }
 
 const POLICY_KEYS = new Set(['random', 'conservative', 'balanced', 'aggressive']);
@@ -47,9 +62,43 @@ export function parseAiBattleHash(hash: string): AiBattleParams | null {
       .split(',')
       .map(s => s.trim().toLowerCase())
       .filter(s => POLICY_KEYS.has(s)),
+    seats: parseSeats(q.get('seats')),
   };
   // One key per seat; unknown/missing entries fall back to 'random'.
   while (parsed.policies.length < parsed.players) parsed.policies.push('random');
   parsed.policies.length = parsed.players;
+  // One entry per seat; absent/blank seat = fully random setup.
+  while (parsed.seats.length < parsed.players) parsed.seats.push({ faction: '', generals: [] });
+  parsed.seats.length = parsed.players;
   return parsed;
+}
+
+const FACTION_NAMES: string[] = allFactions;
+
+/** `魏:wei_001,wei_002|蜀|` → per-seat {faction, generals} entries. */
+function parseSeats(raw: string | null): AiBattleSeat[] {
+  if (!raw) return [];
+  return raw
+    .split('|')
+    .slice(0, 4)
+    .map(entry => {
+      const colon = entry.indexOf(':');
+      const factionPart = (colon === -1 ? entry : entry.slice(0, colon)).trim();
+      const idsPart = colon === -1 ? '' : entry.slice(colon + 1);
+      const faction: Faction | '' = (FACTION_NAMES as string[]).includes(factionPart)
+        ? (factionPart as Faction)
+        : '';
+      const generals = idsPart
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      return { faction, generals };
+    });
+}
+
+/** Inverse of parseSeats — the config dialog builds the hash with this. */
+export function encodeSeats(seats: AiBattleSeat[]): string {
+  return seats
+    .map(s => `${s.faction}${s.generals.length > 0 ? `:${s.generals.join(',')}` : ''}`)
+    .join('|');
 }

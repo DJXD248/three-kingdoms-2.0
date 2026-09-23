@@ -38,11 +38,12 @@ export default defineConfig({
       // Phase-1 AI (legalActions enumerator + consistency tests): stmts 33.2 / branch 27.63 / funcs 24.15 / lines 38.39.
       // 2.2.4 (AI-vs-AI battle runner: seeded matches, invariants, replay): stmts 35.63 / branch 29.52 / funcs 25.89 / lines 40.93.
       // 2.2.7 (three-tier strategy policies + arena): stmts 37.11 / branch 31.36 / funcs 28.09 / lines 41.83.
+      // 2.2.8 (faction balance stats + seat picks + dock table test): stmts 38.1 / branch 31.93 / funcs 29.01 / lines 42.88.
       thresholds: {
-        lines: 40,
-        functions: 27,
-        branches: 30,
-        statements: 36,
+        lines: 42,
+        functions: 28,
+        branches: 31,
+        statements: 37,
       },
     },
   },

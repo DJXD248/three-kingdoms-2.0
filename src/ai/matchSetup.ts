@@ -9,9 +9,22 @@
  * batch (production built-in generals are description-only otherwise).
  */
 import type { EngineState, EnginePlayer } from '../core/GameState';
-import { allGenerals, type General, type Skill } from '../data/generals';
+import { allGenerals, allFactions, type Faction, type General, type Skill } from '../data/generals';
 import { createCardDeck, type CardType } from '../data/cards';
 import { cloneWithRuntimeInstance } from '../utils/runtimeIdentity';
+
+/**
+ * Per-seat setup for the "自选势力/将领" mode (2.2.8). Duplicates are legal —
+ * the same faction or the same general id may appear on several seats and
+ * several times inside one seat's pool. Empty fields fall back to seeded
+ * random choice, so a batch without seatConfigs still plays (faction-pure).
+ */
+export interface SeatConfig {
+  /** '' is tolerated as "not picked" so raw hash/AiBattleSeat objects pass through. */
+  faction?: Faction | '' | null;
+  /** General definition ids (data/generals.ts); repeats allowed. */
+  generals?: string[];
+}
 
 export interface MatchConfig {
   seed: number;
@@ -21,6 +34,8 @@ export interface MatchConfig {
   /** 0..1 — probability a pool general carries an executable practice skill. */
   skillInjection: number;
   baseHp: number;
+  /** One entry per seat (index 0 = player 1); missing entries = random. */
+  seatConfigs?: SeatConfig[];
 }
 
 export function defaultMatchConfig(seed: number, overrides: Partial<MatchConfig> = {}): MatchConfig {
@@ -58,20 +73,20 @@ function takeRandom<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length) % items.length];
 }
 
-function sampleGenerals(count: number): General[] {
-  // Fisher-Yates on a shallow index array; wrap-around clone if demand exceeds supply.
-  const pool = [...allGenerals];
+/** Seeded shuffle + wrap-around sampling: duplicates if count exceeds supply. */
+function sampleFrom<T>(items: T[], count: number): T[] {
+  const pool = [...items];
+  if (pool.length === 0) return [];
   for (let i = pool.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  const out: General[] = [];
+  const out: T[] = [];
   for (let i = 0; i < count; i += 1) out.push(pool[i % pool.length]);
   return out;
 }
 
 export function buildMatchState(config: MatchConfig): EngineState {
-  const sampled = sampleGenerals(config.playerCount * config.poolPerPlayer);
   const players: EnginePlayer[] = [];
   // Deterministic instance ids: cloneWithRuntimeInstance embeds Date.now() +
   // a module counter, which would make a replayed match mint DIFFERENT card
@@ -86,8 +101,21 @@ export function buildMatchState(config: MatchConfig): EngineState {
 
   for (let index = 0; index < config.playerCount; index += 1) {
     const id = index + 1;
+    const seat = config.seatConfigs?.[index] ?? {};
+    // Explicit general ids win (duplicates kept); otherwise draw a faction-pure
+    // pool of poolPerPlayer. Faction label: explicit > first general > seeded random.
+    const explicit = (seat.generals ?? [])
+      .map(gid => allGenerals.find(g => g.id === gid))
+      .filter((g): g is General => Boolean(g));
+    const picked = seat.faction && (allFactions as string[]).includes(seat.faction)
+      ? (seat.faction as Faction)
+      : undefined;
+    const faction: Faction = picked ?? explicit[0]?.faction ?? takeRandom(allFactions);
+    const sources = explicit.length > 0
+      ? explicit
+      : sampleFrom(allGenerals.filter(g => g.faction === faction), config.poolPerPlayer);
     const generalPool: General[] = [];
-    for (const source of sampled.slice(index * config.poolPerPlayer, (index + 1) * config.poolPerPlayer)) {
+    for (const source of sources) {
       const copy = cloneWithRuntimeInstance(source) as General;
       copy.id = `${source.id}_p${id}`;
       stamp(copy);
@@ -101,6 +129,7 @@ export function buildMatchState(config: MatchConfig): EngineState {
     players.push({
       id,
       name: `AI-${id}`,
+      faction,
       hand: [],
       generalPool,
       fieldGenerals: [],

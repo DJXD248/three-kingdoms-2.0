@@ -6,9 +6,20 @@
  * every step that violated an invariant (or was rejected) gets a ❌ line with
  * the violation code + detail, and the match header counts them up.
  */
-import type { MatchResult, RecordedAction } from './battleRunner';
+import type { FactionBalanceStat, MatchResult, RecordedAction } from './battleRunner';
+import { aggregateFactionStats } from './battleRunner';
 import type { Violation } from './invariants';
 
+export type { FactionBalanceStat };
+
+/**
+ * Faction balance 口径 (2.2.8, per-seat accounting — the stat rows and the
+ * aggregated FactionBalanceStat live in battleRunner):
+ * - seats = times the faction occupied a seat in the batch (mirrors count twice)
+ * - 胜率 = wins / seats · 死亡率 = deaths / deployed · 击杀率 = kills / attacks
+ *   (deaths = field-roster removals of any cause; kills credited to successful
+ *   ATTACK steps that removed another seat's general the same step)
+ */
 export interface BattleSummary {
   games: number;
   won: number;
@@ -19,6 +30,23 @@ export interface BattleSummary {
   avgMs: number;
   slowestMs: number;
   violationTotal: number;
+  /** Empty when every result predates seat stats (legacy fixtures/replays). */
+  factionStats: FactionBalanceStat[];
+}
+
+function rate(numerator: number, denominator: number): string {
+  if (denominator <= 0) return '-';
+  return `${((numerator / denominator) * 100).toFixed(1)}%`;
+}
+
+/** Balance rows: one line per faction, canonical order then extras. */
+export function formatFactionStats(stats: FactionBalanceStat[]): string[] {
+  return stats.map(
+    f =>
+      `  ${f.faction}：出场${f.seats}席 胜${f.wins}（胜率 ${rate(f.wins, f.seats)}） · ` +
+      `登场${f.deployed} 阵亡${f.deaths}（死亡率 ${rate(f.deaths, f.deployed)}） · ` +
+      `攻击${f.attacks} 击杀${f.kills}（击杀率 ${rate(f.kills, f.attacks)}）`,
+  );
 }
 
 export function summarizeMatches(results: MatchResult[]): BattleSummary {
@@ -32,6 +60,7 @@ export function summarizeMatches(results: MatchResult[]): BattleSummary {
     avgMs: 0,
     slowestMs: 0,
     violationTotal: 0,
+    factionStats: [],
   };
   for (const r of results) {
     if (r.status === 'won') {
@@ -48,6 +77,7 @@ export function summarizeMatches(results: MatchResult[]): BattleSummary {
     summary.violationTotal += r.violations.length;
   }
   summary.avgMs = summary.games > 0 ? Math.round(summary.totalMs / summary.games) : 0;
+  summary.factionStats = aggregateFactionStats(results);
   return summary;
 }
 
@@ -122,6 +152,10 @@ export function buildOperationLog(results: MatchResult[]): string {
     `总局数 ${summary.games} · 分出胜负 ${summary.won} · 步数耗尽 ${summary.exhausted} · ` +
       `违例局 ${summary.violated} · 违例条目 ${summary.violationTotal} · 总耗时 ${summary.totalMs}ms（均值 ${summary.avgMs}ms/局）`,
   );
+  if (summary.factionStats.length > 0) {
+    out.push('── 势力平衡统计（胜率=胜席/出场席 · 死亡率=阵亡/登场 · 击杀率=击杀/攻击） ──');
+    out.push(...formatFactionStats(summary.factionStats));
+  }
   out.push('');
   results.forEach((r, index) => {
     const byStep = violationSteps(r.violations);

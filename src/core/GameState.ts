@@ -38,6 +38,8 @@ export interface EnginePlayer {
   baseMaxHp?: number;
   isAlive?: boolean;
   statuses?: EngineStatusState[];
+  /** Faction label ('魏'|'蜀'|'吴'|'群'|'晋'); kept as string to stay data-independent. */
+  faction?: string;
   [key: string]: unknown;
 }
 

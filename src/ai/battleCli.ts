@@ -13,6 +13,7 @@
  *   npm run ai-battle -- --replay ai-battle-failures/match-7.json
  */
 import { runMatch, runBatch, type RecordedAction, type MatchResult } from './battleRunner';
+import { formatFactionStats } from './battleReport';
 import type { MatchConfig } from './matchSetup';
 
 declare const process: {
@@ -155,6 +156,10 @@ function main(): void {
       `avg=${summary.avgMs}ms  slowest=${summary.slowestMs}ms  wall=${Date.now() - startedAt}ms`,
   );
   console.log(`  winner distribution: ${JSON.stringify(summary.winnerCounts)}`);
+  if (summary.factionStats.length > 0) {
+    console.log('  势力平衡（胜率=胜席/出场席 · 死亡率=阵亡/登场 · 击杀率=击杀/攻击）:');
+    for (const line of formatFactionStats(summary.factionStats)) console.log(line);
+  }
 
   if (summary.violations.length > 0) {
     console.log(`  first violations (max 20):`);

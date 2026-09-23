@@ -312,6 +312,9 @@ export const allGenerals: General[] = [
   ...jinGenerals,
 ];
 
+/** Canonical faction order — shared by the AI battle seat picker and reports. */
+export const allFactions: Faction[] = ['魏', '蜀', '吴', '群', '晋'];
+
 export const factionColors: Record<Faction, string> = {
   '魏': '#2563eb', // 蓝色
   '蜀': '#dc2626', // 红色

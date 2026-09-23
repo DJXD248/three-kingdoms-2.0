@@ -11,10 +11,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { MatchResult } from '../ai/battleRunner';
 import { runMatch } from '../ai/battleRunner';
 import { policyByName, TIER_PROFILES } from '../ai/policies/strategyPolicy';
-import { defaultMatchConfig } from '../ai/matchSetup';
-import { buildFailureFiles, buildOperationLog, buildReplayBundle, summarizeMatches } from '../ai/battleReport';
+import { defaultMatchConfig, type SeatConfig } from '../ai/matchSetup';
+import { buildFailureFiles, buildOperationLog, buildReplayBundle, formatFactionStats, summarizeMatches } from '../ai/battleReport';
 import { downloadFiles, saveToFolder, type ExportFile } from '../ai/browserExport';
-import { parseAiBattleHash, type AiBattleParams } from '../ai/battleHash';
+import { parseAiBattleHash, type AiBattleParams, type AiBattleSeat } from '../ai/battleHash';
+import { allGenerals } from '../data/generals';
 
 const STATUS_LABEL: Record<MatchResult['status'], string> = {
   won: '✔ 分出胜负',
@@ -22,6 +23,25 @@ const STATUS_LABEL: Record<MatchResult['status'], string> = {
   violation: '❌ 违例',
   'replay-diverged': '❌ 复放分叉',
 };
+
+/** Hash seats → MatchConfig.seatConfigs; returns undefined when nothing was picked. */
+function seatConfigsFrom(seats: AiBattleSeat[]): SeatConfig[] | undefined {
+  if (!seats.some(s => s.faction !== '' || s.generals.length > 0)) return undefined;
+  return seats.map(s => ({
+    faction: s.faction || undefined,
+    generals: s.generals.length > 0 ? s.generals : undefined,
+  }));
+}
+
+function seatLabel(seat: AiBattleSeat, index: number): string {
+  if (!seat.faction && seat.generals.length === 0) return `座位${index + 1}=随机`;
+  const first = allGenerals.find(g => g.id === seat.generals[0]);
+  const faction = seat.faction || first?.faction || '?';
+  const names = seat.generals
+    .map(id => allGenerals.find(g => g.id === id)?.name ?? id)
+    .join('、');
+  return `座位${index + 1}=${faction}${names ? `（自选：${names}）` : '（整池随机抽）'}`;
+}
 
 export default function AiBattleWindow() {
   const paramsRef = useRef<AiBattleParams | null>(parseAiBattleHash(window.location.hash));
@@ -60,6 +80,8 @@ export default function AiBattleWindow() {
           `将池 ${params.pool} · 牌堆 ${params.deck} · 技能注入 ${(params.skill * 100).toFixed(0)}% · 步数上限 ${params.maxSteps}`,
       );
       append(`策略：${policyLabel}`);
+      const seatConfigs = seatConfigsFrom(params.seats);
+      if (seatConfigs) append(`阵容：${params.seats.map(seatLabel).join(' · ')}（整批锁定不变）`);
       append('');
       const t0 = Date.now();
       for (let i = 0; i < params.games; i += 1) {
@@ -69,6 +91,7 @@ export default function AiBattleWindow() {
           poolPerPlayer: params.pool,
           deckSize: params.deck,
           skillInjection: params.skill,
+          seatConfigs,
         });
         const result = runMatch(config, { maxSteps: params.maxSteps, seatPolicies });
         resultsRef.current.push(result);
@@ -88,6 +111,10 @@ export default function AiBattleWindow() {
         `═══ 完成：${summary.games} 局 · 分出胜负 ${summary.won} · 步数耗尽 ${summary.exhausted} · ` +
           `违例 ${summary.violated}（条目 ${summary.violationTotal}） · 总耗时 ${Date.now() - t0}ms ═══`,
       );
+      if (summary.factionStats.length > 0) {
+        append('── 势力平衡（胜率=胜席/出场席 · 死亡率=阵亡/登场 · 击杀率=击杀/攻击）──');
+        for (const row of formatFactionStats(summary.factionStats)) append(row);
+      }
       setRunning(false);
       setDone(true);
       try {

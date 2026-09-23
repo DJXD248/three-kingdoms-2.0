@@ -6,16 +6,17 @@
  * feed their exports.
  */
 import { describe, expect, it } from 'vitest';
-import type { MatchResult, RecordedAction } from './battleRunner';
+import type { MatchResult, RecordedAction, SeatStats } from './battleRunner';
 import { defaultMatchConfig } from './matchSetup';
 import {
   buildFailureFiles,
   buildOperationLog,
   buildReplayBundle,
   formatActionLine,
+  formatFactionStats,
   summarizeMatches,
 } from './battleReport';
-import { parseAiBattleHash } from './battleHash';
+import { encodeSeats, parseAiBattleHash, type AiBattleSeat } from './battleHash';
 
 function match(overrides: Partial<MatchResult> = {}): MatchResult {
   return {
@@ -55,6 +56,37 @@ describe('battleReport', () => {
     expect(s).toMatchObject({ games: 4, won: 2, exhausted: 1, violated: 1, violationTotal: 2, totalMs: 750, slowestMs: 600 });
     expect(s.avgMs).toBe(188);
     expect(s.winnerCounts).toEqual({ '0': 1, '1': 1 });
+  });
+
+  it('aggregates per-faction balance rows from seat stats (mirrors counted per seat)', () => {
+    const seat = (over: Partial<SeatStats>): SeatStats => ({
+      seat: 1, faction: '魏', deployed: 4, deaths: 2, kills: 1, attacks: 3, won: 0, ...over,
+    });
+    const s = summarizeMatches([
+      match({ seatStats: [seat({ won: 1 }), seat({ seat: 2, faction: '魏' })] }), // 魏 double mirror, one won
+      match({ seatStats: [seat({ seat: 1, faction: '蜀', deployed: 5, deaths: 5, kills: 2, attacks: 2 }), seat({ seat: 2, faction: '吴', won: 1 })] }),
+      match({}), // legacy fixture without seatStats must not break aggregation
+    ]);
+    expect(s.factionStats).toEqual([
+      { faction: '魏', seats: 2, wins: 1, deployed: 8, deaths: 4, kills: 2, attacks: 6 },
+      { faction: '蜀', seats: 1, wins: 0, deployed: 5, deaths: 5, kills: 2, attacks: 2 },
+      { faction: '吴', seats: 1, wins: 1, deployed: 4, deaths: 2, kills: 1, attacks: 3 },
+    ]);
+    const rows = formatFactionStats(s.factionStats);
+    expect(rows[0]).toContain('出场2席');
+    expect(rows[0]).toContain('胜率 50.0%');
+    expect(rows[0]).toContain('死亡率 50.0%');
+    expect(rows[0]).toContain('击杀率 33.3%');
+    expect(formatFactionStats([{ faction: '群', seats: 1, wins: 0, deployed: 0, deaths: 0, kills: 0, attacks: 0 }])[0])
+      .toContain('死亡率 -'); // zero denominators render as '-'
+  });
+
+  it('operation log header carries the faction balance block when stats exist', () => {
+    const withStats = match({ seatStats: [{ seat: 1, faction: '晋', deployed: 2, deaths: 1, kills: 0, attacks: 1, won: 1 }] });
+    const log = buildOperationLog([withStats]);
+    expect(log).toContain('势力平衡统计');
+    expect(log).toContain('晋：出场1席');
+    expect(buildOperationLog([match()])).not.toContain('势力平衡统计');
   });
 
   it('operation log marks violation steps, rejected steps, and past-the-end steps with cross', () => {
@@ -108,14 +140,39 @@ describe('parseAiBattleHash', () => {
     expect(parseAiBattleHash('#playing')).toBeNull();
     expect(parseAiBattleHash('')).toBeNull();
     const p = parseAiBattleHash('#ai-battle?games=99999&seed=abc&players=9&pool=1&deck=1&skill=2&maxSteps=1');
-    expect(p).toEqual({ games: 5000, seed: 1, players: 4, pool: 1, deck: 10, skill: 1, maxSteps: 50, policies: ['random', 'random', 'random', 'random'] });
+    expect(p).toEqual({
+      games: 5000, seed: 1, players: 4, pool: 1, deck: 10, skill: 1, maxSteps: 50,
+      policies: ['random', 'random', 'random', 'random'],
+      seats: [0, 1, 2, 3].map(() => ({ faction: '', generals: [] })),
+    });
   });
 
-  it('parses per-seat policy keys: trims, drops unknowns, pads to player count', () => {
-    const p = parseAiBattleHash('#ai-battle?players=3&policies=aggressive%2Cnope%2C%20balanced%20%2Cconservative');
-    expect(p?.policies).toEqual(['aggressive', 'balanced', 'conservative']);
-    const short = parseAiBattleHash('#ai-battle?players=2&policies=balanced');
-    expect(short?.policies).toEqual(['balanced', 'random']);
+  it('parses seats: faction labels, general id lists, padding to player count', () => {
+    const p = parseAiBattleHash('#ai-battle?players=3&seats=%E9%AD%8F:wei_001,wei_001|%E8%9C%80||');
+    expect(p?.seats).toEqual([
+      { faction: '魏', generals: ['wei_001', 'wei_001'] }, // duplicates preserved
+      { faction: '蜀', generals: [] },
+      { faction: '', generals: [] },
+    ]);
+    const junk = parseAiBattleHash('#ai-battle?players=2&seats=汉:x_not_a_gen');
+    expect(junk?.seats).toEqual([
+      { faction: '', generals: ['x_not_a_gen'] }, // unknown faction blanked; ids pass through (matchSetup filters)
+      { faction: '', generals: [] },
+    ]);
+    const tooMany = parseAiBattleHash('#ai-battle?players=2&seats=%E9%AD%8F|%E8%9C%80|%E5%90%B4');
+    expect(tooMany?.seats).toEqual([
+      { faction: '魏', generals: [] },
+      { faction: '蜀', generals: [] },
+    ]);
+  });
+
+  it('encodeSeats round-trips through parseAiBattleHash', () => {
+    const seats: AiBattleSeat[] = [
+      { faction: '吴', generals: ['wu_001', 'wu_002'] },
+      { faction: '', generals: [] },
+    ];
+    const hash = `#ai-battle?players=2&seats=${encodeURIComponent(encodeSeats(seats))}`;
+    expect(parseAiBattleHash(hash)?.seats).toEqual(seats);
   });
 
   it('falls back to defaults for missing keys', () => {
@@ -128,6 +185,17 @@ describe('parseAiBattleHash', () => {
       skill: 0.35,
       maxSteps: 3000,
       policies: ['random', 'random'],
+      seats: [
+        { faction: '', generals: [] },
+        { faction: '', generals: [] },
+      ],
     });
+  });
+
+  it('parses per-seat policy keys: trims, drops unknowns, pads to player count', () => {
+    const p = parseAiBattleHash('#ai-battle?players=3&policies=aggressive%2Cnope%2C%20balanced%20%2Cconservative');
+    expect(p?.policies).toEqual(['aggressive', 'balanced', 'conservative']);
+    const short = parseAiBattleHash('#ai-battle?players=2&policies=balanced');
+    expect(short?.policies).toEqual(['balanced', 'random']);
   });
 });

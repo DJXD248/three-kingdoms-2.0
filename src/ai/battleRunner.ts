@@ -21,6 +21,7 @@ import { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { syncPlayerSkills } from '../skills/skillCompiler';
 import { withSeededRandom } from './rng';
+import { allFactions } from '../data/generals';
 import { buildMatchState, defaultMatchConfig, type MatchConfig } from './matchSetup';
 import { createLedgerSentinel, checkStateInvariants, type Violation } from './invariants';
 import { randomPolicy, type AiPolicy } from './policies/randomPolicy';
@@ -29,6 +30,85 @@ export interface RecordedAction {
   type: GameAction['type'];
   playerId: number;
   payload?: unknown;
+}
+
+/**
+ * Per-seat balance stats (2.2.8). Definitions (the "口径" documented in the
+ * handoff): deployed = generals entering the field roster; deaths = leaving it
+ * (all removals count, whatever killed them); attacks = successful ATTACK
+ * actions; kills = other seats' roster removals on the same step as one of our
+ * successful attacks (includes counter-kill victims and attack-triggered
+ * skill deaths — an intentional broad 口径 for balance tuning).
+ */
+export interface SeatStats {
+  seat: number;
+  faction: string;
+  deployed: number;
+  deaths: number;
+  kills: number;
+  attacks: number;
+  won: 0 | 1;
+}
+
+/** Batch-level per-faction roll-up (see battleReport for the 口径 docs). */
+export interface FactionBalanceStat {
+  faction: string;
+  seats: number;
+  wins: number;
+  deployed: number;
+  deaths: number;
+  kills: number;
+  attacks: number;
+}
+
+export function absorbSeatStats(
+  byFaction: Map<string, FactionBalanceStat>,
+  seatStats: SeatStats[] | undefined,
+): void {
+  for (const st of seatStats ?? []) {
+    let f = byFaction.get(st.faction);
+    if (!f) {
+      f = { faction: st.faction, seats: 0, wins: 0, deployed: 0, deaths: 0, kills: 0, attacks: 0 };
+      byFaction.set(st.faction, f);
+    }
+    f.seats += 1;
+    f.wins += st.won;
+    f.deployed += st.deployed;
+    f.deaths += st.deaths;
+    f.kills += st.kills;
+    f.attacks += st.attacks;
+  }
+}
+
+/** Stable faction row order: canonical 魏蜀吴群晋 first (by seats), then extras. */
+export function sortFactionStats(byFaction: Map<string, FactionBalanceStat>): FactionBalanceStat[] {
+  const canonical: string[] = allFactions;
+  return [...byFaction.values()].sort((a, b) => {
+    const ia = canonical.indexOf(a.faction);
+    const ib = canonical.indexOf(b.faction);
+    return (ia === -1 ? canonical.length : ia) - (ib === -1 ? canonical.length : ib) || b.seats - a.seats;
+  });
+}
+
+export function aggregateFactionStats(results: { seatStats?: SeatStats[] }[]): FactionBalanceStat[] {
+  const byFaction = new Map<string, FactionBalanceStat>();
+  for (const r of results) absorbSeatStats(byFaction, r.seatStats);
+  return sortFactionStats(byFaction);
+}
+
+/** roster key → owning player id, for before/after diffing one step. */
+function snapshotFieldRoster(state: EngineState): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const p of state.players ?? []) {
+    const list = Array.isArray(p.fieldGenerals) ? (p.fieldGenerals as unknown[]) : [];
+    for (const raw of list) {
+      const entry = raw as Record<string, any> | null;
+      const general = (entry?.general ?? entry) as Record<string, any> | null;
+      const key = String(entry?.instanceId ?? general?.instanceId ?? general?.id ?? entry?.id ?? '');
+      if (key) map.set(key, p.id);
+    }
+  }
+  return map;
 }
 
 export interface MatchResult {
@@ -40,6 +120,8 @@ export interface MatchResult {
   actions: RecordedAction[];
   violations: Violation[];
   finalPhase: string;
+  /** Per-seat balance stats; absent only for hand-built legacy fixtures. */
+  seatStats?: SeatStats[];
 }
 
 export interface BatchSummary {
@@ -53,6 +135,7 @@ export interface BatchSummary {
   slowestMs: number;
   violations: { seed: number; step: number; code: string; detail: string }[];
   failedMatches: MatchResult[];
+  factionStats: FactionBalanceStat[];
 }
 
 function countAlive(state: EngineState): number {
@@ -94,11 +177,23 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
     const ledger = createLedgerSentinel();
     let status: MatchResult['status'] = 'stepsExhausted';
 
+    const seatStats: SeatStats[] = (state.players ?? []).map(p => ({
+      seat: p.id,
+      faction: String(p.faction ?? '?'),
+      deployed: 0,
+      deaths: 0,
+      kills: 0,
+      attacks: 0,
+      won: 0 as 0 | 1,
+    }));
+    const statsOf = (playerId: number): SeatStats | undefined => seatStats[playerId - 1];
+
     const firstPlayerId = state.currentPlayerId ?? 1;
 
     const dispatchStep = (action: GameAction, index: number, prepared?: GameEngine): boolean => {
       const engine = prepared ?? new GameEngine(state, { recordHistory: false });
       const aliveBefore = countAlive(state);
+      const rosterBefore = snapshotFieldRoster(state);
       const events = engine.dispatch(action);
       state = engine.state;
       const rejected = events.filter(ev => ev.type === 'ACTION_REJECTED');
@@ -116,6 +211,30 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
       if (found.length > 0) {
         violations.push(...found);
         return false;
+      }
+      // Balance bookkeeping only on fully accepted steps (violation steps end
+      // the match anyway, and their diff would be noise).
+      const rosterAfter = snapshotFieldRoster(state);
+      for (const [key, owner] of rosterAfter) {
+        if (!rosterBefore.has(key)) {
+          const s = statsOf(owner);
+          if (s) s.deployed += 1;
+        }
+      }
+      const removedOwners: number[] = [];
+      for (const [key, owner] of rosterBefore) {
+        if (!rosterAfter.has(key)) {
+          const s = statsOf(owner);
+          if (s) s.deaths += 1;
+          removedOwners.push(owner);
+        }
+      }
+      if (action.type === 'ATTACK') {
+        const actorStats = statsOf(action.playerId);
+        if (actorStats) {
+          actorStats.attacks += 1;
+          actorStats.kills += removedOwners.filter(owner => owner !== action.playerId).length;
+        }
       }
       return true;
     };
@@ -172,15 +291,22 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
       if (status === 'stepsExhausted' && state.phase === 'gameOver') status = 'won';
     }
 
+    const winnerId = winnerOf(state);
+    if (status === 'won' && winnerId != null) {
+      const winnerStats = statsOf(winnerId);
+      if (winnerStats) winnerStats.won = 1;
+    }
+
     return {
       config,
       status,
-      winnerId: winnerOf(state),
+      winnerId,
       steps: actions.length,
       durationMs: Date.now() - startedAt,
       actions,
       violations,
       finalPhase: String(state.phase),
+      seatStats,
     };
   });
 }
@@ -204,7 +330,9 @@ export function runBatch(options: BatchOptions): BatchSummary {
     slowestMs: 0,
     violations: [],
     failedMatches: [],
+    factionStats: [],
   };
+  const factionMap = new Map<string, FactionBalanceStat>();
   for (let i = 0; i < options.games; i += 1) {
     const seed = options.seed + i;
     const config = defaultMatchConfig(seed, options.configOverrides);
@@ -213,6 +341,7 @@ export function runBatch(options: BatchOptions): BatchSummary {
       seatPolicies: options.seatPolicies,
       maxSteps: options.maxSteps,
     });
+    absorbSeatStats(factionMap, result.seatStats);
     summary.games += 1;
     summary.totalMs += result.durationMs;
     summary.slowestMs = Math.max(summary.slowestMs, result.durationMs);
@@ -231,5 +360,6 @@ export function runBatch(options: BatchOptions): BatchSummary {
     }
   }
   summary.avgMs = summary.games > 0 ? Math.round(summary.totalMs / summary.games) : 0;
+  summary.factionStats = sortFactionStats(factionMap);
   return summary;
 }

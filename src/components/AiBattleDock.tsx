@@ -44,6 +44,7 @@ export default function AiBattleDock() {
   if (!developerMode || !payload) return null;
 
   const s = payload.summary;
+  const pct = (n: number, d: number) => (d > 0 ? `${((n / d) * 100).toFixed(1)}%` : '-');
   const files = (): ExportFile[] => [
     { name: '操作日志.txt', content: payload.artifacts.logText },
     { name: '录像.json', content: payload.artifacts.replayJson },
@@ -82,6 +83,43 @@ export default function AiBattleDock() {
         <p className="text-amber-400/60 text-xs">
           耗时 总 {s.totalMs}ms · 均 {s.avgMs}ms/局 · 最慢 {s.slowestMs}ms
         </p>
+        {s.factionStats && s.factionStats.length > 0 && (
+          <div className="pt-1">
+            <p className="text-amber-300 text-xs mb-1">
+              ⚖️ 势力平衡（胜率=胜席/出场 · 死亡率=阵亡/登场 · 击杀率=击杀/攻击）
+            </p>
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="text-amber-400/70">
+                  <th className="text-left font-normal">势力</th>
+                  <th className="text-right font-normal">出场</th>
+                  <th className="text-right font-normal">胜率</th>
+                  <th className="text-right font-normal">登场/阵亡</th>
+                  <th className="text-right font-normal">死亡率</th>
+                  <th className="text-right font-normal">攻击/击杀</th>
+                  <th className="text-right font-normal">击杀率</th>
+                </tr>
+              </thead>
+              <tbody>
+                {s.factionStats.map(f => (
+                  <tr key={f.faction} className="border-t border-amber-700/20">
+                    <td className="text-left font-bold">{f.faction}</td>
+                    <td className="text-right">{f.seats}</td>
+                    <td className="text-right">{pct(f.wins, f.seats)}</td>
+                    <td className="text-right">
+                      {f.deployed}/{f.deaths}
+                    </td>
+                    <td className="text-right">{pct(f.deaths, f.deployed)}</td>
+                    <td className="text-right">
+                      {f.attacks}/{f.kills}
+                    </td>
+                    <td className="text-right">{pct(f.kills, f.attacks)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {note && <p className="text-xs text-amber-200">{note}</p>}
       </div>
       <div className="px-4 pb-3 flex flex-wrap gap-2 text-sm">
