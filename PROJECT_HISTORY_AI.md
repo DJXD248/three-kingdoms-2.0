@@ -606,3 +606,37 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - 军备/补给候选各限 1-2 张；SUPPLY 敌占区+1 附加成本由 resolver 裁决，候选最多 2 张在常规手牌下足够，极端手牌下可能漏更优厚赔方案（不影响合法性对账，影响策略丰富度，阶段二复评）。
 - 主动技能（activeSelf/activeOther）无询问窗口（§12-9c 旧欠账），枚举器与人类受同样限制，AI 线阶段二维持此边界。
 - 试探性能=每候选一次 validate+resolve（无克隆），实测 2 AI 一局 54ms；阶段二 soak（千局）前应复测最坏手牌（40+ 张、多将领）下的候选规模。
+
+## Qoder 2.2.4：AI 对战线·阶段二——本地随机 AI-vs-AI 对局跑器（npm run ai-battle）
+
+**模型标记：** `[MODEL:QODER-AGENT]`
+**baseline_from：** `e4c2c64`（v2.2.3 的最终文档登记提交）
+**branch_scope：** `Qoder/2.0` 仓库
+
+### 决策与依据
+- 五阶段规划中的阶段二：随机策略 + 本地对局跑器。用户硬约束=交付后本地跑零代理额度→必须是 npm 脚本级工具；跑器的价值定位="随机探雷器"（用海量无脑合法对局轰炸引擎的状态机，验证规则健壮性与卡牌守恒），策略强度留给阶段三。
+- 每步镜像生产桥接链路：全新 `new GameEngine(state, opts)` + `syncPlayerSkills(engine, state)` + `engine.dispatch(action)`。不在长活引擎上累积状态，规避 TriggerEngine 按定义 id 的 Map 残留（离场将领旧注册在持久引擎上可能滞留）；与 engineExecutionBridge 每次动作重建的口径一致。
+- 内存治理：ReplayRecorder 每动作深克隆 before/after 且 dispatch 里 `replay.export()` 每次全量 structuredClone → O(n²) 时间 + 无界留存，千局 soak 不可行。方案=引擎构造参数 `recordHistory`（默认 true，UI 回放/快照行为逐字不变；false 旁路 replay.record 与 snapshots.capture，before/after 用活引用）。
+- 可复现性论证：引擎路径全部随机源（DrawResolver 洗牌/回洗、EventProcessor 坟场回洗、createCardDeck、动作 id）均走全局 Math.random → 单点 mulberry32 补丁即全局确定。但 `cloneWithRuntimeInstance` 的 instanceId 内嵌 Date.now+模块级计数器——跨进程复现会发不同身份证；对策=装配层显式打种子派生确定性戳（`ai<seed>_c<n>`），复放局与生成局卡 id 逐字节一致。
+- 复放随机流对齐：--replay 不能只发录制动作——枚举器探测会消耗随机数，跳过策略调用会让后续洗牌流错位。方案=每步照常调用策略（保持消耗），仅把出招替换为录制值，且录制值用字面对象重建（不再次 createAction，避免多耗一次 Math.random）。
+
+### 变更
+- 新增 `src/ai/rng.ts` / `matchSetup.ts`（装配：真实将卡卡堆抽样、skillInjection 注入三条已结算演练技能→每批都压编译器→触发器→效果链）/ `policies/randomPolicy.ts`（AiPolicy 契约：engine.legalActions 均匀取一，null=bug 信号）/ `invariants.ts` / `battleRunner.ts` / `battleCli.ts` / `battleRunner.test.ts`（4 例）。
+- `invariants.ts` 口径：卡牌账本=牌堆+弃牌+各家手牌/将池/坟场/场上(general+armorCards)，重复占位 DUPLICATED / 变多 MULTIPLIED / 非阵亡局减 VANISHED / 阵亡清扫当步重定基线；`legacy_armor_destroyed_*` 合成牌（EventProcessor L611 回退路径凭空造牌）豁免。结构检查：亡者留牌、本营血<0、血量/护甲越界、(zone|areaOwnerId|slot) 唯一性、槽位上界（营地/前线≤2、战斗区<人数）、抽牌窗存在性与归属、gameOver⇔幸存者≤1、winnerId 与唯一幸存者对账。
+- `battleRunner.ts`：开局显式 BEGIN_DRAW(initial,5)，其余全走策略→dispatch→ACTION_REJECTED 即 ENUMERATED_REJECTED；status won/stepsExhausted/violation/replay-diverged；runBatch 聚合。runner 无 fs（vitest 可直跑），落盘只在建 CLI。
+- `battleCli.ts`：--games --seed --players(2-4) --pool --deck --skill --max-steps --out --replay；违例局自动写 `ai-battle-failures/match-<seed>.json`（完整动作日志）；exit code 1=有违例。
+- `package.json`：`ai-battle` 脚本（esbuild 捆绑 CJS→node；esbuild 在 .bin 系 vite 传递依赖）；版本 2.2.3→2.2.4（lock 仅 root 两处；守卫抓到 json5@2.2.3 第三方撞版本号，未误伤）。`.gitignore` += `.ai-battle/` `ai-battle-failures/`。
+- 覆盖率棘轮 37/23/26/31 → 39/25/28/35。
+
+### 验证（本地会话内执行）
+- 失败证据（两处自身 bug，均被自家测试当场抓获后修复）：①首跑 4 例 3 败，CARD_VANISHED 定位到账本收集器只认"卡对象"没下钻 fieldGenerals 包装的 .general（首发 DEPLOY 即漏账）；②复放测试在"第一个引用卡对象的动作"（step 33 DEPLOY）报 GENERAL_NOT_IN_HAND——先后踩中录制数组 off-by-one（BEGIN_DRAW 占 actions[0]）与跨进程 instanceId 漂移两个真问题，逐一修复后 4 例全过。引擎本身零违例。
+- 本地 soak：`npm run ai-battle` 10 局热身 0 违例 → **1000 局双人（seed 1000..1999）0 违例**（均值 9ms/局、最慢 123ms）→ 400 局三人(pool10/deck80/skill0.7) 0 违例 → 300 局四人(deck90/skill0.9) 0 违例 → 200 局长局(pool16/deck120) 0 违例；合计 1900 局全过逐步不变量。随机策略座位胜负偏斜（双人 322/678）为无脑取牌正常现象，阶段三策略校准胜率。
+- `--replay` 跨进程回环实测：match-1000.json 落盘→CLI 读回→status/steps/winner 全同，exit 0。
+- `npm run check` = 0 错误；`npm run test` = **199 通过**（21 文件，+4）；`npm run test:coverage` 过新棘轮（实测 lines 40.93 / funcs 25.89 / branches 29.52 / stmts 35.63）；`npm run lint` = 0 错误 / 30 遗留警告（零新增）；`npm run build` 单文件成功（1,856.68 kB / gzip 540.90 kB）。
+- CI 远端复验：PENDING（推送后补记 run id）。
+
+### Unresolved / Risk
+- 不变量集合按"必死后成立"口径实现：ALIVE_BASE_DEPLETED（活着但本营血≤0）与 MISSING_GAME_OVER 在 1900 局未触发，但极端并发结算（同步双亡）路径未针对性构造，千局级 soak 仍属抽样而非穷尽。
+- 演练技能仅三条已结算效果（DRAW_CARD/DAMAGE），HEAL/GAIN_ARMOR 未注入（2.1.0 结算边界），阶段三若扩结算需同步扩模板。
+- PRACTICE_SKILLS 克隆产生的 `undefined__inst...` 技能 instanceId 属外观噪音（技能不进账本），未清理。
+- 引擎路径若未来引入 Math.random 之外的随机源（如 crypto/uuid），单点补丁确定性即破——battleRunner.test 的同种子复现例会第一时间报红。
