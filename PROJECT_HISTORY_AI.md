@@ -821,3 +821,25 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 ### Unresolved & Risk
 - 技能与文档双处两源：流程若变，先改仓库文档，再同步 Qoder 技能，以文档为准。
 - 文档内代理端口 10808、仓库名、登录态为当前事实；环境变化时按其"先直推、失败如实报"原则处理，勿迷信具体值。
+
+## Qoder 2.2.11：纯文档/契约冻结版（外部架构评审共识落地 + PROJECT_ARCH_MAP 建立）[Qoder/Qwen]
+
+### 背景（用户驱动）
+- 用户担心 2.x 高速迭代偏离 1.x 原作者（网页版 GPT）方向，要求导出 v2.2.10 源码包交其评审；GPT 静态审计结论：**玩法方向未偏离**，但"功能推进速度已快过架构与文档同步速度"，实测抓到 README（131 例）、AGENTS（910 行/status 幽灵模块）、CHANGELOG（谎称删除 start.bat）三处漂移，并建议进入稳定期、建立全项目架构地图。
+- Qoder 逐条对源码核实（全部属实）后与 GPT 在浏览器会话内完成一轮技术讨论（常驻引擎/重建对账、RNG 入 EngineState+录像记结果、CardSelectionPolicy、旧录像只读原则、拆分顺序、阶段 A~F 排期），用户以"我相信你们的合作"拍板开工 2.2.11。
+
+### 变更（零行为改动）
+- README：测试数 264/32（as-of 戳）、补 ai-battle/ai-arena 命令、文档清单加 ARCH_MAP/RELEASE_PIPELINE、日常迭代流程写明五文档登记纪律。
+- AGENTS：模块地图删 `card/`、`status/` 幽灵条目并刷新文件名；gameStore 956 / EventProcessor 852（as-of 戳）；棘轮 46/32/34/41、警告 30 条刷新；加"volatile numbers 以 ARCH_MAP 为准"指针。
+- CHANGELOG：新增 2.2.11 条目 + 补建 2.0.1/2.0.2/2.0.3/2.1.0/2.2.0-2.2.10 年表；2.0.0"Removed start.bat"更正为从未删除。
+- `PROJECT_ARCH_MAP.md`（新）：十字段模块表（含 grep 实证 DORMANT 四模块与 LEGACY 旧 AI 三件套）、权威执行链图、C 注记（引擎重建式现状/三率口径/unattended 不变量）、D-1~D-8 债务决议表、E 诚实清单。
+- `src/rules/legalActions.ts`：getLegalActions JSDoc 由"every action"钉准为**候选枚举契约**（引用 ARCH_MAP D-5），行为零变化。
+- `PROJECT_RELEASE_PIPELINE.md`：铁律增补第四项（周边文档核对义务+根因）；HANDOFF §1 读取顺序插 ARCH_MAP、§3 本轮段、§9 验证条、§12-15 八项决议登记、§13 稳定期状态。
+
+### 验证
+- check 0 错误；264 测试通过（32 文件，零增删）；覆盖率棘轮 46/32/34/41 通过；lint 0 错误/30 遗留警告（零新增）；build 单文件成功（1,916.32 kB / gzip 562.27 kB）。无行为改动故免浏览器 E2E。CI 远端复验 PENDING（推送后回填）。
+
+### Unresolved & Risk
+- 稳定期纪律：阶段 A（本版）~F 排期钉在 ARCH_MAP D 表，未经用户解锁不得偷跑架构/功能改动。
+- ARCH_MAP 的 Introduced 列 1.x 区间为约记、controllers/RuleEngine 边界属低把握条目（E 清单已标 UNVERIFIED），后续动到时先对码再信图。
+- 讨论全程未消耗 GPT 附件额度（纯文本往返）；若 GPT 需逐文件复核，按仓库外 `GPT_REVIEW_PROMPT_20260924.md` 的粘贴模板走。
