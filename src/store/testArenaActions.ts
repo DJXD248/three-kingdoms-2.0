@@ -4,6 +4,9 @@ import { allGenerals, getGeneralsByFaction } from '../data/generals';
 import type { General } from '../data/generals';
 import { cloneWithRuntimeInstance, getRuntimeCardId } from '../utils/runtimeIdentity';
 import type { GameState, Player } from './gameStore';
+import type { EngineState } from '../core/GameState';
+import { dispatchStoreAction } from './engineExecutionBridge';
+import { createAction } from '../action/ActionTypes';
 import { resetLiveReplay } from '../replay/liveReplayRecorder';
 
 export type TestArenaActions = Pick<
@@ -377,3 +380,62 @@ export function buildTestArenaActions(get: GetState, set: SetState, shuffle: Shu
     },
   };
 }
+
+// ── shared test-arena state derivation (extracted from gameStore.ts, stage B) ──
+
+const settleDrawInTestArena = (state: GameState, engineState: EngineState): EngineState => {
+  let nextEngineState = engineState;
+  let draw = nextEngineState.drawState;
+
+  if (draw?.baseLossPending) {
+    nextEngineState = dispatchStoreAction(
+      { ...state, engineState: nextEngineState },
+      createAction('RESOLVE_BASE_LOSS', draw.playerId, { reason: draw.reason }),
+    ).engineState;
+    draw = nextEngineState.drawState;
+  }
+
+  if (draw) {
+    if (draw.totalCards > 0 && nextEngineState.players.some(player => player.id === draw?.playerId && player.isAlive !== false)) {
+      nextEngineState = dispatchStoreAction(
+        { ...state, engineState: nextEngineState },
+        createAction('DRAW', draw.playerId, { fromGeneralPool:0, fromCardPool:draw.totalCards, reason:draw.reason }),
+      ).engineState;
+    }
+
+    const remainingDraw = nextEngineState.drawState;
+    if (remainingDraw) {
+      nextEngineState = dispatchStoreAction(
+        { ...state, engineState: nextEngineState },
+        createAction('CONFIRM_DRAW', remainingDraw.playerId, { reason: remainingDraw.reason }),
+      ).engineState;
+    }
+  }
+
+  return nextEngineState;
+};
+
+export const buildTestArenaState = (state: GameState, engineState: EngineState): Partial<GameState> => {
+  const resolvedEngineState = settleDrawInTestArena(state, engineState);
+  const nextPlayerIndex = resolvedEngineState.players.findIndex(player => player.id === resolvedEngineState.currentPlayerId);
+  const gameOver = resolvedEngineState.phase === 'gameOver';
+  const winnerId = typeof resolvedEngineState.metadata?.winnerId === 'number' ? resolvedEngineState.metadata.winnerId : null;
+
+  return {
+    engineState: resolvedEngineState,
+    players: resolvedEngineState.players as unknown as Player[],
+    cardDeck: resolvedEngineState.deck as GameCard[],
+    discardPile: resolvedEngineState.discardPile as GameCard[],
+    currentPlayerIndex: nextPlayerIndex >= 0 ? nextPlayerIndex : state.currentPlayerIndex,
+    currentRound: resolvedEngineState.round || state.currentRound,
+    phase: gameOver ? 'gameOver' as const : 'testArena' as const,
+    turnPhase: gameOver ? 'end' as const : 'main' as const,
+    winnerId: gameOver ? winnerId : state.winnerId,
+    gameOverBanner: null,
+    defeatEvent: null,
+    drawContext: null,
+    pendingTurnTransition: null,
+    revealedDrawCards: [],
+    isFirstTurn: false,
+  };
+};

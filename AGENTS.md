@@ -34,7 +34,7 @@ src/
 +-- core/            Game engine: GameEngine, EventProcessor, GameState, EventBus, EngineDispatchFlow
 +-- action/          Action system: ActionTypes, ActionDispatcher, ResolverRegistry
 |   +-- resolvers/   Attack, Deploy, Move, Supply, Surrender, Turn, Armor, Draw...
-+-- store/           Zustand store: gameStore, gameStateAdapter, engineAwareSetter, engineExecutionBridge
++-- store/           Zustand store: gameStore (+ gameStoreTypes/gameStoreEditorActions/gameStoreRecovery split in 2.2.12), gameStateAdapter, engineAwareSetter, engineExecutionBridge, testArenaActions, editorPersistence, localGameSnapshot
 +-- data/            Card/general/skill data definitions + registries
 +-- domain/          Game rules: combat, cost, regions, constants
 +-- rules/           Rule engine: ActionValidator, RuleEngine, legalActions (candidate enumerator)
@@ -108,7 +108,7 @@ Excel files (.xlsx) are imported via the `importer/` module:
 
 | File | Purpose |
 |------|---------|
-| `src/store/gameStore.ts` | Central Zustand store (956 lines as of 2.2.11) -- app/session state + engine projection |
+| `src/store/gameStore.ts` | Central Zustand store (622 lines as of 2.2.12; types/editor/recovery/test-arena slices split out per D-6 stage B) -- app/session state + engine projection |
 | `src/core/EventProcessor.ts` | Event application logic (852 lines as of 2.2.11) -- how state changes |
 | `src/core/GameEngine.ts` | Game engine orchestrator (rebuilt per dispatch from EngineState -- see PROJECT_ARCH_MAP lifecycle) |
 | `src/store/gameStateAdapter.ts` | Engine <-> Store state synchronization |

@@ -1,221 +1,34 @@
 import { create } from 'zustand';
-import { General, Faction, allGenerals, SkillTag, SkillTriggerConfig, SkillEffect, SkillEffectMode } from '../data/generals';
+import { General } from '../data/generals';
 import { GameCard, createCardDeck } from '../data/cards';
-import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle, defaultSeatModes, pickAiDraftPicks, type AiSeatMode, type AiSeatTier } from '../setup/runtimeSetup';
+import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle, defaultSeatModes, pickAiDraftPicks } from '../setup/runtimeSetup';
 import { dispatchStoreAction } from './engineExecutionBridge';
-import { applyEngineStateToStore, buildDrawContext, describeDrawSubtitle, engineStateToStoreProjection, isRestorableEngineState, storeStateToEngineState } from './gameStateAdapter';
+import { buildDrawContext, describeDrawSubtitle, engineStateToStoreProjection, storeStateToEngineState } from './gameStateAdapter';
 import type { EngineState } from '../core/GameState';
 import { createAction } from '../action/ActionTypes';
 import type { SkillActivation } from '../skills/dataTypes';
 import {
   loadPersistedSkillEdits,
-  persistSkillEdits,
   loadPersistedGeneralEdits,
-  persistGeneralEdits,
   loadDisabledGenerals,
-  persistDisabledGenerals,
 } from './editorPersistence';
-import { buildTestArenaActions } from './testArenaActions';
+import { buildTestArenaActions, buildTestArenaState } from './testArenaActions';
+import { buildEditorActions } from './gameStoreEditorActions';
+import { buildRecoveryActions } from './gameStoreRecovery';
 import { cloneWithRuntimeInstance } from '../utils/runtimeIdentity';
 import { createEngineAwareSetter } from './engineAwareSetter';
-import { StateSerializer } from '../network/StateSerializer';
 import { clearLocalGameSnapshot, saveLocalGameSnapshot } from './localGameSnapshot';
 import { resetLiveReplay } from '../replay/liveReplayRecorder';
 import { loadReplaySettings, persistReplaySettings } from '../replay/replayStorage';
+import type { GamePhase, DrawContext, Player, GameState } from './gameStoreTypes';
 
-// ── types ────────────────────────────────────────────────────────────────────
-
-export type GamePhase =
-  | 'menu' | 'codex' | 'settings' | 'createRoom' | 'lobby'
-  | 'diceRoll' | 'factionAssign' | 'generalDraft'
-  | 'drawing'   // ← single unified draw phase
-  | 'playing' | 'gameOver'
-  | 'rules'
-  | 'testArena'; // developer test mode
-
-export type DrawReason = 'initial' | 'turnStart' | 'compensation';
-
-export interface DrawContext {
-  reason: DrawReason;
-  playerId: number;
-  totalCards: number;
-  phaseAfter: GamePhase;
-  subtitle: string;
-  baseLossPending?: boolean;
-  resumePhase?: string;
-  resumePlayerId?: number | null;
-}
-
-export interface Position { zone:'camp'|'front'|'battle'; slot:number; areaOwnerId:number|null; }
-
-export interface FieldGeneral {
-  general:General; currentHp:number; maxHp:number;
-  meleeAtk:number; rangedAtk:number; armor:number;
-  currentArmor:number;   // 当前护甲值（动态，由军备牌叠加）
-  armorCards:GameCard[]; // 实际附着在将领上的军备卡实例
-  isArming:boolean;      // 整备状态（叠甲后本回合不能移动/攻击）
-  hasMoved:boolean; hasAttacked:boolean; hasSupplied:boolean; justDeployed:boolean;
-  position:Position; ownerId:number;
-}
-
-export interface Player {
-  id:number; name:string; faction:Faction|null; seatOrder:number; diceRoll:number;
-  generalPool:General[]; hand:(General|GameCard)[]; fieldGenerals:FieldGeneral[];
-  baseHp:number; baseMaxHp:number; isAlive:boolean; isSpectating:boolean;
-  avatarGeneral:General|null; graveyard:General[];
-  // v2.2.9 human-vs-AI: stamped at createRoom from seatModes; survives engine
-  // dispatch clones via the EnginePlayer index signature.
-  isAi?:boolean; aiTier?:AiSeatTier;
-}
-
-export interface GameState {
-  phase:GamePhase; playerCount:number; roomName:string; players:Player[];
-  /** Phase 5.35.6: canonical runtime state for migrated engine flows. */
-  engineState:EngineState;
-  currentPlayerIndex:number; currentRound:number;
-  cardDeck:GameCard[]; discardPile:GameCard[]; battlefieldSlots:number;
-  turnPhase:'start'|'draw'|'main'|'end'; winnerId:number|null;
-  gameOverBanner:string|null;
-  // Dramatic "X势力击破" overlay shown on the board before results / on eliminations
-  defeatEvent:{ faction:Faction|null; name:string } | null;
-  pendingTurnTransition:{ nextIndex:number; nextRound:number } | null;
-  isFirstTurn:boolean;
-  // Skill system
-  skillActivations:SkillActivation[];
-  // Unified draw
-  drawContext:DrawContext|null;
-  revealedDrawCards:(General|GameCard)[];
-  // For initial draw: track which player index is drawing next
-  initialDrawPlayerIndex:number;
-  // Draft
-  draftGenerals:General[]; draftQunGenerals:General[];
-  selectedDraftGenerals:General[]; draftPlayerIndex:number;
-  // v2.2.9 human-vs-AI: per-seat mode chosen in CreateRoom, stamped onto
-  // players at createRoom (index = pre-dice seat).
-  seatModes:AiSeatMode[];
-  settings:{
-    resolution:string;windowMode:string;animationSpeed:number;masterVolume:number;musicVolume:number;sfxVolume:number;autoSave:boolean;
-    // 2.2.6 replay/log saving (persisted in localStorage via replayStorage)
-    autoSaveReplay:boolean;autoSaveLog:boolean;replayDirName:string|null;
-  };
-  developerMode:boolean;
-  skillEdits:Record<string, {name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[]>;
-  generalEdits:Record<string, {name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number}>;
-  disabledGenerals:Set<string>;
-
-  setPhase:(p:GamePhase)=>void; setPlayerCount:(c:number)=>void; setRoomName:(n:string)=>void;
-  createRoom:()=>void; startGame:()=>void; rollDice:()=>void; assignFactions:()=>void;
-  distributeDraftGenerals:()=>void; selectDraftGeneral:(g:General)=>void; confirmDraft:()=>void;
-  setSeatMode:(index:number, patch:Partial<AiSeatMode>)=>void;
-  aiAutoDraft:()=>void;
-  // Unified draw actions
-  executeDraw:(fromPool:number,fromDeck:number)=>boolean;
-  confirmDraw:()=>void;
-  resolvePendingDrawLoss:()=>void;
-  deployGeneral:(g:General,slot:number,consume:(General|GameCard)[])=>boolean;
-  moveGeneral:(id:string,target:Position,consume?:General|GameCard)=>void;
-  attackTarget:(atkId:string,tgtId:string,ranged:boolean,consume?:General|GameCard)=>void;
-  supplyGeneral:(id:string,cards:(General|GameCard)[])=>void;
-  armGeneral:(id:string,armorCards:GameCard[])=>boolean;
-  endTurn:()=>void; surrender:(id:number)=>void;
-  updateSettings:(s:Partial<GameState['settings']>)=>void;
-  clearDefeatEvent:()=>void;
-  clearSkillActivation:(id:string)=>void;
-  toggleDeveloperMode:(password:string)=>boolean;
-  setDeveloperMode:(v:boolean)=>void;
-  updateSkillEdit:(generalId:string, skills:{name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[])=>void;
-  updateGeneralEdit:(generalId:string, edits:{name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number})=>void;
-  batchDeleteEdits:(generalIds:string[])=>void;
-  toggleDisabledGeneral:(id:string)=>void;
-  batchToggleDisabled:(ids:string[],disabled:boolean)=>void;
-  importSkillEditsFromText:(text:string)=>number;
-  getGeneralWithEdits:(general:General)=>General;
-  createSerializedSnapshot:(roomId:string)=>string;
-  restoreEngineState:(snapshot:unknown)=>boolean;
-  restoreSerializedSnapshot:(data:string,expectedRoomId?:string)=>boolean;
-  resetGame:()=>void; setCurrentPlayerIndex:(i:number)=>void;
-  // ── test arena ──
-  isTestMode:boolean;
-  testActionCounts:Record<string, {attacks:number;moves:number;supplies:number}>;
-  startTestArena:()=>void;
-  testDrawCards:(playerId:number,count:number)=>void;
-  testDrawSpecificGeneral:(playerId:number,generalId:string)=>void;
-  testDiscardCard:(playerId:number,cardId:string)=>void;
-  testAddPlayer:()=>void;
-  testRemovePlayer:(playerId:number)=>void;
-  testSetGeneralHp:(generalId:string,hp:number)=>void;
-  testSetGeneralMaxHp:(generalId:string,maxHp:number)=>void;
-  testDamageGeneral:(generalId:string,amount:number,type:'attack'|'skill'|'lose')=>void;
-  testHealGeneral:(generalId:string,amount:number)=>void;
-  testSetBaseHp:(playerId:number,hp:number)=>void;
-  testDamageBase:(playerId:number,amount:number,type:'attack'|'skill'|'lose')=>void;
-  testHealBase:(playerId:number,amount:number)=>void;
-  testResetActions:(generalId:string)=>void;
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
+// Store-level types live in gameStoreTypes.ts (stage B split); re-exported
+// here so existing consumers keep importing them from this module.
+export * from './gameStoreTypes';
 
 // ── store ────────────────────────────────────────────────────────────────────
 
 const defaultDraw:DrawContext|null=null;
-
-const settleDrawInTestArena = (state: GameState, engineState: EngineState): EngineState => {
-  let nextEngineState = engineState;
-  let draw = nextEngineState.drawState;
-
-  if (draw?.baseLossPending) {
-    nextEngineState = dispatchStoreAction(
-      { ...state, engineState: nextEngineState },
-      createAction('RESOLVE_BASE_LOSS', draw.playerId, { reason: draw.reason }),
-    ).engineState;
-    draw = nextEngineState.drawState;
-  }
-
-  if (draw) {
-    if (draw.totalCards > 0 && nextEngineState.players.some(player => player.id === draw?.playerId && player.isAlive !== false)) {
-      nextEngineState = dispatchStoreAction(
-        { ...state, engineState: nextEngineState },
-        createAction('DRAW', draw.playerId, { fromGeneralPool:0, fromCardPool:draw.totalCards, reason:draw.reason }),
-      ).engineState;
-    }
-
-    const remainingDraw = nextEngineState.drawState;
-    if (remainingDraw) {
-      nextEngineState = dispatchStoreAction(
-        { ...state, engineState: nextEngineState },
-        createAction('CONFIRM_DRAW', remainingDraw.playerId, { reason: remainingDraw.reason }),
-      ).engineState;
-    }
-  }
-
-  return nextEngineState;
-};
-
-const buildTestArenaState = (state: GameState, engineState: EngineState): Partial<GameState> => {
-  const resolvedEngineState = settleDrawInTestArena(state, engineState);
-  const nextPlayerIndex = resolvedEngineState.players.findIndex(player => player.id === resolvedEngineState.currentPlayerId);
-  const gameOver = resolvedEngineState.phase === 'gameOver';
-  const winnerId = typeof resolvedEngineState.metadata?.winnerId === 'number' ? resolvedEngineState.metadata.winnerId : null;
-
-  return {
-    engineState: resolvedEngineState,
-    players: resolvedEngineState.players as unknown as Player[],
-    cardDeck: resolvedEngineState.deck as GameCard[],
-    discardPile: resolvedEngineState.discardPile as GameCard[],
-    currentPlayerIndex: nextPlayerIndex >= 0 ? nextPlayerIndex : state.currentPlayerIndex,
-    currentRound: resolvedEngineState.round || state.currentRound,
-    phase: gameOver ? 'gameOver' as const : 'testArena' as const,
-    turnPhase: gameOver ? 'end' as const : 'main' as const,
-    winnerId: gameOver ? winnerId : state.winnerId,
-    gameOverBanner: null,
-    defeatEvent: null,
-    drawContext: null,
-    pendingTurnTransition: null,
-    revealedDrawCards: [],
-    isFirstTurn: false,
-  };
-};
 
 const deriveResultState = (state: GameState, engineState: EngineState, fallbackPhase: GamePhase = state.phase) => {
   const winnerId = typeof engineState.metadata?.winnerId === 'number' ? engineState.metadata.winnerId : null;
@@ -752,159 +565,12 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     skillActivations: st.skillActivations.filter(a => a.id !== id),
   })),
 
-  toggleDeveloperMode: password => {
-    if (password !== 'djxdzx000') return false;
-    set((st: GameState) => ({ developerMode: !st.developerMode }));
-    return true;
-  },
-
-  setDeveloperMode: v => set({ developerMode: v }),
-
-  updateSkillEdit: (generalId, skills) => {
-    const next = { ...get().skillEdits, [generalId]: skills };
-    persistSkillEdits(next);
-    set({ skillEdits: next });
-  },
-
-  updateGeneralEdit: (generalId, edits) => {
-    const next = { ...get().generalEdits, [generalId]: edits };
-    persistGeneralEdits(next);
-    set({ generalEdits: next });
-  },
-
-  batchDeleteEdits: generalIds => {
-    const skillEdits = { ...get().skillEdits };
-    const generalEdits = { ...get().generalEdits };
-    for (const id of generalIds) {
-      delete skillEdits[id];
-      delete generalEdits[id];
-    }
-    persistSkillEdits(skillEdits);
-    persistGeneralEdits(generalEdits);
-    set({ skillEdits, generalEdits });
-  },
-
-  toggleDisabledGeneral: id => {
-    const next = new Set(get().disabledGenerals);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    persistDisabledGenerals(next);
-    set({ disabledGenerals: next });
-  },
-
-  batchToggleDisabled: (ids, disabled) => {
-    const next = new Set(get().disabledGenerals);
-    for (const id of ids) {
-      if (disabled) next.add(id); else next.delete(id);
-    }
-    persistDisabledGenerals(next);
-    set({ disabledGenerals: next });
-  },
-
-  importSkillEditsFromText: text => {
-    const validTags = ['锁定技', '限定技', '登场技', '遗计技', '觉醒技'];
-    const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
-    let count = 0;
-    const edits = { ...get().skillEdits };
-    for (const line of lines) {
-      const parts = line.split('|').map(part => part.trim());
-      if (parts.length < 2) continue;
-      const general = allGenerals.find(g => g.name === parts[0]);
-      if (!general) continue;
-      const skillNames = parts[1].split(',').map(v => v.trim()).filter(Boolean);
-      const descriptions = parts.length >= 3 ? parts[2].split(',').map(v => v.trim()) : [];
-      const tags = parts.length >= 4 ? parts[3].split(',').map(v => v.trim()) : [];
-      edits[general.id] = skillNames.map((name, index) => ({
-        name,
-        description: descriptions[index] || '',
-        tag: tags[index] && validTags.includes(tags[index]) ? tags[index] as SkillTag : undefined,
-      }));
-      count++;
-    }
-    persistSkillEdits(edits);
-    set({ skillEdits: edits });
-    return count;
-  },
-
-  getGeneralWithEdits: general => {
-    const { skillEdits, generalEdits } = get();
-    const result = { ...general };
-    const gEdits = generalEdits[general.id];
-    if (gEdits) {
-      if (gEdits.name) result.name = gEdits.name;
-      if (gEdits.faction) result.faction = gEdits.faction;
-      if (gEdits.hp != null) {
-        result.hp = gEdits.hp;
-        result.type = gEdits.hp >= 4 ? '武将' : '文将';
-      }
-      if (gEdits.meleeAtk != null) result.meleeAtk = gEdits.meleeAtk;
-      if (gEdits.rangedAtk != null) result.rangedAtk = gEdits.rangedAtk;
-    }
-    const sEdits = skillEdits[general.id];
-    if (sEdits) {
-      result.skills = sEdits.map(skill => ({
-        name: skill.name,
-        description: skill.description,
-        tag: skill.tag,
-        trigger: skill.trigger,
-        effects: skill.effects,
-        effectMode: skill.effectMode,
-        forced: skill.forced,
-      }));
-    }
-    return result;
-  },
+  ...buildEditorActions(get, set),
 
   // UI compatibility helpers. These do not contain game rules.
   clearDefeatEvent:()=>set({defeatEvent:null}),
 
-  restoreEngineState: snapshot => {
-    if (!isRestorableEngineState(snapshot)) {
-      console.error('[Recovery] Invalid EngineState snapshot rejected');
-      return false;
-    }
-    // Restored matches have no in-memory action history before this point:
-    // the live replay capture restarts from the recovery position.
-    resetLiveReplay();
-    applyEngineStateToStore(snapshot, patch => set(patch as Partial<GameState>));
-    return true;
-  },
-
-  createSerializedSnapshot: roomId => {
-    const normalizedRoomId = typeof roomId === 'string' ? roomId.trim() : '';
-    if (!normalizedRoomId) {
-      throw new Error('[Recovery] Snapshot room ID is required');
-    }
-    const serializer = new StateSerializer();
-    const snapshotRoomName = get().roomName || normalizedRoomId;
-    const snapshotPlayerCount = Number.isFinite(get().playerCount)
-      ? Number(get().playerCount)
-      : Math.max(get().players.length, get().engineState.players.length || 0);
-    return serializer.serialize(serializer.createSnapshot(normalizedRoomId, get().engineState, snapshotRoomName, snapshotPlayerCount));
-  },
-
-  restoreSerializedSnapshot: (data, expectedRoomId) => {
-    try {
-      const snapshot = new StateSerializer().deserialize(data);
-      if (expectedRoomId !== undefined && snapshot.roomId !== expectedRoomId) {
-        console.error('[Recovery] Snapshot room mismatch rejected');
-        return false;
-      }
-      const restored = get().restoreEngineState(snapshot.state);
-      if (!restored) {
-        clearLocalGameSnapshot();
-        return false;
-      }
-      set({
-        roomName: snapshot.roomName || snapshot.roomId || get().roomName,
-        playerCount: Number.isFinite(snapshot.playerCount) ? snapshot.playerCount : snapshot.state.players.length,
-      });
-      return true;
-    } catch (error) {
-      clearLocalGameSnapshot();
-      console.error('[Recovery] Serialized snapshot rejected', error);
-      return false;
-    }
-  },
+  ...buildRecoveryActions(get, set),
 
   resetGame:()=>{
     resetLiveReplay();

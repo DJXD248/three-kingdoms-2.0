@@ -48,9 +48,10 @@
 | `data/generals.ts`、`cards.ts`、`registries/*` | Data | 卡牌/将领静态数据与注册表 | CANONICAL | 数据内容 | 进程级 | PURE | UT/E2E | — | 1.x |
 | `skills/skillCompiler.ts` → `SkillTriggerBridge.ts` → `triggers/TriggerEngine.ts` | Skill | 数据化技能唯一运行时链路 | CANONICAL | 技能何时触发、产出什么事件 | 随引擎 | PURE（编译）/RNG（触发结算可致伤） | UT/CI/E2E（2.2.1 真机贯通） | 触发覆盖不全（onTurnEnd 等待接）；技能致死未自然产 DEATH→onKill 断链（D-3） | 2.1.0 |
 | `skills/skillExcelFormat.ts`、`SkillDataRegistry.ts` | Skill | Excel 六列导入导出与数据登记 | CANONICAL | — | request/进程级 | PURE | UT | — | 2.2.0 |
-| `store/gameStore.ts`（956 行） | Store | 会话态 + UI 投影 + 编辑器/TestArena/recovery/replay 设置等多职责混合 | CANONICAL（会话态） | 界面与流程状态；对局真相仍以 EngineState 为准 | 页面级（内存，刷新即失） | TIME/EXT | UT/E2E | 热点文件，D 阶段 B 第一拆分红（GPT 评审确认非"规则回灌"，是"应用层 Store+兼容层"） | 1.x |
+| `store/gameStore.ts`（622 行，2.2.12 时点；原 956） | Store | 会话态 + UI 投影 + 对局动作装配（编辑器/恢复/演练场切片已外移） | CANONICAL（会话态） | 界面与流程状态；对局真相仍以 EngineState 为准 | 页面级（内存，刷新即失） | TIME/EXT | UT/E2E | D-6 阶段 B 第一刀已落地（2.2.12 纯移动拆分，见 gameStoreTypes/EditorActions/Recovery 行）；GPT 评审确认非"规则回灌"，是"应用层 Store+兼容层" | 1.x |
+| `store/gameStoreTypes.ts`（135 行）、`gameStoreEditorActions.ts`（137 行）、`gameStoreRecovery.ts`（70 行） | Store | 2.2.12 自 gameStore 拆出：类型面全量、编辑器/开发者动作工厂、快照恢复动作工厂 | CANONICAL（gameStore 的组成部分；gameStore 再导出类型保持消费口径） | 无独立权威——宿主仍是 gameStore | 页面级 | 编辑器/恢复路径 EXT | UT（复用 gameStore 测试面）/E2E 冒烟 | 纯移动拆分零行为变化；后续切片按同模式继续 | 2.2.12 |
 | `store/engineExecutionBridge.ts` | Store | store↔引擎桥（重建式执行发生地） | CANONICAL | — | action-scoped | PURE | UT/IT | D-1 的落点 | 1.x |
-| `store/gameStateAdapter.ts`、`engineAwareSetter.ts`、`localGameSnapshot.ts`、`editorPersistence.ts`、`testArenaActions.ts` | Store | 引擎↔store 投影、存档、编辑器持久化、演练场动作 | CANONICAL/COMPAT | 投影规则归 adapter | 页面级 | EXT（localStorage） | UT | — | 1.x-2.x |
+| `store/gameStateAdapter.ts`、`engineAwareSetter.ts`、`localGameSnapshot.ts`、`editorPersistence.ts`、`testArenaActions.ts`（441 行，2.2.12 起含 buildTestArenaState/settleDrawInTestArena） | Store | 引擎↔store 投影、存档、编辑器持久化、演练场动作+演练场状态推导 | CANONICAL/COMPAT | 投影规则归 adapter | 页面级 | EXT（localStorage） | UT | — | 1.x-2.x |
 | `ai/policies/*`（三档策略+随机） | AI | 从候选中选动作（激进>均衡>保守>随机，擂台 3400 局零违例） | CANONICAL | 选什么动作 | 会话级 | PURE（零随机——司机卡死检测前提） | UT/arena/CI | 权重静态手工标定，规则数值变动需重跑 ai-arena | 2.2.7 |
 | `ai/aiTurnDriver.ts` | AI | 生产 store 链路的人机座位司机（征召/抽牌/出招/护栏） | CANONICAL | AI 座位节奏 | 对局级 | PURE 前提 | UT/E2E 两局 | 引入随机策略需重审 lastChoiceKey 回退 | 2.2.9 |
 | `ai/battleRunner.ts`、`arena.ts`、`battleReport.ts`、`matchSetup.ts`、`invariants.ts`、`battleHash.ts`、`rng.ts`、`browserExport.ts`、`arenaCli.ts`、`battleCli.ts` | AI | 离线模拟/擂台/报告/不变量/种子 RNG/导出 | CANONICAL（工具线） | 仅分析用途，不触生产 | 进程级（node/浏览器窗） | RNG（withSeededRandom 全局替换 Math.random，try/finally 恢复；见 D-2） | UT/CI + 千局 soak | seatModes 等会话态不持久化 | 2.2.4-2.2.8 |
@@ -82,7 +83,7 @@
 | D-3 | 技能 Effect/Trigger 覆盖半成品：HEAL/GAIN_ARMOR 未完整结算；onTurnEnd/onOtherDeploy/onBecomingTarget 等未全接；技能致死不产 DEATH→onKill 断链 | 先钉死 Event→Trigger→Effect→State mutation 权威边界再加覆盖面，防第二轮技能膨胀 | 阶段 C |
 | D-4 | legacy 护甲兜底 `legacy_armor_destroyed_${Date.now()}` 伪造牌实例（EventProcessor.ts:613） | 确认全部调用方供真实实例后移除；**旧录像永不回填改写**（历史证据）；加 ReplayHeader{schemaVersion,gameVersion}，旧录像经 Adapter 转 canonical 只读加载 | 阶段 B 定策、C 执行 |
 | D-5 | 候选枚举"指定卡消耗"扩展性 | 标志挂 **Action 语义**不挂卡：`CardSelectionPolicy: EQUIVALENT / INSTANCE_REQUIRED (/PREFERRED)`；EQUIVALENT 保持代表卡收窄防动作空间爆炸 | 需求出现时 |
-| D-6 | 热点文件多职责 | 拆分顺序已钉：**gameStore → EventProcessor（单一 processEvent 入口+事件族分文件）→ SkillEditor → GameBoard/TestArena**；EventProcessor 拆分不许出现第二入口 | 阶段 B（前二）/F（后三） |
+| D-6 | 热点文件多职责 | 拆分顺序已钉：**gameStore → EventProcessor（单一 processEvent 入口+事件族分文件）→ SkillEditor → GameBoard/TestArena**；EventProcessor 拆分不许出现第二入口。**进度：gameStore 第一刀已落地（2.2.12 纯移动拆出 types/编辑器/恢复/演练场切片，956→622 行）；EventProcessor 待拆** | 阶段 B（前二）/F（后三） |
 | D-7 | `npm run build` 内嵌 `npm install`（构建依赖网络、伪装安装语义） | 评审异议记录在案；本仓离线单文件分发场景为初因，改动需连同分发文档，列入 2.3 议题而非 2.2.11 | 2.3 议 |
 | D-8 | 周边文档易漂移 | 2.2.11 起登记纪律扩至五文档（README/AGENTS/CHANGELOG 纳入核对），见 PROJECT_RELEASE_PIPELINE.md | **已落地** |
 

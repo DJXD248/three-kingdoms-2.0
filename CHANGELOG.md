@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.12] - 2026-09-24
+
+Stabilization stage B, first split (decision D-6): `gameStore.ts` shrunk 956 -> 622 lines via **pure verbatim moves, zero behavior change**.
+
+- `src/store/gameStoreTypes.ts` (new): all store-level types (GamePhase/DrawContext/Player/GameState...); gameStore re-exports them so consumer imports are unchanged.
+- `src/store/gameStoreEditorActions.ts` (new): developer-mode + skill/general edit slice as `buildEditorActions(get, set)` factory (same pattern as `buildTestArenaActions`).
+- `src/store/gameStoreRecovery.ts` (new): snapshot serialization/restore slice as `buildRecoveryActions(get, set)`.
+- `settleDrawInTestArena` / `buildTestArenaState` moved into `testArenaActions.ts` (test-arena cohesion; 297 -> 441 lines).
+- Verified: check 0 errors / 264 tests pass (32 files, zero add/remove) / coverage ratchet gates 41/34/32/46 hold (measured 41.96/34.85/32.84/47) / lint 0 errors 30 legacy warnings / build 1,916.39 kB single file. Browser smoke via dev-only `__TK__`: createRoom->lobby, editor persist/merge/delete round-trip, snapshot create+restore true, testArena enter + endTurn stays mounted, resetGame keeps preferences; console 0 errors.
+
 ## [2.2.11] - 2026-09-24
 
 Documentation / contract-freeze release. **No gameplay behavior, engine, or rule changes.**
