@@ -599,7 +599,7 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 ### 验证（本地会话内执行）
 - 失败证据（修复前，按引擎为准修正）：测试初稿断言"战斗区不可远程攻本营"，枚举对账环节暴露引擎实际**接受** battle→base 远程攻击（AttackResolver `base_(\d+)` 分支），改断言为"应出现 base 候选"——枚举器与裁判一致，错在测试假设。另修一处自造 API（vi.spyOnGlobalRandom 不存在→vi.spyOn(Math,'random')）与一处未使用变量。
 - `npm run check` = 0 错误；`npm run test` = **195 通过**（20 文件，+5）；`npm run test:coverage` 过新棘轮（实测 38.39/24.15/27.63/33.2）；`npm run lint` = 0 错误 / 30 遗留警告（零新增）；`npm run build` 单文件成功（1,856.46 kB / gzip 540.86 kB）。
-- CI 远端复验待推送后确认（PENDING）。
+- CI 远端复验已完成：run `35806986372` 全绿（CI #12，master@ad8bafe，经登录态浏览器确认；另 CI #11 run `35802631721` 对 v2.2.2 文档提交复验同样全绿）。
 
 ### Unresolved / Risk
 - 候选生成对"消耗卡选择"取手牌前缀（如部署取前 hp 张非自身卡）：合法存在性判定够用（resolver 只检查数量/去重/在手），但**不枚举所有消耗组合**——阶段二策略层若需"选哪些卡当费用"（如优先耗将回池）需扩候选或提供 `consumeCards` 变体生成器。
