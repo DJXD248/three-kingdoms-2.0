@@ -640,3 +640,32 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - 演练技能仅三条已结算效果（DRAW_CARD/DAMAGE），HEAL/GAIN_ARMOR 未注入（2.1.0 结算边界），阶段三若扩结算需同步扩模板。
 - PRACTICE_SKILLS 克隆产生的 `undefined__inst...` 技能 instanceId 属外观噪音（技能不进账本），未清理。
 - 引擎路径若未来引入 Math.random 之外的随机源（如 crypto/uuid），单点补丁确定性即破——battleRunner.test 的同种子复现例会第一时间报红。
+
+## Qoder 2.2.5：开发者模式·游戏内 AI 对战演练（后台窗口跑器 + 右下角简报 + 日志/录像导出）
+
+### 决策与依据
+- 用户插入需求（明确置于阶段三之前）：开发者模式下主菜单出现"AI 对战演练"入口 → 配置弹窗选条件 → **新开后台窗口**跑对战（不占用游戏窗口）→ 结束后输出**操作日志（错误处额外标注）与录像** + 主窗口**右下角结束简报**（局数/完成/错误 + 打开日志与录像的按钮）。
+- 后台窗口 = `window.open(同一构建, '#ai-battle?...')`：单文件产物 file:// 与 vite dev 均可用；App.tsx 在**模块加载期读取一次哈希**（每个文档生命周期内哈希不变 → hook 顺序稳定，无 conditional hook lint 问题）。
+- 对战核心**零改动复用** `src/ai/battleRunner`（无 fs 依赖正是阶段二的设计红利）：游戏内跑器与 `npm run ai-battle` 是同一条引擎链路，行为/不变量口径完全一致。
+- 逐局之间 `await setTimeout(0)` 让出宏任务：主线程不被千局计算饿死，窗口保持可滚动可关闭；StrictMode 双挂载用 startedRef 守卫。
+- 子→父通信：`window.opener.postMessage({kind:'qoder-ai-battle-done', params, summary, artifacts(日志文本/录像 JSON/失败文件)}, '*')`；父窗口 `AiBattleDock` 监听并渲染右下角简报。产物**全量随消息回传**（千局内文本量可控），主窗口无需再访问子窗口内存。
+- "打开文件夹"在浏览器安全模型下无法唤起 OS 资源管理器：交付为 File System Access"保存到文件夹"（写入所选目录 `ai-battle-log/`）+ 不可用时降级下载，界面文案如实说明。
+- 报告层拆为纯函数模块（battleReport/battleHash/browserExport）：组件只留渲染，vitest 无需 DOM 即可锁定 ❌ 标注口径。
+
+### 变更
+- 新增 `src/ai/battleReport.ts`（summarizeMatches / formatActionLine 中文动作摘要 / buildOperationLog（违例步、拒绝步 ❌ 整行前缀；越界违例单列；零违例局 ✔）/ buildReplayBundle（CLI 兼容记录数组）/ buildFailureFiles（与 CLI 落盘同 schema））。
+- 新增 `src/ai/battleHash.ts`（AiBattleParams + parseAiBattleHash：games 1-5000 / players 2-4 / pool / deck / skill 0-1 显式 0 合法 / maxSteps 钳制，缺 key 走默认而非 0）、`src/ai/browserExport.ts`（triggerDownload / 错峰 downloadFiles / saveToFolder→'saved'|'unavailable'|'cancelled'）。
+- 新增组件 `AiBattleConfig`（弹窗：2-4 AI 选择、局数/种子/步数、高级 将池/牌堆/技能注入；window.open 返回 null → 弹窗内出现 `target=_blank` 手动打开链接兜底；z-140）/ `AiBattleWindow`（哈希路由后台窗口：实时日志红色违例高亮、头部导出按钮、完成行统计）/ `AiBattleDock`（右下角 z-130 结束简报 + 导出，developerMode 才渲染）。
+- 接线：`MainMenu.tsx` developerMode 下新增"🤖 AI 对战演练"（游戏设置之后）+ 弹窗挂载；`App.tsx` 哈希分支 + `<AiBattleDock/>`。
+- 新增 `src/ai/battleReport.test.ts` 6 例；`vitest.config.ts` 对 Node>=24 自动 `pool:'vmThreads'`（本地 Node 升 v24 后 vitest 5.0.1 默认 forks/threads worker 全崩 `Cannot read properties of undefined (reading 'config')`，vmThreads 205/205 全绿；CI Node 20/22 保持默认池）。版本号 2.2.4→2.2.5（package.json + lock 前两处，第三方撞号守卫通过）。
+
+### 验证
+- `npm run check` = 0 错误；`npm run test` = **205 通过**（22 文件，+6）；覆盖率棘轮未动实测 40.39/26.03/29.51/35.43 通过；`npm run lint` = 0 错误 / 30 遗留警告（新文件零警告：纯函数出组件文件保 fast-refresh）；`vite build` 单文件成功（1,884.70 kB / gzip 550.47 kB）。
+- 浏览器 E2E（真实点击 + dev 服务器 5199）：设置页密码解锁开发者模式 → 主菜单出现"AI 对战演练" → 弹窗填参（局数改 3）→ 后台窗口路由渲染并**真跑 2 局：全部获胜、0 违例、96ms**，完成行与实时进度逐局可见 → 主窗口右下角结束简报按子窗口消息格式**完整渲染**（共 2 局/胜方分布/违例 0/耗时 + 三导出按钮）→ 模拟弹窗被拦：兜底提示与手动打开链接（含正确 hash 参数）出现。
+- E2E 期间实发发现：右下角简报（z-130）与配置弹窗（z-120）重叠导致按钮不可点 → 弹窗层级提至 z-140。
+- 未端到端验证（诚实标注）：真实 OS 弹窗的 opener.postMessage 往返在本自动化浏览器无法测试（弹窗被硬拦，window.open 返回 null）；机制为标准 API，且拦截兜底路径已验证。CI 远端复验 PENDING（推送后回填）。
+
+### Unresolved / Risk
+- 千局级浏览器内跑批受页面内存上限约束（MatchResult 全量留存）；>1000 局仍推荐 `npm run ai-battle` CLI，游戏内定位是"体验/找错"量级。
+- File System Access 仅安全上下文可用（https/localhost），file:// 单文件版走下载降级；"打开系统文件夹"无法在浏览器内实现，已按能力如实交付。
+- 后台窗口关闭按钮依赖脚本 `window.close()`（仅对 window.open 打开的窗口有效），手动新开标签页访问 `#ai-battle` 时该按钮无效——属可接受的边缘（正常入口均从弹窗打开）。
