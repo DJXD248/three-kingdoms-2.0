@@ -12,6 +12,7 @@ import type { DataSkillDefinition } from '../skills/dataTypes';
 import { ReplayRecorder } from '../replay/ReplayRecorder';
 import { SnapshotManager } from '../replay/SnapshotManager';
 import { resolveTriggerChain } from './EngineDispatchFlow';
+import { getLegalActions } from '../rules/legalActions';
 
 export class GameEngine {
   readonly events = new EventBus();
@@ -82,6 +83,13 @@ export class GameEngine {
 
   registerPlayerSkills(ownerId: number | string, skills: DataSkillDefinition[]) {
     return this.skillTriggers.registerSkills(ownerId, skills);
+  }
+
+  /** Every action `playerId` can currently dispatch without being rejected.
+   * Candidates are generated from the state; legality is decided by the same
+   * RuleEngine + resolvers that judge real dispatches (see rules/legalActions). */
+  legalActions(playerId: number): GameAction[] {
+    return getLegalActions(this, playerId);
   }
 
   unregisterPlayerSkills(ownerId: number | string) {

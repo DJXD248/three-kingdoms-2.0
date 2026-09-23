@@ -27,11 +27,12 @@ export default defineConfig({
       // Raised during the Phase 5 skill uniqueness convergence (skill chain tests).
       // 2.2.0 (skillExcelFormat + editor runtime smoke): overall lines 31.0 / funcs 19.4 / branches 22.3 / stmts 26.4.
       // 2.2.2 (core gameplay flow tests, src/core/gameFlow.test.ts): stmts 29.87 / branch 25.13 / funcs 21.93 / lines 35.04.
+      // Phase-1 AI (legalActions enumerator + consistency tests): stmts 33.2 / branch 27.63 / funcs 24.15 / lines 38.39.
       thresholds: {
-        lines: 34,
-        functions: 21,
-        branches: 24,
-        statements: 29,
+        lines: 37,
+        functions: 23,
+        branches: 26,
+        statements: 31,
       },
     },
   },
