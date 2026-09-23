@@ -1,0 +1,176 @@
+/**
+ * v2.2.9 (AI-line phase 4) — in-game human-vs-AI turn driver.
+ *
+ * `runAiStep` is called on a fixed cadence by <AiDirector/> with the *current
+ * Zustand snapshot*. It inspects the phase, and when the seat that owns the
+ * current interaction is an AI seat, it performs exactly ONE store action and
+ * returns true. Everything goes through the production store pipeline
+ * (executeDraw/deployGeneral/… → dispatchStoreAction), so AI games obey the
+ * same rule truth, replay recording and writebacks as human games.
+ *
+ * The brain is reused verbatim from 2.2.7: `new GameEngine(engineState,
+ * {recordHistory:false})` + `syncPlayerSkills` + the tier policy. Policy
+ * instances are cached per (seat, tier) for the whole match because the
+ * strategy policy keeps draw-window bookkeeping in its closure (a fresh
+ * instance per step would re-DRAW forever). `resetAiControllers()` is called
+ * whenever a new match starts.
+ *
+ * Stagnation guard: the strategy policies are zero-random, so if a mapped
+ * store call silently fails (engine rejects what the probe thought was legal)
+ * the *same* action would be re-picked from an equivalent state forever. The
+ * guard remembers the last choice signature; on an immediate repeat it forces
+ * the fallback (confirm draw / end turn), which is always legal.
+ */
+import type { GameAction } from '../action/ActionTypes';
+import { GameEngine } from '../core/GameEngine';
+import type { EngineState } from '../core/GameState';
+import { syncPlayerSkills } from '../skills/skillCompiler';
+import { createStrategyPolicy, parseTier } from './policies/strategyPolicy';
+import { randomPolicy, type AiPolicy } from './policies/randomPolicy';
+import type { AiSeatTier } from '../setup/runtimeSetup';
+import type { GameState, Player } from '../store/gameStore';
+
+/** Minimal store surface the driver touches (GameState satisfies it). */
+export type AiDriverState = GameState;
+
+let seatPolicies = new Map<string, AiPolicy>();
+let lastChoiceKey = '';
+
+/** New match boundary: drop per-seat closures and the stagnation guard. */
+export function resetAiControllers(): void {
+  seatPolicies = new Map();
+  lastChoiceKey = '';
+}
+
+function policyFor(playerId: number, tier: AiSeatTier): AiPolicy {
+  if (tier === 'random') return randomPolicy;
+  const key = `${playerId}:${tier}`;
+  let policy = seatPolicies.get(key);
+  if (!policy) {
+    policy = createStrategyPolicy(parseTier(tier) ?? 'balanced');
+    seatPolicies.set(key, policy);
+  }
+  return policy;
+}
+
+function aiSeatOf(state: GameState, playerId: number | null | undefined): Player | null {
+  if (playerId == null) return null;
+  const player = state.players.find(p => p.id === playerId);
+  return player?.isAi ? player : null;
+}
+
+function allSeatsAi(state: GameState): boolean {
+  return state.players.length > 0 && state.players.every(p => p.isAi === true);
+}
+
+/** Ask the seat's policy what it would do, with the repeat guard applied. */
+function pickPolicyAction(state: GameState, playerId: number, tier: AiSeatTier): GameAction | null {
+  const engine = new GameEngine(state.engineState as EngineState, { recordHistory: false });
+  syncPlayerSkills(engine, state.engineState as EngineState);
+  const picked = policyFor(playerId, tier)(engine, playerId);
+  if (!picked) {
+    lastChoiceKey = '';
+    return null;
+  }
+  const key = `${playerId}|${state.engineState.turn}|${picked.type}|${JSON.stringify(picked.payload ?? null)}`;
+  if (key === lastChoiceKey) {
+    // Same state, same zero-random pick, previous attempt changed nothing →
+    // hand over to the caller's guaranteed-legal fallback.
+    lastChoiceKey = '';
+    return null;
+  }
+  lastChoiceKey = key;
+  return picked;
+}
+
+interface DrawPayload { fromGeneralPool?: number; fromCardPool?: number }
+
+/** Translate one engine GameAction chosen by the policy into a store call. */
+function applyPolicyAction(state: GameState, playerId: number, action: GameAction): boolean {
+  const p = action.payload as Record<string, any> | undefined;
+  switch (action.type) {
+    case 'DRAW': {
+      const d = (p ?? {}) as DrawPayload;
+      const ok = state.executeDraw(Number(d.fromGeneralPool) || 0, Number(d.fromCardPool) || 0);
+      if (!ok) state.confirmDraw();
+      return true;
+    }
+    case 'CONFIRM_DRAW': state.confirmDraw(); return true;
+    case 'RESOLVE_BASE_LOSS': state.resolvePendingDrawLoss(); return true;
+    case 'DEPLOY_GENERAL': return state.deployGeneral(p?.general, Number(p?.slot) || 0, p?.consumeCards ?? []);
+    case 'MOVE_GENERAL': state.moveGeneral(p?.generalId, p?.target, p?.consumeCard); return true;
+    case 'ATTACK': state.attackTarget(p?.attackerId, p?.targetId, p?.ranged === true, p?.consumeCard); return true;
+    case 'SUPPLY': state.supplyGeneral(p?.generalId, p?.consumeCards ?? []); return true;
+    case 'EQUIP_ARMOR': return state.armGeneral(p?.generalId, p?.armorCards ?? []);
+    case 'END_TURN': state.endTurn(); return true;
+    case 'SURRENDER': state.surrender(playerId); return true;
+    default: return false;
+  }
+}
+
+function stepDrawing(state: GameState): boolean {
+  const draw = state.engineState.drawState;
+  if (!draw) return false; // UnifiedDraw owns the (rare) empty-window confirm
+  const seat = aiSeatOf(state, draw.playerId);
+  if (!seat) return false;
+  const tier: AiSeatTier = seat.aiTier ?? 'balanced';
+  if (draw.baseLossPending) {
+    state.resolvePendingDrawLoss();
+    return true;
+  }
+  const action = pickPolicyAction(state, draw.playerId, tier);
+  if (action) {
+    if (applyPolicyAction(state, draw.playerId, action)) return true;
+  }
+  // Nothing (legal|safe) to draw with → close the window (always legal).
+  state.confirmDraw();
+  return true;
+}
+
+function stepPlaying(state: GameState): boolean {
+  const seat = state.players[state.currentPlayerIndex];
+  if (!seat?.isAi) return false;
+  if (state.engineState.currentPlayerId !== seat.id) {
+    // Store index and engine disagree — never dispatch for the wrong seat.
+    console.warn('[aiTurnDriver] currentPlayerIndex/engine currentPlayerId mismatch', {
+      index: state.currentPlayerIndex, seatId: seat.id,
+      engineId: state.engineState.currentPlayerId,
+    });
+    return false;
+  }
+  const tier: AiSeatTier = seat.aiTier ?? 'balanced';
+  const action = pickPolicyAction(state, seat.id, tier);
+  if (action && applyPolicyAction(state, seat.id, action)) return true;
+  state.endTurn(); // END_TURN is always legal for the active seat
+  return true;
+}
+
+/**
+ * Drive one AI interaction. Returns true when an AI store action was made
+ * (one per call), false when it is a human's turn or nothing is drivable.
+ */
+export function runAiStep(state: GameState): boolean {
+  switch (state.phase) {
+    case 'lobby':
+      if (!allSeatsAi(state)) return false;
+      state.startGame();
+      return true;
+    case 'diceRoll':
+      if (!allSeatsAi(state)) return false;
+      // Skip the dice animation: roll for real (seat order matters), then
+      // assignFactions() chains distributeDraftGenerals after its 1.5s beat.
+      state.rollDice();
+      state.setPhase('factionAssign');
+      state.assignFactions();
+      return true;
+    case 'generalDraft': {
+      const seat = state.players[state.draftPlayerIndex];
+      if (!seat?.isAi) return false;
+      state.aiAutoDraft();
+      return true;
+    }
+    case 'drawing': return stepDrawing(state);
+    case 'playing': return stepPlaying(state);
+    default: return false;
+  }
+}

@@ -461,7 +461,7 @@ export default function GameBoard(){
       <div className="flex flex-shrink-0 items-center justify-center gap-3 bg-black/30 px-4 py-1">
         {players.map(p=>{const a=p.id===cp.id;const c=factionColors[p.faction!];return(
           <div key={p.id} className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${a?'border-amber-500/60 bg-amber-900/20':!p.isAlive?'border-gray-800/30 opacity-30':'border-gray-700/20'}`}>
-            <div className="h-2 w-2 rounded-full" style={{backgroundColor:c}}/><span className="text-[11px] font-bold" style={{color:c}}>{p.name}</span><span className="text-[10px] text-red-400/80">🏯{p.baseHp}</span><span className="text-[10px] text-amber-300/50">🃏{p.hand.length}</span></div>);})}
+            <div className="h-2 w-2 rounded-full" style={{backgroundColor:c}}/><span className="text-[11px] font-bold" style={{color:c}}>{p.isAi?'🤖':''}{p.name}</span><span className="text-[10px] text-red-400/80">🏯{p.baseHp}</span><span className="text-[10px] text-amber-300/50">🃏{p.hand.length}</span></div>);})}
       </div>
       {/* board */}
       <div ref={boardViewportRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-2">
@@ -475,7 +475,7 @@ export default function GameBoard(){
             </div>
             {rgt&&<div className="flex flex-col items-center"><span className="mb-1 text-[10px] font-bold" style={{color:factionColors[rgt.faction!]}}>{rgt.name}</span><TerritorySide p={rgt} side="right"/></div>}
           </div>
-          <div className="flex flex-col items-center"><TerritoryBottom p={bot}/><span className="mt-1 text-[10px] font-bold" style={{color:factionColors[bot.faction!]}}>{bot.name}({bot.faction}) — 你的回合</span></div>
+          <div className="flex flex-col items-center"><TerritoryBottom p={bot}/><span className="mt-1 text-[10px] font-bold" style={{color:factionColors[bot.faction!]}}>{bot.name}({bot.faction}) — {bot.isAi?'AI 出手中…':'你的回合'}</span></div>
         </div>
         {/* Skill activation notifications */}
         {skillActivations.length>0&&<div className="pointer-events-none absolute left-3 top-12 z-40 flex flex-col gap-2 max-w-xs">{skillActivations.map(a=>(

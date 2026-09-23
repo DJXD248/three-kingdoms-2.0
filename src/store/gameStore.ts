@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { General, Faction, allGenerals, SkillTag, SkillTriggerConfig, SkillEffect, SkillEffectMode } from '../data/generals';
 import { GameCard, createCardDeck } from '../data/cards';
-import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle } from '../setup/runtimeSetup';
+import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle, defaultSeatModes, pickAiDraftPicks, type AiSeatMode, type AiSeatTier } from '../setup/runtimeSetup';
 import { dispatchStoreAction } from './engineExecutionBridge';
 import { applyEngineStateToStore, buildDrawContext, describeDrawSubtitle, engineStateToStoreProjection, isRestorableEngineState, storeStateToEngineState } from './gameStateAdapter';
 import type { EngineState } from '../core/GameState';
@@ -63,6 +63,9 @@ export interface Player {
   generalPool:General[]; hand:(General|GameCard)[]; fieldGenerals:FieldGeneral[];
   baseHp:number; baseMaxHp:number; isAlive:boolean; isSpectating:boolean;
   avatarGeneral:General|null; graveyard:General[];
+  // v2.2.9 human-vs-AI: stamped at createRoom from seatModes; survives engine
+  // dispatch clones via the EnginePlayer index signature.
+  isAi?:boolean; aiTier?:AiSeatTier;
 }
 
 export interface GameState {
@@ -87,6 +90,9 @@ export interface GameState {
   // Draft
   draftGenerals:General[]; draftQunGenerals:General[];
   selectedDraftGenerals:General[]; draftPlayerIndex:number;
+  // v2.2.9 human-vs-AI: per-seat mode chosen in CreateRoom, stamped onto
+  // players at createRoom (index = pre-dice seat).
+  seatModes:AiSeatMode[];
   settings:{
     resolution:string;windowMode:string;animationSpeed:number;masterVolume:number;musicVolume:number;sfxVolume:number;autoSave:boolean;
     // 2.2.6 replay/log saving (persisted in localStorage via replayStorage)
@@ -100,6 +106,8 @@ export interface GameState {
   setPhase:(p:GamePhase)=>void; setPlayerCount:(c:number)=>void; setRoomName:(n:string)=>void;
   createRoom:()=>void; startGame:()=>void; rollDice:()=>void; assignFactions:()=>void;
   distributeDraftGenerals:()=>void; selectDraftGeneral:(g:General)=>void; confirmDraft:()=>void;
+  setSeatMode:(index:number, patch:Partial<AiSeatMode>)=>void;
+  aiAutoDraft:()=>void;
   // Unified draw actions
   executeDraw:(fromPool:number,fromDeck:number)=>boolean;
   confirmDraw:()=>void;
@@ -249,6 +257,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   skillActivations:[],
   drawContext:defaultDraw,revealedDrawCards:[],initialDrawPlayerIndex:0,
   draftGenerals:[],draftQunGenerals:[],selectedDraftGenerals:[],draftPlayerIndex:0,
+  seatModes:defaultSeatModes(),
   settings:{resolution:'1920x1080',windowMode:'全屏',animationSpeed:1,masterVolume:80,musicVolume:60,sfxVolume:70,autoSave:false,...loadReplaySettings()},
   developerMode:false,
   skillEdits:loadPersistedSkillEdits(),
@@ -261,8 +270,8 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   createRoom:()=>{
     resetLiveReplay();
-    const{playerCount,roomName}=get();
-    const ps=createLobbyPlayers(playerCount) as Player[];
+    const{playerCount,roomName,seatModes}=get();
+    const ps=createLobbyPlayers(playerCount, seatModes) as Player[];
     set({players:ps,roomName,phase:'lobby',battlefieldSlots:playerCount,cardDeck:createCardDeck()});
   },
   startGame:()=>set({phase:'diceRoll'}),
@@ -325,6 +334,23 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const ids=u.slice(0,ni).flatMap(p=>p.generalPool.map(g=>g.id));
     const candidates = buildDraftCandidates(np.faction, dis, ids);
     set({players:u,draftPlayerIndex:ni,draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[]});
+  },
+
+  setSeatMode:(index, patch) => set(st => ({
+    seatModes: st.seatModes.map((m, i) => (i === index ? { ...m, ...patch } : m)),
+  })),
+
+  // v2.2.9: an AI seat drafts instantly (7 faction generals + up to 3 群,
+  // the seat rule's max-Qun pick). No-ops for human seats and when the
+  // candidate pool cannot legally fill 10 cards (falls back to the human UI).
+  aiAutoDraft:()=>{
+    const {players,draftPlayerIndex,draftGenerals,draftQunGenerals}=get();
+    const p=players[draftPlayerIndex];
+    if(!p?.isAi)return;
+    const picks=pickAiDraftPicks(draftGenerals,draftQunGenerals);
+    if(picks.length!==10)return;
+    set({selectedDraftGenerals:picks});
+    get().confirmDraft();
   },
 
   // ── unified draw: execute ──

@@ -14,6 +14,7 @@ import TestArena from './components/TestArena';
 import Rules from './components/Rules';
 import AiBattleWindow from './components/AiBattleWindow';
 import AiBattleDock from './components/AiBattleDock';
+import AiDirector from './components/AiDirector';
 import { factionColors } from './data/generals';
 
 // Hash route for the background AI-battle window opened by developer mode.
@@ -74,6 +75,7 @@ export default function App() {
   return (
     <div className="app-shell">
       {content}
+      <AiDirector />
       <DeveloperOverlay />
       <AiBattleDock />
     </div>

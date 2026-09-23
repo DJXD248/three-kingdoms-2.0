@@ -87,6 +87,9 @@ export default function UnifiedDraw() {
   };
   const cfg = reasonConfig[drawContext.reason] ?? reasonConfig.turnStart;
   const color = player.faction ? factionColors[player.faction] : '#eab308';
+  // v2.2.9: when the draw belongs to an AI seat the AiDirector answers this
+  // screen — hide the interactive controls and show a "thinking" banner.
+  const aiDrawing = player.isAi === true;
 
   return (
     <div className="min-h-screen text-white flex flex-col items-center justify-center" style={{
@@ -132,8 +135,19 @@ export default function UnifiedDraw() {
         <p className="text-center text-amber-500/50 text-xs mt-1">{drawContext.subtitle}</p>
       </div>
 
+      {/* AI seat owns this draw: the director plays it automatically */}
+      {aiDrawing && (
+        <div className="text-center animate-pulse mb-6">
+          <div className="text-5xl mb-3">🤖</div>
+          <p className="text-cyan-300 text-lg font-bold">{player.name} 正在决定抽卡…</p>
+          {revealedDrawCards.length > 0 && (
+            <p className="text-amber-400/60 text-sm mt-2">已抽出 {revealedDrawCards.length} 张，稍候自动确认</p>
+          )}
+        </div>
+      )}
+
       {/* Pre-draw base loss warning */}
-      {drawContext.baseLossPending && !drawn && !animating && (
+      {drawContext.baseLossPending && !drawn && !animating && !aiDrawing && (
         <div className="w-full max-w-md px-6 animate-fadeIn animate-screenShake">
           <div className="bg-black/50 border border-red-700/40 rounded-xl p-8 text-center mb-6 animate-base-hit">
             <div className="text-6xl mb-4 animate-pulse-glow">🏯💥</div>
@@ -159,7 +173,7 @@ export default function UnifiedDraw() {
       )}
 
       {/* Selection UI — before draw */}
-      {!drawn && !animating && !drawContext.baseLossPending && total > 0 && (
+      {!drawn && !animating && !aiDrawing && !drawContext.baseLossPending && total > 0 && (
         <div className="w-full max-w-md px-6 animate-fadeIn">
           <div className="bg-black/50 border border-amber-800/30 rounded-xl p-6 mb-6">
             <p className="text-center text-amber-400/60 text-sm mb-4">自由分配抽取来源</p>
