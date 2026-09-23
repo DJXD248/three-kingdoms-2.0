@@ -59,7 +59,13 @@ export class DeployGeneralResolver implements ActionResolver {
     if (!Number.isInteger(payload.slot) || payload.slot < 0 || payload.slot > 2) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'INVALID_CAMP_SLOT' } }];
     }
-    if (fieldGenerals.some((fg: any) => fg?.position?.zone === 'camp' && fg?.position?.areaOwnerId === action.playerId && fg?.position?.slot === payload.slot)) {
+    // Camp occupancy is per AREA, not per player record: an enemy general that
+    // marched into my camp lives in the invader's fieldGenerals array, so a
+    // scan limited to my own record would let me deploy onto the same square.
+    const occupantsOfTargetSlot = state.players.flatMap(p =>
+      (Array.isArray(p.fieldGenerals) ? p.fieldGenerals : []) as any[],
+    );
+    if (occupantsOfTargetSlot.some((fg: any) => fg?.position?.zone === 'camp' && fg?.position?.areaOwnerId === action.playerId && fg?.position?.slot === payload.slot)) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'CAMP_SLOT_OCCUPIED' } }];
     }
     if (consumeCards.length < 1 || consumeCards.length > Number(general.hp)) {

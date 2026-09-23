@@ -157,6 +157,39 @@ describe('DeployGeneralResolver', () => {
       expect((events[0].data as any).reason).toBe('CAMP_SLOT_OCCUPIED');
     });
 
+    it('should reject deploying into a camp slot held by an enemy invader', () => {
+      // Regression (2.2.7): the invader lives in the OTHER player's fieldGenerals
+      // record but physically occupies my camp area — the occupancy check must
+      // scan every player record, not just mine.
+      const generalCard = { id: 'g1', hp: 2 };
+      const consumeCard = { id: 'c1' };
+      const me = createTestPlayer(1, { hand: [generalCard, consumeCard] });
+      const invader = {
+        general: { id: 'g9' },
+        ownerId: 2,
+        position: { zone: 'camp', areaOwnerId: 1, slot: 0 },
+      };
+      const enemy = createTestPlayer(2, { fieldGenerals: [invader] });
+      const state = createTestState([me, enemy]);
+      const action = createAction('DEPLOY_GENERAL', 1, {
+        general: generalCard,
+        slot: 0,
+        consumeCards: [consumeCard],
+      });
+
+      const events = resolver.resolve(state, action as any);
+      expect(events[0].type).toBe('ACTION_REJECTED');
+      expect((events[0].data as any).reason).toBe('CAMP_SLOT_OCCUPIED');
+
+      // A free slot in the same camp still deploys fine.
+      const otherSlot = createAction('DEPLOY_GENERAL', 1, {
+        general: generalCard,
+        slot: 1,
+        consumeCards: [consumeCard],
+      });
+      expect(resolver.resolve(state, otherSlot as any)[0].type).toBe('GENERAL_DEPLOYED');
+    });
+
     it('should reject invalid deploy cost', () => {
       const generalCard = { id: 'g1', hp: 3 };
       const player = createTestPlayer(1, { hand: [generalCard] });
