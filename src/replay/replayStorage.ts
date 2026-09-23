@@ -5,9 +5,15 @@
  * is a real folder picked once via the File System Access API. The directory
  * handle itself is kept in IndexedDB (localStorage can't store handles) and
  * the display name + toggles in localStorage. Writes go to
- * `<picked>/录像/…json` and `<picked>/操作日志/…log.txt`. When the API is
- * unavailable, permission was revoked, or the user re-prompt was declined,
- * callers fall back to plain downloads.
+ * `<picked>/录像/…json` and `<picked>/操作日志/…log.txt`.
+ *
+ * 2.2.10 root fix: unattended auto-save (`unattended: true`) never triggers
+ * OS-level dialogs — it only writes when the remembered folder's permission
+ * is already 'granted' (queryPermission, never requestPermission), and
+ * otherwise parks the files in a small in-session pending queue (no blob
+ * download: browsers configured to "ask where to save" would pop a hung
+ * Windows save dialog). Manual saves (user click) keep the download
+ * fallback, and any successful folder save flushes the pending queue.
  */
 import { downloadFiles, type ExportFile } from '../ai/browserExport';
 
@@ -105,6 +111,20 @@ async function idbDelete(key: string): Promise<void> {
 export type DirPermission = 'granted' | 'prompt' | 'denied' | 'unsupported';
 
 /**
+ * Test seam: pin the "remembered folder" handle (or lack thereof) without a
+ * real IndexedDB/picker. Pass null to simulate "no directory configured".
+ */
+const dirHandleOverride: { active: boolean; handle: any | null } = { active: false, handle: null };
+export function __setDirectoryHandleForTests(handle: any | null): void {
+  dirHandleOverride.active = true;
+  dirHandleOverride.handle = handle;
+}
+export function __clearDirectoryHandleOverrideForTests(): void {
+  dirHandleOverride.active = false;
+  dirHandleOverride.handle = null;
+}
+
+/**
  * Ask the user for the save folder and remember its handle. Returns
  * 'cancelled' when the picker was dismissed (previous choice kept).
  */
@@ -134,15 +154,20 @@ export async function clearReplayDirectory(): Promise<void> {
   }
 }
 
-/** Stored directory handle with read-write permission confirmed (never prompts). */
-export async function getWritableReplayDirectory(): Promise<any | null> {
+/** Resolve the remembered handle (test override first); no permission checks. */
+async function loadStoredDirectoryHandle(): Promise<any | null> {
+  if (dirHandleOverride.active) return dirHandleOverride.handle;
   if (!supportsFolderPicker()) return null;
-  let handle: any;
   try {
-    handle = await idbGet<any>(DIR_HANDLE_KEY);
+    return (await idbGet<any>(DIR_HANDLE_KEY)) ?? null;
   } catch {
     return null;
   }
+}
+
+/** Stored directory handle with read-write permission confirmed (may prompt; user-gesture paths only). */
+export async function getWritableReplayDirectory(): Promise<any | null> {
+  const handle = await loadStoredDirectoryHandle();
   if (!handle || typeof handle.getDirectoryHandle !== 'function') return null;
   try {
     const permission = await handle.queryPermission({ mode: 'readwrite' });
@@ -154,14 +179,25 @@ export async function getWritableReplayDirectory(): Promise<any | null> {
   }
 }
 
-export async function checkReplayDirectoryPermission(): Promise<DirPermission> {
-  if (!supportsFolderPicker()) return 'unsupported';
-  let handle: any;
+/**
+ * 2.2.10: permission check for unattended (auto-save) paths — only ever
+ * returns a handle when access is *already* granted. Never calls
+ * requestPermission, so it cannot pop a browser prompt in a remote session.
+ */
+export async function getSilentlyWritableReplayDirectory(): Promise<any | null> {
+  const handle = await loadStoredDirectoryHandle();
+  if (!handle || typeof handle.queryPermission !== 'function') return null;
   try {
-    handle = await idbGet<any>(DIR_HANDLE_KEY);
+    const permission = await handle.queryPermission({ mode: 'readwrite' });
+    return permission === 'granted' ? handle : null;
   } catch {
-    return 'denied';
+    return null;
   }
+}
+
+export async function checkReplayDirectoryPermission(): Promise<DirPermission> {
+  const handle = await loadStoredDirectoryHandle();
+  if (!dirHandleOverride.active && !supportsFolderPicker()) return 'unsupported';
   if (!handle || typeof handle.queryPermission !== 'function') return 'denied';
   try {
     const permission = await handle.queryPermission({ mode: 'readwrite' });
@@ -182,17 +218,87 @@ export async function writeToSubfolder(dir: any, subfolder: string, files: Expor
   }
 }
 
-export type SaveOutcome = 'folder' | 'downloaded';
+export type SaveOutcome = 'folder' | 'downloaded' | 'pending';
+
+export interface SavedArtifact {
+  subfolder: string;
+  file: ExportFile;
+}
 
 /**
- * Save replay + operation log files. Prefers the remembered folder; falls
- * back to downloads when no folder is set / permission is missing.
+ * 2.2.10 pending queue: files an unattended auto-save could not write
+ * silently (no granted directory). Kept in memory for the session, capped,
+ * oldest dropped first. Flushed on the next successful folder save — never
+ * via downloads, so a remote/unattended session can't hang on a save dialog.
  */
-export async function saveArtifacts(files: { subfolder: string; file: ExportFile }[]): Promise<SaveOutcome> {
+const PENDING_CAP = 12;
+let pendingAutoSaves: SavedArtifact[] = [];
+
+export function listPendingAutoSaves(): SavedArtifact[] {
+  return [...pendingAutoSaves];
+}
+
+export function clearPendingAutoSaves(): void {
+  pendingAutoSaves = [];
+}
+
+function enqueuePending(items: SavedArtifact[]): void {
+  pendingAutoSaves = [...pendingAutoSaves, ...items].slice(-PENDING_CAP);
+}
+
+/**
+ * Write anything still pending into the remembered folder when it is
+ * silently writable. Returns how many files were flushed (0 when no
+ * directory is available — the queue then simply waits).
+ */
+export async function flushPendingAutoSaves(): Promise<number> {
+  if (pendingAutoSaves.length === 0) return 0;
+  const dir = await getSilentlyWritableReplayDirectory();
+  if (!dir) return 0;
+  const items = pendingAutoSaves;
+  try {
+    for (const item of items) await writeToSubfolder(dir, item.subfolder, [item.file]);
+    pendingAutoSaves = [];
+    return items.length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Save replay + operation log files.
+ * - `unattended: true` (auto-save): writes only through an already-granted
+ *   folder; otherwise parks the files in the pending queue. No downloads, no
+ *   permission prompts — nothing that can open a dialog nobody is there to
+ *   click (the 2.2.6 hung-"Save As" root cause).
+ * - attended (user clicked save): folder first (may re-ask permission, the
+ *   click authorises it), download fallback kept, and pending files are
+ *   flushed along when the folder write succeeds.
+ */
+export async function saveArtifacts(
+  files: SavedArtifact[],
+  opts: { unattended?: boolean } = {},
+): Promise<SaveOutcome> {
+  if (opts.unattended) {
+    const dir = await getSilentlyWritableReplayDirectory();
+    if (dir) {
+      try {
+        for (const item of files) await writeToSubfolder(dir, item.subfolder, [item.file]);
+        await flushPendingAutoSaves();
+        return 'folder';
+      } catch {
+        enqueuePending(files);
+        return 'pending';
+      }
+    }
+    enqueuePending(files);
+    return 'pending';
+  }
   const dir = await getWritableReplayDirectory();
   if (dir) {
     try {
       for (const item of files) await writeToSubfolder(dir, item.subfolder, [item.file]);
+      await flushPendingAutoSaves();
       return 'folder';
     } catch {
       // fall through to downloads

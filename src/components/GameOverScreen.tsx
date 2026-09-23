@@ -39,14 +39,18 @@ export default function GameOverScreen() {
   const hasReplay = getLiveReplayEntryCount() > 0;
   const autoSaveRan = useRef(false);
 
-  const outcomeNote = (outcome: 'folder' | 'downloaded', dirName: string | null) =>
+  const outcomeNote = (outcome: 'folder' | 'downloaded' | 'pending', dirName: string | null) =>
     outcome === 'folder'
       ? `已保存到文件夹「${dirName ?? '所选路径'}」`
-      : '已按浏览器下载方式保存（未设置或未授权保存路径）';
+      : outcome === 'pending'
+        ? '未授权保存目录，已暂存浏览器内存（不弹保存窗口），授权目录或点"保存"后自动补存'
+        : '已按浏览器下载方式保存（未设置或未授权保存路径）';
 
   // Auto-save on match end: replays behind a settings toggle, operation log
   // on by default (per the 2.2.6 requirement). StrictMode double-mount is
-  // guarded so each match ends up saved exactly once.
+  // guarded so each match ends up saved exactly once. 2.2.10: unattended —
+  // writes only to an already-granted folder, otherwise parks in the pending
+  // queue; never triggers downloads, so no hung "Save As" dialog remotely.
   useEffect(() => {
     if (autoSaveRan.current) return;
     autoSaveRan.current = true;
@@ -56,16 +60,18 @@ export default function GameOverScreen() {
     const jobs: Promise<string>[] = [];
     if (settings.autoSaveLog) {
       jobs.push(
-        saveArtifacts([
-          { subfolder: OPERATION_LOG_SUBFOLDER, file: { name: operationLogFileName(base), content: buildGameplayLog(doc) } },
-        ]).then((r) => outcomeNote(r, settings.replayDirName)),
+        saveArtifacts(
+          [{ subfolder: OPERATION_LOG_SUBFOLDER, file: { name: operationLogFileName(base), content: buildGameplayLog(doc) } }],
+          { unattended: true },
+        ).then((r) => outcomeNote(r, settings.replayDirName)),
       );
     }
     if (settings.autoSaveReplay) {
       jobs.push(
-        saveArtifacts([
-          { subfolder: REPLAY_SUBFOLDER, file: { name: replayFileName(base), content: JSON.stringify(doc, null, 2) } },
-        ]).then((r) => outcomeNote(r, settings.replayDirName)),
+        saveArtifacts(
+          [{ subfolder: REPLAY_SUBFOLDER, file: { name: replayFileName(base), content: JSON.stringify(doc, null, 2) } }],
+          { unattended: true },
+        ).then((r) => outcomeNote(r, settings.replayDirName)),
       );
     }
     if (jobs.length === 0) return;
@@ -155,7 +161,8 @@ export default function GameOverScreen() {
               </button>
             </div>
             <p className="mt-2 text-xs text-amber-200/50">
-              录像存入设置里所选"录像保存路径"的「{REPLAY_SUBFOLDER}」子文件夹；未设置路径时改为浏览器下载。
+              录像存入设置里所选"录像保存路径"的「{REPLAY_SUBFOLDER}」子文件夹；手动点"保存"且未设置路径时才走浏览器下载。
+              自动保存永不弹系统保存窗口：未授权目录时本局内容暂存在浏览器内存，授权后自动补存。
               操作日志默认每局自动保存在同一目录的「{OPERATION_LOG_SUBFOLDER}」子文件夹。
             </p>
             {autoSavedNote && <p className="mt-1 text-xs text-green-300/80">{autoSavedNote}</p>}

@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import {
   checkReplayDirectoryPermission,
   clearReplayDirectory,
+  flushPendingAutoSaves,
   pickReplayDirectory,
   supportsFolderPicker,
 } from '../replay/replayStorage';
@@ -73,18 +74,23 @@ export default function Settings({ onBack, hideDeveloper = false }: { onBack?: (
     const result = await pickReplayDirectory();
     if (result.status === 'picked') {
       updateSettings({ replayDirName: result.name });
-      setReplayDirHint(`✅ 已设置录像保存路径：「${result.name}」`);
+      const flushed = await flushPendingAutoSaves();
+      setReplayDirHint(
+        flushed > 0
+          ? `✅ 已设置录像保存路径：「${result.name}」，之前暂存的 ${flushed} 份自动保存已补存到该目录`
+          : `✅ 已设置录像保存路径：「${result.name}」`,
+      );
     } else if (result.status === 'cancelled') {
       setReplayDirHint('已取消选择，保持原路径不变');
     } else {
-      setReplayDirHint('⚠️ 当前浏览器不支持文件夹选择，保存将走浏览器下载');
+      setReplayDirHint('⚠️ 当前浏览器不支持文件夹选择：手动保存走浏览器下载，自动保存会暂存等待授权');
     }
   };
 
   const handleClearReplayDir = async () => {
     await clearReplayDirectory();
     updateSettings({ replayDirName: null });
-    setReplayDirHint('已清除保存路径，之后改为浏览器下载保存');
+    setReplayDirHint('已清除保存路径：之后手动保存走浏览器下载，自动保存改为暂存（不再弹保存窗口）');
   };
 
   return (
@@ -162,7 +168,7 @@ export default function Settings({ onBack, hideDeveloper = false }: { onBack?: (
             <SettingRow label="录像保存路径">
               <div className="flex items-center gap-2">
                 <span className="text-amber-300/80 text-sm max-w-40 truncate">
-                  {settings.replayDirName ? `「${settings.replayDirName}」` : '未选择（保存时走浏览器下载）'}
+                  {settings.replayDirName ? `「${settings.replayDirName}」` : '未选择（自动保存暂存，手动保存才走下载）'}
                 </span>
                 <button
                   onClick={() => void handlePickReplayDir()}
@@ -204,6 +210,7 @@ export default function Settings({ onBack, hideDeveloper = false }: { onBack?: (
             <p className="text-xs text-amber-200/50">
               浏览器不允许直接填写电脑路径，"选择文件夹"即为设置路径（等效做法）。结束后录像存入所选目录的「{REPLAY_SUBFOLDER}」子文件夹，
               操作日志存入「{OPERATION_LOG_SUBFOLDER}」子文件夹；命名默认为 房间名-势力-年月日时。操作日志默认每局自动保存。
+              未授权目录时自动保存只在浏览器内暂存、不弹系统保存窗口，授权后自动补存（2.2.10 治本：远程无人值守不再被"另存为"卡住）。
             </p>
           </SettingGroup>
 
