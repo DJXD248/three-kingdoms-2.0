@@ -669,3 +669,28 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - 千局级浏览器内跑批受页面内存上限约束（MatchResult 全量留存）；>1000 局仍推荐 `npm run ai-battle` CLI，游戏内定位是"体验/找错"量级。
 - File System Access 仅安全上下文可用（https/localhost），file:// 单文件版走下载降级；"打开系统文件夹"无法在浏览器内实现，已按能力如实交付。
 - 后台窗口关闭按钮依赖脚本 `window.close()`（仅对 window.open 打开的窗口有效），手动新开标签页访问 `#ai-battle` 时该按钮无效——属可接受的边缘（正常入口均从弹窗打开）。
+
+## Qoder 2.2.6：对局结束录像/操作日志保存体系（结算窗口询问行 + 设置页路径与自动保存）
+
+### 决策与依据
+- 用户裁定：浏览器不能"打开电脑文件夹窗口"，改为新形态——所有模式的对局结束结算窗口下方加"是否保存录像"询问（左侧重命名输入框、右侧保存按钮）；设置页新增"录像保存路径"+"每局自动保存录像"开关；操作日志另存独立子文件夹且默认自动保存；命名=房间名+玩家势力+年月日时缩写。
+- 生产链路每次 dispatch 都新建 GameEngine（engineExecutionBridge），引擎自带 replay 记录器活不过一步 → 单局录像必须由一个长生命周期模块承接。选择挂在 `dispatchStoreAction` 这个**全模式动作唯一收口点**之后，UI 侧只在结算窗口收口（GameOverScreen 是 phase==='gameOver' 的唯一渲染），自动保存用挂载 effect 实现"每局结束"语义。
+- 录像数据形态直接复用 canonical `ReplayDocument`（ReplayRecorder/ReplayPlayer/serialize/deserialize 工具链零改动兼容），不发明第二格式。
+- 浏览器安全边界（如实交代）：无法写"手输路径"，路径=File System Access 选一次真实文件夹，句柄存 IndexedDB；重启浏览器后权限回到 prompt 态需再授权（写入前 queryPermission 非侵入检查，拿不到就降级下载）；这是平台限制的诚实等价，不是半途而废。
+
+### 变更
+- 新增 `src/replay/liveReplayRecorder.ts`（单例捕获器：懒建档、初始 BEGIN_DRAW 永远重开文档防继承、只存 afterState 链式减半克隆、reset 挂 createRoom/resetGame/restoreEngineState/startTestArena）、`replayNaming.ts`（默认名/清洗/「录像」「操作日志」子文件夹常量）、`gameplayLog.ts`（ReplayDocument→中文日志，ACTION_REJECTED 步整行 ❌ 附码，复用 ai/battleReport.formatActionLine）、`replayStorage.ts`（IndexedDB 句柄库+localStorage 设置；saveArtifacts 目录优先、下载兜底）。
+- `engineExecutionBridge.dispatchStoreAction` 每步 `recordLiveDispatch`；`gameStore` settings 扩 3 字段（autoSaveReplay 默认关/autoSaveLog 默认开/replayDirName），updateSettings 顺带 persist；`GameOverScreen` 询问卡（预填默认名可改、保存按钮、📥/💾 状态行、无数据禁用、StrictMode ref 守卫只自动存一次）；`Settings.tsx` "录像与日志"组（选文件夹/清除/两开关/prompt 重授权提示/能力说明）。
+- `main.tsx` dev-only `window.__TK__`（store+捕获器）用于结算窗口 E2E 装配，`import.meta.env.DEV` 分支生产整体消除；补 `src/vite-env.d.ts`（tsconfig types:["node"] 下 import.meta.env 需要 vite/client reference）。
+- 测试 +14 → 219 例 / 27 文件（见 HANDOFF §9 2.2.6 明细）。
+
+### 验证
+- check 0 错误 / 219 通过 / 覆盖率棘轮不动（40.3/26.67/29.91/35.51 过 39/25/28/35）/ lint 0 错误 30 遗留警告零新增 / build 单文件 1,896.11 kB(gzip 554.52 kB)。
+- 浏览器 E2E：设置页组渲染与默认态→开关 localStorage 持久化→开发者解锁→结算窗口（dev 钩子喂 3 步真数据含 1 个被拒动作）：默认名 `E2E结算房-蜀-20260923-13` 正确、自动保存（日志+录像）📥 行出现、改名后手动保存 💾 成功。
+- CI 远端复验 PENDING（推送后回填）。
+
+### Unresolved & Risk
+- 测试场沙盒内"投降"按既有口径钉在 testArena 不跳结算窗（buildTestArenaState 结果被显式 phase 覆盖）——既有行为非本轮回归；正常对局与复盘恢复不受影响。
+- 存档恢复的对局只能从恢复点起捕获录像（动作历史在存档前丢失属预期，日志抬头步数会偏少）。
+- 长时间对局的捕获内存=O(步数×状态克隆)，与 GameEngine recordHistory 默认行为同量级；若未来要做"全程回放播放器"需再上快照差分。
+- 多文件连发下载浏览器可能弹"允许下载多个文件"授权；File System Access 仅 secure context 可用（localhost/https）。
