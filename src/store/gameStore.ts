@@ -20,6 +20,8 @@ import { cloneWithRuntimeInstance } from '../utils/runtimeIdentity';
 import { createEngineAwareSetter } from './engineAwareSetter';
 import { StateSerializer } from '../network/StateSerializer';
 import { clearLocalGameSnapshot, saveLocalGameSnapshot } from './localGameSnapshot';
+import { resetLiveReplay } from '../replay/liveReplayRecorder';
+import { loadReplaySettings, persistReplaySettings } from '../replay/replayStorage';
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +87,11 @@ export interface GameState {
   // Draft
   draftGenerals:General[]; draftQunGenerals:General[];
   selectedDraftGenerals:General[]; draftPlayerIndex:number;
-  settings:{resolution:string;windowMode:string;animationSpeed:number;masterVolume:number;musicVolume:number;sfxVolume:number;autoSave:boolean;};
+  settings:{
+    resolution:string;windowMode:string;animationSpeed:number;masterVolume:number;musicVolume:number;sfxVolume:number;autoSave:boolean;
+    // 2.2.6 replay/log saving (persisted in localStorage via replayStorage)
+    autoSaveReplay:boolean;autoSaveLog:boolean;replayDirName:string|null;
+  };
   developerMode:boolean;
   skillEdits:Record<string, {name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[]>;
   generalEdits:Record<string, {name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number}>;
@@ -243,7 +249,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   skillActivations:[],
   drawContext:defaultDraw,revealedDrawCards:[],initialDrawPlayerIndex:0,
   draftGenerals:[],draftQunGenerals:[],selectedDraftGenerals:[],draftPlayerIndex:0,
-  settings:{resolution:'1920x1080',windowMode:'全屏',animationSpeed:1,masterVolume:80,musicVolume:60,sfxVolume:70,autoSave:false},
+  settings:{resolution:'1920x1080',windowMode:'全屏',animationSpeed:1,masterVolume:80,musicVolume:60,sfxVolume:70,autoSave:false,...loadReplaySettings()},
   developerMode:false,
   skillEdits:loadPersistedSkillEdits(),
   generalEdits:loadPersistedGeneralEdits(),
@@ -254,6 +260,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   setPhase:p=>set({phase:p}),setPlayerCount:c=>set({playerCount:c}),setRoomName:n=>set({roomName:n}),
 
   createRoom:()=>{
+    resetLiveReplay();
     const{playerCount,roomName}=get();
     const ps=createLobbyPlayers(playerCount) as Player[];
     set({players:ps,roomName,phase:'lobby',battlefieldSlots:playerCount,cardDeck:createCardDeck()});
@@ -705,7 +712,15 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     }
   },
 
-  updateSettings: s => set((st: GameState) => ({ settings: { ...st.settings, ...s } })),
+  updateSettings: s => set((st: GameState) => {
+    const settings = { ...st.settings, ...s };
+    persistReplaySettings({
+      autoSaveReplay: settings.autoSaveReplay,
+      autoSaveLog: settings.autoSaveLog,
+      replayDirName: settings.replayDirName,
+    });
+    return { settings };
+  }),
 
   clearSkillActivation: id => set((st: GameState) => ({
     skillActivations: st.skillActivations.filter(a => a.id !== id),
@@ -821,6 +836,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       console.error('[Recovery] Invalid EngineState snapshot rejected');
       return false;
     }
+    // Restored matches have no in-memory action history before this point:
+    // the live replay capture restarts from the recovery position.
+    resetLiveReplay();
     applyEngineStateToStore(snapshot, patch => set(patch as Partial<GameState>));
     return true;
   },
@@ -863,6 +881,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   },
 
   resetGame:()=>{
+    resetLiveReplay();
     const state=get();
     const baseState = {
       phase:'menu' as GamePhase,

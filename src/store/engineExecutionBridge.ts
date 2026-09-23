@@ -2,6 +2,7 @@ import { GameEngine } from '../core/GameEngine';
 import { storeStateToEngineState } from './gameStateAdapter';
 import { cloneEngineState } from '../core/GameState';
 import { syncPlayerSkills } from '../skills/skillCompiler';
+import { recordLiveDispatch } from '../replay/liveReplayRecorder';
 import type { GameAction } from '../action/ActionTypes';
 import type { EngineState } from '../core/GameState';
 import type { GameEvent } from '../core/Event';
@@ -29,5 +30,9 @@ export function dispatchStoreAction(storeState: unknown, action: GameAction): {
   const engine = new GameEngine(engineState);
   syncPlayerSkills(engine, engineState);
   const events = engine.dispatch(action);
-  return { engineState: engine.snapshot(), events };
+  const snapshot = engine.snapshot();
+  // 2.2.6: the store engine is per-dispatch, so the match-level replay lives
+  // in liveReplayRecorder instead — feed every dispatched action into it.
+  recordLiveDispatch(action, events, snapshot);
+  return { engineState: snapshot, events };
 }

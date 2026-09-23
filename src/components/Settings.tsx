@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useEffect } from 'react';
+import {
+  checkReplayDirectoryPermission,
+  clearReplayDirectory,
+  pickReplayDirectory,
+  supportsFolderPicker,
+} from '../replay/replayStorage';
+import { OPERATION_LOG_SUBFOLDER, REPLAY_SUBFOLDER } from '../replay/replayNaming';
 
 export default function Settings({ onBack, hideDeveloper = false }: { onBack?: () => void; hideDeveloper?: boolean }) {
   const setPhase = useGameStore(s => s.setPhase);
@@ -43,6 +50,41 @@ export default function Settings({ onBack, hideDeveloper = false }: { onBack?: (
     } else {
       setDevError('密码错误');
     }
+  };
+
+  // ── 录像与日志（2.2.6）──
+  const [replayDirHint, setReplayDirHint] = useState('');
+  const canPickFolder = supportsFolderPicker();
+
+  useEffect(() => {
+    if (!canPickFolder || !settings.replayDirName) return;
+    let alive = true;
+    void checkReplayDirectoryPermission().then(permission => {
+      if (!alive) return;
+      if (permission === 'prompt') {
+        setReplayDirHint('💡 浏览器重启后需在下次保存时重新授权（点"选择文件夹"可立即恢复授权）');
+      }
+    });
+    return () => { alive = false; };
+  }, [canPickFolder, settings.replayDirName]);
+
+  const handlePickReplayDir = async () => {
+    setReplayDirHint('');
+    const result = await pickReplayDirectory();
+    if (result.status === 'picked') {
+      updateSettings({ replayDirName: result.name });
+      setReplayDirHint(`✅ 已设置录像保存路径：「${result.name}」`);
+    } else if (result.status === 'cancelled') {
+      setReplayDirHint('已取消选择，保持原路径不变');
+    } else {
+      setReplayDirHint('⚠️ 当前浏览器不支持文件夹选择，保存将走浏览器下载');
+    }
+  };
+
+  const handleClearReplayDir = async () => {
+    await clearReplayDirectory();
+    updateSettings({ replayDirName: null });
+    setReplayDirHint('已清除保存路径，之后改为浏览器下载保存');
   };
 
   return (
@@ -114,6 +156,55 @@ export default function Settings({ onBack, hideDeveloper = false }: { onBack?: (
               </button>
             </SettingRow>
             <p className="text-xs text-amber-200/50">开启后，每次回合结束会自动保存当前对局。</p>
+          </SettingGroup>
+
+          <SettingGroup title="录像与日志">
+            <SettingRow label="录像保存路径">
+              <div className="flex items-center gap-2">
+                <span className="text-amber-300/80 text-sm max-w-40 truncate">
+                  {settings.replayDirName ? `「${settings.replayDirName}」` : '未选择（保存时走浏览器下载）'}
+                </span>
+                <button
+                  onClick={() => void handlePickReplayDir()}
+                  className="rounded-lg bg-amber-700 px-3 py-1.5 text-sm font-bold text-white hover:bg-amber-600 transition-all"
+                >
+                  选择文件夹
+                </button>
+                {settings.replayDirName && (
+                  <button
+                    onClick={() => void handleClearReplayDir()}
+                    className="rounded-lg bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600 transition-all"
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
+            </SettingRow>
+            <SettingRow label="每局自动保存录像">
+              <button
+                onClick={() => updateSettings({ autoSaveReplay: !settings.autoSaveReplay })}
+                className={`rounded-lg px-4 py-1.5 text-sm font-bold transition-all ${
+                  settings.autoSaveReplay ? 'bg-green-700 text-white hover:bg-green-600' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                {settings.autoSaveReplay ? '已开启' : '未开启'}
+              </button>
+            </SettingRow>
+            <SettingRow label="自动保存操作日志">
+              <button
+                onClick={() => updateSettings({ autoSaveLog: !settings.autoSaveLog })}
+                className={`rounded-lg px-4 py-1.5 text-sm font-bold transition-all ${
+                  settings.autoSaveLog ? 'bg-green-700 text-white hover:bg-green-600' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                }`}
+              >
+                {settings.autoSaveLog ? '已开启' : '未开启'}
+              </button>
+            </SettingRow>
+            {replayDirHint && <p className="text-xs text-amber-300/70">{replayDirHint}</p>}
+            <p className="text-xs text-amber-200/50">
+              浏览器不允许直接填写电脑路径，"选择文件夹"即为设置路径（等效做法）。结束后录像存入所选目录的「{REPLAY_SUBFOLDER}」子文件夹，
+              操作日志存入「{OPERATION_LOG_SUBFOLDER}」子文件夹；命名默认为 房间名-势力-年月日时。操作日志默认每局自动保存。
+            </p>
           </SettingGroup>
 
           {!hideDeveloper && <SettingGroup title="开发者选项">

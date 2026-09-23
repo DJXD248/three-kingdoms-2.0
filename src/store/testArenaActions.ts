@@ -4,6 +4,7 @@ import { allGenerals, getGeneralsByFaction } from '../data/generals';
 import type { General } from '../data/generals';
 import { cloneWithRuntimeInstance, getRuntimeCardId } from '../utils/runtimeIdentity';
 import type { GameState, Player } from './gameStore';
+import { resetLiveReplay } from '../replay/liveReplayRecorder';
 
 export type TestArenaActions = Pick<
   GameState,
@@ -33,6 +34,7 @@ type Shuffle = <T>(items: T[]) => T[];
 export function buildTestArenaActions(get: GetState, set: SetState, shuffle: Shuffle): TestArenaActions {
   return {
     startTestArena: () => {
+      resetLiveReplay();
       const factions = shuffle([...playableFactions]);
       const avatars = shuffle(allGenerals);
       const deck = createCardDeck();
