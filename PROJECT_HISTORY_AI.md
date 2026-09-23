@@ -633,7 +633,7 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 - 本地 soak：`npm run ai-battle` 10 局热身 0 违例 → **1000 局双人（seed 1000..1999）0 违例**（均值 9ms/局、最慢 123ms）→ 400 局三人(pool10/deck80/skill0.7) 0 违例 → 300 局四人(deck90/skill0.9) 0 违例 → 200 局长局(pool16/deck120) 0 违例；合计 1900 局全过逐步不变量。随机策略座位胜负偏斜（双人 322/678）为无脑取牌正常现象，阶段三策略校准胜率。
 - `--replay` 跨进程回环实测：match-1000.json 落盘→CLI 读回→status/steps/winner 全同，exit 0。
 - `npm run check` = 0 错误；`npm run test` = **199 通过**（21 文件，+4）；`npm run test:coverage` 过新棘轮（实测 lines 40.93 / funcs 25.89 / branches 29.52 / stmts 35.63）；`npm run lint` = 0 错误 / 30 遗留警告（零新增）；`npm run build` 单文件成功（1,856.68 kB / gzip 540.90 kB）。
-- CI 远端复验：PENDING（推送后补记 run id）。
+- CI 远端复验已完成：run `35811273378` 全绿（CI #14，master@d3e166f，经登录态浏览器确认）。
 
 ### Unresolved / Risk
 - 不变量集合按"必死后成立"口径实现：ALIVE_BASE_DEPLETED（活着但本营血≤0）与 MISSING_GAME_OVER 在 1900 局未触发，但极端并发结算（同步双亡）路径未针对性构造，千局级 soak 仍属抽样而非穷尽。
