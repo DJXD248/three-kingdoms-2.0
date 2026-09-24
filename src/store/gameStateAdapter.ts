@@ -6,8 +6,19 @@
  */
 import type { EngineState } from '../core/GameState';
 import type { GameCard } from '../data/cards';
+import { createRngState } from '../core/rng';
 import type { GameState, Player } from './gameStore';
 import type { DrawContext } from './gameStore';
+
+/** Seed a fresh engine RNG cursor. Reuses an existing cursor when rebuilding
+ * from a store that already carries one (so the mid-game cursor is never
+ * reset); otherwise draws entropy from time + Math.random for live play.
+ * Headless/seeded runs pass their own config.seed via buildMatchState. */
+function seedRngState(store: any) {
+  const existing = store?.engineState?.rngState;
+  if (existing && typeof existing.s === 'number') return { s: existing.s >>> 0 };
+  return createRngState((Date.now() ^ Math.floor(Math.random() * 0x100000000)) >>> 0);
+}
 
 export function storeStateToEngineState(store: any): EngineState {
   return {
@@ -43,6 +54,7 @@ export function storeStateToEngineState(store: any): EngineState {
         }
       : null,
     isFirstTurn: store.isFirstTurn === true,
+    rngState: seedRngState(store),
   };
 }
 

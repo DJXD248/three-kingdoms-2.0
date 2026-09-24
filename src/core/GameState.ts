@@ -6,6 +6,8 @@
  * - network synchronization
  */
 
+import { createRngState, type RngState } from './rng';
+
 export interface EngineStatusState {
   id: string;
   kind: string;
@@ -57,6 +59,9 @@ export interface EngineState {
   metadata?: Record<string, unknown>;
   drawState?: EngineDrawState | null;
   isFirstTurn?: boolean;
+  /** Deterministic engine RNG cursor (D-2). Optional so legacy snapshots and
+   * replays without it still load; a missing cursor is lazily re-seeded. */
+  rngState?: RngState;
 }
 
 export function createInitialEngineState(): EngineState {
@@ -71,7 +76,10 @@ export function createInitialEngineState(): EngineState {
     deck: [],
     discardPile: [],
     drawState: null,
-    isFirstTurn: true
+    isFirstTurn: true,
+    // Default cursor; real matches re-seed at room creation (createRoom) so a
+    // deterministic run can also be reproduced from a chosen seed.
+    rngState: createRngState(0x9e3779b9),
   };
 }
 

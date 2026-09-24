@@ -1,11 +1,11 @@
 /**
  * Seeded RNG helpers for deterministic AI battles.
  *
- * Every randomness source on the engine path (DrawResolver shuffle/reshuffle,
- * EventProcessor graveyard reshuffle, card-deck build, action ids) goes
- * through the global Math.random — verified by grep in 2.2.4. Therefore a
- * single global patch makes a whole match reproducible from one seed, without
- * touching engine internals. `withSeededRandom` always restores the original.
+ * Since D-2 (stage D) the engine's in-match randomness (draw shuffles) is
+ * carried by EngineState.rngState instead of the global Math.random, so this
+ * global patch now only covers the remaining setup-path randomness (card-deck
+ * build, general sampling) and AI policy tie-breaks. `withSeededRandom` always
+ * restores the original; full retirement is tracked as a PENDING item.
  */
 
 /** mulberry32 — small, fast, good enough for battle shuffling. */

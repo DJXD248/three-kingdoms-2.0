@@ -1,6 +1,7 @@
 import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
+import { cloneRngState, rngShuffle } from '../rng';
 
 export function applyDrawRequiredEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as {
@@ -36,85 +37,104 @@ export function applyDrawRequiredEvent(state: EngineState, event: GameEvent): En
   };
 }
 
+/** Stable identity key used to remove exactly the drawn cards from a pile. */
+function cardRemovalKey(card: unknown): string {
+  const rt = getRuntimeCardId(card as any);
+  if (rt) return rt;
+  if (card && typeof card === 'object' && 'id' in card) return String((card as any).id);
+  return JSON.stringify(card);
+}
+
+/**
+ * Applies a DRAW event. Per D-2 (stage D) all card selection happens here —
+ * the resolver only emits requested counts. Randomness (general-pool shuffle +
+ * discard-pile reshuffle) is consumed from a private clone of EngineState
+ * .rngState, which is then advanced in the returned state so the whole match
+ * is reproducible from state alone. A missing cursor (legacy snapshot) is
+ * lazily seeded from the current turn so even the first draw is deterministic.
+ */
 export function applyDrawEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as {
     playerId?: number;
-    generalCards?: unknown[];
-    cardCards?: unknown[];
-    reshuffledCardCards?: unknown[];
+    requestedGeneral?: number;
+    requestedCards?: number;
     count?: number;
     value?: number;
   } | undefined;
   if (typeof data?.playerId !== 'number') return state;
 
-  const generalCards = Array.isArray(data.generalCards) ? data.generalCards : [];
-  let cardCards = Array.isArray(data.cardCards) ? data.cardCards : [];
-  let reshuffledCardCards = Array.isArray(data.reshuffledCardCards) ? data.reshuffledCardCards : [];
+  const player = state.players.find(p => p.id === data.playerId);
+  if (!player) return state;
 
-  // Skill-triggered draws (DRAW_CARD effects) arrive as a bare count.
-  // Select concrete card instances at apply time from the shared deck
-  // (reshuffling the discard pile when it runs low) so chained draws
-  // can never duplicate card instances the way pre-selected slices could.
-  if (!Array.isArray(data.generalCards) && !Array.isArray(data.cardCards)) {
-    const requested = Math.max(0, Math.floor(Number(data.count ?? data.value ?? 0)));
-    if (requested === 0) return state;
-    const deckCards = Array.isArray(state.deck) ? state.deck : [];
-    const discardCards = Array.isArray(state.discardPile) ? state.discardPile : [];
-    cardCards = deckCards.slice(0, Math.min(requested, deckCards.length));
-    if (cardCards.length < requested && discardCards.length > 0) {
-      reshuffledCardCards = [...discardCards]
-        .sort(() => Math.random() - 0.5)
-        .slice(0, Math.min(requested - cardCards.length, discardCards.length));
-      cardCards = [...cardCards, ...reshuffledCardCards];
-    }
+  const requestedGeneral = Math.max(0, Math.floor(Number(data.requestedGeneral ?? 0)));
+  const requestedCards = Math.max(0, Math.floor(Number(data.requestedCards ?? data.count ?? data.value ?? 0)));
+  if (requestedGeneral === 0 && requestedCards === 0) return state;
+
+  const fallbackSeed = (((state.turn + 1) * 2654435761) ^ ((state.round + 1) * 40503) ^ ((state.deck?.length ?? 0) * 2246822519)) >>> 0;
+  const rng = cloneRngState(state.rngState, fallbackSeed);
+
+  // Private general pool: seeded shuffle so draft/selection order never biases
+  // which general is drawn (main-faction generals are presented first when
+  // drafting, so using that order would artificially favor them).
+  const generalPool = Array.isArray(player.generalPool) ? player.generalPool : [];
+  const shuffledGeneralPool = requestedGeneral > 0 ? rngShuffle(generalPool, rng) : generalPool;
+  const generalCards = shuffledGeneralPool.slice(0, Math.min(requestedGeneral, shuffledGeneralPool.length));
+
+  // Shared card pool: take from the top of the deck; when it runs low, reshuffle
+  // the discard pile (seeded) to refill.
+  const deckCards = Array.isArray(state.deck) ? state.deck : [];
+  const discardCards = Array.isArray(state.discardPile) ? state.discardPile : [];
+  let cardCards = deckCards.slice(0, Math.min(requestedCards, deckCards.length));
+  let reshuffledCardCards: unknown[] = [];
+  if (cardCards.length < requestedCards && discardCards.length > 0) {
+    const reshuffled = rngShuffle(discardCards, rng);
+    reshuffledCardCards = reshuffled.slice(0, Math.min(requestedCards - cardCards.length, reshuffled.length));
+    cardCards = [...cardCards, ...reshuffledCardCards];
   }
 
   const drawn = [...generalCards, ...cardCards];
 
-  const remainingReshuffledIds = new Set(reshuffledCardCards.map(card => {
-    if (card && typeof card === 'object' && 'id' in card) return String((card as any).id);
-    return JSON.stringify(card);
-  }));
+  // Remove the drawn generals from the pool by exact runtime identity.
+  const drawnGeneralKeys = new Map<string, number>();
+  for (const card of generalCards) {
+    const key = cardRemovalKey(card);
+    drawnGeneralKeys.set(key, (drawnGeneralKeys.get(key) ?? 0) + 1);
+  }
+  const remainingGeneralPool = generalPool.filter(card => {
+    const key = cardRemovalKey(card);
+    const count = drawnGeneralKeys.get(key) ?? 0;
+    if (count <= 0) return true;
+    if (count === 1) drawnGeneralKeys.delete(key);
+    else drawnGeneralKeys.set(key, count - 1);
+    return false;
+  });
 
+  // Remove the reshuffled cards that left the discard pile by exact identity.
+  const reshuffledKeys = new Map<string, number>();
+  for (const card of reshuffledCardCards) {
+    const key = cardRemovalKey(card);
+    reshuffledKeys.set(key, (reshuffledKeys.get(key) ?? 0) + 1);
+  }
   const nextDiscard = reshuffledCardCards.length === 0
     ? state.discardPile
     : state.discardPile.filter(card => {
-        const key = card && typeof card === 'object' && 'id' in card
-          ? String((card as any).id)
-          : JSON.stringify(card);
-        if (remainingReshuffledIds.has(key)) {
-          remainingReshuffledIds.delete(key);
-          return false;
-        }
-        return true;
+        const key = cardRemovalKey(card);
+        const count = reshuffledKeys.get(key) ?? 0;
+        if (count <= 0) return true;
+        if (count === 1) reshuffledKeys.delete(key);
+        else reshuffledKeys.set(key, count - 1);
+        return false;
       });
 
-  const players = state.players.map(player => {
-    if (player.id !== data.playerId) return player;
-    const currentHand = Array.isArray(player.hand) ? player.hand : [];
-    const currentPool = Array.isArray(player.generalPool) ? player.generalPool : [];
+  // Only deck-sourced cards advance the deck pointer; reshuffled cards came
+  // from the discard pile.
+  const deckConsume = Math.min(cardCards.length - reshuffledCardCards.length, deckCards.length);
 
-    // IMPORTANT: DrawResolver selects physical general instances after
-    // shuffling a copy of the pool. Never remove the first N entries
-    // from the original pool here, because that can leave the actually
-    // drawn general behind and make it drawable again. Remove the exact
-    // runtime instances emitted by the DRAW event instead.
-    const selectedGeneralIds = new Map<string, number>();
-    for (const card of generalCards) {
-      const id = getRuntimeCardId(card as any);
-      if (id) selectedGeneralIds.set(id, (selectedGeneralIds.get(id) ?? 0) + 1);
-    }
-    const remainingGeneralPool = currentPool.filter(card => {
-      const id = getRuntimeCardId(card as any);
-      const count = selectedGeneralIds.get(id) ?? 0;
-      if (count <= 0) return true;
-      if (count === 1) selectedGeneralIds.delete(id);
-      else selectedGeneralIds.set(id, count - 1);
-      return false;
-    });
-
+  const players = state.players.map(p => {
+    if (p.id !== data.playerId) return p;
+    const currentHand = Array.isArray(p.hand) ? p.hand : [];
     return {
-      ...player,
+      ...p,
       hand: [...currentHand, ...drawn],
       generalPool: remainingGeneralPool,
     };
@@ -123,8 +143,9 @@ export function applyDrawEvent(state: EngineState, event: GameEvent): EngineStat
   return {
     ...state,
     players,
-    deck: state.deck.slice(Math.min(cardCards.length - reshuffledCardCards.length, state.deck.length)),
+    deck: state.deck.slice(deckConsume),
     discardPile: nextDiscard,
+    rngState: rng,
   };
 }
 

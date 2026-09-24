@@ -12,6 +12,7 @@ import type { EngineState, EnginePlayer } from '../core/GameState';
 import { allGenerals, allFactions, type Faction, type General, type Skill } from '../data/generals';
 import { createCardDeck, type CardType } from '../data/cards';
 import { cloneWithRuntimeInstance } from '../utils/runtimeIdentity';
+import { createRngState } from '../core/rng';
 
 /**
  * Per-seat setup for the "自选势力/将领" mode (2.2.8). Duplicates are legal —
@@ -168,5 +169,9 @@ export function buildMatchState(config: MatchConfig): EngineState {
     discardPile: [],
     metadata: { roomId: `ai-battle-${config.seed}` },
     drawState: null,
+    // Engine draws now consume this cursor (D-2), independent of the global
+    // Math.random patch — seeded from config.seed so a run is reproducible
+    // from state alone.
+    rngState: createRngState(config.seed),
   };
 }

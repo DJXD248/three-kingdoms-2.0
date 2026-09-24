@@ -191,8 +191,8 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
 
   describe('① 开局抽牌', () => {
     it('双方依次完成初始 5 张抽取后进入行动阶段，且抽牌窗口有严格门禁', () => {
-      // 固定 RNG 使将领头池洗牌成为恒等置换 → 抽到的将领可精确断言
-      vi.spyOn(Math, 'random').mockReturnValue(0.99);
+      // D-2：将池洗牌改由 EngineState.rngState 驱动（不再受 Math.random mock 影响），
+      // 具体抽到哪张由种子游标决定，这里只断言阵营纯度与数量。
 
       const p1 = makePlayer(1, '玩家1', '魏', { generalPool: makeGeneralPool('wei_', '魏') });
       const p2 = makePlayer(2, '玩家2', '蜀', { generalPool: makeGeneralPool('shu_', '蜀') });
@@ -212,7 +212,7 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
       const hand1 = engine.state.players[0].hand as any[];
       expect(hand1).toHaveLength(5);
       expect(hand1.filter(isGeneralCard)).toHaveLength(1);
-      expect(hand1.find(isGeneralCard).id).toBe('wei_1');
+      expect(hand1.find(isGeneralCard).id).toMatch(/^wei_/);
       expect(engine.state.players[0].generalPool).toHaveLength(9);
       expect(engine.state.deck).toHaveLength(48);
 
@@ -596,7 +596,7 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
 
   describe('⑨ 完整一局冒烟（开局抽牌→部署→三段推进→摧毁本营获胜）', () => {
     it('全程只通过 GameAction 驱动，从 menu 一路打到 gameOver', () => {
-      vi.spyOn(Math, 'random').mockReturnValue(0.99); // 初始抽将确定性：洗牌取 pool[0]
+      // D-2：抽将洗牌走 rngState 游标，可精确断言的只剩阵营纯度。
 
       const p1 = makePlayer(1, '玩家1', '魏', { generalPool: makeGeneralPool('fw1_', '魏') });
       const p2 = makePlayer(2, '玩家2', '蜀', { generalPool: makeGeneralPool('fw2_', '蜀'), baseHp: 2, baseMaxHp: 2 });
@@ -615,7 +615,7 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
       // ── 第 1 回合：部署 + 营地→己方前线 ──
       const hand1 = () => playerOf(engine, 1).hand as any[];
       const general = hand1().find(isGeneralCard);
-      expect(general.id).toBe('fw1_1');
+      expect(general.id).toMatch(/^fw1_/);
       const generalId = runtimeIdOf(general);
       const costCard = () => hand1().find(card => !isGeneralCard(card));
       deployOk(engine, 1, general, 0, [costCard()]);

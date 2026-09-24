@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { DrawResolver } from './DrawResolver';
 import { createAction } from '../ActionTypes';
 import type { EngineState, EnginePlayer } from '../../core/GameState';
@@ -25,6 +25,8 @@ const ds = (playerId: number, totalCards: number) => ({ reason: 'turnStart' as c
 
 describe('DrawResolver', () => {
   const resolver = new DrawResolver();
+  const originalRandom = Math.random;
+  afterEach(() => { Math.random = originalRandom; });
 
   it('resolves DRAW only', () => {
     expect(resolver.canResolve(createAction('DRAW', 1, {}))).toBe(true);
@@ -54,34 +56,36 @@ describe('DrawResolver', () => {
     expect((events[0].data as any).expected).toBe(5);
   });
 
-  it('splits general and card draws', () => {
+  it('emits a count-only DRAW event (D-2: no card selection in resolvers)', () => {
     const deck = [{ id: 'd1' }, { id: 'd2' }];
     const st = state({ drawState: ds(1, 3), deck });
     const events = resolver.resolve(st, createAction('DRAW', 1, { fromGeneralPool: 1, fromCardPool: 2 }));
     expect(events[0].type).toBe('DRAW');
     const data = events[0].data as any;
-    expect(data.generalCards).toHaveLength(1);
-    expect(data.cardCards).toHaveLength(2);
+    expect(data.playerId).toBe(1);
+    expect(data.requestedGeneral).toBe(1);
+    expect(data.requestedCards).toBe(2);
     expect(data.count).toBe(3);
-    expect(data.reshuffleUsed).toBe(false);
+    expect(data.reason).toBe('turnStart');
+    // Selection moved to applyDrawEvent; the resolver must not smuggle instances.
+    expect(data.generalCards).toBeUndefined();
+    expect(data.cardCards).toBeUndefined();
+    expect(data.reshuffledCardCards).toBeUndefined();
+    expect(data.reshuffleUsed).toBeUndefined();
   });
 
-  it('reshuffles discard pile when deck is short', () => {
-    const deck = [{ id: 'd1' }];
-    const discard = [{ id: 'x1' }, { id: 'x2' }, { id: 'x3' }];
-    const st = state({ drawState: ds(1, 3), deck, discard });
-    const events = resolver.resolve(st, createAction('DRAW', 1, { fromGeneralPool: 0, fromCardPool: 3 }));
-    const data = events[0].data as any;
-    expect(data.reshuffleUsed).toBe(true);
-    expect(data.cardCards.length).toBe(3);
-    expect(data.reshuffledCardCards.length).toBe(2);
+  it('never touches the global random source (D-2 ban on private RNG in resolvers)', () => {
+    // createAction mints its id with Math.random, so build it before the probe.
+    const action = createAction('DRAW', 1, { fromGeneralPool: 1, fromCardPool: 2 });
+    const st = state({ drawState: ds(1, 3), deck: [{ id: 'd1' }, { id: 'd2' }, { id: 'd3' }] });
+    Math.random = () => { throw new Error('DrawResolver must not consume Math.random'); };
+    const events = resolver.resolve(st, action);
+    expect(events[0].type).toBe('DRAW');
   });
 
-  it('never selects more generals than the pool holds', () => {
-    const st = state({ drawState: ds(1, 5), players: [createTestPlayer(1, { generalPool: [{ id: 'pg1' }] })] });
-    const events = resolver.resolve(st, createAction('DRAW', 1, { fromGeneralPool: 5, fromCardPool: 0 }));
-    const data = events[0].data as any;
-    expect(data.generalCards).toHaveLength(1);
-    expect(data.count).toBe(1);
+  it('is pure: same state + same action yields identical events', () => {
+    const st = state({ drawState: ds(1, 3), deck: [{ id: 'd1' }, { id: 'd2' }, { id: 'd3' }] });
+    const action = createAction('DRAW', 1, { fromGeneralPool: 2, fromCardPool: 1 });
+    expect(resolver.resolve(st, action)).toEqual(resolver.resolve(st, action));
   });
 });
