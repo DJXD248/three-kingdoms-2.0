@@ -865,3 +865,20 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 ### Unresolved & Risk
 - 纯移动拆分未触碰任何 set() 载荷语义；唯一微改写是 toggleDeveloperMode 从函数式 set 改为 get()+对象 set（等价求值，devMode 冒烟通过）。
 - gameStore 剩余 622 行仍含对局动作+流程状态两组职责，阶段 B 第二对象是 EventProcessor（852 行，D-6：单一 processEvent 入口+事件族分文件，禁第二入口）。
+
+## Qoder 2.2.13：稳定期阶段 B 第二刀——EventProcessor 纯移动拆分（D-6 推进）[Qoder/Qwen]
+
+背景：用户在 2.2.12 闭环后口令"进行下一步"，按稳定期路线推进阶段 B 第二刀（决议 D-6：EventProcessor 拆分，单一 processEvent 入口+事件族分文件，不许出现第二入口）。零行为改动红线：玩法/引擎/规则一字未动。
+
+变更（全部逐字搬移）：
+- `core/EventProcessor.ts` 852→93 行：类只保留 `process`（cloneEngineState + 队列循环 + apply）与 `apply`（薄 switch 15 案例分发），类头注释新增单入口禁令（"do not add a second entry point that mutates EngineState from events"）。
+- 新目录 `core/eventProcessors/`：`damageEvents.ts`(168，BASE_DAMAGE+DAMAGE，含技能伤害 applyArmorDamage 结算与 legacy 护甲兜底 Date.now——D-4 位置指针随迁至 damageEvents.ts:151)、`drawEvents.ts`(178，DRAW_REQUIRED+DRAW 含堆不足洗弃牌堆+DRAW_CONFIRMED 含补偿抽回归)、`generalEvents.ts`(214，GENERAL_DEPLOYED/GENERAL_MOVED/SUPPLY_RESOLVED/ARMOR_EQUIPPED+RESOURCE_TYPES)、`playerEvents.ts`(77，PLAYER_DEFEATED+GAME_OVER)、`turnEvents.ts`(95，TURN_END/TURN_ACTIONS_RESET/TURN_START/PHASE_CHANGED)、`chainedConsequences.ts`(112，`enqueueDerivedConsequences(queue,event,before,next)` 承接原 process 内联的四段派生连锁：DAMAGE 本营致死→PLAYER_DEFEATED、DEATH→DRAW_REQUIRED 补偿抽、BASE_DAMAGE→PLAYER_DEFEATED、PLAYER_DEFEATED→GAME_OVER/回合交接四连发)。
+- 处理器一律纯 (state, event) → state 函数、仅经 EventProcessor 调用；`core/index.ts` 与外部消费方（GameEngine/测试）口径不变。
+- AGENTS（模块图 core/ 行+Key Files 行）、ARCH_MAP（EventProcessor 行改 93 行时点、新增 eventProcessors/* 行、D-4 指针、D-6 进度"前两刀落地，剩 F 阶段 UI 三文件"）、CHANGELOG [2.2.13] 同轮刷新。
+
+验证：
+- check 0 错误；264 测试通过（32 文件，零增删）；覆盖率棘轮 41/34/32/46 维持通过（实测 stmts 42.09 / branch 34.67 / funcs 33.45 / lines 47.16，funcs 较上轮 +0.61 系拆出函数被真实测到）；lint 0 错误/30 遗留警告（零新增）；build 单文件 1,916.89 kB / gzip 562.51 kB。
+- 浏览器冒烟（dev `__TK__` 直驱拆分后真实 store+引擎装配，非旁路）：createRoom→lobby；startTestArena 后 endTurn×4 连续驱动 TURN_END/TURN_START/DRAW_REQUIRED/DRAW_CONFIRMED/PHASE_CHANGED 走拆分后处理器（引擎 turn 2→5、round 1→2 进位正确、phase playing/ACTION 驻留）；快照链 createSerializedSnapshot('EP-Room-1')=4,565 字符→restoreSerializedSnapshot=true、错房号=false、空房号=既有守卫抛错；错误密码 toggleDeveloperMode=false。控制台仅两条 [Recovery] 拒收日志，均为故意投喂坏数据的演示性断言，应用自身 0 报错。
+- CI 远端复验 PENDING（推送后回填）。
+
+Unresolved & Risk：①DAMAGE 案例内 `fallbackDestroyedArmor` 仍用 Date.now（D-4 待办，位置已迁、行为未动）；②DRAW 洗堆仍用 Math.random（D-2 待办）；③阶段 B 定义内的两刀已完成，剩余 SkillEditor/GameBoard/TestArena 整理属 F 序列，需用户口令再动。

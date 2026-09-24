@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.13] - 2026-09-24
+
+Stabilization stage B, second split (decision D-6): `core/EventProcessor.ts` shrunk 852 -> 93 lines via **pure verbatim moves, zero behavior change**. Single canonical entry (`process` queue loop + `apply` thin dispatcher) preserved; no second entry point.
+
+- `src/core/eventProcessors/damageEvents.ts` (new, 168): BASE_DAMAGE + DAMAGE handlers (incl. skill-damage armor settlement and legacy armor fallback, now at damageEvents.ts:151).
+- `src/core/eventProcessors/drawEvents.ts` (new, 178): DRAW_REQUIRED / DRAW (deck selection & reshuffle) / DRAW_CONFIRMED.
+- `src/core/eventProcessors/generalEvents.ts` (new, 214): GENERAL_DEPLOYED / GENERAL_MOVED / SUPPLY_RESOLVED / ARMOR_EQUIPPED + RESOURCE_TYPES.
+- `src/core/eventProcessors/playerEvents.ts` (new, 77): PLAYER_DEFEATED / GAME_OVER.
+- `src/core/eventProcessors/turnEvents.ts` (new, 95): TURN_END / TURN_ACTIONS_RESET / TURN_START / PHASE_CHANGED.
+- `src/core/eventProcessors/chainedConsequences.ts` (new, 112): deterministic derived-event enqueue (DAMAGE/DEATH/BASE_DAMAGE/PLAYER_DEFEATED chains) formerly inline in process().
+- Verified: check 0 errors / 264 tests pass (32 files, zero add/remove) / coverage ratchet gates 41/34/32/46 hold (measured 42.09/34.67/33.45/47.16, funcs up from 32.84) / lint 0 errors 30 legacy warnings / build 1,916.89 kB single file. Browser smoke via dev-only `__TK__` (real store+engine assembly): createRoom->lobby, startTestArena + 4x endTurn driving TURN_END/TURN_START/DRAW_REQUIRED/DRAW_CONFIRMED/PHASE_CHANGED through split handlers (turn 2->5, round rolls to 2), snapshot create(4,565 chars)+restore true + empty-roomId guard + mismatched-room rejection, wrong developer password rejected; app console 0 unexpected errors (only deliberate negative-probe rejections).
+
 ## [2.2.12] - 2026-09-24
 
 Stabilization stage B, first split (decision D-6): `gameStore.ts` shrunk 956 -> 622 lines via **pure verbatim moves, zero behavior change**.

@@ -38,7 +38,8 @@
 |---|---|---|---|---|---|---|---|---|---|
 | `core/EngineState`（经 `core/GameState.ts`） | State | 对局唯一持久真相源，可序列化/重建 | CANONICAL | 它自己（一切状态以它为准） | game-scoped（持久于 store） | PURE（数据本身） | UT/CI | 无 rngState（见 D-2） | 1.x |
 | `core/GameEngine.ts` | Engine | dispatch 编排：校验→resolver→事件应用 | CANONICAL | 引擎对"一次动作如何执行"负责 | **action-scoped（现状）**：每次 dispatch 被 bridge 重建 | RNG（内部掷骰走 Math.random） | UT/IT/CI | 长生命周期需求（Reaction/网络）未满足，见 D-1 | 1.x |
-| `core/EventProcessor.ts`（852 行） | Event | 事件→状态迁移唯一应用点 | CANONICAL | 状态如何变化它说了算 | 随引擎重建 | PURE（除 legacy 护甲兜底用 Date.now，见 D-4） | UT/CI（17+ 用例） | 体积大、多职责（按事件族拆分是 D 阶段 B 项） | 1.x |
+| `core/EventProcessor.ts`（93 行，2.2.13 时点；原 852） | Event | 事件→状态迁移唯一应用入口（process 队列循环 + apply 薄分发；D-6 阶段 B 第二刀纯移动拆分，处理器逐字移入 eventProcessors/，唯一入口纪律不变） | CANONICAL | 状态如何变化它说了算 | 随引擎重建 | PURE（除 legacy 护甲兜底用 Date.now，见 D-4） | UT/CI（17+ 用例） | 已按事件族拆分（2.2.13） | 1.x |
+| `core/eventProcessors/*`（6 文件 844 行：damageEvents 168 / drawEvents 178 / generalEvents 214 / playerEvents 77 / turnEvents 95 / chainedConsequences 112） | Event | 事件族处理器（纯 (state, event) → state 函数）+ 派生事件入队（DAMAGE/DEATH/BASE_DAMAGE/PLAYER_DEFEATED 连锁） | CANONICAL（仅经 EventProcessor 单一入口调用，禁第二入口） | — | 随引擎重建 | PURE（DRAW 堆不足时洗弃牌堆用 Math.random，见 D-2） | UT/CI | 2.2.13 引入，纯移动零行为变化 | 2.2.13 |
 | `core/EngineDispatchFlow.ts` | Engine | dispatch 流程辅助 | CANONICAL | — | action-scoped | PURE | UT | — | 1.x |
 | `action/ActionDispatcher.ts` + `resolvers/*`（11 个） | Action | 动作→事件产出 | CANONICAL | 各 resolver 对自己动作的事件形态负责 | request-scoped | PURE/RNG（抽牌类） | UT 全覆盖/CI | HEAL/GAIN_ARMOR 类技能效果尚无完整结算（D-3 前置） | 1.x |
 | `rules/ActionValidator.ts` | Rule | **合法性最终裁判** | CANONICAL | 合法/非法它说了算 | request-scoped | PURE | UT/E2E | — | 1.x |
@@ -81,9 +82,9 @@
 | D-1 | GameEngine action-scoped，无法满足 Reaction/网络/长生命周期 | **短期允许双路验证，禁止双路长期执行**：抽出唯一 `TransitionCore.transition(state,action,ctx)`；常驻引擎只是持有 currentState/rngState 的执行容器；重建式执行降级为对账工具；测试断言 常驻结果===重建结果 | 阶段 E |
 | D-2 | RNG：withSeededRandom 全局替换 Math.random（并行/服务器下有危险）；重放"重新掷骰"脆弱 | RNG 进 `EngineState.rngState`；随机行为产出 **RandomOutcome 事件**（purpose/value/稳定 id）；**录像记结果不记重掷**；禁止 Resolver 私拿随机源，统一 ExecutionContext.random() | 阶段 D（单独迁移，勿与 D-1 同期） |
 | D-3 | 技能 Effect/Trigger 覆盖半成品：HEAL/GAIN_ARMOR 未完整结算；onTurnEnd/onOtherDeploy/onBecomingTarget 等未全接；技能致死不产 DEATH→onKill 断链 | 先钉死 Event→Trigger→Effect→State mutation 权威边界再加覆盖面，防第二轮技能膨胀 | 阶段 C |
-| D-4 | legacy 护甲兜底 `legacy_armor_destroyed_${Date.now()}` 伪造牌实例（EventProcessor.ts:613） | 确认全部调用方供真实实例后移除；**旧录像永不回填改写**（历史证据）；加 ReplayHeader{schemaVersion,gameVersion}，旧录像经 Adapter 转 canonical 只读加载 | 阶段 B 定策、C 执行 |
+| D-4 | legacy 护甲兜底 `legacy_armor_destroyed_${Date.now()}` 伪造牌实例（现居 `eventProcessors/damageEvents.ts:151`，2.2.13 拆分前在 EventProcessor.ts:613） | 确认全部调用方供真实实例后移除；**旧录像永不回填改写**（历史证据）；加 ReplayHeader{schemaVersion,gameVersion}，旧录像经 Adapter 转 canonical 只读加载 | 阶段 B 定策、C 执行 |
 | D-5 | 候选枚举"指定卡消耗"扩展性 | 标志挂 **Action 语义**不挂卡：`CardSelectionPolicy: EQUIVALENT / INSTANCE_REQUIRED (/PREFERRED)`；EQUIVALENT 保持代表卡收窄防动作空间爆炸 | 需求出现时 |
-| D-6 | 热点文件多职责 | 拆分顺序已钉：**gameStore → EventProcessor（单一 processEvent 入口+事件族分文件）→ SkillEditor → GameBoard/TestArena**；EventProcessor 拆分不许出现第二入口。**进度：gameStore 第一刀已落地（2.2.12 纯移动拆出 types/编辑器/恢复/演练场切片，956→622 行）；EventProcessor 待拆** | 阶段 B（前二）/F（后三） |
+| D-6 | 热点文件多职责 | 拆分顺序已钉：**gameStore → EventProcessor（单一 processEvent 入口+事件族分文件）→ SkillEditor → GameBoard/TestArena**；EventProcessor 拆分不许出现第二入口。**进度：阶段 B 前两刀已落地——gameStore（2.2.12，956→622 行）、EventProcessor（2.2.13，852→93 行入口 + eventProcessors/ 六族文件，纯移动零行为变化）；下一刀轮 F 阶段 SkillEditor/GameBoard/TestArena** | 阶段 B（前二，完）/F（后三） |
 | D-7 | `npm run build` 内嵌 `npm install`（构建依赖网络、伪装安装语义） | 评审异议记录在案；本仓离线单文件分发场景为初因，改动需连同分发文档，列入 2.3 议题而非 2.2.11 | 2.3 议 |
 | D-8 | 周边文档易漂移 | 2.2.11 起登记纪律扩至五文档（README/AGENTS/CHANGELOG 纳入核对），见 PROJECT_RELEASE_PIPELINE.md | **已落地** |
 

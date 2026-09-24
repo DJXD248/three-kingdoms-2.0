@@ -31,7 +31,7 @@ npm run lint:fix                                   # eslint . --fix
 
 ```
 src/
-+-- core/            Game engine: GameEngine, EventProcessor, GameState, EventBus, EngineDispatchFlow
++-- core/            Game engine: GameEngine, EventProcessor (thin entry), eventProcessors/ (event-family handlers, split in 2.2.13), GameState, EventBus, EngineDispatchFlow
 +-- action/          Action system: ActionTypes, ActionDispatcher, ResolverRegistry
 |   +-- resolvers/   Attack, Deploy, Move, Supply, Surrender, Turn, Armor, Draw...
 +-- store/           Zustand store: gameStore (+ gameStoreTypes/gameStoreEditorActions/gameStoreRecovery split in 2.2.12), gameStateAdapter, engineAwareSetter, engineExecutionBridge, testArenaActions, editorPersistence, localGameSnapshot
@@ -109,7 +109,7 @@ Excel files (.xlsx) are imported via the `importer/` module:
 | File | Purpose |
 |------|---------|
 | `src/store/gameStore.ts` | Central Zustand store (622 lines as of 2.2.12; types/editor/recovery/test-arena slices split out per D-6 stage B) -- app/session state + engine projection |
-| `src/core/EventProcessor.ts` | Event application logic (852 lines as of 2.2.11) -- how state changes |
+| `src/core/EventProcessor.ts` | Event application logic -- single canonical entry (process/apply dispatcher, 93 lines as of 2.2.13; handlers verbatim-split into `core/eventProcessors/*` by event family per D-6 stage B) |
 | `src/core/GameEngine.ts` | Game engine orchestrator (rebuilt per dispatch from EngineState -- see PROJECT_ARCH_MAP lifecycle) |
 | `src/store/gameStateAdapter.ts` | Engine <-> Store state synchronization |
 | `src/action/resolvers/*.ts` | Action resolution logic (attack, deploy, move, etc.) |
