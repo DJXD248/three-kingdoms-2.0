@@ -1012,3 +1012,21 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 **Unresolved**：①store 常驻迁移（gameStore 持长生命周期引擎）顺延下一刀（用户口径）；②D-2 欠账不变：a) RandomOutcome 事件流（单独一刀）+ e) 观察项（§12-16）；③CI 远端复验待回填。
 
 （收尾补记：feat `518bb6f`、docs `ee761ba` 与附注标签 `v2.2.20` 一次推送——直连超时，一次性借道本地代理 127.0.0.1:10808 成功，未写持久配置。push 事件按顶端提交建单 run：CI #52（编号 35995323024，master@ee761ba，覆盖 feat+docs 全树）**全绿**，test(22)/test(24)（294 例双 Node）/lint/build 四 job 页面徽标全部 completed successfully、零失败标记。回填提交另起一 run，按约定只核验回填这一级。）
+
+
+## Qoder 2.2.21：稳定期阶段 E 第二刀（收线）——store 常驻迁移落地：桥内唯一长生命周期引擎容器、adopt-clone 语义、重建式执行降级为对账工具（决议 D-1 闭环）[Qoder/Qwen]
+
+**背景**：用户批准两刀连做计划（先 v2.2.21 store 常驻迁移、后 RandomOutcome 事件流一刀，除中途暴露需优先解决的问题外不打断），本刀为阶段 E 第二刀。计划稿原案="入参 engineState 与容器上次 snapshot 同一性匹配则复用常驻引擎，否则保守降级重建"。**实施前设计评审否决了同一性匹配**：gameStore 的 engine-aware setter 每次 set 都把投影字段与快照**别名共享**（`players: engineState.players` 是同一数组对象），任何就地改写都不会改变引用同一性，匹配判定会漏检——双头真相风险恰恰藏在"看起来能省钱"的那一步。改采 **adopt-clone 语义**：常驻容器每步无条件采纳入参 engineState 的克隆作为自己的状态。这在结构上恒等于旧重建路径消费的输入（同一份数据、同一条 TransitionCore），却保住了容器实例供未来 Reaction/网络接线；外部改写 store 态（读档、resetGame、testArena 装配）因"每步重读入参"天然被尊重，**计划稿的重建失效钩子整个不需要了**。
+
+**变更**：
+- **`store/engineExecutionBridge.ts` 常驻化**：模块级单例 `{engine, registeredOwners, dispatches}`，`new GameEngine(state, {recordHistory: false})`——对局级录像已由 liveReplayRecorder 每步投喂单路承接，常驻引擎若再挂自己的 ReplayRecorder/SnapshotManager 链=零读者的双倍内存增长，故旁路。dispatch 序：adopt 克隆 → 技能注册表全量重登记 → `engine.dispatch` → `snapshot()` → `recordLiveDispatch`。gameStore 八个调用点签名不变、零改动。
+- **技能注册每步 resync（复刻 fresh-engine 语义）**：`syncPlayerSkills` 只注册从不注销（Map.set），常驻表会让上一步阵亡的将领继续触发。现每步先按上一批 ownerId `unregisterPlayerSkills` 再全量 sync——注册表内容与"新建引擎跑这一步"逐字节一致（TriggerEngine 排序稳定，Map 插入序即优先级并列序）。
+- **重建式执行降级为对账工具**：`dispatchStoreActionReconcile` 保留 2.2.21 前的每步重建语义（新引擎、默认 recordHistory），**刻意不喂 liveReplayRecorder**——生产录像归常驻路独占，两路因此在测试里可并跑对账而零双录。
+- **测试 294→297 / 37 文件**（`core/transitionEquivalence.test.ts` 3→6 例）：主对账升级为**四路全等**（A 直接常驻引擎连跑 === B `dispatchStoreActionReconcile` 重建 === C store 常驻桥 `dispatchStoreAction` === D ReplayPlayer 回放 A 的录像文档，逐步原始事件序列+终态全等）；容器专例 3——①连续 dispatch 复用同一 GameEngine 实例（`__residentEngineProbe()` 引用同一性+dispatches 1→2）；②跨步 resync 清死将：第 1 步击杀后 `:g2:` 绑定仍在表中，第 2 步 resync 后与全新重建的注册表全等且无 g2；③别名态被消费：直接就地改写入参 `players[0].hand`（模拟 gameStore 别名改写），桥与对账路结果仍全等。测试缝 `__resetResidentEngineContainer`/`__residentEngineProbe`。
+- 文档随刀修正：`skillCompiler.ts` 过时注释（"store 每次 dispatch 新建引擎"）、ARCH_MAP（C-1 引擎现状、B 表 bridge/GameEngine/TransitionCore 行、D-1 行标收线、D-2 行建局随机销案状态滞后）、AGENTS 引擎生命周期条目（D-1 closed 口径+禁把容器当真相源）、README/HANDOFF 测试数 297。
+
+**行为变化（披露）**：**零**——这不是"变化后重锚"，是"根本没动"：`ai-battle --games 300 --seed 1` 胜席分布 {1:109,2:191} 与 2.2.19/2.2.20 基线**逐字一致**（won=300/VIOLATIONS=0）；测试面除新增例外全部原断言通过（含 skillPipeline 连跑多步过桥的既有用例）；package.json/lock 2.2.20→2.2.21。
+
+**验证**（定稿红线：全部文件定稿后、提交前跑满五闸）：check 0 错误；297 测试通过（37 文件）；覆盖率棘轮维持 42/34/34/47（实测 stmts 43.30 / branch 35.52 / funcs 34.95 / lines 48.40，branch -0.02 系桥文件拆常驻容器后的分母漂移，地板不动）；lint 0 错误 30 遗留警告零新增；build 单文件 1,919.38 kB/gzip 563.60 kB；ai-battle 300 局分布与基线逐字一致。**浏览器真机 E2E（dev 5199 人机对战 2 人房，DOM 真实点击+骰子限流技巧，全新起服故活 store 走裸 `import('/src/store/gameStore.ts')` 无需 `?t=`）**：完整开局链（骰子 7/6→确认座次→AI 座自动征召→玩家真实点击征召 7 晋+3 群→确认→初始抽卡 2 将+3 卡→AI 抽卡→开始行动→playing）+对局链**全程走常驻桥**：登场司马懿（点手牌→登场将领→**至少消耗 1 张手牌**的口径：点锡矿使"确认位置"解禁→deployTarget 点己方营地格落子 camp:2；probe dispatches 10→11）→⏭️结束回合→AI 司机完整回合（→17）→第 2 轮玩家回合抽 5 张确认→开始行动→🚶前进（选精钢锭耗卡→营地→前线 slot2 自动落位 hasMoved=true；→20）。`__residentEngineProbe()` 实证单容器单调复用无重建；console 0 错误 0 警告（仅 vite/React info）。登场 UI 小插曲如实登记：先按记忆口径点营地/前线格无反应，查 `GameBoard.tsx:507` 确认"确认位置"启用条件是 `depCards.length>0`（登场至少耗 1 张），属 UI 规则而非本刀回归。
+
+**Unresolved**：①D-2 欠账不变：a) RandomOutcome 事件流（下一刀 2.2.22，同一授权）+ e) 观察项（§12-16）；②常驻容器的长生命周期业务接线（ReactionWindow 入口/网络）随各自需求另立刀次；③CI 远端复验待回填。
