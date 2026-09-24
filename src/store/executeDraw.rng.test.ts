@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useGameStore } from './gameStore';
 import type { Player } from './gameStore';
-import { assignFactions, createLobbyPlayers, defaultSeatModes } from '../setup/runtimeSetup';
+import { assignFactions, defaultSeatModes } from '../setup/runtimeSetup';
 import { resetAiControllers, runAiStep } from '../ai/aiTurnDriver';
 import { createRngState } from '../core/rng';
 
