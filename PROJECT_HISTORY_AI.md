@@ -929,3 +929,24 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **Unresolved**：①阶段 C（技能覆盖面：HEAL/GAIN_ARMOR、触发、技能击杀→DEATH 链，即旧 §12-9 b-d）为稳定期下一轮，开工前待用户口令；②三大 UI 文件进一步瘦身（Slot/Territory/Dev 面板等闭包绑定件）需解闭包=非纯移动，单独立项待评估；③compactPrimitives 与 uiPrimitives 的合并统一同上（需视觉回归），稳定期内不动。
 （收尾补记：推送后云端 CI #42 全绿——run 35952936795，master@3b3bf36，test(22)/test(24)/lint/build 四 job 均 completed successfully。直推成功，未借道代理。）
+
+## Qoder 2.2.17：稳定期阶段 C 首刀——HEAL/GAIN_ARMOR 真实结算 + 技能击杀→DEATH 链接通（旧 §12-9 b/d 销案）[Qoder/Qwen]
+
+**背景**：用户口令"好吧，做阶段C"。范围经盘点后与用户口径确认为 b+d 两项：HEAL/GAIN_ARMOR 效果接入结算、技能致命伤补发 DEATH 打通 onKill/onDeath/补偿抽链；c（ReactionWindow 业务入口）与无引擎事件支撑的触发种类（modify*/onBase*/passive/active*/untilExpire/onOtherDeploy/onTurnEnd/onBecomingTarget/onTargetConfirmed/onOtherSkillActivated）维持 PENDING。核心难点（d）：技能致死只在 **apply 时刻**才可知，而触发链跑在 dispatch 前冻结态上——DAMAGE 处理器直接移除将领后没有任何事件告诉引擎"这人死于技能"。解法定型为"派生 DEATH + 有界重入"：既守住 D-2 单一改动入口（EventProcessor.process 是唯一 state→state 通道），又让死亡技能链完整展开。
+
+**变更**：
+- `core/Event.ts`：GameEventType += `HEAL | GAIN_ARMOR`。
+- `core/eventProcessors/generalEvents.ts`：新增纯处理器 `applyHealEvent`（治疗封顶 maxHp；不在场武将=诚实 no-op，如自身 onDeath 治疗）与 `applyGainArmorEvent`（currentArmor 点数累加——护甲点数货币而非实体护甲卡，与编辑器预览"获得 N 点护甲"口径一致）。
+- `core/EventProcessor.ts`：apply() += 两 case；`process(state, events, collected?)` 增可选**追加收集**参——队列中途派生的事件在入队点被收集（队列切片差），旧调用方零影响。
+- `core/eventProcessors/chainedConsequences.ts`：DAMAGE 分支扩展——`damageType==='skill'` 且目标将领 before→after 从 fieldGenerals 消失时派生 `DEATH{targetPlayerId, targetId, attackerPlayerId, attackerId, skillKill:true}`；普攻击杀已由 AttackResolver 自带 DEATH，该门条件即去重保证。
+- `core/GameEngine.ts`：dispatch 增加**有界重入回合**（`MAX_TRIGGER_REENTRY_ROUNDS=8`）：收集到的派生 DEATH 以应用后状态再展开触发链（DEATH/TRIGGERED 本身不重复状态处理），超出上限发 CUSTOM `TRIGGER_REENTRY_LIMIT` 哨兵。
+- `skills/SkillTriggerBridge.ts`：HEAL/GAIN_ARMOR 效果翻译为真实事件（findGeneralRef 解析目标所在玩家；命中基地目标的兜底 playerIdFromBase）。
+- `skills/skillCompiler.ts` / `skills/skillExcelFormat.ts`：SUPPORTED_EFFECT_TYPES 与 SETTLEABLE_RUNTIME_TYPES 升为四类型——编辑器"暂未接入结算"标注随数据源自动消失。
+- 测试：`skillCompiler.test.ts` 的 HEAL/GAIN_ARMOR 跳过断言改写为编译断言；`skillPipeline.test.ts` +4（HEAL 封顶 5→maxHp、GAIN_ARMOR 0→2、技能击杀集成：onDeath(100) 先于 onKill(60) 结算的牌堆序断言+graveyard+补偿 drawState、普攻击杀恰好 1 条 DEATH 去重）。264→268 例/32 文件。内置武将全部仍为纯描述（编译器跳过），现有内容零行为变化。
+- 覆盖率棘轮上调 42/34/33/47（实测 42.46/35.11/33.85/47.49；branch 两轮抖动 35.11–35.28，地板留 34 防 CI 矩阵误杀）。
+- AGENTS/README（无需改动项经 cross-check 确认）、ARCH_MAP（Event/GameEngine/EventProcessor/eventProcessors/skills 行刷新）、CHANGELOG [2.2.17]、HANDOFF §3/§9/§12-9/§13 同轮登记；另记用户决定：三大 UI 文件解闭包瘦身**不再进行，除非有明确收益**。
+
+**验证**：check 0 错误；268 测试通过（32 文件）；lint 0 错误 30 遗留警告零新增；build 单文件 1,918.69 kB/gzip 563.24 kB；`npm run ai-battle -- --games 300 --seed 1` VIOLATIONS=0（won=300、均值 19ms、最慢 136ms）。浏览器 E2E（dev 5203，store 直驱 `__TK__`——本轮真实点击被自动化环境连续拒绝，改用 2.2.13 起既受口径的直驱法，如实登记）：正式流程（建房 2 人→掷骰→定势力→双人征召含 updateSkillEdit 烘焙 烈攻/枭斩/疗愈/遗志→初始抽牌 executeDraw+confirmDraw）进 playing 后 `restoreEngineState` 种场面（黄盖 hp2 上手加固甲、许褚满血 hp4 入 p2 场、粮草入手），再走**真实 store 动作**：①setCurrentPlayerIndex(1)+endTurn→p1 TURN_START 疗愈 hp 2→4（+3 封顶）+ 固甲护甲 0→2；executeDraw(0,5)+confirmDraw 过回合抽；②attackTarget（**运行时 instanceId**——首次用裸定义 id 被 ATTACKER_NOT_CONTROLLED 正确拒绝，改 instanceId 后放行）近战 2+烈攻技能 3 击杀满血许褚→墓地收尸、遗志 onDeath p2 手牌+1、枭斩 onKill p1 手牌+1（耗 1 粮后净+0 对上）、"玩家2 击破补偿抽卡" drawContext 呈现→executeDraw(0,1)+confirmDraw→phase playing、currentPlayerId 归 1；③UI 快照 黄盖"⚔️ 黄盖 🛡️2 ❤️4/4"、墓地(1)、抽牌堆 43，控制台 0 错误。诚实边界：截图未产出（页面后台 viewport 不可见，快照+控制台代替）；editor 下拉新标注以服务端模块 fetch（同源 5203 确认 SETTLEABLE 四项）+jsdom 冒烟覆盖，未做弹窗内真机点击。
+
+**Unresolved**：①§12-9c（ReactionWindow 业务入口）与无引擎事件触发种类维持 PENDING，属阶段 C 剩余面；②下一轮按序为阶段 D（RNG 进 EngineState.rngState，决议 D-2），待用户口令；③有界重入的 8 轮上限在真实内容规模下（当前无任何内置武将带 runtime）不可能被触达，哨兵仅防守未来链式自炸内容。
+

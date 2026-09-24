@@ -109,7 +109,7 @@ Excel files (.xlsx) are imported via the `importer/` module:
 | File | Purpose |
 |------|---------|
 | `src/store/gameStore.ts` | Central Zustand store (622 lines as of 2.2.12; types/editor/recovery/test-arena slices split out per D-6 stage B) -- app/session state + engine projection |
-| `src/core/EventProcessor.ts` | Event application logic -- single canonical entry (process/apply dispatcher, 93 lines as of 2.2.13; handlers verbatim-split into `core/eventProcessors/*` by event family per D-6 stage B) |
+| `src/core/EventProcessor.ts` | Event application logic -- single canonical entry (process/apply dispatcher + optional append-only `collected[]` derived-event capture added in 2.2.17, 106 lines as of 2.2.17; handlers verbatim-split into `core/eventProcessors/*` by event family per D-6 stage B) |
 | `src/core/GameEngine.ts` | Game engine orchestrator (rebuilt per dispatch from EngineState -- see PROJECT_ARCH_MAP lifecycle) |
 | `src/store/gameStateAdapter.ts` | Engine <-> Store state synchronization |
 | `src/action/resolvers/*.ts` | Action resolution logic (attack, deploy, move, etc.) |
@@ -129,7 +129,7 @@ menu --> codex/settings/createRoom/rules
 
 ## Notes for AI Agents
 
-- **Tests cover core flow, resolvers, skills, AI, replay.** 264 tests across 32 files (as of 2.2.11; latest count is authoritative in PROJECT_HANDOFF §3). ci.yml also gates `npm audit --audit-level=high`. Add more alongside existing ones in `src/**/*.test.ts`. Run `npm run test:coverage` for per-file coverage; thresholds in vitest.config.ts act as a ratchet (lines>=46, functions>=32, branches>=34, statements>=41 as of 2.2.10) and fail CI on regression.
+- **Tests cover core flow, resolvers, skills, AI, replay.** 268 tests across 32 files (as of 2.2.17; latest count is authoritative in PROJECT_HANDOFF §3). ci.yml also gates `npm audit --audit-level=high`. Add more alongside existing ones in `src/**/*.test.ts`. Run `npm run test:coverage` for per-file coverage; thresholds in vitest.config.ts act as a ratchet (lines>=47, functions>=33, branches>=34, statements>=42 as of 2.2.17) and fail CI on regression.
 - **State sync is critical.** Always update both engine state and Zustand store via the established adapter pattern.
 - **Card identity.** Use `getRuntimeCardId()` from `utils/runtimeIdentity` for all card ID lookups.
 - **Excel import.** The `importer/` module requires `exceljs` -- verify .xlsx parsing after dependency changes. Note: package.json forces transitive `uuid` to ^11.1.1 via npm `overrides` (security fix, audit-clean baseline); revisit the override whenever exceljs is bumped.
