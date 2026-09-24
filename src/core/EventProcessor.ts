@@ -9,6 +9,7 @@ import {
   applyDrawRequiredEvent,
   applyDrawEvent,
   applyDrawConfirmedEvent,
+  type DrawOutcomeFlow,
 } from './eventProcessors/drawEvents';
 import {
   applyGeneralDeployedEvent,
@@ -44,16 +45,20 @@ import { enqueueDerivedConsequences } from './eventProcessors/chainedConsequence
  * mid-queue (by enqueueDerivedConsequences) is appended there so the caller
  * (GameEngine.dispatch) can re-enter the trigger chain for events whose
  * consequences were only knowable after state settled — e.g. skill kills.
+ *
+ * The optional 4th `flow` (2.2.22, decision D-2a) threads the per-dispatch
+ * RandomOutcome record/replay channel to the DRAW handler only; every other
+ * event family stays untouched.
  */
 export class EventProcessor {
-  process(state: EngineState, events: GameEvent[], collected?: GameEvent[]): EngineState {
+  process(state: EngineState, events: GameEvent[], collected?: GameEvent[], flow?: DrawOutcomeFlow): EngineState {
     let next = cloneEngineState(state);
     const queue = [...events];
 
     while (queue.length > 0) {
       const event = queue.shift()!;
       const before = next;
-      next = this.apply(next, event);
+      next = this.apply(next, event, flow);
       const derivedStart = queue.length;
       enqueueDerivedConsequences(queue, event, before, next);
       if (collected) collected.push(...queue.slice(derivedStart));
@@ -62,14 +67,14 @@ export class EventProcessor {
     return next;
   }
 
-  private apply(state: EngineState, event: GameEvent): EngineState {
+  private apply(state: EngineState, event: GameEvent, flow?: DrawOutcomeFlow): EngineState {
     switch (event.type) {
       case 'BASE_DAMAGE':
         return applyBaseDamageEvent(state, event);
       case 'DRAW_REQUIRED':
         return applyDrawRequiredEvent(state, event);
       case 'DRAW':
-        return applyDrawEvent(state, event);
+        return applyDrawEvent(state, event, flow);
       case 'GENERAL_DEPLOYED':
         return applyGeneralDeployedEvent(state, event);
       case 'GENERAL_MOVED':

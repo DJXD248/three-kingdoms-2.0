@@ -1,11 +1,11 @@
 /**
  * Live match replay capture (2.2.6).
  *
- * The production store dispatches through a fresh engine per action
- * (engineExecutionBridge), so GameEngine's own recorder never accumulates a
- * whole match. This module is the single long-lived recorder instead: every
- * store dispatch feeds one entry in, and the settlement screen / auto-save
- * pull the finished ReplayDocument back out.
+ * The production store dispatches through a RESIDENT engine whose own
+ * recorder is switched off (engineExecutionBridge, 2.2.21 — recordHistory:
+ * false), so this module stays the single long-lived recorder for a whole
+ * match: every store dispatch feeds one entry in, and the settlement screen
+ * / auto-save pull the finished ReplayDocument back out.
  *
  * Memory note: entries chain `afterState` only — ReplayRecorder reconstructs
  * each step's beforeState from the previous entry, halving the state clones.

@@ -1,7 +1,20 @@
 import type { EngineState } from '../GameState';
-import type { GameEvent } from '../Event';
+import type { GameEvent, RandomOutcomeData, RandomOutcomeValue } from '../Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
-import { cloneRngState, rngShuffle } from '../rng';
+import { cloneRngState, rngShuffle, type RngState } from '../rng';
+
+/**
+ * Per-dispatch RNG flow (decision D-2a, 2.2.22). Created by TransitionCore
+ * for every accepted action: `produced` collects the draw selections made on
+ * the live RNG path (later appended to the event stream as RANDOM_OUTCOME
+ * events); `overrides` is the replay injection queue consumed one slot per
+ * DRAW event, in dispatch order. Live production play never sets overrides.
+ */
+export interface DrawOutcomeFlow {
+  produced: RandomOutcomeData[];
+  overrides?: readonly RandomOutcomeData[];
+  overridePos: number;
+}
 
 export function applyDrawRequiredEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as {
@@ -52,8 +65,17 @@ function cardRemovalKey(card: unknown): string {
  * .rngState, which is then advanced in the returned state so the whole match
  * is reproducible from state alone. A missing cursor (legacy snapshot) is
  * lazily seeded from the current turn so even the first draw is deterministic.
+ *
+ * D-2a (2.2.22): the live selection is additionally reported into
+ * `flow.produced` as a RandomOutcome ("record outcomes, not re-rolls"). When
+ * `flow.overrides` carries a replay result that passes materialization
+ * (counts match the deterministic formulas AND every identity key exists in
+ * the current piles), the recorded selection is applied verbatim and the
+ * cursor jumps to cursorAfter without touching the RNG. Any mismatch falls
+ * back to the seeded re-roll — old pre-2.2.22 replays and corrupt payloads
+ * both keep working through that path.
  */
-export function applyDrawEvent(state: EngineState, event: GameEvent): EngineState {
+export function applyDrawEvent(state: EngineState, event: GameEvent, flow?: DrawOutcomeFlow): EngineState {
   const data = event.data as {
     playerId?: number;
     requestedGeneral?: number;
@@ -70,26 +92,58 @@ export function applyDrawEvent(state: EngineState, event: GameEvent): EngineStat
   const requestedCards = Math.max(0, Math.floor(Number(data.requestedCards ?? data.count ?? data.value ?? 0)));
   if (requestedGeneral === 0 && requestedCards === 0) return state;
 
-  const fallbackSeed = (((state.turn + 1) * 2654435761) ^ ((state.round + 1) * 40503) ^ ((state.deck?.length ?? 0) * 2246822519)) >>> 0;
-  const rng = cloneRngState(state.rngState, fallbackSeed);
-
-  // Private general pool: seeded shuffle so draft/selection order never biases
-  // which general is drawn (main-faction generals are presented first when
-  // drafting, so using that order would artificially favor them).
   const generalPool = Array.isArray(player.generalPool) ? player.generalPool : [];
-  const shuffledGeneralPool = requestedGeneral > 0 ? rngShuffle(generalPool, rng) : generalPool;
-  const generalCards = shuffledGeneralPool.slice(0, Math.min(requestedGeneral, shuffledGeneralPool.length));
-
-  // Shared card pool: take from the top of the deck; when it runs low, reshuffle
-  // the discard pile (seeded) to refill.
   const deckCards = Array.isArray(state.deck) ? state.deck : [];
   const discardCards = Array.isArray(state.discardPile) ? state.discardPile : [];
-  let cardCards = deckCards.slice(0, Math.min(requestedCards, deckCards.length));
+
+  let generalCards: unknown[];
+  let cardCards: unknown[];
   let reshuffledCardCards: unknown[] = [];
-  if (cardCards.length < requestedCards && discardCards.length > 0) {
-    const reshuffled = rngShuffle(discardCards, rng);
-    reshuffledCardCards = reshuffled.slice(0, Math.min(requestedCards - cardCards.length, reshuffled.length));
-    cardCards = [...cardCards, ...reshuffledCardCards];
+  let nextCursor: RngState;
+
+  const override = takeOverride(flow, data.playerId);
+  const replayed = override
+    ? materializeSelection(override.value, { generalPool, deckCards, discardCards, requestedGeneral, requestedCards })
+    : null;
+
+  if (replayed) {
+    generalCards = replayed.generalCards;
+    cardCards = replayed.cardCards;
+    reshuffledCardCards = replayed.reshuffledCardCards;
+    nextCursor = replayed.cursorAfter;
+    flow?.produced.push(override!);
+  } else {
+    const fallbackSeed = (((state.turn + 1) * 2654435761) ^ ((state.round + 1) * 40503) ^ ((state.deck?.length ?? 0) * 2246822519)) >>> 0;
+    const rng = cloneRngState(state.rngState, fallbackSeed);
+
+    // Private general pool: seeded shuffle so draft/selection order never biases
+    // which general is drawn (main-faction generals are presented first when
+    // drafting, so using that order would artificially favor them).
+    const shuffledGeneralPool = requestedGeneral > 0 ? rngShuffle(generalPool, rng) : generalPool;
+    generalCards = shuffledGeneralPool.slice(0, Math.min(requestedGeneral, shuffledGeneralPool.length));
+
+    // Shared card pool: take from the top of the deck; when it runs low, reshuffle
+    // the discard pile (seeded) to refill.
+    const deckTake = Math.min(requestedCards, deckCards.length);
+    cardCards = deckCards.slice(0, deckTake);
+    if (cardCards.length < requestedCards && discardCards.length > 0) {
+      const reshuffled = rngShuffle(discardCards, rng);
+      reshuffledCardCards = reshuffled.slice(0, Math.min(requestedCards - cardCards.length, reshuffled.length));
+      cardCards = [...cardCards, ...reshuffledCardCards];
+    }
+
+    nextCursor = rng;
+    flow?.produced.push({
+      purpose: 'DRAW_SELECTION',
+      stableId: '',
+      value: {
+        playerId: data.playerId,
+        generalKeys: generalCards.map(cardRemovalKey),
+        deckTake: deckTakeCount(cardCards, reshuffledCardCards),
+        reshuffleKeys: reshuffledCardCards.map(cardRemovalKey),
+        cursorAfter: { s: rng.s >>> 0 },
+      },
+    });
   }
 
   const drawn = [...generalCards, ...cardCards];
@@ -145,8 +199,70 @@ export function applyDrawEvent(state: EngineState, event: GameEvent): EngineStat
     players,
     deck: state.deck.slice(deckConsume),
     discardPile: nextDiscard,
-    rngState: rng,
+    rngState: nextCursor,
   };
+}
+
+/** Pop the next replay slot for this DRAW (one per DRAW event, in order). */
+function takeOverride(flow: DrawOutcomeFlow | undefined, playerId: number): RandomOutcomeData | null {
+  if (!flow?.overrides) return null;
+  const override = flow.overrides[flow.overridePos];
+  flow.overridePos += 1;
+  if (!override || override.purpose !== 'DRAW_SELECTION' || override.value.playerId !== playerId) return null;
+  return override;
+}
+
+function deckTakeCount(cardCards: unknown[], reshuffledCardCards: unknown[]): number {
+  return cardCards.length - reshuffledCardCards.length;
+}
+
+interface SelectionInputs {
+  generalPool: unknown[];
+  deckCards: unknown[];
+  discardCards: unknown[];
+  requestedGeneral: number;
+  requestedCards: number;
+}
+
+/**
+ * Rebuild the exact card objects a recorded selection drew, from the piles of
+ * the replayed-before state. Strict: any count or key divergence returns null
+ * so the caller falls back to the seeded re-roll.
+ */
+function materializeSelection(
+  value: RandomOutcomeValue,
+  inputs: SelectionInputs,
+): { generalCards: unknown[]; cardCards: unknown[]; reshuffledCardCards: unknown[]; cursorAfter: { s: number } } | null {
+  const { generalPool, deckCards, discardCards, requestedGeneral, requestedCards } = inputs;
+
+  const wantGeneral = Math.min(requestedGeneral, generalPool.length);
+  const wantDeck = Math.min(requestedCards, deckCards.length);
+  const wantReshuffle = Math.min(requestedCards - wantDeck, discardCards.length);
+  if (value.generalKeys.length !== wantGeneral) return null;
+  if (value.deckTake !== wantDeck) return null;
+  if (value.reshuffleKeys.length !== wantReshuffle) return null;
+
+  const generalCards = takeByKeys(generalPool, value.generalKeys);
+  if (!generalCards) return null;
+  const reshuffledCardCards = takeByKeys(discardCards, value.reshuffleKeys);
+  if (!reshuffledCardCards) return null;
+  const cardCards = [...deckCards.slice(0, wantDeck), ...reshuffledCardCards];
+  return { generalCards, cardCards, reshuffledCardCards, cursorAfter: { s: value.cursorAfter.s >>> 0 } };
+}
+
+/** Remove one matching card per requested key (same identity notion as
+ * cardRemovalKey). Returns null when a key cannot be resolved. */
+function takeByKeys(pile: unknown[], keys: string[]): unknown[] | null {
+  if (keys.length === 0) return [];
+  const pool = [...pile];
+  const picked: unknown[] = [];
+  for (const key of keys) {
+    const index = pool.findIndex(card => cardRemovalKey(card) === key);
+    if (index < 0) return null;
+    picked.push(pool[index]);
+    pool.splice(index, 1);
+  }
+  return picked;
 }
 
 export function applyDrawConfirmedEvent(state: EngineState, event: GameEvent): EngineState {

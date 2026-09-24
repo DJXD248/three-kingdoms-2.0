@@ -4,8 +4,9 @@ import type { EventProcessor } from './EventProcessor';
 import type { TriggerEngine } from '../triggers/TriggerEngine';
 import type { RuleEngine } from '../rules/RuleEngine';
 import type { EngineState } from './GameState';
-import type { GameEvent } from './Event';
+import type { GameEvent, RandomOutcomeData } from './Event';
 import { resolveTriggerChain } from './EngineDispatchFlow';
+import type { DrawOutcomeFlow } from './eventProcessors/drawEvents';
 
 /**
  * TransitionCore (decision D-1): the ONE pure state transition of the game.
@@ -27,6 +28,9 @@ export interface TransitionContext {
   readonly resolvers: ResolverRegistry;
   readonly processor: EventProcessor;
   readonly triggers: TriggerEngine;
+  /** Replay-only RandomOutcome injection queue (D-2a). Absent/null on every
+   * live path — selections then run the seeded RNG and get RECORDED. */
+  readonly outcomeOverrides?: readonly RandomOutcomeData[] | null;
 }
 
 export interface TransitionResult {
@@ -70,8 +74,9 @@ export function transition(
   const triggeredEvents = resolveTriggerChain(state, ctx.triggers, resolvedEvents);
   events.push(...triggeredEvents);
 
+  const flow: DrawOutcomeFlow = { produced: [], overrides: ctx.outcomeOverrides ?? undefined, overridePos: 0 };
   const derived: GameEvent[] = [];
-  let next = ctx.processor.process(state, events, derived);
+  let next = ctx.processor.process(state, events, derived, flow);
 
   // Skill kills settle inside process(), so their derived DEATH events miss
   // the pre-dispatch trigger chain. Re-enter it (bounded) with post-apply
@@ -85,12 +90,23 @@ export function transition(
     events.push(...expanded);
     const generated = expanded.filter(event => event.type !== 'DEATH' && event.type !== 'TRIGGERED');
     const nextDerived: GameEvent[] = [];
-    next = ctx.processor.process(next, generated, nextDerived);
+    next = ctx.processor.process(next, generated, nextDerived, flow);
     pendingDeaths = nextDerived.filter(event => event.type === 'DEATH');
   }
   if (pendingDeaths.length > 0) {
     events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingDeaths: pendingDeaths.length } });
   }
+
+  // D-2a: every random selection made in this dispatch leaves the pure path
+  // as a RANDOM_OUTCOME event (purpose/value/stableId). Stable ids are
+  // stamped here from post-transition coordinates; replay forwards the
+  // recorded objects verbatim, so live and replay streams stay identical.
+  flow.produced.forEach((outcome, index) => {
+    if (!outcome.stableId) {
+      outcome.stableId = `ro:${next.turn}:${next.round}:${outcome.value.playerId}:${index}`;
+    }
+    events.push({ type: 'RANDOM_OUTCOME', data: outcome });
+  });
 
   return { state: next, events, accepted: true };
 }

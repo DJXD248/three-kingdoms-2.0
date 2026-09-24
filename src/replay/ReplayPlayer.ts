@@ -1,6 +1,7 @@
 import { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { cloneEngineState } from '../core/GameState';
+import type { GameEvent, RandomOutcomeData } from '../core/Event';
 import { syncPlayerSkills } from '../skills/skillCompiler';
 import type { ReplayDocument, ReplayEvent } from './types';
 
@@ -12,9 +13,15 @@ export interface ReplayPlaybackResult {
 
 /** Replays the canonical action log through the same GameEngine used by live play.
  * Skill registration is re-derived from EngineState before every dispatch —
- * exactly what the live per-step path (engineExecutionBridge → syncPlayerSkills)
- * does — so plays of mid-match deployments match live, not just the initial
- * field (2.2.20, decision D-1 reconciliation). */
+ * exactly what the live per-step path does (resident bridge, 2.2.21;
+ * per-step syncPlayerSkills keeps mid-match deployments in sync, 2.2.20) —
+ * so plays of mid-match deployments match live, not just the initial field.
+ *
+ * D-2a (2.2.22) "record outcomes, not re-rolls": recorded RANDOM_OUTCOME
+ * events are injected per dispatch, so draw selections come from the replay
+ * document itself instead of re-running the RNG. Entries without them
+ * (pre-2.2.22 replays) legitimately fall back to the reproducible seeded
+ * re-roll from 2.2.18 — dual read, no version bump. */
 export class ReplayPlayer {
   play(document: ReplayDocument, untilSequence?: number): ReplayPlaybackResult {
     const limit = untilSequence === undefined ? document.entries.length : untilSequence;
@@ -24,6 +31,7 @@ export class ReplayPlayer {
     for (const entry of document.entries) {
       if (entry.sequence > limit) break;
       syncPlayerSkills(engine, engine.state);
+      engine.outcomeOverrides = extractRandomOutcomes(entry.events);
       const before = engine.snapshot();
       const events = engine.dispatch(entry.action);
       const after = engine.snapshot();
@@ -43,4 +51,10 @@ export class ReplayPlayer {
       events: processed,
     };
   }
+}
+
+function extractRandomOutcomes(events: readonly GameEvent[]): RandomOutcomeData[] {
+  return events
+    .filter(event => event.type === 'RANDOM_OUTCOME' && event.data)
+    .map(event => structuredClone(event.data) as RandomOutcomeData);
 }

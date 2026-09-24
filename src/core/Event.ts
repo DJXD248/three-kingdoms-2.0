@@ -10,6 +10,7 @@ export type GameEventType =
   | 'DRAW'
   | 'DRAW_REQUIRED'
   | 'DRAW_CONFIRMED'
+  | 'RANDOM_OUTCOME'
   | 'DEATH'
   | 'TURN_START'
   | 'TURN_END'
@@ -34,4 +35,31 @@ export interface GameEvent<T = unknown> {
   type: GameEventType;
   timestamp?: number;
   data?: T;
+}
+
+/**
+ * RandomOutcome (decision D-2a, 2.2.22): one random SELECTION made during a
+ * dispatch, recorded as data — "record outcomes, not re-rolls". Replay
+ * consumes these instead of re-running the RNG algorithm: it materializes
+ * the chosen cards by identity key and restores cursorAfter, so a replay
+ * stays correct even if the RNG implementation itself ever changes.
+ * Replays without these events (pre-2.2.22) legitimately fall back to the
+ * reproducible re-roll path (2.2.18 cursors); dual-read, no version bump.
+ */
+export interface RandomOutcomeValue {
+  playerId: number;
+  /** Chosen generals from the private pool, keyed like cardRemovalKey. */
+  generalKeys: string[];
+  /** How many cards were taken from the top of the shared deck. */
+  deckTake: number;
+  /** Cards pulled from the discard pile by the seeded reshuffle. */
+  reshuffleKeys: string[];
+  /** Engine RNG cursor right after this selection consumed randomness. */
+  cursorAfter: { s: number };
+}
+
+export interface RandomOutcomeData {
+  purpose: 'DRAW_SELECTION';
+  stableId: string;
+  value: RandomOutcomeValue;
 }

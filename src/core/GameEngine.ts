@@ -1,7 +1,7 @@
 import type { GameAction } from '../action/ActionTypes';
 import { ResolverRegistry } from '../action/ResolverRegistry';
 import type { EngineState } from './GameState';
-import type { GameEvent } from './Event';
+import type { GameEvent, RandomOutcomeData } from './Event';
 import { EventBus } from './EventBus';
 import { EventProcessor } from './EventProcessor';
 import { TriggerEngine } from '../triggers/TriggerEngine';
@@ -34,6 +34,11 @@ export class GameEngine {
 
   private readonly recordHistory: boolean;
 
+  /** Playback-only RandomOutcome injection (D-2a, 2.2.22): ReplayPlayer sets
+   * one batch per entry right before dispatch; every live/production path
+   * leaves it null, so play is RNG-driven and RECORDS outcomes instead. */
+  outcomeOverrides: readonly RandomOutcomeData[] | null = null;
+
   constructor(public state: EngineState, options: GameEngineOptions = {}) {
     this.recordHistory = options.recordHistory !== false;
     if (this.recordHistory) {
@@ -55,6 +60,7 @@ export class GameEngine {
       const rejected = result.events[0];
       this.events.emit(rejected);
       if (this.recordHistory) this.replay.record(action, [rejected], beforeState, beforeState);
+      this.outcomeOverrides = null;
       return [rejected];
     }
 
@@ -70,6 +76,7 @@ export class GameEngine {
       const roomId = String(afterState.metadata?.roomId ?? 'local');
       this.snapshots.capture(roomId, afterState, sequence, 'action', action.id);
     }
+    this.outcomeOverrides = null;
     return events;
   }
 
