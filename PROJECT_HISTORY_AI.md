@@ -993,3 +993,20 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 （收尾补记：feat `086ff39`、docs `8646a05` 与附注标签 `v2.2.19` 一次推送——直连超时，一次性借道本地代理 127.0.0.1:10808 成功，未写持久配置。push 事件按顶端提交建单 run：CI #50（编号 35984979124，master@8646a05，覆盖 feat+docs 全树）**全绿**，test(22)/test(24)（291 例双 Node）/lint 1m14s/build 1m17s 四 job 均 completed successfully，run 页零失败标记。）
 
+
+## Qoder 2.2.20：稳定期阶段 E 首刀——TransitionCore 唯一纯转移抽出、三路对账钉死、ReplayPlayer 技能注册修复（决议 D-1）[Qoder/Qwen]
+
+**背景**：用户口令"开工吧"+授权创建 TransitionCore.ts；范围口径确认四点：①纯转移抽出 ②常驻 vs 重建对账测试 ③ReplayPlayer 修复 ④除③外零行为变化——**store 常驻迁移（gameStore 持有长生命周期引擎）明确顺延下一刀**。盘点关键事实：所有实况消费方（engineExecutionBridge/battleRunner/ReplayPlayer）此前各自新建引擎，转移逻辑藏在 GameEngine.dispatch 里与容器副作用（打戳发射/STATE_CHANGED/录像/快照）缠绕；EventBus.emit 会**就地**给事件对象盖 id/timestamp，并经 TRIGGERED.data.sourceEvent 共享引用与时间派生 rootEventId 泄漏进事件载荷——对账测试必须归一化这一层，纯转移路径本身不产生这些字段。
+
+**变更**：
+- **新增 `core/TransitionCore.ts`（97 行）**：`transition(state, action, ctx: TransitionContext{rules,resolvers,processor,triggers}) → {state, events, accepted}`。原 dispatch 的"校验（ACTION_REJECTED 早退）→ getResolver（NO_RESOLVER 早退）→ ACTION_ACCEPTED + resolver.resolve → resolveTriggerChain → EventProcessor.process → DEATH 有界重入循环"逐字移入；`MAX_TRIGGER_REENTRY_ROUNDS=8` 常量随迁（GameEngine 中彻底移除，曾出现重复声明导致编译错，一并清除）。
+- **GameEngine 降为薄容器（~113 行）**：`dispatch` = `transition(this.state, action, this)` + 容器侧效应——rejected 即时 emit（录像记 before=after 同快照）；接受路径 transition 之后 push `STATE_CHANGED{action, snapshot}`、emit 循环、recordHistory 门控的 `replay.record` + `snapshots.capture`（sequence=export().length+1）。可观测行为逐字不变。
+- **ReplayPlayer 修复（本轮唯一行为变化）**：此前只在构造时 registerPlayerSkills，**中途登场将领的技能在重建回放里永不注册**；现循环内每次 dispatch 前 `syncPlayerSkills(engine, engine.state)`——与实况每步路径（生产桥）完全同构。安全性依据：SkillTriggerBridge 触发 id=`skill:${ownerId}:${skill.id}`，TriggerEngine.register 按 id Map.set 幂等替换，常驻实例重复注册无害。ReplayPlayer 无 UI 消费方，影响面仅录像工具链。
+- **三路对账测试 `core/transitionEquivalence.test.ts` 3 例（291→294/37 文件）**：4 步脚本（近战击杀链：烈攻 onDamageDealt 补伤→遗志 onDeath 摸牌→枭斩 onKill 摸牌→DEATH 重入触发链；前进移动；补偿抽窗拦截 END_TURN 的 ACTION_REJECTED 步）。路径 A=单个常驻引擎连跑；路径 B=每步经生产桥 `dispatchStoreAction` 重建；路径 C=把 A 的录像文档交 ReplayPlayer 重建整局。断言 **逐步原始事件序列全等 + 终态 JSON 全等**（三路一致）。归一化只剥离容器打戳产物：{type,data} 形事件对象的 id/timestamp 与时间派生 rootEventId；首跑 2/3 失败即因 emit 就地打戳经 sourceEvent 共享引用漏进比对，补 normalize 后 3/3 绿——该层事实已写入文件头注释。
+- D-1"禁止双路长期执行"纪律达成：**转移逻辑全库仅 TransitionCore 一份**，常驻与重建只是两种持有状态的外壳，重建式执行降级为对账工具。
+
+**行为变化（披露）**：仅 ReplayPlayer 每步技能注册修复（录像重建回放与实况一致性提升；无 UI 消费方）。其余零变化——`ai-battle --games 300 --seed 1` 胜席分布 {1:109,2:191} 与 2.2.19 基线**逐字一致**（won=300/VIOLATIONS=0），AI 整局链路零漂移实锤。
+
+**验证**（定稿红线：全部文件定稿后、提交前跑满五闸）：check 0 错误；294 测试通过（37 文件，+3）；覆盖率棘轮维持 42/34/34/47（实测 stmts 43.04 / branch 35.54 / funcs 34.55 / lines 48.11，四项均较 2.2.19 微升，地板不动）；lint 0 错误 30 遗留警告零新增；build 单文件 1,919.03 kB/gzip 563.48 kB；ai-battle 300 局分布与基线一致。**浏览器真机 E2E（dev 5199 人机对战 2 人房，DOM 真实点击+骰子限流技巧）**：登场庞德（手牌 5→1）→🚶前进（engineState 实证 position=front:0/areaOwnerId=1）→⏭️结束回合→AI 完整回合（抽卡+登场邓艾+前进+结束，全部经 TransitionCore 新链路）→第 2 轮玩家抽卡确认（骰子明牌 5 张）→🏹远程攻击流程（近战因射程内无敌被禁用属规则正确，选消耗卡→"点击高亮目标"提示条出现）——console 全程 0 错误 0 警告。E2E 插曲如实登记：登场环节数次"点击营地无响应"，经 `dispatchStoreAction` 直驱探针（返回 ACTION_ACCEPTED+GENERAL_DEPLOYED+STATE_CHANGED）排除引擎回归，根因=测试驱动在同一 evaluate 里批量点击多个嵌套节点污染了 GameBoard 局部选择态；教训"一次 evaluate 只点一个 React 元素"已入项目记忆。另确认 Vite HMR 陷阱：console `import('/src/store/gameStore.ts')` 拿到的是全新模块实例（phase:menu），必须用 performance 资源条目里的 `?t=` 时间戳 URL 才能触达活 store。
+
+**Unresolved**：①store 常驻迁移（gameStore 持长生命周期引擎）顺延下一刀（用户口径）；②D-2 欠账不变：a) RandomOutcome 事件流（单独一刀）+ e) 观察项（§12-16）；③CI 远端复验待回填。
