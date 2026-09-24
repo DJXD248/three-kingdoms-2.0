@@ -308,6 +308,113 @@ describe('skill pipeline · end-to-end', () => {
   });
 });
 
+describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () => {
+  function huici(): Skill {
+    return {
+      name: '回刺',
+      effects: [
+        { id: 'e1', trigger: { type: 'onBecomingTarget' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' } },
+      ],
+    };
+  }
+
+  it('counter damage hits the attacker and settles AFTER the source damage in one dispatch', () => {
+    const attacker = makeGeneral('g1', []);
+    const victim = makeGeneral('g2', [huici()]);
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(attacker, 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
+    ]);
+
+    const events = engine.dispatch(
+      createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
+    );
+
+    const counters = events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill');
+    expect(counters).toHaveLength(1);
+    expect((counters[0].data as any).targetId).toBe('g1');
+    expect((counters[0].data as any).sourceGeneralId).toBe('g2');
+
+    // Frozen timing (ARCH_MAP Trigger 契约表): the trigger chain queues the
+    // derived effect at the tail, so the counter settles after the attack's
+    // own AFTER_DAMAGE within the same dispatch.
+    const types = events.map(e => e.type);
+    expect(types.indexOf('DAMAGE') < types.lastIndexOf('DAMAGE')).toBe(true);
+    expect(types.indexOf('BEFORE_DAMAGE')).toBeLessThan(types.lastIndexOf('DAMAGE'));
+
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect((p1.fieldGenerals as any[])[0].currentHp).toBe(3); // 4 - 1 counter
+    expect((p2.fieldGenerals as any[])[0].currentHp).toBe(2); // 4 - 2 attack
+  });
+
+  it('attacks on a base never trigger becoming-target skills', () => {
+    const attacker = makeGeneral('g1', []);
+    const victim = makeGeneral('g2', [huici()]);
+    const attackerField = makeFieldGeneral(attacker, 1);
+    // Melee base rule: stand in the target player's area and hit their base.
+    attackerField.position = { zone: 'front', slot: 0, areaOwnerId: 2 };
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [attackerField], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
+    ]);
+
+    const events = engine.dispatch(
+      createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'base_2', ranged: false, consumeCard: ATTACK_COST }),
+    );
+
+    expect(events.some(e => e.type === 'BEFORE_DAMAGE')).toBe(true);
+    expect(events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill')).toHaveLength(0);
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect(p2.baseHp).toBe(9);
+    expect((engine.state.players.find(p => p.id === 1)!.fieldGenerals as any[])[0].currentHp).toBe(4);
+  });
+
+  it('isolation: attacking another general of the same owner does not trigger', () => {
+    const attacker = makeGeneral('g1', []);
+    const skilled = makeGeneral('g2', [huici()]);
+    const unskilled = makeGeneral('g3', []);
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(attacker, 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, {
+        fieldGenerals: [makeFieldGeneral(skilled, 2, 0), makeFieldGeneral(unskilled, 2, 1)],
+      }),
+    ]);
+
+    const events = engine.dispatch(
+      createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g3', ranged: false, consumeCard: ATTACK_COST }),
+    );
+
+    expect(events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill')).toHaveLength(0);
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    expect((p1.fieldGenerals as any[])[0].currentHp).toBe(4);
+  });
+
+  it('the counter still lands even when the source damage kills the target (frozen timing)', () => {
+    const attacker = makeGeneral('g1', []);
+    const victim = { ...makeGeneral('g2', [huici()]), hp: 2 };
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(attacker, 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
+    ]);
+
+    const events = engine.dispatch(
+      createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
+    );
+
+    const deaths = events.filter(e => e.type === 'DEATH');
+    expect(deaths).toHaveLength(1);
+    const counters = events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill');
+    expect(counters).toHaveLength(1);
+
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect((p1.fieldGenerals as any[])[0].currentHp).toBe(3);
+    expect(p2.fieldGenerals).toHaveLength(0);
+    expect((p2.graveyard as any[]).map((c: any) => c.id)).toContain('g2');
+  });
+});
+
 describe('skill pipeline · Stage C coverage (HEAL / GAIN_ARMOR / skill-kill DEATH)', () => {
   it('HEAL effect restores HP and caps at maxHp', () => {
     const healer = makeGeneral('g2', [

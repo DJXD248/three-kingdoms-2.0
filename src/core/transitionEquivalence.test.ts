@@ -243,6 +243,52 @@ describe('TransitionCore · 常驻 === 重建 (decision D-1)', () => {
   });
 });
 
+describe('onBecomingTarget counter chain plays identically across all paths (2.3.0)', () => {
+  function buildCounterInitial(): EngineState {
+    const counter = makeGeneral('g2', 4, [
+      {
+        name: '回刺',
+        effects: [{ id: 'e1', trigger: { type: 'onBecomingTarget' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' } }],
+      },
+    ]);
+    return makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(makeGeneral('g1', 4, []), 1)],
+        hand: [ATTACK_COST],
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(counter, 2)] }),
+    ]);
+  }
+
+  const ATTACK_G1_G2 = createAction('ATTACK', 1, {
+    attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST,
+  });
+
+  it('resident, rebuild-reconcile and recorded replay stream the counter chain identically', () => {
+    const initial = buildCounterInitial();
+
+    const engine = new GameEngine(cloneEngineState(initial));
+    syncPlayerSkills(engine, engine.state);
+    const live = rawEvents(engine.dispatch(ATTACK_G1_G2));
+    expect(live.some(raw => JSON.parse(raw).type === 'BEFORE_DAMAGE')).toBe(true);
+    expect(live.filter(raw => JSON.parse(raw).type === 'DAMAGE')).toHaveLength(2);
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    const bridged = dispatchStoreAction({ engineState: cloneEngineState(initial) }, ATTACK_G1_G2);
+    expect(rawEvents(bridged.events)).toEqual(live);
+
+    const reconciled = dispatchStoreActionReconcile({ engineState: cloneEngineState(initial) }, ATTACK_G1_G2);
+    expect(rawEvents(reconciled.events)).toEqual(live);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual([live]);
+    expect(JSON.stringify(playback.state)).toBe(JSON.stringify(engine.state));
+  });
+});
+
 describe('store resident container (decision D-1, v2.2.21 second cut)', () => {
   beforeEach(() => {
     __resetResidentEngineContainer();

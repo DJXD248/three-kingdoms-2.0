@@ -12,7 +12,13 @@ const TRIGGER_EVENT_MAP: Partial<Record<DataSkillTrigger, GameEventType>> = {
   onDamageTaken: 'DAMAGE',
   onDamageDealt: 'AFTER_DAMAGE',
   onKill: 'DEATH',
-  onDeath: 'DEATH'
+  onDeath: 'DEATH',
+  // 2.3.0: BEFORE_DAMAGE is a pure notification (no EventProcessor case, no
+  // state change) emitted by AttackResolver right before damage settlement.
+  // Derived effects queue at the trigger-chain tail, so a counter hit from
+  // this trigger settles AFTER the source DAMAGE within one dispatch —
+  // frozen semantics, see PROJECT_ARCH_MAP "Trigger 契约表".
+  onBecomingTarget: 'BEFORE_DAMAGE'
 };
 
 const PRIORITY: Partial<Record<DataSkillTrigger, number>> = {
@@ -21,7 +27,8 @@ const PRIORITY: Partial<Record<DataSkillTrigger, number>> = {
   onDamageTaken: 50,
   onDamageDealt: 50,
   onKill: 60,
-  onDeath: 100
+  onDeath: 100,
+  onBecomingTarget: 50
 };
 
 export interface SkillOwnerBinding {
@@ -93,6 +100,14 @@ function buildCondition(
       case 'onDeath': {
         if (!idEq(ownerId, data.targetPlayerId)) return false;
         if (generalId && !idEq(generalId, data.targetId)) return false;
+        return true;
+      }
+      case 'onBecomingTarget': {
+        // BEFORE_DAMAGE for a base attack carries no targetPlayerId, so the
+        // owner check below legitimately never matches — being attacked as a
+        // base is not "a general becoming a target".
+        if (!idEq(ownerId, data.targetPlayerId)) return false;
+        if (generalId && !idEq(generalId, data.targetId ?? data.target)) return false;
         return true;
       }
       default:

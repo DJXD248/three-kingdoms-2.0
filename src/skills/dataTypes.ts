@@ -15,7 +15,8 @@ export type DataSkillTrigger =
   | 'onDamageTaken'
   | 'onDamageDealt'
   | 'onKill'
-  | 'onDeath';
+  | 'onDeath'
+  | 'onBecomingTarget';
 
 export type DataSkillEffectType =
   | 'DRAW_CARD'

@@ -1,7 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { compileSkill, compileGeneralSkills, syncPlayerSkills } from './skillCompiler';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  compileSkill,
+  compileGeneralSkills,
+  syncPlayerSkills,
+  getCompileDiagnostics,
+  __resetCompileWarnDedup,
+} from './skillCompiler';
 import { GameEngine } from '../core/GameEngine';
 import { createInitialEngineState } from '../core/GameState';
+import type { EngineState } from '../core/GameState';
 import type { General, Skill } from '../data/generals';
 
 function skill(overrides: Partial<Skill> = {}): Skill {
@@ -175,6 +182,20 @@ describe('skillCompiler · compileSkill', () => {
     expect(definitions).toHaveLength(2);
     expect(definitions.map(d => d.trigger)).toEqual(['onTurnStart', 'onDamageTaken']);
   });
+
+  it('compiles onBecomingTarget — 2.3.0 mapped it onto the existing BEFORE_DAMAGE event', () => {
+    const { definitions, skipped } = compileSkill(
+      general(),
+      skill({
+        effects: [{ id: 'e1', trigger: { type: 'onBecomingTarget' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' } }],
+      }),
+      'g1',
+    );
+    expect(skipped).toHaveLength(0);
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0].trigger).toBe('onBecomingTarget');
+    expect(definitions[0].effects[0]).toMatchObject({ type: 'DAMAGE', target: 'ATTACKER' });
+  });
 });
 
 describe('skillCompiler · compileGeneralSkills', () => {
@@ -234,5 +255,100 @@ describe('skillCompiler · syncPlayerSkills', () => {
     ];
     const engine = new GameEngine(state);
     expect(syncPlayerSkills(engine, state)).toBe(0);
+  });
+});
+
+function stateWithGenerals(generals: General[]): EngineState {
+  const state = createInitialEngineState();
+  state.players = [
+    { id: 1, name: 'P1', fieldGenerals: generals.map(g => ({ general: g, ownerId: 1 })) },
+    { id: 2, name: 'P2', fieldGenerals: [] },
+  ];
+  return state;
+}
+
+describe('skillCompiler · compile-skip diagnostics (2.3.0, D-9 class C)', () => {
+  beforeEach(() => {
+    __resetCompileWarnDedup();
+  });
+
+  it('skipped entries land in the out-of-band channel with their reason', () => {
+    const state = stateWithGenerals([
+      general({ id: 'diag_001', skills: [{ name: '诊断甲', description: '纯描述' }] }),
+    ]);
+    const engine = new GameEngine(state);
+    syncPlayerSkills(engine, state);
+
+    const diagnostics = getCompileDiagnostics(engine);
+    expect(diagnostics).not.toBeNull();
+    expect(diagnostics!.skips).toHaveLength(1);
+    expect(diagnostics!.skips[0]).toMatchObject({ skillName: '诊断甲', reason: 'NO_RUNTIME_PAYLOAD' });
+  });
+
+  it('the same skipped entry warns exactly once, not once per resync', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const state = stateWithGenerals([
+        general({ id: 'warn_001', skills: [{ name: '聚合甲', description: '纯描述' }] }),
+      ]);
+      const engine = new GameEngine(state);
+      syncPlayerSkills(engine, state);
+      syncPlayerSkills(engine, state); // the resident path resyncs before every dispatch
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain('聚合甲');
+      expect(String(warn.mock.calls[0][0])).toContain('NO_RUNTIME_PAYLOAD');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a newly deployed skipped skill earns one more warn; old entries never repeat', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const state = stateWithGenerals([
+        general({ id: 'sig_001', skills: [{ name: '签名单甲', description: '纯描述' }] }),
+      ]);
+      const engine = new GameEngine(state);
+      syncPlayerSkills(engine, state);
+
+      state.players[0].fieldGenerals = [
+        ...(state.players[0].fieldGenerals as any[]),
+        {
+          general: general({ id: 'sig_002', skills: [{ name: '签名新乙', description: '纯描述' }] }),
+          ownerId: 1,
+        },
+      ];
+      syncPlayerSkills(engine, state);
+      syncPlayerSkills(engine, state);
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(String(warn.mock.calls[1][0])).toContain('签名新乙');
+      expect(String(warn.mock.calls[1][0])).not.toContain('签名单甲');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('an assembly without skips reports nothing and never warns', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const state = stateWithGenerals([
+        general({
+          id: 'clean_001',
+          skills: [{
+            name: '合规技',
+            effects: [{ id: 'e1', trigger: { type: 'onBecomingTarget' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' } }],
+          }],
+        }),
+      ]);
+      const engine = new GameEngine(state);
+      expect(syncPlayerSkills(engine, state)).toBe(1);
+
+      expect(getCompileDiagnostics(engine)).toBeNull();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

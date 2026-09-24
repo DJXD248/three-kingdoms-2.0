@@ -7,9 +7,9 @@
  *   - Only skills with a structured runtime effect payload are compiled.
  *     Built-in generals keep descriptive text only, so nothing fires until a
  *     designer attaches real numbers — the compiler never invents gameplay.
- *   - Only the six event-backed triggers are supported; the remaining trigger
- *     kinds (modify*, onBase*, passive, active*, untilExpire, …) are skipped
- *     with an explicit reason.
+ *   - Only the seven event-backed triggers are supported; the remaining
+ *     trigger kinds (modify*, onBase*, passive, active*, untilExpire, …) are
+ *     skipped with an explicit reason.
  *   - HEAL / GAIN_ARMOR settle in EventProcessor as hp restore (capped at
  *     maxHp) and armor points; effect types beyond the four supported ones
  *     are still skipped rather than emitting no-op events.
@@ -28,7 +28,11 @@ import type { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 
-/** Skill triggers that map 1:1 onto real engine events. */
+/** Skill triggers that map 1:1 onto real engine events.
+ * onBecomingTarget maps to BEFORE_DAMAGE (2.3.0): a pure notification emitted
+ * by AttackResolver right before damage settlement — no new event type, no
+ * state change. Base-targeted BEFORE_DAMAGE carries no targetPlayerId, so a
+ * general skill legitimately never fires on base attacks. */
 const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>> = {
   onDeploy: 'onDeploy',
   onTurnStart: 'onTurnStart',
@@ -36,6 +40,7 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   onDamageDealt: 'onDamageDealt',
   onKill: 'onKill',
   onDeath: 'onDeath',
+  onBecomingTarget: 'onBecomingTarget',
 };
 
 /** Effect types EventProcessor can actually settle today. */
@@ -193,9 +198,19 @@ export function compileGeneralSkills(
  * semantics of the rebuild path — a general that left the field cannot keep
  * triggering. Compiled, data-driven registration only — no gameplay rules
  * live here.
+ *
+ * Compile honesty (2.3.0, D-9 class C): skipped skill entries used to vanish
+ * silently here (the 演練・回刺 onBecomingTarget case). They now land in an
+ * out-of-band diagnostics channel — never the event stream, never state —
+ * and each DISTINCT skipped entry earns exactly one aggregated console.warn
+ * on first appearance. Dedup is per entry, not per engine and not per
+ * skip-set: the battleRunner/reconcile paths mint a fresh engine per step and
+ * the resident path resyncs per dispatch, so either coarser key would turn
+ * field churn into log spam.
  */
 export function syncPlayerSkills(engine: GameEngine, state: EngineState): number {
   let registered = 0;
+  const skips: SkillSkip[] = [];
   for (const player of state.players) {
     const fieldGenerals = Array.isArray(player.fieldGenerals)
       ? (player.fieldGenerals as Array<Record<string, unknown>>)
@@ -204,11 +219,56 @@ export function syncPlayerSkills(engine: GameEngine, state: EngineState): number
       const general = fg?.general as General | undefined;
       if (!general || !Array.isArray(general.skills) || general.skills.length === 0) continue;
       const runtimeId = getRuntimeCardId(general as never) || general.id;
-      const { definitions } = compileGeneralSkills(general, runtimeId);
+      const { definitions, skipped } = compileGeneralSkills(general, runtimeId);
+      skips.push(...skipped);
       if (definitions.length === 0) continue;
       engine.registerPlayerSkills(player.id, definitions);
       registered += definitions.length;
     }
   }
+  recordCompileSkips(engine, skips);
   return registered;
+}
+
+/**
+ * Out-of-band view of the compile skips seen for an engine's latest skill
+ * sync. Observation only (mirrors GameEngine.lastOverrideFailures, 2.2.23):
+ * the editor/Excel input layer and tests consume this; the event stream
+ * never carries it.
+ */
+export interface SkillCompileDiagnostics {
+  skips: SkillSkip[];
+  /** Aggregated distinct entries: `${skillName}|${effectId}|${reason}`. */
+  signature: string;
+}
+
+const diagnosticsByEngine = new WeakMap<GameEngine, SkillCompileDiagnostics>();
+const warnedEntries = new Set<string>();
+
+function recordCompileSkips(engine: GameEngine, skips: SkillSkip[]): void {
+  if (skips.length === 0) return;
+  const distinct = [...new Set(
+    skips.map(skip => `${skip.skillName}|${skip.effectId ?? ''}|${skip.reason}`),
+  )].sort();
+  diagnosticsByEngine.set(engine, { skips, signature: distinct.join(';') });
+  const fresh = distinct.filter(entry => !warnedEntries.has(entry));
+  if (fresh.length === 0) return;
+  fresh.forEach(entry => warnedEntries.add(entry));
+  console.warn(
+    `[skillCompiler] ${fresh.length} skill effect(s) skipped at compile time — ` +
+    fresh.map(entry => {
+      const [skillName, effectId, reason] = entry.split('|');
+      return `${skillName}${effectId ? `#${effectId}` : ''}: ${reason}`;
+    }).join(', ') +
+    '. Skipped skills never fire until the engine gains support for them.',
+  );
+}
+
+export function getCompileDiagnostics(engine: GameEngine): SkillCompileDiagnostics | null {
+  return diagnosticsByEngine.get(engine) ?? null;
+}
+
+/** Test seam: forget warned entries so dedup can be re-observed. */
+export function __resetCompileWarnDedup(): void {
+  warnedEntries.clear();
 }
