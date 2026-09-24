@@ -952,3 +952,25 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 （收尾补记：推送后云端检查一次通过——编号 35965467286（CI #44，master@926a530，3m 14s），test(22)/test(24)/lint/build 四 job 均 completed successfully，双 Node 矩阵各 268 例/32 文件全过；本次直连推送即成功，没有借用代理。）
 
+## Qoder 2.2.18：稳定期阶段 D 首刀——引擎随机进 EngineState.rngState（决议 D-2 主件）[Qoder/Qwen]
+
+**背景**：用户口令"开始阶段D"。范围与旧数据兼容两问均答"[No preference]"→代决定为**中刀**（引擎核心抽牌链+AI 种子统一，withSeededRandom 收窄不删除）+ **缺字段惰性播种、不 bump 任何版本号**。盘点（Explore 全库扫）钉死随机源分布：引擎路径=Math.random 在 DrawResolver 两处（将池洗牌/弃牌堆有偏重洗）与 drawEvents 技能摸牌一处（有偏重洗）；建局路径（createCardDeck/runtimeSetup/matchSetup）与 policy 属外围；action.id/instanceId 是非选择型不确定源（本轮不动，PENDING）。架构约束决定收敛方向：resolver 契约是"描述发生了什么"、不得改动状态，因此 RNG 消费点必须在 EventProcessor 家族——把 DrawResolver 的选牌整体迁入 applyDrawEvent（该处技能摸牌分支本就在处理器选牌，两分支合一）。录像明牌 UI 安全性经审：gameStore.executeDraw 的 revealed 来自手牌差分（afterHand.slice(beforeHand)）而非事件载荷，删字段无 UI 影响。
+
+**变更**：
+- 新增 `core/rng.ts`（49 行）：mulberry32 游标 `{ s: uint32 }` 纯数据（structuredClone/JSON 双友好）；`createRngState/cloneRngState/rngNext/rngShuffle`（返新数组；替代有偏 `sort(()=>Math.random()-.5)`）。
+- `core/GameState.ts`：`EngineState.rngState?` **可选**字段（旧快照/旧录像宽容加载、零版本号变更）；createInitialEngineState 播种常量 0x9e3779b9。
+- `action/resolvers/DrawResolver.ts` 重写：只校验三拒（NO_PENDING_DRAW/DRAW_PLAYER_NOT_FOUND/DRAW_TOTAL_MISMATCH），产**计数式** DRAW 事件 `{playerId, requestedGeneral, requestedCards, count, reason}`——选牌与 Math.random 全部清零（D-2"禁 Resolver 私拿随机源"达成）。
+- `core/eventProcessors/drawEvents.ts`：applyDrawEvent 成为**全引擎唯一抽牌选牌点**——将池 rngShuffle、牌堆顶切、弃牌堆种子重洗；游标推进写回返回态；EventProcessor.process 单克隆贯穿队列→多事件链游标连续；缺游标旧局按 `(turn+1,round+1,deckLen)` 派生确定性兜底种子（旧档首抽可复现）。技能摸牌裸 count 载荷（SkillTriggerBridge 的 `{...data, playerId, count}`）经 `data.requestedCards ?? data.count ?? data.value` 兼容，bridge 零改动。
+- `store/gameStateAdapter.ts`：`seedRngState`——建房播种一次（Date.now^random），局中已有游标绝不重置（防中途重掷）；isRestorableEngineState 不动（未知字段宽容=向后兼容策略 D-4 口径）。
+- `ai/matchSetup.ts`：buildMatchState 返回 `rngState: createRngState(config.seed)`——AI 局引擎抽牌流从状态游标来，与 withSeededRandom（继续覆盖建堆/采样/policy）双轨分立。
+- `ai/rng.ts` 头注刷新为收窄口径（全退 PENDING）。
+- 测试 268→**287/35 文件**（净 +19）：`core/rng.test.ts` 8（同种子同流/异种异流/[0,1) 界/JSON 往返续流/clone 兜底/洗牌确定性/真置换/游标就地推进）；`eventProcessors/drawEvents.test.ts` 8（同状态重放同结果/仅随机选择才耗游标/将池抽牌落库/弃牌堆重洗/裸 count 技能摸牌/旧档惰性播种且游标写回可续/多事件队列贯穿/两类 no-op）；`DrawResolver.test.ts` 重写 8（三拒+计数契约+**Math.random 抛错探针**+resolve 纯等性；旧 3 例选牌断言换契约）；`store/executeDraw.rng.test.ts` 3（生产 store 建房游标可序列化/同 engineState 快照重放同抽/改种子变抽）；gameFlow ①⑨ 两处"Math.random mock=恒等洗牌"精确 id 断言改阵营纯度正则（rngState 下 mock 已无效，如实登记）。
+
+**行为变化（披露）**：抽牌结果分布与 2.2.17 前不同（种子洗牌替代有偏 sort+流拆分，D-2 预期内）；牌堆顶序、补偿抽、UI 明牌零变化；旧录像/旧存档照常加载（缺 rngState 走惰性兜底种子）。
+
+**验证**：check 0 错误；287 测试通过；覆盖率棘轮**维持** 42/34/33/47（实测 42.55/35.14/34.01/47.55，四项均较 2.2.17 微升，地板不动）；lint 0 错误 30 遗留警告零新增；build 单文件 1,918.75 kB/gzip 563.32 kB；`npm run ai-battle -- --games 300 --seed 1` **两轮摘要完全一致**（won=300、VIOLATIONS=0、胜席 {1:112,2:188}）——同种子确定性在 300 局规模实证。**浏览器真机 E2E 未做**（诚实边界）：本轮自动化权限分类器对页面导航全通道拒绝（browser-use navigate 两条路径均被拦、chrome-devtools 无 Chrome 可执行），等效验证降级为 vitest 生产 store 链路（executeDraw.rng 3 例 + aiTurnDriver 全店完整局在 287 内）；真机抽牌面回归登记 PENDING。
+
+**Unresolved**：①D-2 剩余欠账登记 §12-16：RandomOutcome 事件流（"记结果不记重掷"仍未达成，现状态是"重掷可复现"）、建局随机迁入 rngState、action.id/instanceId 确定性、withSeededRandom 彻底退役、battleRunner lockstep 清理、ReactionWindow 窗口 id（§12-9c 同源）；②本刀浏览器真机面待下个可做版本优先补；③下一轮按序为阶段 E（引擎生命周期常驻，D-1），开工前待用户口令。
+
+CI 远端复验：待回填。
+
