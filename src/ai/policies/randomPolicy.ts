@@ -7,15 +7,23 @@
  * CONFIRM_DRAW for the actor). `engine.legalActions` is the only legality
  * source, so every policy (random now, tiered strategies in phase 3) stays
  * rule-agnostic by construction.
+ *
+ * Randomness (D-2 second cut, 2.2.19): seeded callers (the battle runner)
+ * inject an explicit `random` stream; live human-vs-AI play leaves it out and
+ * falls back to Math.random — a policy never holds a hidden entropy source.
  */
 import type { GameAction } from '../../action/ActionTypes';
 import type { GameEngine } from '../../core/GameEngine';
 
-export type AiPolicy = (engine: GameEngine, playerId: number) => GameAction | null;
+export type AiPolicy = (
+  engine: GameEngine,
+  playerId: number,
+  random?: () => number,
+) => GameAction | null;
 
 /** Uniform-random pick over the legal list — the phase-2 baseline. */
-export const randomPolicy: AiPolicy = (engine, playerId) => {
+export const randomPolicy: AiPolicy = (engine, playerId, random = Math.random) => {
   const legal = engine.legalActions(playerId);
   if (legal.length === 0) return null;
-  return legal[Math.floor(Math.random() * legal.length) % legal.length];
+  return legal[Math.floor(random() * legal.length) % legal.length];
 };

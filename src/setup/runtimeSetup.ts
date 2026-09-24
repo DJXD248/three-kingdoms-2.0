@@ -64,8 +64,12 @@ export function shuffle<T>(items: readonly T[], random = Math.random): T[] {
 
 export const PLAYABLE_FACTIONS: Faction[] = ['魏', '蜀', '吴', '晋'];
 
-export function createLobbyPlayers(playerCount: number, seatModes: readonly AiSeatMode[] = []): SetupPlayerSeed[] {
-  const avatars = shuffle(allGenerals);
+export function createLobbyPlayers(
+  playerCount: number,
+  seatModes: readonly AiSeatMode[] = [],
+  random: () => number = Math.random,
+): SetupPlayerSeed[] {
+  const avatars = shuffle(allGenerals, random);
   const players: SetupPlayerSeed[] = [];
   for (let i = 0; i < playerCount; i += 1) {
     const mode = seatModes[i] ?? { isAi: false, tier: 'balanced' as AiSeatTier };
@@ -92,15 +96,21 @@ export function createLobbyPlayers(playerCount: number, seatModes: readonly AiSe
   return players;
 }
 
-export function rollAndSortPlayers<T extends { diceRoll: number; seatOrder: number }>(players: readonly T[]): T[] {
+export function rollAndSortPlayers<T extends { diceRoll: number; seatOrder: number }>(
+  players: readonly T[],
+  random: () => number = Math.random,
+): T[] {
   return [...players]
-    .map(player => ({ ...player, diceRoll: Math.floor(Math.random() * 12) + 1 }))
+    .map(player => ({ ...player, diceRoll: Math.floor(random() * 12) + 1 }))
     .sort((a, b) => b.diceRoll - a.diceRoll)
     .map((player, index) => ({ ...player, seatOrder: index }));
 }
 
-export function assignFactions<T extends { faction: Faction | null }>(players: readonly T[]): T[] {
-  const factions = shuffle(PLAYABLE_FACTIONS);
+export function assignFactions<T extends { faction: Faction | null }>(
+  players: readonly T[],
+  random: () => number = Math.random,
+): T[] {
+  const factions = shuffle(PLAYABLE_FACTIONS, random);
   return players.map((player, index) => ({ ...player, faction: factions[index % factions.length] }));
 }
 
@@ -108,10 +118,12 @@ export function buildDraftCandidates(
   faction: Faction,
   disabledIds: ReadonlySet<string>,
   alreadySelectedIds: readonly string[] = [],
+  random: () => number = Math.random,
 ): { main: General[]; qun: General[] } {
   const excluded = new Set(alreadySelectedIds);
   const available = shuffle(
     getGeneralsByFaction(faction).filter(general => !excluded.has(general.id) && !disabledIds.has(general.id)),
+    random,
   );
   const warriors = available.filter(general => general.type === '武将');
   const scholars = available.filter(general => general.type === '文将');
@@ -120,10 +132,11 @@ export function buildDraftCandidates(
   main.push(...warriors.slice(0, Math.max(3, Math.min(warriors.length, 7))));
   main.push(...scholars.slice(0, 10 - main.length));
   if (main.length < 10) main.push(...warriors.slice(main.length).slice(0, 10 - main.length));
-  main = shuffle(main.slice(0, 10));
+  main = shuffle(main.slice(0, 10), random);
 
   const qun = shuffle(
     getGeneralsByFaction('群').filter(general => !excluded.has(general.id) && !disabledIds.has(general.id)),
+    random,
   ).slice(0, 5);
 
   return { main, qun };

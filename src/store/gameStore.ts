@@ -5,6 +5,7 @@ import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFacti
 import { dispatchStoreAction } from './engineExecutionBridge';
 import { buildDrawContext, describeDrawSubtitle, engineStateToStoreProjection, storeStateToEngineState } from './gameStateAdapter';
 import type { EngineState } from '../core/GameState';
+import { cloneRngState, rngNext, type RngState } from '../core/rng';
 import { createAction } from '../action/ActionTypes';
 import type { SkillActivation } from '../skills/dataTypes';
 import {
@@ -62,6 +63,20 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     replace?: boolean,
   ) => void);
 
+  // ── D-2 second cut (2.2.19): setup randomness draws from EngineState.rngState ──
+  // Each setup step clones the engine's own cursor, consumes it, and commits
+  // the advanced cursor back inside the same set(). commitSetup applies the
+  // exact storeStateToEngineState projection the engine-aware setter would
+  // have run anyway, so the only observable delta is the moved cursor.
+  const setupCursor = (): RngState => cloneRngState(get().engineState.rngState, 1);
+  const commitSetup = (patch: Partial<GameState>, rng: RngState): void => {
+    const merged = { ...get(), ...patch } as GameState;
+    set({
+      ...patch,
+      engineState: { ...storeStateToEngineState(merged), rngState: { s: rng.s >>> 0 } },
+    });
+  };
+
   return ({
   phase:'menu',playerCount:0,roomName:generateRoomName(),players:[],currentPlayerIndex:0,
   engineState:storeStateToEngineState({phase:'menu',players:[],currentPlayerIndex:0,currentRound:1,cardDeck:[],discardPile:[],turnPhase:'start',isFirstTurn:true}),
@@ -84,18 +99,28 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   createRoom:()=>{
     resetLiveReplay();
     const{playerCount,roomName,seatModes}=get();
-    const ps=createLobbyPlayers(playerCount, seatModes) as Player[];
-    set({players:ps,roomName,phase:'lobby',battlefieldSlots:playerCount,cardDeck:createCardDeck()});
+    const rng=setupCursor();
+    const random=()=>rngNext(rng);
+    const ps=createLobbyPlayers(playerCount, seatModes, random) as Player[];
+    commitSetup({players:ps,roomName,phase:'lobby',battlefieldSlots:playerCount,cardDeck:createCardDeck(random)},rng);
   },
   startGame:()=>set({phase:'diceRoll'}),
-  rollDice:()=>set({players:rollAndSortPlayers(get().players)}),
-  assignFactions:()=>{const ps=get().players;set({players:assignFactions(ps)});setTimeout(()=>get().distributeDraftGenerals(),1500);},
+  rollDice:()=>{
+    const rng=setupCursor();
+    commitSetup({players:rollAndSortPlayers(get().players, ()=>rngNext(rng))},rng);
+  },
+  assignFactions:()=>{
+    const rng=setupCursor();
+    commitSetup({players:assignFactions(get().players, ()=>rngNext(rng))},rng);
+    setTimeout(()=>get().distributeDraftGenerals(),1500);
+  },
 
   distributeDraftGenerals:()=>{
     const{disabledGenerals:dis}=get();
     const fp=get().players[0];if(!fp?.faction)return;
-    const candidates = buildDraftCandidates(fp.faction, dis);
-    set({phase:'generalDraft',draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[],draftPlayerIndex:0});
+    const rng=setupCursor();
+    const candidates = buildDraftCandidates(fp.faction, dis, [], ()=>rngNext(rng));
+    commitSetup({phase:'generalDraft',draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[],draftPlayerIndex:0},rng);
   },
   selectDraftGeneral:(g)=>{const sd=get().selectedDraftGenerals;set({selectedDraftGenerals:sd.some(x=>x.id===g.id)?sd.filter(x=>x.id!==g.id):sd.length<10?[...sd,g]:sd});},
   confirmDraft:()=>{
@@ -145,8 +170,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const np=u[ni];if(!np.faction)return;
     const{disabledGenerals:dis}=get();
     const ids=u.slice(0,ni).flatMap(p=>p.generalPool.map(g=>g.id));
-    const candidates = buildDraftCandidates(np.faction, dis, ids);
-    set({players:u,draftPlayerIndex:ni,draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[]});
+    const rng=setupCursor();
+    const candidates = buildDraftCandidates(np.faction, dis, ids, ()=>rngNext(rng));
+    commitSetup({players:u,draftPlayerIndex:ni,draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[]},rng);
   },
 
   setSeatMode:(index, patch) => set(st => ({

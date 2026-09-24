@@ -67,11 +67,16 @@ function createCards(): GameCard[] {
 
 export const allCards: GameCard[] = createCards();
 
-export function createCardDeck(): GameCard[] {
+/**
+ * Shuffled 52-card deck. `random` defaults to Math.random for dev tooling,
+ * but every gameplay path passes a seeded stream (D-2, 2.2.19): the store
+ * setup steps feed the EngineState.rngState cursor, matchSetup its own.
+ */
+export function createCardDeck(random: () => number = Math.random): GameCard[] {
   const deck = [...allCards];
   // Fisher-Yates shuffle
   for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [deck[i], deck[j]] = [deck[j], deck[i]];
   }
   return deck;

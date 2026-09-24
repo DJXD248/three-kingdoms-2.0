@@ -36,7 +36,25 @@ describe('ai battle runner (seeded smoke)', () => {
     expect(a.status).toBe(b.status);
     expect(a.winnerId).toBe(b.winnerId);
     expect(a.steps).toBe(b.steps);
-    expect(a.actions.map(x => x.type).join(',')).toBe(b.actions.map(x => x.type).join(','));
+    // 2.2.19: full action equality (type + seat + payload), not just the type
+    // sequence — every stream (assembly, draws, policy picks) is seeded
+    // explicitly, so a patchless rerun is bit-identical end to end.
+    expect(a.actions).toEqual(b.actions);
+  });
+
+  it('patchless: a generated match never reaches for the global random source', () => {
+    // Headline guard for the retired withSeededRandom patch (D-2 second cut):
+    // Math.random throws, so ANY hidden entropy consumer on the runner path
+    // fails the match instead of silently drifting across reruns.
+    const original = Math.random;
+    Math.random = () => { throw new Error('battleRunner must run on explicit seeded streams'); };
+    try {
+      const result = runMatch(defaultMatchConfig(505, { poolPerPlayer: 4, deckSize: 40 }), { maxSteps: 1500 });
+      expect(result.violations).toEqual([]);
+      expect(result.status).toBe('won');
+    } finally {
+      Math.random = original;
+    }
   });
 
   it('replaying a recorded match accepts every action and ends identically', () => {

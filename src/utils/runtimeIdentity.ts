@@ -18,11 +18,12 @@ export function getRuntimeGeneralId(general: RuntimeCardLike | null | undefined)
   return getRuntimeCardId(general);
 }
 
+// D-2 second cut (2.2.19): ids are minted from a process-local counter only —
+// no clock, no entropy. Consumers match ids by equality (never parse them),
+// and seeded AI battles overwrite them with stamp() ids, so uniqueness within
+// a session is the whole contract.
 export function createRuntimeInstanceId(definitionId: string): string {
-  const now = Date.now().toString(36);
-  const seq = (++runtimeSequence).toString(36);
-  const random = Math.random().toString(36).slice(2, 8);
-  return `${definitionId}__inst_${now}_${seq}_${random}`;
+  return `${definitionId}__inst_${(++runtimeSequence).toString(36)}`;
 }
 
 export function cloneWithRuntimeInstance<T extends RuntimeCardLike>(card: T): T {

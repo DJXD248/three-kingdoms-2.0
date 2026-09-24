@@ -8,19 +8,19 @@
  * replay/snapshot deep-clone retention (O(n^2)) building up — the UI keeps
  * the default (true) and is untouched.
  *
- * Determinism: every randomness source on the engine path goes through the
- * global Math.random (see src/ai/rng.ts), so one seed reproduces a whole
- * match. The replay mode keeps the SAME random-number consumption as the
- * generated run (the policy is still consulted each step) and merely
- * overrides the choice with the recorded action — that way divergence points
- * at a real non-determinism or rule bug rather than stream skew.
+ * Determinism (D-2 second cut, 2.2.19): every randomness source is an
+ * explicit seeded stream derived from config.seed — assembly through
+ * matchSetup's setup cursor, engine draws through state.rngState, and random
+ * policy picks through the runner's policy cursor. The old global
+ * Math.random patch (src/ai/rng.ts) is retired. Replay mode dispatches the
+ * recorded actions directly without consulting any policy.
  */
 import type { GameAction } from '../action/ActionTypes';
 import { createAction } from '../action/ActionTypes';
 import { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { syncPlayerSkills } from '../skills/skillCompiler';
-import { withSeededRandom } from './rng';
+import { createRngState, rngNext } from '../core/rng';
 import { allFactions } from '../data/generals';
 import { buildMatchState, defaultMatchConfig, type MatchConfig } from './matchSetup';
 import { createLedgerSentinel, checkStateInvariants, type Violation } from './invariants';
@@ -168,8 +168,12 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
     options.seatPolicies?.[playerId - 1] ?? defaultPolicy;
   const maxSteps = options.maxSteps ?? 3000;
   const recorded = options.recorded ?? null;
+  // Third explicit seeded stream: policy tie-break entropy, salted apart from
+  // the setup cursor (matchSetup) and the in-play cursor (state.rngState).
+  const policyRng = createRngState((config.seed ^ 0x85ebca6b) >>> 0);
+  const randomForPolicy = () => rngNext(policyRng);
 
-  return withSeededRandom(config.seed, () => {
+  const run = (): MatchResult => {
     const startedAt = Date.now();
     let state = buildMatchState(config);
     const actions: RecordedAction[] = [];
@@ -260,19 +264,20 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
             : state.currentPlayerId ?? firstPlayerId;
         const engine = new GameEngine(state, { recordHistory: false });
         syncPlayerSkills(engine, state);
-        const picked = policyFor(actor)(engine, actor); // always consulted → identical RNG stream in replay mode
-        let next = picked;
+        let next: GameAction | null;
         if (recorded) {
           // actions[0] is always the runner-owned BEGIN_DRAW (both modes),
           // so the recording for loop step `index` sits at recorded[index].
+          // Replay never consults a policy — recorded actions are re-minted
+          // verbatim (createAction's id is a pure counter since 2.2.19).
           const rec = recorded[index];
           if (!rec) {
             status = state.phase === 'gameOver' ? 'won' : 'stepsExhausted';
             break;
           }
-          // Reuse the recording verbatim. A plain literal (not createAction)
-          // keeps the seeded RNG stream in lockstep with the generated run.
-          next = { id: `replay_${index}`, type: rec.type, playerId: rec.playerId, payload: rec.payload } as GameAction;
+          next = createAction(rec.type, rec.playerId, rec.payload);
+        } else {
+          next = policyFor(actor)(engine, actor, randomForPolicy);
         }
         if (!next) {
           violations.push({
@@ -308,7 +313,8 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
       finalPhase: String(state.phase),
       seatStats,
     };
-  });
+  };
+  return run();
 }
 
 export interface BatchOptions extends RunOptions {

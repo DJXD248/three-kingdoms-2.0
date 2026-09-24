@@ -75,10 +75,11 @@ describe('DrawResolver', () => {
   });
 
   it('never touches the global random source (D-2 ban on private RNG in resolvers)', () => {
-    // createAction mints its id with Math.random, so build it before the probe.
+    // Since 2.2.19 createAction's id is a pure counter, so the action is
+    // built INSIDE the probe too — proving the whole call chain is entropy-free.
+    Math.random = () => { throw new Error('DrawResolver must not consume Math.random'); };
     const action = createAction('DRAW', 1, { fromGeneralPool: 1, fromCardPool: 2 });
     const st = state({ drawState: ds(1, 3), deck: [{ id: 'd1' }, { id: 'd2' }, { id: 'd3' }] });
-    Math.random = () => { throw new Error('DrawResolver must not consume Math.random'); };
     const events = resolver.resolve(st, action);
     expect(events[0].type).toBe('DRAW');
   });

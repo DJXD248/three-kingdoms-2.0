@@ -22,13 +22,20 @@ export interface GameAction<T = unknown> {
   payload?: T;
 }
 
+// D-2 second cut (2.2.19): action.id only has to be unique within the process
+// (SnapshotRecord.actionId association, network packet ids — nothing looks
+// actions up by id), so it is a plain counter. No clock, no entropy: creating
+// an action can never perturb a seeded stream or make a replay diverge.
+let actionSerial = 0;
+
 export function createAction<T = unknown>(
   type: ActionType,
   playerId: number,
   payload?: T,
 ): GameAction<T> {
+  actionSerial += 1;
   return {
-    id: `action_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    id: `action_${actionSerial}`,
     type,
     playerId,
     ...(payload === undefined ? {} : { payload }),

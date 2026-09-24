@@ -2,14 +2,17 @@
  * Match-assembly tests for the 2.2.8 seat setups (faction picks, explicit
  * general lists with duplicates, seeded determinism) plus the faction-label
  * propagation the balance stats rely on.
+ *
+ * Since the 2.2.19 D-2 second cut buildMatchState is patchless-deterministic:
+ * its own setup cursor stream + seed-stamped ids for cards AND skills, so the
+ * tests call it bare and can deep-equal two assemblies of the same config.
  */
 import { describe, expect, it } from 'vitest';
 import { buildMatchState, defaultMatchConfig, type SeatConfig } from './matchSetup';
-import { withSeededRandom } from './rng';
 import { allFactions, allGenerals, getGeneralsByFaction, type General } from '../data/generals';
 
 const build = (seed: number, overrides: Parameters<typeof defaultMatchConfig>[1]) =>
-  withSeededRandom(seed, () => buildMatchState(defaultMatchConfig(seed, overrides)));
+  buildMatchState(defaultMatchConfig(seed, overrides));
 
 describe('matchSetup seat configs', () => {
   it('every seat carries a valid faction label and a faction-pure pool', () => {
@@ -23,20 +26,15 @@ describe('matchSetup seat configs', () => {
     }
   });
 
-  it('same seed → identical assembly (factions, pools, stamped instance ids)', () => {
+  it('same seed → identical assembly, patchless (full EngineState deep-equal)', () => {
     const a = build(77, { playerCount: 2, poolPerPlayer: 4 });
     const b = build(77, { playerCount: 2, poolPerPlayer: 4 });
-    // Skill objects keep cloneWithRuntimeInstance's Date.now-based instanceId
-    // (only cards are seed-stamped), so strip those before comparing.
-    const norm = (v: unknown) =>
-      JSON.parse(JSON.stringify(v), (k, val) =>
-        k === 'instanceId' && typeof val === 'string' && val.includes('__inst_') ? '' : val,
-      );
-    expect(norm(a.players)).toEqual(norm(b.players));
-    // Card-level ids ARE stamped deterministically — assert one directly.
+    // Cards AND injected skills are seed-stamped, so no process-local counter
+    // leaks into state — the whole assembled match must compare equal.
+    expect(a).toEqual(b);
     const ids = (p: typeof a) =>
       p.players.flatMap(q => (q.generalPool as General[]).map(g => (g as { instanceId?: string }).instanceId));
-    expect(ids(a)).toEqual(ids(b));
+    expect(ids(a)[0]).toBe(`ai77_c0`);
   });
 
   it('explicit faction is honoured and duplicate factions across seats are legal', () => {

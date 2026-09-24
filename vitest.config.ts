@@ -41,9 +41,10 @@ export default defineConfig({
       // 2.2.8 (faction balance stats + seat picks + dock table test): stmts 38.1 / branch 31.93 / funcs 29.01 / lines 42.88.
       // 2.2.9 (human-vs-AI driver: full store-level AI match tests): stmts 41.43 / branch 34.55 / funcs 32.33 / lines 46.47.
       // 2.2.17 (Stage C skill coverage: HEAL/GAIN_ARMOR settlement + skill-kill DEATH chain tests): stmts 42.46-42.66 / branch 35.11-35.28 / funcs 33.85-33.97 / lines 47.49-47.72. Branch floor kept at 34 (run-to-run jitter).
+      // 2.2.19 (D-2 second cut: setup-cursor + patchless-runner determinism tests): stmts 42.61-42.81 / branch 35.19-35.54 / funcs 34.26-34.45 / lines 47.59-47.84. Funcs floor raised; branch kept at 34 for jitter headroom (same call as 2.2.17).
       thresholds: {
         lines: 47,
-        functions: 33,
+        functions: 34,
         branches: 34,
         statements: 42,
       },
