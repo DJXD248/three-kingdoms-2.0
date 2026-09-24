@@ -19,6 +19,7 @@ export type GameEventType =
   | 'REACTION_WINDOW_OPENED'
   | 'REACTION_WINDOW_CLOSED'
   | 'TRIGGERED'
+  | 'SKILL_ACTIVATED'
   | 'STATE_CHANGED'
   | 'GENERAL_DEPLOYED'
   | 'GENERAL_MOVED'
@@ -62,4 +63,21 @@ export interface RandomOutcomeData {
   purpose: 'DRAW_SELECTION';
   stableId: string;
   value: RandomOutcomeValue;
+}
+
+/**
+ * SKILL_ACTIVATED (2.3.1, decision D-3 content era): the A-class record that
+ * an explicit ACTIVATE_SKILL action ran. Currently only the ask-before-END_TURN
+ * turn-end path (turnEndSkills/TurnEndSkillResolver) mints it. Its `stableId`
+ * (`<turn>:<skillId>`) is what consumption tracking stores in
+ * EngineState.consumedSkills, making "once per turn" a replayable game fact
+ * rather than container timing.
+ */
+export interface SkillActivationEventData {
+  skillId: string;
+  skillName: string;
+  effectId: string;
+  generalId: string;
+  playerId: number;
+  stableId: string;
 }

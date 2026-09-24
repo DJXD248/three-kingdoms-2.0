@@ -33,7 +33,12 @@ export function storeStateToEngineState(store: any): EngineState {
     currentPlayerId: Array.isArray(store.players)
       ? store.players?.[store.currentPlayerIndex]?.id ?? null
       : null,
-    turn: typeof store.currentRound === 'number' ? store.currentRound : 0,
+    // Engine-only facts survive a UI-layer rebuild (same retention idea as
+    // the rng cursor below): turn has no store display field (currentRound
+    // maps to round), and consumedSkills is written solely by EventProcessor.
+    // Re-deriving turn from currentRound mid-match would rewind the counter
+    // and corrupt the 2.3.1 once-per-turn ledger keys.
+    turn: store?.engineState?.turn ?? (typeof store.currentRound === 'number' ? store.currentRound : 0),
     round: typeof store.currentRound === 'number' ? store.currentRound : 0,
     deck: Array.isArray(store.cardDeck) ? store.cardDeck : [],
     discardPile: Array.isArray(store.discardPile) ? store.discardPile : [],
@@ -55,6 +60,10 @@ export function storeStateToEngineState(store: any): EngineState {
       : null,
     isFirstTurn: store.isFirstTurn === true,
     rngState: seedRngState(store),
+    // consumedSkills has no store display field (written solely by
+    // EventProcessor) — dropping it on rebuild would silently undo
+    // once-per-turn activation (2.3.1).
+    consumedSkills: store?.engineState?.consumedSkills,
   };
 }
 

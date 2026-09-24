@@ -9,6 +9,7 @@ export * from "./SupplyResolver";
 export * from "./ArmorResolver";
 export * from "./DrawResolver";
 export * from "./TurnResolver";
+export * from "./TurnEndSkillResolver";
 
 export { ResolveBaseLossResolver } from './ResolveBaseLossResolver';
 export { SurrenderResolver } from './SurrenderResolver';

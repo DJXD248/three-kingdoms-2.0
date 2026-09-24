@@ -38,6 +38,9 @@ export default function GameBoard(){
   const resetGame=useGameStore(s=>s.resetGame);
   const reactionWindow=useGameStore(s=>s.reactionWindow);
   const passReaction=useGameStore(s=>s.passReaction);
+  const turnEndAsk=useGameStore(s=>s.turnEndAsk);
+  const activateTurnEndSkill=useGameStore(s=>s.activateTurnEndSkill);
+  const skipTurnEndAsk=useGameStore(s=>s.skipTurnEndAsk);
 
   const [vm,setVm]=useState<ViewMode>('board');
   const [ins,setIns]=useState<InspectTarget|null>(null);
@@ -487,8 +490,9 @@ export default function GameBoard(){
             <p className="text-xs text-amber-200/80">{a.message}</p>
           </div>
         ))}</div>}
-        {/* 2.2.25 §12-9c: reaction-window HUD — entry mechanism only, mirrors the resident container */}
-        {reactionWindow&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+        {/* 2.2.25 §12-9c: reaction-window HUD — entry mechanism only, mirrors the resident container.
+            While a turn-end ask owns this window (2.3.1), the dedicated ask HUD below replaces it. */}
+        {reactionWindow&&!(turnEndAsk&&reactionWindow.id===turnEndAsk.windowId)&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
           <div className="rounded-xl border-2 border-sky-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(14,165,233,0.35)'}}>
             <p className="text-sm font-black text-sky-300">⏳ 反应窗口开启 · 等待通过</p>
             <p className="mt-0.5 text-[10px] text-sky-200/60">{reactionWindow.id}</p>
@@ -501,6 +505,19 @@ export default function GameBoard(){
                   : <Btn key={pid} onClick={()=>passReaction(pid)}>🫱 {name} 通过</Btn>;
               })}
             </div>
+          </div>
+        </div>}
+        {/* 2.3.1 turn-end ask HUD: real END_TURN is deferred until each candidate is
+            activated (canonical ACTIVATE_SKILL) or the player skips. The window itself
+            is container observation; the decisions inside it are recorded facts. */}
+        {turnEndAsk&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+          <div className="rounded-xl border-2 border-amber-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(245,158,11,0.35)'}}>
+            <p className="text-sm font-black text-amber-300">🌙 回合结束询问 · 是否发动将领技能？</p>
+            <p className="mt-0.5 text-[10px] text-amber-200/60">{turnEndAsk.windowId}</p>
+            <div className="mt-2 flex flex-col gap-1.5">
+              {turnEndAsk.candidates.map(c=><button key={c.skillId} onClick={()=>activateTurnEndSkill(c.skillId,c.generalId)} title={c.description} className="rounded-lg border border-amber-600/60 bg-amber-900/50 px-3 py-1.5 text-xs font-bold text-amber-100 hover:bg-amber-800/60">⚡ {c.generalName}【{c.skillName}】</button>)}
+            </div>
+            <div className="mt-2"><Btn onClick={skipTurnEndAsk}>⏭️ 跳过并结束回合</Btn></div>
           </div>
         </div>}
         {depNotice&&<div className="pointer-events-none absolute left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2"><div className="rounded-xl border-2 border-amber-500 bg-black/90 px-8 py-4 text-center animate-fadeIn"><p className="text-xl font-black text-amber-400">⚔️ 将领登场</p><p className="text-lg text-amber-200">{depNotice}</p></div></div>}

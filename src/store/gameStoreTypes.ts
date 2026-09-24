@@ -51,6 +51,28 @@ export interface Player {
   isAi?:boolean; aiTier?:AiSeatTier;
 }
 
+/**
+ * 2.3.1 turn-end ask window (容器层询问): a store-layer deferral of the real
+ * END_TURN while the current human player still has activatable onTurnEnd
+ * skills. Class-B container observation (D-9) — the window itself is never
+ * recorded; the in-window activations are canonical ACTIVATE_SKILL actions
+ * and DO enter the replay stream ("窗口可以不录；窗口里的游戏决策不能不录").
+ */
+export interface TurnEndAskCandidate {
+  skillId:string;
+  generalId:string;
+  generalName:string;
+  skillName:string;
+  description:string;
+}
+
+export interface TurnEndAsk {
+  playerId:number;
+  /** reactionWindow.id of the accompanying container window (rw:… deterministic). */
+  windowId:string;
+  candidates:TurnEndAskCandidate[];
+}
+
 export interface GameState {
   phase:GamePhase; playerCount:number; roomName:string; players:Player[];
   /** Phase 5.35.6: canonical runtime state for migrated engine flows. */
@@ -79,6 +101,8 @@ export interface GameState {
   // 2.2.25 (§12-9c): reaction-window business entry — container-layer state
   // mirrored for the HUD. Never part of EngineState or the replay stream.
   reactionWindow:ReactionWindowState|null;
+  // 2.3.1: turn-end ask deferral (see TurnEndAsk above). Null = no pending ask.
+  turnEndAsk:TurnEndAsk|null;
   settings:{
     resolution:string;windowMode:string;animationSpeed:number;masterVolume:number;musicVolume:number;sfxVolume:number;autoSave:boolean;
     // 2.2.6 replay/log saving (persisted in localStorage via replayStorage)
@@ -104,6 +128,10 @@ export interface GameState {
   supplyGeneral:(id:string,cards:(General|GameCard)[])=>void;
   armGeneral:(id:string,armorCards:GameCard[])=>boolean;
   endTurn:()=>void; surrender:(id:number)=>void;
+  // 2.3.1 turn-end ask: activate one offered skill (canonical ACTIVATE_SKILL),
+  // or skip — close the window and commit the real END_TURN.
+  activateTurnEndSkill:(skillId:string,generalId:string)=>boolean;
+  skipTurnEndAsk:()=>void;
   // 2.2.25 reaction-window entry (no skill auto-opens this cut)
   openReactionWindow:(sourceEvent?:GameEvent,participants?:number[])=>ReactionWindowState|null;
   passReaction:(playerId:number)=>boolean;

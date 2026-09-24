@@ -19,6 +19,11 @@ const TRIGGER_EVENT_MAP: Partial<Record<DataSkillTrigger, GameEventType>> = {
   // this trigger settles AFTER the source DAMAGE within one dispatch —
   // frozen semantics, see PROJECT_ARCH_MAP "Trigger 契约表".
   onBecomingTarget: 'BEFORE_DAMAGE'
+  // onTurnEnd is DELIBERATELY absent (2.3.1, single-activation-path /
+  // double-fire ban): TURN_END must never auto-fire the skill. Its only
+  // activation path is the canonical ACTIVATE_SKILL action → the resolver,
+  // which reuses the static createSkillEvents below — the same
+  // effect-translation code, never a second one.
 };
 
 const PRIORITY: Partial<Record<DataSkillTrigger, number>> = {
@@ -146,7 +151,7 @@ export class SkillTriggerBridge {
       skillId: binding.skill.id,
       condition: buildCondition(binding.skill.trigger, binding),
       createEvents: (context) =>
-        this.createSkillEvents(binding, context.state, context.event)
+        SkillTriggerBridge.createSkillEvents(binding, context.state, context.event)
     });
 
     const ownerKey = String(binding.ownerId);
@@ -177,7 +182,11 @@ export class SkillTriggerBridge {
     );
   }
 
-  private createSkillEvents(
+  /** Effect translation — instance-free on purpose (2.3.1): the trigger path
+   * and the explicit ACTIVATE_SKILL path must share ONE code, so this is a
+   * static and TurnEndSkillResolver calls it directly rather than keeping a
+   * second copy of the DRAW/DAMAGE/HEAL/GAIN_ARMOR translation. */
+  static createSkillEvents(
     binding: SkillOwnerBinding,
     state: EngineState,
     event: GameEvent
@@ -185,7 +194,7 @@ export class SkillTriggerBridge {
     const sourceId = String(binding.ownerId);
 
     return binding.skill.effects.map(effect => {
-      const targetId = this.resolveEffectTarget(effect, binding, event);
+      const targetId = SkillTriggerBridge.resolveEffectTarget(effect, binding, event);
       const data = {
         sourceId,
         targetId,
@@ -209,7 +218,7 @@ export class SkillTriggerBridge {
       }
 
       if (effect.type === 'DAMAGE') {
-        const targetRef = this.findGeneralRef(state, targetId);
+        const targetRef = SkillTriggerBridge.findGeneralRef(state, targetId);
         return {
           type: 'DAMAGE',
           data: {
@@ -218,7 +227,7 @@ export class SkillTriggerBridge {
             sourceGeneralId: binding.skill.sourceGeneralId,
             targetPlayerId: targetRef
               ? targetRef.player.id
-              : this.playerIdFromBase(targetId),
+              : SkillTriggerBridge.playerIdFromBase(targetId),
             targetId: targetId ?? data.targetId,
             damageType: 'skill',
             value: Math.max(1, Number(effect.value ?? 1))
@@ -227,14 +236,14 @@ export class SkillTriggerBridge {
       }
 
       if (effect.type === 'HEAL' || effect.type === 'GAIN_ARMOR') {
-        const targetRef = this.findGeneralRef(state, targetId);
+        const targetRef = SkillTriggerBridge.findGeneralRef(state, targetId);
         return {
           type: effect.type,
           data: {
             ...data,
             targetPlayerId: targetRef
               ? targetRef.player.id
-              : this.playerIdFromBase(targetId),
+              : SkillTriggerBridge.playerIdFromBase(targetId),
             targetId: targetId ?? data.targetId,
             value: Math.max(1, Number(effect.value ?? 1))
           }
@@ -255,7 +264,7 @@ export class SkillTriggerBridge {
    *   ATTACKER → the attacker general of the source event
    *   TARGET   → the victim/general referenced by the source event
    */
-  private resolveEffectTarget(
+  private static resolveEffectTarget(
     effect: SkillEffectData,
     binding: SkillOwnerBinding,
     event: GameEvent
@@ -277,7 +286,7 @@ export class SkillTriggerBridge {
     return value === undefined ? undefined : String(value);
   }
 
-  private findGeneralRef(state: EngineState, generalId?: string) {
+  private static findGeneralRef(state: EngineState, generalId?: string) {
     if (!generalId) return null;
     for (const player of state.players) {
       const fieldGenerals = Array.isArray(player.fieldGenerals)
@@ -290,7 +299,7 @@ export class SkillTriggerBridge {
     return null;
   }
 
-  private playerIdFromBase(targetId?: string): number | undefined {
+  private static playerIdFromBase(targetId?: string): number | undefined {
     if (!targetId || !targetId.startsWith('base_')) return undefined;
     const parsed = Number(targetId.slice('base_'.length));
     return Number.isFinite(parsed) ? parsed : undefined;

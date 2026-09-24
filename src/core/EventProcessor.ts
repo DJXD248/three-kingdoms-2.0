@@ -30,6 +30,7 @@ import {
   applyPhaseChangedEvent,
 } from './eventProcessors/turnEvents';
 import { enqueueDerivedConsequences } from './eventProcessors/chainedConsequences';
+import { applySkillActivatedEvent } from './eventProcessors/skillEvents';
 
 /**
  * Applies emitted events to engine state.
@@ -99,6 +100,8 @@ export class EventProcessor {
         return applyTurnEndEvent(state, event);
       case 'TURN_ACTIONS_RESET':
         return applyTurnActionsResetEvent(state, event);
+      case 'SKILL_ACTIVATED':
+        return applySkillActivatedEvent(state, event);
       case 'TURN_START':
         return applyTurnStartEvent(state, event);
       case 'PHASE_CHANGED':

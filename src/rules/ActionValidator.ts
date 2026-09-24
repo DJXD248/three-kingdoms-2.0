@@ -13,7 +13,11 @@ export class ActionValidator {
       // Developer test arena intentionally bypasses normal phase/turn gating.
       // The test harness can control any player and exercise gameplay actions.
     } else if (state.phase === 'drawing') {
-      const drawPlayerId = state.metadata?.drawPlayerId;
+      // The window itself (drawState) is the authority on who may act.
+      // metadata.drawPlayerId is a legacy mirror (store-adapter channel) that
+      // not every window writer refreshes — trusting it alone deadlocked a
+      // compensation-resumed window in the 2.3.1 soak (246 seed sweep).
+      const drawPlayerId = state.drawState?.playerId ?? state.metadata?.drawPlayerId;
       if (typeof drawPlayerId === 'number' && action.playerId !== drawPlayerId) {
         return { valid: false, reason: 'NOT_DRAW_PLAYER' };
       }
@@ -56,6 +60,16 @@ export class ActionValidator {
       const payload = action.payload as any;
       if (!payload?.generalId || !Array.isArray(payload.armorCards) || payload.armorCards.length === 0) {
         return { valid: false, reason: 'INVALID_ARMOR_PAYLOAD' };
+      }
+    }
+
+    if (action.type === 'ACTIVATE_SKILL') {
+      // 2.3.1: addressing-only shape check — ownership / once-per-turn are
+      // game facts the resolver judges against re-derived state.
+      const payload = action.payload as any;
+      if (typeof payload?.skillId !== 'string' || typeof payload?.generalId !== 'string' ||
+        !payload.skillId || !payload.generalId) {
+        return { valid: false, reason: 'INVALID_ACTIVATE_SKILL_PAYLOAD' };
       }
     }
 

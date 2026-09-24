@@ -102,6 +102,11 @@ function applyPolicyAction(state: GameState, playerId: number, action: GameActio
     case 'ATTACK': state.attackTarget(p?.attackerId, p?.targetId, p?.ranged === true, p?.consumeCard); return true;
     case 'SUPPLY': state.supplyGeneral(p?.generalId, p?.consumeCards ?? []); return true;
     case 'EQUIP_ARMOR': return state.armGeneral(p?.generalId, p?.armorCards ?? []);
+    // 2.3.1: AI seats activate turn-end skills exactly like humans decide in
+    // the ask window — one canonical ACTIVATE_SKILL action, no direct state
+    // edits. Consumption drops the candidate from the next legalActions, so
+    // the stagnation guard cannot loop on it.
+    case 'ACTIVATE_SKILL': return state.activateTurnEndSkill(String(p?.skillId ?? ''), String(p?.generalId ?? ''));
     case 'END_TURN': state.endTurn(); return true;
     case 'SURRENDER': state.surrender(playerId); return true;
     default: return false;

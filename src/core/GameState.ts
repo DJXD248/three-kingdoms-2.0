@@ -62,6 +62,23 @@ export interface EngineState {
   /** Deterministic engine RNG cursor (D-2). Optional so legacy snapshots and
    * replays without it still load; a missing cursor is lazily re-seeded. */
   rngState?: RngState;
+  /**
+   * Turn-bound skill consumption ledger (2.3.1, D-3 content era): one entry
+   * per accepted SKILL_ACTIVATED event. A-class game fact — it lives in the
+   * state (so 常驻/重建/回放 all see it) and the "once per turn" gate in
+   * TurnEndSkillResolver reads it. Optional: legacy states/saves lack it and
+   * simply carry no consumption.
+   */
+  consumedSkills?: ConsumedSkill[];
+}
+
+export interface ConsumedSkill {
+  /** `<turn>:<skillId>` — the SKILL_ACTIVATED stableId. */
+  stableId: string;
+  /** Compiled skill definition id (unique per general instance + effect). */
+  skillId: string;
+  turn: number;
+  playerId: number;
 }
 
 export function createInitialEngineState(): EngineState {

@@ -28,6 +28,7 @@ import type { GameAction } from '../action/ActionTypes';
 import { createAction } from '../action/ActionTypes';
 import type { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
+import { listTurnEndSkillCandidates } from '../skills/turnEndSkills';
 
 const RESOURCE_TYPES = new Set(['粮草', '材料', '军备', 'SUPPLY', 'MATERIAL', 'ARMAMENT']);
 
@@ -194,6 +195,13 @@ export function getLegalActions(engine: GameEngine, playerId: number): GameActio
     for (let count = 1; count <= Math.min(2, armorCards.length); count += 1) {
       tryPush('EQUIP_ARMOR', { generalId, armorCards: armorCards.slice(0, count) });
     }
+  }
+
+  // ACTIVATE_SKILL (2.3.1): turn-end skills offered by the ask window are
+  // ordinary legal actions — candidates derive from EngineState (compile +
+  // consumed ledger), the probe (validator + resolver) gives the final verdict.
+  for (const candidate of listTurnEndSkillCandidates(state, playerId)) {
+    tryPush('ACTIVATE_SKILL', { skillId: candidate.definition.id, generalId: candidate.generalId });
   }
 
   // Always-considered window actions.

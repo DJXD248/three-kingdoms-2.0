@@ -21,7 +21,8 @@ import { createEngineAwareSetter } from './engineAwareSetter';
 import { clearLocalGameSnapshot, saveLocalGameSnapshot } from './localGameSnapshot';
 import { resetLiveReplay } from '../replay/liveReplayRecorder';
 import { loadReplaySettings, persistReplaySettings } from '../replay/replayStorage';
-import type { GamePhase, DrawContext, Player, GameState } from './gameStoreTypes';
+import type { GamePhase, DrawContext, Player, GameState, TurnEndAsk, TurnEndAskCandidate } from './gameStoreTypes';
+import { listTurnEndSkillCandidates, type TurnEndSkillCandidate } from '../skills/turnEndSkills';
 
 // Store-level types live in gameStoreTypes.ts (stage B split); re-exported
 // here so existing consumers keep importing them from this module.
@@ -77,6 +78,89 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     });
   };
 
+  // 2.3.1 turn-end ask: candidate shaping (store view of an engine-derived
+  // candidate — never a second rule source, see skills/turnEndSkills).
+  const toTurnEndAskCandidate = (c: TurnEndSkillCandidate): TurnEndAskCandidate => ({
+    skillId: c.definition.id,
+    generalId: c.generalId,
+    generalName: c.generalName,
+    skillName: c.definition.name,
+    description: c.definition.description,
+  });
+
+  // The real END_TURN commit, shared verbatim by the ungated endTurn path and
+  // skipTurnEndAsk — exactly one place ever dispatches END_TURN in the store.
+  const commitEndTurn = () => {
+    const{currentPlayerIndex,currentRound,isTestMode}=get();
+    const activePlayer=get().players[currentPlayerIndex];
+    if(!activePlayer) return;
+
+    const { engineState } = dispatchStoreAction(
+      get(),
+      createAction('END_TURN', activePlayer.id),
+    );
+
+    if(isTestMode){
+      // Keep the test arena mounted while still executing the real turn/draw
+      // pipeline. This makes the test sandbox behave like a live match without
+      // ejecting the persistent debug controls when phase changes.
+      const testArenaState = buildTestArenaState(get(), engineState) as Partial<GameState> & { engineState: EngineState };
+      set({
+        ...testArenaState,
+        phase: testArenaState.engineState.phase === 'gameOver' ? 'gameOver' : 'testArena',
+        turnPhase: testArenaState.engineState.phase === 'gameOver' ? 'end' : 'main',
+      });
+      return;
+    }
+
+    const nextPlayerId=engineState.currentPlayerId;
+    const nextIndex=engineState.players.findIndex(player=>player.id===nextPlayerId);
+    const safeNextIndex=nextIndex>=0?nextIndex:currentPlayerIndex;
+    const nextRound=engineState.round || currentRound;
+    const alive=engineState.players.filter(player=>player.isAlive !== false);
+
+    if(alive.length<=1){
+      set({
+        engineState,
+        players:engineState.players as unknown as Player[],
+        cardDeck:engineState.deck as GameCard[],
+        discardPile:engineState.discardPile as GameCard[],
+        currentPlayerIndex:safeNextIndex,
+        currentRound:nextRound,
+        winnerId:alive.length===1?alive[0].id:null,
+        gameOverBanner:null,
+        defeatEvent:null,
+        pendingTurnTransition:null,
+        turnEndAsk:null,
+        phase:'gameOver',
+      });
+      clearLocalGameSnapshot();
+      return;
+    }
+
+    const nextPlayer=engineState.players[safeNextIndex];
+    if(!nextPlayer)return;
+
+    const outcome = deriveResultState(get(), engineState, 'playing');
+    set({
+      engineState,
+      players:engineState.players as unknown as Player[],
+      currentPlayerIndex:safeNextIndex,
+      currentRound:nextRound,
+      isFirstTurn:false,
+      drawContext:engineState.drawState ? buildDrawContext(engineState, engineState.drawState, {
+        phaseAfter: 'playing',
+        subtitle: describeDrawSubtitle(engineState, engineState.drawState, `${nextPlayer.name} 回合抽卡 (${engineState.drawState.totalCards}张)`),
+      }) : null,
+      phase: outcome.phase,
+      turnPhase: outcome.turnPhase,
+      winnerId: outcome.winnerId,
+    });
+    if (get().settings.autoSave) {
+      saveLocalGameSnapshot(get().createSerializedSnapshot(get().roomName));
+    }
+  };
+
   return ({
   phase:'menu',playerCount:0,roomName:generateRoomName(),players:[],currentPlayerIndex:0,
   engineState:storeStateToEngineState({phase:'menu',players:[],currentPlayerIndex:0,currentRound:1,cardDeck:[],discardPile:[],turnPhase:'start',isFirstTurn:true}),
@@ -87,6 +171,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   draftGenerals:[],draftQunGenerals:[],selectedDraftGenerals:[],draftPlayerIndex:0,
   seatModes:defaultSeatModes(),
   reactionWindow:null,
+  turnEndAsk:null,
   settings:{resolution:'1920x1080',windowMode:'全屏',animationSpeed:1,masterVolume:80,musicVolume:60,sfxVolume:70,autoSave:false,...loadReplaySettings()},
   developerMode:false,
   skillEdits:loadPersistedSkillEdits(),
@@ -104,7 +189,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const rng=setupCursor();
     const random=()=>rngNext(rng);
     const ps=createLobbyPlayers(playerCount, seatModes, random) as Player[];
-    commitSetup({players:ps,roomName,phase:'lobby',battlefieldSlots:playerCount,cardDeck:createCardDeck(random)},rng);
+    commitSetup({players:ps,roomName,phase:'lobby',battlefieldSlots:playerCount,cardDeck:createCardDeck(random),turnEndAsk:null},rng);
   },
   startGame:()=>set({phase:'diceRoll'}),
   rollDice:()=>{
@@ -534,73 +619,118 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   },
 
   endTurn:()=>{
-    const{currentPlayerIndex,currentRound,isTestMode}=get();
-    const activePlayer=get().players[currentPlayerIndex];
+    const state=get();
+    const activePlayer=state.players[state.currentPlayerIndex];
     if(!activePlayer) return;
 
-    const { engineState } = dispatchStoreAction(
-      get(),
-      createAction('END_TURN', activePlayer.id),
+    // Ask already open and END_TURN pressed again (right-rail button, keyboard
+    // mash) — that IS the skip decision: close the container window honestly,
+    // then commit. Never a silent bypass leaving a stale ask behind.
+    if(state.turnEndAsk){ get().skipTurnEndAsk(); return; }
+
+    // 回合结束询问门 (2.3.1, HANDOFF §4 "回合结束如存在可发动的将领技能，应进入
+    // 询问/结算窗口"): a human seat with still-activatable onTurnEnd skills does
+    // NOT dispatch END_TURN yet — a container-layer ask opens instead (class B,
+    // never recorded). Decisions inside the window are canonical: activation is
+    // an ACTIVATE_SKILL action, skipping commits the real END_TURN (class A,
+    // recorded). "窗口可以不录；窗口里的游戏决策不能不录" — D-3c 钉死句首检.
+    // Engine-level END_TURN legality is unchanged (contract-table 口径): AI
+    // seats never pass through this gate (their activations arrive as ordinary
+    // policy-picked ACTIVATE_SKILL actions), and the test arena stays ungated.
+    if(!state.isTestMode && !activePlayer.isAi && !state.turnEndAsk
+       && state.phase==='playing' && state.engineState.currentPlayerId===activePlayer.id){
+      const candidates=listTurnEndSkillCandidates(state.engineState, activePlayer.id);
+      if(candidates.length>0){
+        const turn=state.engineState.turn ?? 0;
+        const win=get().openReactionWindow(
+          { type:'CUSTOM', data:{ reason:'turn-end-ask', playerId:activePlayer.id, stableId:`turn-end-ask:${turn}:${activePlayer.id}` } },
+          [activePlayer.id],
+        );
+        if(win){
+          set({ turnEndAsk:{ playerId:activePlayer.id, windowId:win.id, candidates:candidates.map(toTurnEndAskCandidate) } });
+          return;
+        }
+        // window refused (no participants) — fall through and commit honestly
+      }
+    }
+    commitEndTurn();
+  },
+
+  skipTurnEndAsk:()=>{
+    const ask=get().turnEndAsk;
+    if(ask){
+      get().passReaction(ask.playerId); // sole participant passes → window closes
+      set({ turnEndAsk:null });
+    }
+    commitEndTurn();
+  },
+
+  activateTurnEndSkill:(skillId,generalId)=>{
+    const state=get();
+    const actorId=state.turnEndAsk?.playerId
+      ?? state.engineState.currentPlayerId
+      ?? state.players[state.currentPlayerIndex]?.id;
+    if(typeof actorId!=='number') return false;
+    const offered=listTurnEndSkillCandidates(state.engineState, actorId)
+      .find(c=>c.definition.id===skillId && c.generalId===String(generalId));
+
+    const { engineState, events } = dispatchStoreAction(
+      state,
+      createAction('ACTIVATE_SKILL', actorId, { skillId, generalId }),
     );
+    const activated=events.find(event=>event.type==='SKILL_ACTIVATED');
+    if(!activated) return false;
 
-    if(isTestMode){
-      // Keep the test arena mounted while still executing the real turn/draw
-      // pipeline. This makes the test sandbox behave like a live match without
-      // ejecting the persistent debug controls when phase changes.
-      const testArenaState = buildTestArenaState(get(), engineState) as Partial<GameState> & { engineState: EngineState };
-      set({
-        ...testArenaState,
-        phase: testArenaState.engineState.phase === 'gameOver' ? 'gameOver' : 'testArena',
-        turnPhase: testArenaState.engineState.phase === 'gameOver' ? 'end' : 'main',
-      });
-      return;
+    if(state.isTestMode){
+      set({ ...buildTestArenaState(state, engineState), turnEndAsk:null });
+      return true;
     }
 
-    const nextPlayerId=engineState.currentPlayerId;
-    const nextIndex=engineState.players.findIndex(player=>player.id===nextPlayerId);
-    const safeNextIndex=nextIndex>=0?nextIndex:currentPlayerIndex;
-    const nextRound=engineState.round || currentRound;
-    const alive=engineState.players.filter(player=>player.isAlive !== false);
+    // The effect may kill a general, defeat a player or even end the game —
+    // project the full state (attackTarget 对账口径), never a partial patch.
+    const defeatedPlayerId=(events.find(event=>event.type==='PLAYER_DEFEATED')?.data as any)?.playerId;
+    const defeatedEventPlayer=typeof defeatedPlayerId==='number'
+      ? engineState.players.find(player=>player.id===defeatedPlayerId)
+      : undefined;
+    const pendingDraw=engineState.drawState;
+    const outcome=deriveResultState(state, engineState);
 
-    if(alive.length<=1){
-      set({
-        engineState,
-        players:engineState.players as unknown as Player[],
-        cardDeck:engineState.deck as GameCard[],
-        discardPile:engineState.discardPile as GameCard[],
-        currentPlayerIndex:safeNextIndex,
-        currentRound:nextRound,
-        winnerId:alive.length===1?alive[0].id:null,
-        gameOverBanner:null,
-        defeatEvent:null,
-        pendingTurnTransition:null,
-        phase:'gameOver',
-      });
-      clearLocalGameSnapshot();
-      return;
+    // Ask bookkeeping from the NEW state (consumption already applied): zero
+    // remaining candidates → the container window closes with the ask.
+    const wasAsked=state.turnEndAsk && state.turnEndAsk.playerId===actorId;
+    let nextAsk:TurnEndAsk|null=null;
+    if(wasAsked){
+      const remaining=listTurnEndSkillCandidates(engineState, actorId);
+      nextAsk=remaining.length===0
+        ? null
+        : { ...state.turnEndAsk!, candidates:remaining.map(toTurnEndAskCandidate) };
     }
 
-    const nextPlayer=engineState.players[safeNextIndex];
-    if(!nextPlayer)return;
-
-    const outcome = deriveResultState(get(), engineState, 'playing');
     set({
-      engineState,
-      players:engineState.players as unknown as Player[],
-      currentPlayerIndex:safeNextIndex,
-      currentRound:nextRound,
-      isFirstTurn:false,
-      drawContext:engineState.drawState ? buildDrawContext(engineState, engineState.drawState, {
-        phaseAfter: 'playing',
-        subtitle: describeDrawSubtitle(engineState, engineState.drawState, `${nextPlayer.name} 回合抽卡 (${engineState.drawState.totalCards}张)`),
-      }) : null,
+      ...engineStateToStoreProjection(engineState, state.currentPlayerIndex),
+      currentRound: engineState.round || state.currentRound,
       phase: outcome.phase,
       turnPhase: outcome.turnPhase,
       winnerId: outcome.winnerId,
+      defeatEvent: typeof defeatedPlayerId==='number' && defeatedEventPlayer
+        ? { faction:(defeatedEventPlayer as any).faction ?? null, name:(defeatedEventPlayer as any).name ?? '' }
+        : state.defeatEvent,
+      drawContext: pendingDraw ? buildDrawContext(engineState, pendingDraw) : null,
+      revealedDrawCards: pendingDraw ? [] : state.revealedDrawCards,
+      turnEndAsk: nextAsk,
+      skillActivations:[...state.skillActivations, {
+        id:String((activated.data as any)?.stableId ?? `${engineState.turn}:${skillId}:${generalId}`),
+        generalName:offered?.generalName ?? '',
+        skillName:String((activated.data as any)?.skillName ?? ''),
+        message:offered?.definition.description || '回合结束技能已发动',
+        color:'#f59e0b',
+        timestamp:Date.now(),
+      }],
     });
-    if (get().settings.autoSave) {
-      saveLocalGameSnapshot(get().createSerializedSnapshot(get().roomName));
+    if(wasAsked && nextAsk===null){
+      get().passReaction(actorId); // no candidates left → close the container window
     }
+    return true;
   },
 
   updateSettings: s => set((st: GameState) => {
@@ -654,6 +784,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       draftPlayerIndex:0,
       isTestMode:false,
       reactionWindow:null as GameState['reactionWindow'],
+      turnEndAsk:null as GameState['turnEndAsk'],
       testActionCounts:{} as GameState['testActionCounts'],
     };
     const engineState=storeStateToEngineState(baseState);

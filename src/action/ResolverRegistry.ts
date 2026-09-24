@@ -10,6 +10,7 @@ import {
   MoveGeneralResolver,
   SupplyResolver,
   TurnResolver,
+  TurnEndSkillResolver,
   ResolveBaseLossResolver,
   SurrenderResolver,
 } from './resolvers';
@@ -25,6 +26,7 @@ export class ResolverRegistry {
     new SupplyResolver(),
     new ArmorResolver(),
     new TurnResolver(),
+    new TurnEndSkillResolver(),
     new ResolveBaseLossResolver(),
     new SurrenderResolver(),
   ];

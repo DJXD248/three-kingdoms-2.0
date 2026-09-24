@@ -7,9 +7,12 @@
  *   - Only skills with a structured runtime effect payload are compiled.
  *     Built-in generals keep descriptive text only, so nothing fires until a
  *     designer attaches real numbers — the compiler never invents gameplay.
- *   - Only the seven event-backed triggers are supported; the remaining
+ *   - Only the event-backed triggers are supported; the remaining
  *     trigger kinds (modify*, onBase*, passive, active*, untilExpire, …) are
- *     skipped with an explicit reason.
+ *     skipped with an explicit reason. onTurnEnd (2.3.1) is the exception
+ *     that proves the rule: it compiles, but NEVER auto-fires — TURN_END is
+ *     deliberately absent from TRIGGER_EVENT_MAP, and its sole activation
+ *     path is the canonical ACTIVATE_SKILL action (ask-window driven).
  *   - HEAL / GAIN_ARMOR settle in EventProcessor as hp restore (capped at
  *     maxHp) and armor points; effect types beyond the four supported ones
  *     are still skipped rather than emitting no-op events.
@@ -41,6 +44,10 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   onKill: 'onKill',
   onDeath: 'onDeath',
   onBecomingTarget: 'onBecomingTarget',
+  // 2.3.1: compiles for the ACTIVATE_SKILL path only — deliberately NOT in
+  // TRIGGER_EVENT_MAP, so TURN_END never auto-fires it (single activation
+  // path, double-fire ban).
+  onTurnEnd: 'onTurnEnd',
 };
 
 /** Effect types EventProcessor can actually settle today. */
@@ -129,7 +136,10 @@ export function compileSkill(
     }
 
     let damageTypeFilter: DataSkillDefinition['damageTypeFilter'];
-    if (mapped === 'onTurnStart' && triggerConfig.turnSubType === 'otherTurn') {
+    if ((mapped === 'onTurnStart' || mapped === 'onTurnEnd') && triggerConfig.turnSubType === 'otherTurn') {
+      // The ask window only ever belongs to the current turn's owner, so an
+      // otherTurn onTurnEnd has no honest activation path (2.3.1, same
+      // discipline as the pre-existing onTurnStart guard).
       skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
       return;
     }
@@ -162,6 +172,12 @@ export function compileSkill(
       effects: [converted],
       sourceGeneralId: runtimeGeneralId,
       damageTypeFilter,
+      // ACTIVATE_SKILL addressing (2.3.1): id doubles as `<general>:<skill>:<effect>`,
+      // these two fields let resolvers/UI read the parts without parsing.
+      effectId: effect.id,
+      turnSubType: (mapped === 'onTurnStart' || mapped === 'onTurnEnd')
+        ? triggerConfig.turnSubType
+        : undefined,
     });
   };
 

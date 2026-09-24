@@ -13,6 +13,7 @@ export type ActionType =
   | 'CONFIRM_DRAW'
   | 'BEGIN_DRAW'
   | 'RESOLVE_BASE_LOSS'
+  | 'ACTIVATE_SKILL'
   | 'SURRENDER';
 
 export interface GameAction<T = unknown> {

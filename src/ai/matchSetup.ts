@@ -68,6 +68,15 @@ const PRACTICE_SKILLS: Skill[] = [
     description: 'AI 演練注入：成为攻击目标时反弹 1 点伤害',
     effects: [{ id: 'e1', trigger: { type: 'onBecomingTarget' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' } }],
   },
+  {
+    // 2.3.1 content anchor for the turn-end ask chain. Never auto-fires
+    // (TURN_END is not event-mapped): it activates only through an explicit
+    // ACTIVATE_SKILL action — in ai-battle via policy picks from
+    // legalActions, in live play via the ask window / AI driver.
+    name: '演練・守夜',
+    description: 'AI 演練注入：回合结束时可摸一张牌',
+    effects: [{ id: 'e1', trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+  },
 ];
 
 // Setup and in-play randomness are separate cursor streams derived from the

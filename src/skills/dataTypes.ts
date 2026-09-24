@@ -12,6 +12,7 @@
 export type DataSkillTrigger =
   | 'onDeploy'
   | 'onTurnStart'
+  | 'onTurnEnd'
   | 'onDamageTaken'
   | 'onDamageDealt'
   | 'onKill'
@@ -44,6 +45,13 @@ export interface DataSkillDefinition {
   sourceGeneralId?: string;
   /** Restrict damage triggers to a single damage source category. */
   damageTypeFilter?: 'attack' | 'skill';
+  /** Source SkillEffect id, kept for the explicit-activation path (2.3.1:
+   * ACTIVATE_SKILL addresses a definition as generalId + skillName + effectId
+   * so the payload stays human-readable and stable across recompiles). */
+  effectId?: string;
+  /** onTurnStart/onTurnEnd sub-timing carried through compilation (2.3.1):
+   * the turn-end ask window only offers selfTurn candidates. */
+  turnSubType?: 'selfTurn' | 'otherTurn';
 }
 
 /**
