@@ -879,6 +879,6 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 验证：
 - check 0 错误；264 测试通过（32 文件，零增删）；覆盖率棘轮 41/34/32/46 维持通过（实测 stmts 42.09 / branch 34.67 / funcs 33.45 / lines 47.16，funcs 较上轮 +0.61 系拆出函数被真实测到）；lint 0 错误/30 遗留警告（零新增）；build 单文件 1,916.89 kB / gzip 562.51 kB。
 - 浏览器冒烟（dev `__TK__` 直驱拆分后真实 store+引擎装配，非旁路）：createRoom→lobby；startTestArena 后 endTurn×4 连续驱动 TURN_END/TURN_START/DRAW_REQUIRED/DRAW_CONFIRMED/PHASE_CHANGED 走拆分后处理器（引擎 turn 2→5、round 1→2 进位正确、phase playing/ACTION 驻留）；快照链 createSerializedSnapshot('EP-Room-1')=4,565 字符→restoreSerializedSnapshot=true、错房号=false、空房号=既有守卫抛错；错误密码 toggleDeveloperMode=false。控制台仅两条 [Recovery] 拒收日志，均为故意投喂坏数据的演示性断言，应用自身 0 报错。
-- CI 远端复验 PENDING（推送后回填）。
+- CI 远端复验已完成：run `35940699193` 全绿（CI #35，master@262167f，test(22)/test(24)/lint/build 四 job 均过）；`6617b52`/`262167f`/标签 `v2.2.13` 直推成功。
 
 Unresolved & Risk：①DAMAGE 案例内 `fallbackDestroyedArmor` 仍用 Date.now（D-4 待办，位置已迁、行为未动）；②DRAW 洗堆仍用 Math.random（D-2 待办）；③阶段 B 定义内的两刀已完成，剩余 SkillEditor/GameBoard/TestArena 整理属 F 序列，需用户口令再动。
