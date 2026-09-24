@@ -897,6 +897,6 @@ Unresolved & Risk：①DAMAGE 案例内 `fallbackDestroyedArmor` 仍用 Date.now
 验证：
 - check 0 错误；264 测试通过（32 文件，零增删）；覆盖率棘轮 41/34/32/46 维持通过（实测 42.09/34.67/33.45/47.16，与上轮持平）；lint 0 错误/30 遗留警告（零新增）；build 单文件 1,916.59 kB / gzip 562.85 kB。
 - 浏览器真实点击回归（dev 5202，全走拆分后组件实例）：图鉴→开发者模式→编辑器挂载、95 将列表；TriggerEditor 触发下拉 20 项→onDamageTaken（先试 onDeploy 无子项属既有口径非回归）→伤害类型子下拉 attackDamage→预览"受到伤害后→攻击伤害"→保存→store skillEdits 含 damageSubType→批删还原 0 编辑；多效果模式→RuntimeEditor 类型下拉（纯描述/DRAW_CARD/DAMAGE）→数值 3→目标下拉（自身/伤害来源/被作用者）→预览"造成 3 点技能伤害→被作用者"；真实 row-per-skill 11 列 .xlsx 经隐藏文件输入 fetch+DataTransfer 注入→拆分后解析器全链路→"✅ 从 1 个工作表导入 1 名将领"且落库正确→清理还原 0；导出按钮→"✅ 已导出Excel文件"；控制台 0 错误（仅 vite/React DevTools 常规信息）。
-- CI 远端复验 PENDING（推送后回填）。
+- CI 远端复验已完成：run `35944672735` 全绿（CI #37，master@f3e295c，test(22)/test(24)/lint/build 四 job 均 completed successfully）；功能提交 `0580e08`、登记提交 `f3e295c` 与附注标签 `v2.2.14` 已推送（直推成功，未借道代理）。
 
 Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用户口令；②handleImportFile/handleExport 留守件是本文件剩余主体（868 行），下一刀若继续拆需先解闭包（非纯移动，需单独立项审批口径）；③2.2.0 登记的 §12-9 b/c/d 技能覆盖面待办不受本轮影响，维持 PENDING。
