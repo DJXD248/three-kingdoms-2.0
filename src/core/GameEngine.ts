@@ -11,7 +11,7 @@ import { RuleEngine } from '../rules/RuleEngine';
 import type { DataSkillDefinition } from '../skills/dataTypes';
 import { ReplayRecorder } from '../replay/ReplayRecorder';
 import { SnapshotManager } from '../replay/SnapshotManager';
-import { resolveTriggerChain } from './EngineDispatchFlow';
+import { transition } from './TransitionCore';
 import { getLegalActions } from '../rules/legalActions';
 
 export interface GameEngineOptions {
@@ -20,8 +20,6 @@ export interface GameEngineOptions {
    * and headless runs log their own action lists instead. */
   recordHistory?: boolean;
 }
-
-const MAX_TRIGGER_REENTRY_ROUNDS = 8;
 
 export class GameEngine {
   readonly events = new EventBus();
@@ -44,67 +42,25 @@ export class GameEngine {
     }
   }
 
+  /** Container-layer dispatch (decision D-1): the state transition itself is
+   * TransitionCore.transition; this wrapper only owns the effects that must
+   * stay outside the pure path — event stamping/emission, snapshots, and
+   * replay recording — so常驻 vs 重建 paths can be compared on raw events. */
   dispatch(action: GameAction): GameEvent[] {
     const beforeState = this.recordHistory ? this.snapshot() : this.state;
-    const events: GameEvent[] = [];
-    const validation = this.rules.validateAction(this.state, action);
-    if (!validation.valid) {
-      const rejected: GameEvent = {
-        type: 'ACTION_REJECTED',
-        data: { action, reason: validation.reason ?? 'INVALID_ACTION' },
-      };
+    const result = transition(this.state, action, this);
+    this.state = result.state;
+
+    if (!result.accepted) {
+      const rejected = result.events[0];
       this.events.emit(rejected);
       if (this.recordHistory) this.replay.record(action, [rejected], beforeState, beforeState);
       return [rejected];
     }
 
-    const resolver = this.resolvers.getResolver(action);
-
-    if (!resolver) {
-      const rejected: GameEvent = {
-        type: 'ACTION_REJECTED',
-        data: { action, reason: `NO_RESOLVER:${action.type}` },
-      };
-      this.events.emit(rejected);
-      if (this.recordHistory) this.replay.record(action, [rejected], beforeState, beforeState);
-      return [rejected];
-    }
-
-    const accepted: GameEvent = { type: 'ACTION_ACCEPTED', data: { action } };
-    events.push(accepted);
-
-    const resolvedEvents = resolver.resolve(this.state, action);
-    const triggeredEvents = resolveTriggerChain(this.state, this.triggers, resolvedEvents);
-    events.push(...triggeredEvents);
-
-    const derived: GameEvent[] = [];
-    this.state = this.processor.process(this.state, events, derived);
-
-    // Skill kills settle inside process(), so their derived DEATH events miss
-    // the pre-dispatch trigger chain. Re-enter it (bounded) with post-apply
-    // state so onKill/onDeath skills fire for skill kills too. Each derived
-    // DEATH already had its state consequences settled where it was derived
-    // (chainedConsequences), so re-entry only processes freshly generated
-    // events — never the DEATH itself — to avoid double settlement.
-    let pendingDeaths = derived.filter(event => event.type === 'DEATH');
-    for (let round = 0; pendingDeaths.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
-      const expanded = resolveTriggerChain(this.state, this.triggers, pendingDeaths);
-      events.push(...expanded);
-      const generated = expanded.filter(event => event.type !== 'DEATH' && event.type !== 'TRIGGERED');
-      const nextDerived: GameEvent[] = [];
-      this.state = this.processor.process(this.state, generated, nextDerived);
-      pendingDeaths = nextDerived.filter(event => event.type === 'DEATH');
-    }
-    if (pendingDeaths.length > 0) {
-      events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingDeaths: pendingDeaths.length } });
-    }
-
+    const events = result.events;
     const afterState = this.recordHistory ? this.snapshot() : this.state;
-    const changed: GameEvent = {
-      type: 'STATE_CHANGED',
-      data: { action, snapshot: afterState },
-    };
-    events.push(changed);
+    events.push({ type: 'STATE_CHANGED', data: { action, snapshot: afterState } });
 
     for (const event of events) this.events.emit(event);
 
