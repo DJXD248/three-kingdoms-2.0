@@ -8,6 +8,7 @@ import { General, factionColors, skillTagColors, allGenerals } from '../data/gen
 import { getGeneralCardVisual } from '../utils/generalCardVisual';
 import { GameCard } from '../data/cards';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { SC, Bar, Btn } from './testArena/compactPrimitives';
 
 type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'selectMoveCard'|'selectSupplyCards';
 interface InspectTarget { type:'general'|'card'|'fieldGeneral'; general?:General; card?:GameCard; fieldGeneral?:FieldGeneral; playerId?:number; }
@@ -480,6 +481,3 @@ export default function TestArena(){
   );
 }
 
-function SC({l,v,c}:{l:string;v:string;c:string}){return(<div className="rounded-lg border border-slate-800/40 bg-black/50 p-2 text-center"><p className="mb-0.5 text-[9px] text-amber-400/60">{l}</p><p className={`text-lg font-black ${c}`}>{v}</p></div>);}
-function Bar({children}:{children:React.ReactNode}){return(<div className="absolute bottom-[90px] left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-amber-800/40 bg-black/90 px-5 py-2 animate-slideUp">{children}</div>);}
-function Btn({children,onClick,ok=true,red}:{children:React.ReactNode;onClick:()=>void;ok?:boolean;red?:boolean}){return(<button onClick={ok?onClick:undefined} disabled={!ok} className={`rounded-lg px-3 py-1 text-xs font-bold ${!ok?'cursor-not-allowed bg-gray-700 text-gray-500':red?'bg-red-900/60 text-red-300':'bg-green-600 text-white'}`}>{children}</button>);}
