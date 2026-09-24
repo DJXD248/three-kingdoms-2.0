@@ -187,10 +187,12 @@ export function compileGeneralSkills(
 /**
  * Register the skills of all field generals of every player into the engine.
  *
- * The store builds a fresh GameEngine per dispatch (state is the single
- * source of truth), so registration is re-derived from EngineState on every
- * dispatch instead of being kept in a long-lived registry. Compiled,
- * data-driven registration only — no gameplay rules live here.
+ * Registration is always re-derived from EngineState (never cached gameplay
+ * state): the resident store container unregisters its previous owners and
+ * calls this before every dispatch, which reproduces the fresh-engine
+ * semantics of the rebuild path — a general that left the field cannot keep
+ * triggering. Compiled, data-driven registration only — no gameplay rules
+ * live here.
  */
 export function syncPlayerSkills(engine: GameEngine, state: EngineState): number {
   let registered = 0;

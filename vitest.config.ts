@@ -43,6 +43,7 @@ export default defineConfig({
       // 2.2.17 (Stage C skill coverage: HEAL/GAIN_ARMOR settlement + skill-kill DEATH chain tests): stmts 42.46-42.66 / branch 35.11-35.28 / funcs 33.85-33.97 / lines 47.49-47.72. Branch floor kept at 34 (run-to-run jitter).
       // 2.2.19 (D-2 second cut: setup-cursor + patchless-runner determinism tests): stmts 42.61-42.81 / branch 35.19-35.54 / funcs 34.26-34.45 / lines 47.59-47.84. Funcs floor raised; branch kept at 34 for jitter headroom (same call as 2.2.17).
       // 2.2.20 (D-1 TransitionCore extraction + resident-vs-rebuilt reconciliation tests): stmts 42.83 / branch 35.26 / funcs 34.36 / lines 47.87. Floors held (all within jitter headroom of 2.2.19 measurements).
+      // 2.2.21 (D-1 second cut: store resident container + adopt-clone/resync guards, 4-path reconciliation): stmts 43.30 / branch 35.52 / funcs 34.95 / lines 48.40. Floors held; branch -0.02 vs 2.2.20 is denominator drift, still 1.5pt above floor.
       thresholds: {
         lines: 47,
         functions: 34,
