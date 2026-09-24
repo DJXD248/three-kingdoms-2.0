@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.16] - 2026-09-24
+
+Stabilization stage F, final cut (decision D-6 now closed): `TestArena.tsx` shrunk 485 -> 483 lines via **pure verbatim moves, zero behavior change**.
+
+- `src/components/testArena/compactPrimitives.tsx` (new, 10 lines): the three state-free top-level primitives at TestArena's tail -- SC (stat card) / Bar (bottom floating action bar) / Btn (confirm-cancel button incl. disabled state) -- moved verbatim; TestArena gains one import line.
+- Deliberately **not merged** with the board's `gameBoard/uiPrimitives`: same component names but compact CSS variants (p-2 vs p-2.5, text-lg vs text-xl, bottom-[90px] vs bottom-[110px], gap-3 vs gap-4, px-3 py-1 text-xs vs px-4 py-1.5 text-sm). Merging would change styling, i.e. behavior, which breaks the pure-move discipline; the new file header pins this down and any future unification needs its own project item plus visual regression. TestArena has no StatPill/Modal equivalents (its inspect dialog is inline JSX, not a component).
+- Scope: `Slot`/`BSlot`/`Territory*`, the three dev-panel tabs and every action handler stay in the component (closures over local and store state); further slimming requires closure disentanglement and a separate project item.
+- Verified: check 0 errors / 264 tests pass (32 files, zero add/remove) / coverage flat at 41.90/34.49/33.33/46.93 holding gates 41/34/32/46 / lint 0 errors 30 legacy warnings / build 1,916.59 kB single file (gzip 562.85 kB). Browser real-click E2E in a 4-player test arena, all through the moved primitives: pool search for 廖化 -> add to hand -> hand-tile inspect SC grid (4/2/1/0) -> deploy Bar "登场：廖化 (消耗0/4)" with Btn disabled -> select 4 cost cards -> confirm -> deployTarget Bar -> click green camp slot (hand 6 -> 1) -> field inspect live SC + per-turn counters + melee/ranged/supply disabled states -> advance single-target straight to front:0 -> dev-panel 场上 damage to 3/4 (hit animation fired) -> supply Bar "已选0张" confirm disabled -> pick 1 军粮 -> confirm heals to 4/4 -> counters show move 1 / supply 1 -> player switch -> end turn -> 退出 back to menu; console 0 errors 0 warnings. CI re-verification: to be backfilled.
+
 ## [2.2.15] - 2026-09-24
 
 Stabilization stage F, second cut (decision D-6, second of the last-three list): `GameBoard.tsx` shrunk 704 -> 689 lines via **pure verbatim moves, zero behavior change**.

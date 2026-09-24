@@ -915,3 +915,17 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **Unresolved**：①TestArena（485 行）为 D-6 后三件最后一刀，开工前待用户口令；②GameBoard 进一步瘦身（Slot/Territory 等）需解闭包=非纯移动，单独立项待评估；③§12-9 b-d（技能覆盖面，阶段 C）维持 PENDING。
 （收尾补记：推送后云端 CI #39 全绿——run 35948875546，master@ab78fd0，test(22)/test(24)/lint/build 四 job 均 completed successfully、双矩阵各 32 文件/264 用例。推送直连超时，一次性借道本地代理 127.0.0.1:10808 成功，未写持久配置。）
+
+## Qoder 2.2.16：稳定期 F 序列最后一刀——TestArena 紧凑原语纯移动拆分（D-6 就此收线）[Qoder/Qwen]
+
+**背景**：用户回复"继续F序列"，D-6 后三件的最后一件（TestArena，485 行）获授权。盘点结论：全文件真正无状态捕获、可纯移动外迁的只有**尾部三个顶层展示原语** SC/Bar/Btn（第 483-485 行）；`Slot`/`BSlot`/`TerritoryBottom/Top/Side` 内联子组件、Dev 面板三标签（玩家/场上/将领池）与全部动作处理器均闭包于组件 state 与 store，留守（与 2.2.14/2.2.15 同理）。关键边界决定：这三个原语与棋盘版 `gameBoard/uiPrimitives` 同名但是**紧凑 CSS 变体**（p-2 vs p-2.5、text-lg vs text-xl、bottom-[90px] vs bottom-[110px]、gap-3 vs gap-4、px-3 py-1 text-xs vs px-4 py-1.5 text-sm），**刻意不合并**——合并=改样式=行为变化，违背纯移动纪律；TestArena 也没有 StatPill/Modal 等价件（其检视弹窗是内联 JSX，不是组件）。
+
+**变更**：
+- `components/TestArena.tsx` 485→483 行（-3/+1）。
+- 新文件 `components/testArena/compactPrimitives.tsx`（10 行）：SC（统计小卡）/Bar（底部浮动操作条）/Btn（确认/取消按钮，含禁用态）逐字外移；文件头四条中文注释钉死"紧凑变体刻意不合并、未来统一需单独立项做视觉回归"的决定。零微改：三个函数体一字未动，`React.ReactNode` 依旧走 UMD 全局类型解析；TestArena 顶部新增一行 import。
+- AGENTS/README（无 TestArena 行数引用，免改）、ARCH_MAP（UI 行三文件全刷新+新增 compactPrimitives 行+D-6 收线）、CHANGELOG [2.2.16]、HANDOFF §3/§9/§13（F 序列收线、下一轮阶段 C 待口令）同轮登记。
+
+**验证**：check 0 错误；264 测试通过（32 文件零增删）；覆盖率棘轮 41/34/32/46 维持（实测 41.90/34.49/33.33/46.93，与 2.2.15 完全持平）；lint 0 错误 30 遗留警告零新增；build 单文件 1,916.59 kB/gzip 562.85 kB。浏览器真实点击回归（dev 5204，startTestArena 四人演练场，全部走拆分后 compactPrimitives 实例）：将领池标签搜索"廖化"→点击入手牌（5→6）→手牌瓷砖 inspect SC×4（❤️4/⚔️2/🏹1/🛡️0）→⚔️登场将领→Bar"登场：廖化 (消耗0/4)"+Btn 确认禁用→点 4 张消耗瓷砖→确认解禁→deployTarget Bar"📍点击营地空格放置"→点绿框(borderColor rgb(34,197,94))营地格真实落子（camp:0，手牌 6→1）→场上 inspect SC 实时 4/4+本回合计数行+近战/远程/补给禁用态（射程无敌/满血/手牌不足）→🚶前进单目标直连（front:0）→Dev"场上"标签执行伤害（4/4→3/4，animate-base-hit 命中动画触发）→补给 Bar"已选0张，补0点"确认禁用→选 1 张军粮→确认回 4/4、手牌清空→计数行"🚶移动 1次💊补给 1次"→玩家切换 idx 0→1→⏭️结束回合 1→2→✕ 退出归 menu；控制台 0 错误 0 警告。
+
+**Unresolved**：①阶段 C（技能覆盖面：HEAL/GAIN_ARMOR、触发、技能击杀→DEATH 链，即旧 §12-9 b-d）为稳定期下一轮，开工前待用户口令；②三大 UI 文件进一步瘦身（Slot/Territory/Dev 面板等闭包绑定件）需解闭包=非纯移动，单独立项待评估；③compactPrimitives 与 uiPrimitives 的合并统一同上（需视觉回归），稳定期内不动。
+（收尾补记：CI 证据待回填。）
