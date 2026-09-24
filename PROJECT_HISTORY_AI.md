@@ -989,5 +989,7 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **验证**（定稿红线：全部文件定稿后、提交前跑满五闸）：check 0 错误；291 测试通过；覆盖率 42.61-42.81/35.19-35.54/34.26-34.45/47.59-47.84 过 42/34/34/47；lint 0 错误 30 遗留警告零新增；build 单文件 1,918.71 kB/gzip 563.39 kB；ai-battle 300 局×2 遍内容逐字一致。**浏览器真机抽牌 E2E（§12-16 欠账销案）**：dev 5199（复用既存 vite 实例，Vite 读盘即最新版）人机对战 2 人房真实点击全链路——建房→骰子 9/8→势力分配→征召 10 将（含许褚点选核对）→回合 1 抽牌面 2 将领+3 卡盖→选择确认→playing 渲染，console 0 错误。环境形态如实登记：内置浏览器视口隐藏致 CDP 指针输入不可用（NATIVE_BROWSER_VIEWPORT_UNAVAILABLE；chrome-devtools MCP 无 Chrome 可执行），改以 `evaluate_script` 派发真实 DOM `.click()`（React 走真实事件处理器）+ 既有测试骰子限流补丁（后台标签 setInterval 被 Chrome 拉长所致，非产品 bug），每次刷新需重注入。
 
-**Unresolved**：①D-2 仅剩 a) RandomOutcome 事件流（"记结果不记重掷"——当前达成的是"全局可复现"而非"记结果"；用户已定夺单独一刀）与 e) 观察项（ReactionWindow 窗口 id、DiceRoll.tsx 纯 UI 骰子、testArenaActions/generateRoomName 豁免面，均 §12-16 登记）；②平衡观测台历史数据用新基线 {1:109,2:191} 重锚待做；③CI 远端复验待回填；④下一轮按序仍为阶段 E（引擎生命周期常驻，D-1），开工前待用户口令。
+**Unresolved**：①D-2 仅剩 a) RandomOutcome 事件流（"记结果不记重掷"——当前达成的是"全局可复现"而非"记结果"；用户已定夺单独一刀）与 e) 观察项（ReactionWindow 窗口 id、DiceRoll.tsx 纯 UI 骰子、testArenaActions/generateRoomName 豁免面，均 §12-16 登记）；②平衡观测台历史数据用新基线 {1:109,2:191} 重锚待做；③下一轮按序仍为阶段 E（引擎生命周期常驻，D-1），开工前待用户口令。
+
+（收尾补记：feat `086ff39`、docs `8646a05` 与附注标签 `v2.2.19` 一次推送——直连超时，一次性借道本地代理 127.0.0.1:10808 成功，未写持久配置。push 事件按顶端提交建单 run：CI #50（编号 35984979124，master@8646a05，覆盖 feat+docs 全树）**全绿**，test(22)/test(24)（291 例双 Node）/lint 1m14s/build 1m17s 四 job 均 completed successfully，run 页零失败标记。）
 
