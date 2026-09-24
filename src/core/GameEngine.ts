@@ -12,6 +12,7 @@ import type { DataSkillDefinition } from '../skills/dataTypes';
 import { ReplayRecorder } from '../replay/ReplayRecorder';
 import { SnapshotManager } from '../replay/SnapshotManager';
 import { transition } from './TransitionCore';
+import type { OverrideFailure } from './eventProcessors/drawEvents';
 import { getLegalActions } from '../rules/legalActions';
 
 export interface GameEngineOptions {
@@ -39,6 +40,11 @@ export class GameEngine {
    * leaves it null, so play is RNG-driven and RECORDS outcomes instead. */
   outcomeOverrides: readonly RandomOutcomeData[] | null = null;
 
+  /** D-2a bypass (2.2.23): strict-validation failures of the overrides
+   * injected on the LAST dispatch — out-of-band observation, never part of
+   * the event stream. Live paths are structurally empty (no overrides). */
+  lastOverrideFailures: OverrideFailure[] = [];
+
   constructor(public state: EngineState, options: GameEngineOptions = {}) {
     this.recordHistory = options.recordHistory !== false;
     if (this.recordHistory) {
@@ -61,6 +67,7 @@ export class GameEngine {
       this.events.emit(rejected);
       if (this.recordHistory) this.replay.record(action, [rejected], beforeState, beforeState);
       this.outcomeOverrides = null;
+      this.lastOverrideFailures = result.overrideFailures;
       return [rejected];
     }
 
@@ -77,6 +84,7 @@ export class GameEngine {
       this.snapshots.capture(roomId, afterState, sequence, 'action', action.id);
     }
     this.outcomeOverrides = null;
+    this.lastOverrideFailures = result.overrideFailures;
     return events;
   }
 

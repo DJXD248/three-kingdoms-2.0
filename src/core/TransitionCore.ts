@@ -6,7 +6,7 @@ import type { RuleEngine } from '../rules/RuleEngine';
 import type { EngineState } from './GameState';
 import type { GameEvent, RandomOutcomeData } from './Event';
 import { resolveTriggerChain } from './EngineDispatchFlow';
-import type { DrawOutcomeFlow } from './eventProcessors/drawEvents';
+import type { DrawOutcomeFlow, OverrideFailure } from './eventProcessors/drawEvents';
 
 /**
  * TransitionCore (decision D-1): the ONE pure state transition of the game.
@@ -41,6 +41,10 @@ export interface TransitionResult {
    * adds id/timestamp at the container layer. */
   events: GameEvent[];
   accepted: boolean;
+  /** Recorded overrides that failed strict validation on this dispatch
+   * (D-2a bypass, 2.2.23). Out-of-band observation: never part of the
+   * event stream, always empty on live paths (no overrides there). */
+  overrideFailures: OverrideFailure[];
 }
 
 const MAX_TRIGGER_REENTRY_ROUNDS = 8;
@@ -56,7 +60,7 @@ export function transition(
       type: 'ACTION_REJECTED',
       data: { action, reason: validation.reason ?? 'INVALID_ACTION' },
     };
-    return { state, events: [rejected], accepted: false };
+    return { state, events: [rejected], accepted: false, overrideFailures: [] };
   }
 
   const resolver = ctx.resolvers.getResolver(action);
@@ -65,7 +69,7 @@ export function transition(
       type: 'ACTION_REJECTED',
       data: { action, reason: `NO_RESOLVER:${action.type}` },
     };
-    return { state, events: [rejected], accepted: false };
+    return { state, events: [rejected], accepted: false, overrideFailures: [] };
   }
 
   const events: GameEvent[] = [{ type: 'ACTION_ACCEPTED', data: { action } }];
@@ -108,5 +112,5 @@ export function transition(
     events.push({ type: 'RANDOM_OUTCOME', data: outcome });
   });
 
-  return { state: next, events, accepted: true };
+  return { state: next, events, accepted: true, overrideFailures: flow.diagnostics ?? [] };
 }

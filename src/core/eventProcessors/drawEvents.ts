@@ -14,6 +14,17 @@ export interface DrawOutcomeFlow {
   produced: RandomOutcomeData[];
   overrides?: readonly RandomOutcomeData[];
   overridePos: number;
+  /** D-2a diagnostic bypass (2.2.23): recorded overrides that failed strict
+   * validation. Observation only — behavior stays the seeded re-roll. */
+  diagnostics?: OverrideFailure[];
+}
+
+export type OverrideFailureReason = 'MISMATCHED_SLOTS' | 'COUNT_MISMATCH' | 'UNRESOLVABLE_KEY';
+
+export interface OverrideFailure {
+  stableId: string;
+  playerId: number;
+  reason: OverrideFailureReason;
 }
 
 export function applyDrawRequiredEvent(state: EngineState, event: GameEvent): EngineState {
@@ -74,6 +85,10 @@ function cardRemovalKey(card: unknown): string {
  * cursor jumps to cursorAfter without touching the RNG. Any mismatch falls
  * back to the seeded re-roll — old pre-2.2.22 replays and corrupt payloads
  * both keep working through that path.
+ *
+ * D-2a bypass (2.2.23): a rejected override is additionally reported into
+ * `flow.diagnostics` with its reason ("可自动降级，不可无痕降级" — the
+ * behavior still degrades silently, the observation is not silent).
  */
 export function applyDrawEvent(state: EngineState, event: GameEvent, flow?: DrawOutcomeFlow): EngineState {
   const data = event.data as {
@@ -102,9 +117,13 @@ export function applyDrawEvent(state: EngineState, event: GameEvent, flow?: Draw
   let nextCursor: RngState;
 
   const override = takeOverride(flow, data.playerId);
-  const replayed = override
+  const materialized = override
     ? materializeSelection(override.value, { generalPool, deckCards, discardCards, requestedGeneral, requestedCards })
     : null;
+  if (override && materialized && !materialized.ok) {
+    pushDiagnostic(flow, { stableId: override.stableId, playerId: data.playerId, reason: materialized.reason });
+  }
+  const replayed = materialized?.ok ? materialized.selection : null;
 
   if (replayed) {
     generalCards = replayed.generalCards;
@@ -203,13 +222,25 @@ export function applyDrawEvent(state: EngineState, event: GameEvent, flow?: Draw
   };
 }
 
-/** Pop the next replay slot for this DRAW (one per DRAW event, in order). */
+/** Pop the next replay slot for this DRAW (one per DRAW event, in order).
+ * A missing slot is legitimate (legacy documents); a slot that disagrees on
+ * purpose/playerId means the recorded stream is misaligned — fall back, and
+ * say so (2.2.23 diagnostic bypass). */
 function takeOverride(flow: DrawOutcomeFlow | undefined, playerId: number): RandomOutcomeData | null {
   if (!flow?.overrides) return null;
   const override = flow.overrides[flow.overridePos];
   flow.overridePos += 1;
-  if (!override || override.purpose !== 'DRAW_SELECTION' || override.value.playerId !== playerId) return null;
+  if (!override) return null;
+  if (override.purpose !== 'DRAW_SELECTION' || override.value.playerId !== playerId) {
+    pushDiagnostic(flow, { stableId: override.stableId, playerId, reason: 'MISMATCHED_SLOTS' });
+    return null;
+  }
   return override;
+}
+
+function pushDiagnostic(flow: DrawOutcomeFlow | undefined, failure: OverrideFailure): void {
+  if (!flow) return;
+  (flow.diagnostics ??= []).push(failure);
 }
 
 function deckTakeCount(cardCards: unknown[], reshuffledCardCards: unknown[]): number {
@@ -226,28 +257,31 @@ interface SelectionInputs {
 
 /**
  * Rebuild the exact card objects a recorded selection drew, from the piles of
- * the replayed-before state. Strict: any count or key divergence returns null
- * so the caller falls back to the seeded re-roll.
+ * the replayed-before state. Strict: any count or key divergence fails with a
+ * reason so the caller falls back to the seeded re-roll — and reports the
+ * reason into the flow diagnostics (2.2.23).
  */
+type MaterializedSelection = { generalCards: unknown[]; cardCards: unknown[]; reshuffledCardCards: unknown[]; cursorAfter: { s: number } };
+
 function materializeSelection(
   value: RandomOutcomeValue,
   inputs: SelectionInputs,
-): { generalCards: unknown[]; cardCards: unknown[]; reshuffledCardCards: unknown[]; cursorAfter: { s: number } } | null {
+): { ok: true; selection: MaterializedSelection } | { ok: false; reason: OverrideFailureReason } {
   const { generalPool, deckCards, discardCards, requestedGeneral, requestedCards } = inputs;
 
   const wantGeneral = Math.min(requestedGeneral, generalPool.length);
   const wantDeck = Math.min(requestedCards, deckCards.length);
   const wantReshuffle = Math.min(requestedCards - wantDeck, discardCards.length);
-  if (value.generalKeys.length !== wantGeneral) return null;
-  if (value.deckTake !== wantDeck) return null;
-  if (value.reshuffleKeys.length !== wantReshuffle) return null;
+  if (value.generalKeys.length !== wantGeneral) return { ok: false, reason: 'COUNT_MISMATCH' };
+  if (value.deckTake !== wantDeck) return { ok: false, reason: 'COUNT_MISMATCH' };
+  if (value.reshuffleKeys.length !== wantReshuffle) return { ok: false, reason: 'COUNT_MISMATCH' };
 
   const generalCards = takeByKeys(generalPool, value.generalKeys);
-  if (!generalCards) return null;
+  if (!generalCards) return { ok: false, reason: 'UNRESOLVABLE_KEY' };
   const reshuffledCardCards = takeByKeys(discardCards, value.reshuffleKeys);
-  if (!reshuffledCardCards) return null;
+  if (!reshuffledCardCards) return { ok: false, reason: 'UNRESOLVABLE_KEY' };
   const cardCards = [...deckCards.slice(0, wantDeck), ...reshuffledCardCards];
-  return { generalCards, cardCards, reshuffledCardCards, cursorAfter: { s: value.cursorAfter.s >>> 0 } };
+  return { ok: true, selection: { generalCards, cardCards, reshuffledCardCards, cursorAfter: { s: value.cursorAfter.s >>> 0 } } };
 }
 
 /** Remove one matching card per requested key (same identity notion as
