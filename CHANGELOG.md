@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.14] - 2026-09-24
+
+Stabilization stage F, first cut (decision D-6, head of the last-three list): `SkillEditor.tsx` shrunk 1253 -> 868 lines via **pure verbatim moves, zero behavior change**.
+
+- `src/components/skillEditor/skillExcelParsers.ts` (new, 228 lines): all Excel/text import parsers (parseSkillCell / clean / isDetailedFormat / isRowPerSkillFormat / resolveGeneralByNameFaction / parseRowPerSkillSheet / parseLegacyDetailedRow). Disclosed type-only micro-writes: exported `SkillEditEntry` interface replaces five in-component `typeof editingSkills` references (field-for-field identical to the old inline state type; the component useState now uses it too), `export` keywords added (`clean` stays module-private), de-indentation from component scope.
+- `src/components/skillEditor/TriggerEditor.tsx` (new, 106 lines): trigger-timing sub-editor incl. `selectCls` (used only there).
+- `src/components/skillEditor/RuntimeEditor.tsx` (new, 78 lines): structured runtime editor incl. `runtimeSelectCls` / `runtimePreviewText`.
+- `handleImportFile` / `handleExport` / `isIncompleteForExport` intentionally stayed in the component this round (closure over state -- not pure moves); SkillEditor's import surface narrowed accordingly.
+- Verified: check 0 errors / 264 tests pass (32 files, zero add/remove) / coverage ratchet gates 41/34/32/46 hold (measured 42.09/34.67/33.45/47.16, flat vs 2.2.13) / lint 0 errors 30 legacy warnings / build 1,916.59 kB single file. Browser real-click E2E through the split components: editor mount, 95-general list, TriggerEditor type -> damage-subtype -> preview -> save -> store holds damageSubType -> batch-delete restore; multi-effect mode -> RuntimeEditor type/value/target -> preview; a real row-per-skill .xlsx injected via the file input and parsed by the moved parsers ("imported 1 general") then stored correctly; Excel export succeeded; console 0 errors.
+
 ## [2.2.13] - 2026-09-24
 
 Stabilization stage B, second split (decision D-6): `core/EventProcessor.ts` shrunk 852 -> 93 lines via **pure verbatim moves, zero behavior change**. Single canonical entry (`process` queue loop + `apply` thin dispatcher) preserved; no second entry point.
