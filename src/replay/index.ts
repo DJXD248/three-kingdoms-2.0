@@ -1,4 +1,5 @@
-export type { SnapshotRecord, ReplayEvent, ReplayDocument } from './types';
+export type { SnapshotRecord, ReplayEvent, ReplayDocument, ReplayHeader } from './types';
+export { REPLAY_SCHEMA_VERSION } from './types';
 export { ReplayRecorder } from './ReplayRecorder';
 export { ReplayManager } from './ReplayManager';
 export { SnapshotManager } from './SnapshotManager';

@@ -146,9 +146,17 @@ export function applyDamageEvent(state: EngineState, event: GameEvent): EngineSt
   });
 
   const damagedArmorCards = Number(data?.armorLost ?? 0);
+  // Point-based armor (GAIN_ARMOR, 2.2.17) has no card instances attached, so
+  // destroyed points legitimately land here without real cards. Placeholders
+  // keep the `legacy_armor_destroyed` prefix ai/invariants.ts excludes from
+  // the card ledger, but the id is positional (D-2 determinism: the old
+  // Date.now() stamp made discard contents irreproducible across replays).
+  const consumedToDiscard =
+    consumedCard && resourceTypes.includes(String(consumedCard?.type ?? '')) ? 1 : 0;
+  const fallbackBaseIndex = state.discardPile.length + consumedToDiscard;
   const fallbackDestroyedArmor = damagedArmorCards > 0 && destroyedArmorCardsForDiscard.length === 0
     ? Array.from({ length: damagedArmorCards }, (_, i) => ({
-        id: `legacy_armor_destroyed_${Date.now()}_${i}`,
+        id: `legacy_armor_destroyed_${fallbackBaseIndex + i}`,
         name: '已损毁护甲',
         type: '军备',
         description: '被攻击损毁的护甲',

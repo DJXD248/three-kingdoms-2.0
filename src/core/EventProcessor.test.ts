@@ -179,6 +179,101 @@ describe('EventProcessor', () => {
       expect(fg?.currentArmor).toBe(0);
     });
 
+    it('D-4 伴随案（2.2.24）：无实体护甲点的损毁占位按弃牌堆位置定 id，同输入两次结算逐字一致', () => {
+      const makeGeneral = () => ({
+        general: { id: 'g1', hp: 4, meleeAtk: 2, rangedAtk: 1 },
+        currentHp: 3,
+        maxHp: 4,
+        meleeAtk: 2,
+        rangedAtk: 1,
+        armor: 2,
+        currentArmor: 2,
+        armorCards: [],
+        isArming: false,
+        hasMoved: false,
+        hasAttacked: false,
+        hasSupplied: false,
+        justDeployed: false,
+        ownerId: 1,
+        position: { zone: 'front' as const, slot: 0, areaOwnerId: 1 },
+      });
+      const event: GameEvent = {
+        type: 'DAMAGE',
+        data: {
+          sourcePlayerId: 2,
+          sourceGeneralId: 'g2',
+          targetPlayerId: 1,
+          targetId: 'g1',
+          target: 'g1',
+          damageType: 'attack',
+          value: 1,
+          hpLost: 1,
+          armorLost: 2,
+          newHp: 3,
+          newArmor: 0,
+          attackerId: 'g2',
+          ranged: false,
+          defeated: false,
+        },
+      };
+
+      const first = processor.process(createTestState([createTestPlayer(1, { fieldGenerals: [makeGeneral()] })]), [event]);
+      const second = processor.process(createTestState([createTestPlayer(1, { fieldGenerals: [makeGeneral()] })]), [event]);
+
+      expect(JSON.stringify(first.discardPile)).toBe(JSON.stringify(second.discardPile));
+      expect((first.discardPile as any[]).map(card => card.id)).toEqual([
+        'legacy_armor_destroyed_0',
+        'legacy_armor_destroyed_1',
+      ]);
+    });
+
+    it('D-4 伴随案（2.2.24）：带真实实例时损毁护甲卡原样进弃牌堆，不再生成占位卡', () => {
+      const armorCard = { id: 'arm1', name: '护心镜', type: '军备', instanceId: 'arm1-i1' };
+      const general = {
+        general: { id: 'g1', hp: 4, meleeAtk: 2, rangedAtk: 1 },
+        currentHp: 3,
+        maxHp: 4,
+        meleeAtk: 2,
+        rangedAtk: 1,
+        armor: 2,
+        currentArmor: 0,
+        armorCards: [armorCard],
+        isArming: false,
+        hasMoved: false,
+        hasAttacked: false,
+        hasSupplied: false,
+        justDeployed: false,
+        ownerId: 1,
+        position: { zone: 'front' as const, slot: 0, areaOwnerId: 1 },
+      };
+      const event: GameEvent = {
+        type: 'DAMAGE',
+        data: {
+          sourcePlayerId: 2,
+          sourceGeneralId: 'g2',
+          targetPlayerId: 1,
+          targetId: 'g1',
+          target: 'g1',
+          damageType: 'attack',
+          value: 1,
+          hpLost: 1,
+          armorLost: 1,
+          newHp: 3,
+          newArmor: 0,
+          destroyedArmorCardIds: ['arm1-i1'],
+          attackerId: 'g2',
+          ranged: false,
+          defeated: false,
+        },
+      };
+      const state = createTestState([createTestPlayer(1, { fieldGenerals: [general] })]);
+
+      const result = processor.process(state, [event]);
+
+      expect((result.discardPile as any[]).map(card => card.id)).toEqual(['arm1']);
+      expect((result.discardPile as any[]).some(card => String(card.id).startsWith('legacy_armor'))).toBe(false);
+    });
+
     it('should remove general from field when defeated', () => {
       const general = {
         general: { id: 'g1', hp: 2, meleeAtk: 2, rangedAtk: 1 },
