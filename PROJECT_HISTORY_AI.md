@@ -972,5 +972,5 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **Unresolved**：①D-2 剩余欠账登记 §12-16：RandomOutcome 事件流（"记结果不记重掷"仍未达成，现状态是"重掷可复现"）、建局随机迁入 rngState、action.id/instanceId 确定性、withSeededRandom 彻底退役、battleRunner lockstep 清理、ReactionWindow 窗口 id（§12-9c 同源）；②本刀浏览器真机面待下个可做版本优先补；③下一轮按序为阶段 E（引擎生命周期常驻，D-1），开工前待用户口令。
 
-CI 远端复验：待回填。
+（收尾补记：云端检查第一遍**没过**——docs 提交 265d225 的 run #46（编号 35974231930）里 test(22)/test(24) 在 `npm run check` 步骤报 TS6133：`src/store/executeDraw.rng.test.ts` 第 11 行残留一个没用到的导入 `createLobbyPlayers`（lint 绿、build 被跳过）。根因复盘：本地那次"check 0 错误"跑在该测试文件最后一次编辑**之前**，属陈旧验证——以后全套验证一律放到所有文件定稿之后、提交之前再跑。处置：删该导入（零行为变化）→ 本地 check 0/287 测试/覆盖率 42.55-35.14-34.01-47.55/lint 0 错 30 警告/build 1,918.75 kB 重跑全绿 → fix 提交 620a0a0；经用户授权标签 v2.2.18 强制重指到 620a0a0（只动这一个 tag ref，master 正常推送）。推送：直连超时→一次性 `-c http.proxy=http://127.0.0.1:10808` 成功（未写持久配置）。CI #47（编号 35975699142，master@620a0a0）全绿：test(22) 1m59s、test(24) 1m3s、lint 1m15s、build 59s，四 job 全部 completed successfully。）
 
