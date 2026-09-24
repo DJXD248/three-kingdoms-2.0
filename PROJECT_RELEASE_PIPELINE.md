@@ -25,6 +25,8 @@ README 停留在"131 例"、AGENTS 引用了已不存在的 status/ 模块、CHA
 - 测试 + 覆盖率门禁通过（Vitest；Node≥24 时 vitest.config.ts 已配 vmThreads 池）；
 - lint 0 错误（ESLint 10 flat config，不支持 `--ext` 参数）；
 - `npm run build` 成功（vite 对盘符大小写敏感，用与 cwd 一致的盘符路径）；
+- **定稿红线（2.2.18 起）**：本节全部验证必须发生在**所有文件（含测试文件）最后一次编辑之后、commit 之前**；验证后又改了任何文件哪怕一行，必须整套重跑。实战教训：v2.2.18 本地"check 0 错误"跑在测试文件最后一次编辑之前，推送后 CI #46 因一个未使用导入（TS6133）在 check 步骤失败。
+- **已推送标签指向失败提交时**：先补修复提交（重跑整套验证）→ 推 master → 标签用 `git push --force origin vX.Y.Z` 重指到修复提交（force 只允许作用于该 tag ref，master 绝不强推）；force 操作必须先取得用户明确授权（权限分类器也会拦未确认的 force），先问再动。先例：v2.2.18 用户选择"标签强制移到修复提交"。
 - 玩法/交互改动必须真实浏览器 E2E，不旁路引擎（结算页等场景用 `main.tsx` 的 dev-only `window.__TK__` 注入）。
 - **浏览器 E2E 两条血泪教训**：
   - browser-use 的 click 工具对本页"假成功"，须在 evaluate_script 里 `el.click()`；脚本内裸中文会被内容分类器拦截，用 `\uXXXX` 转义。
