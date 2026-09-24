@@ -860,7 +860,7 @@ xlsx 议题闭环，无遗留。回到 HandOff 第 13 节主线：技能系统�
 ### 验证
 - check 0 错误；264 测试通过（32 文件，零增删）；覆盖率棘轮实测 stmts 41.96 / branch 34.85 / funcs 32.84 / lines 47（棘轮 41/34/32/46 维持通过，无阈值调整）；lint 0 错误/30 遗留警告（零新增）；build 单文件 1,916.39 kB / gzip 562.33 kB。
 - 浏览器冒烟（dev `__TK__` 直驱拆分后真实装配，非旁路）：createRoom→lobby；编辑器九动作存取删回环（含 getGeneralWithEdits 合并结果断言）；快照创建（5326 字符）+恢复 true；startTestArena+endTurn 驻留；resetGame 保偏好；控制台 0 错误。
-- CI 远端复验 PENDING（推送后回填）。
+- CI 远端复验已完成：run `35935393466` 全绿（CI #33，master@c5c82c1，3m3s，test(22)/test(24)/lint/build 四 job 均 completed successfully）；`9f8e426`+`c5c82c1`+标签 `v2.2.12` 已推送（直推超时→一次性代理成功）。
 
 ### Unresolved & Risk
 - 纯移动拆分未触碰任何 set() 载荷语义；唯一微改写是 toggleDeveloperMode 从函数式 set 改为 get()+对象 set（等价求值，devMode 冒烟通过）。
