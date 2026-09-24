@@ -103,9 +103,18 @@ export class GameEngine {
     this.skillTriggers.unregisterOwner(ownerId);
   }
 
+  /** Container-level window counter (D-2 e①, 2.2.25): part of the window's
+   * deterministic identity, never consumed from the engine rng cursor —
+   * window identity is not game randomness. */
+  private reactionWindowSeq = 0;
+
   openReactionWindow(event: GameEvent, participants?: number[]) {
     const ids = participants ?? this.state.players.map(player => player.id);
-    const window = this.reactions.open(event, ids);
+    const sourceEventKey =
+      (event.data as { stableId?: string } | undefined)?.stableId ?? event.type;
+    const stableId =
+      `rw:${this.state.turn}:${this.state.round}:${sourceEventKey}:${++this.reactionWindowSeq}`;
+    const window = this.reactions.open(event, ids, stableId);
     this.events.emit({ type: 'REACTION_WINDOW_OPENED', data: window });
     return window;
   }

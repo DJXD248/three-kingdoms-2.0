@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { General } from '../data/generals';
 import { GameCard, createCardDeck } from '../data/cards';
 import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle, defaultSeatModes, pickAiDraftPicks } from '../setup/runtimeSetup';
-import { dispatchStoreAction } from './engineExecutionBridge';
+import { dispatchStoreAction, openReactionWindowStore, passReactionStore, resetReactionWindowStore } from './engineExecutionBridge';
 import { buildDrawContext, describeDrawSubtitle, engineStateToStoreProjection, storeStateToEngineState } from './gameStateAdapter';
 import type { EngineState } from '../core/GameState';
 import { cloneRngState, rngNext, type RngState } from '../core/rng';
@@ -86,6 +86,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   drawContext:defaultDraw,revealedDrawCards:[],initialDrawPlayerIndex:0,
   draftGenerals:[],draftQunGenerals:[],selectedDraftGenerals:[],draftPlayerIndex:0,
   seatModes:defaultSeatModes(),
+  reactionWindow:null,
   settings:{resolution:'1920x1080',windowMode:'全屏',animationSpeed:1,masterVolume:80,musicVolume:60,sfxVolume:70,autoSave:false,...loadReplaySettings()},
   developerMode:false,
   skillEdits:loadPersistedSkillEdits(),
@@ -98,6 +99,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   createRoom:()=>{
     resetLiveReplay();
+    resetReactionWindowStore();
     const{playerCount,roomName,seatModes}=get();
     const rng=setupCursor();
     const random=()=>rngNext(rng);
@@ -507,6 +509,30 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     });
   },
 
+  // ── 2.2.25 (§12-9c) reaction-window business entry ──
+  // Container-layer timing through the resident engine (decision D-1: the
+  // window never touches TransitionCore/EngineState, so it is structurally
+  // absent from the replay stream and from four-way reconciliation). No
+  // skill auto-opens a window in this cut — content coverage stays with D-3.
+  openReactionWindow:(sourceEvent?,participants?)=>{
+    const state=get();
+    const ids=(participants ?? state.players.filter(p=>p.isAlive!==false).map(p=>p.id));
+    if(ids.length===0)return null;
+    const win=openReactionWindowStore(
+      state,
+      sourceEvent ?? { type:'CUSTOM', data:{ reason:'manual-reaction-window' } },
+      ids,
+    );
+    set({ reactionWindow:{ ...win, passed:[...win.passed] } });
+    return win;
+  },
+  passReaction:(playerId)=>{
+    const { accepted, window } = passReactionStore(get(), playerId);
+    if(!accepted)return false;
+    set({ reactionWindow: window && !window.closed ? { ...window, passed:[...window.passed] } : null });
+    return true;
+  },
+
   endTurn:()=>{
     const{currentPlayerIndex,currentRound,isTestMode}=get();
     const activePlayer=get().players[currentPlayerIndex];
@@ -600,6 +626,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   resetGame:()=>{
     resetLiveReplay();
+    resetReactionWindowStore();
     const state=get();
     const baseState = {
       phase:'menu' as GamePhase,
@@ -626,6 +653,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       selectedDraftGenerals:[] as General[],
       draftPlayerIndex:0,
       isTestMode:false,
+      reactionWindow:null as GameState['reactionWindow'],
       testActionCounts:{} as GameState['testActionCounts'],
     };
     const engineState=storeStateToEngineState(baseState);

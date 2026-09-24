@@ -7,12 +7,17 @@ export class ReactionWindow {
   readonly priority = new PrioritySystem();
   private current: ReactionWindowState | null = null;
 
-  open(event: GameEvent, participants: number[]) {
+  /** stableId is the window's DETERMINISTIC identity (decision D-2 e①,
+   * closed in 2.2.25): the caller derives it from pure data
+   * (`rw:<turn>:<round>:<sourceEventKey>:<seq>`), never from a clock or
+   * Math.random. openedAt stays Date.now — observation only; the window
+   * lives in the container, never in EngineState or the replay stream. */
+  open(event: GameEvent, participants: number[], stableId: string) {
     const uniqueParticipants = [...new Set(participants)];
     this.priority.reset(uniqueParticipants);
 
     this.current = {
-      id: `reaction_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: stableId,
       sourceEventId: event.id ?? `${event.type}:${event.timestamp ?? Date.now()}`,
       sourceEventType: event.type,
       participants: uniqueParticipants,

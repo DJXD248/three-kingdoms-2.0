@@ -36,6 +36,8 @@ export default function GameBoard(){
   const skillActivations=useGameStore(s=>s.skillActivations);
   const clearSkillActivation=useGameStore(s=>s.clearSkillActivation);
   const resetGame=useGameStore(s=>s.resetGame);
+  const reactionWindow=useGameStore(s=>s.reactionWindow);
+  const passReaction=useGameStore(s=>s.passReaction);
 
   const [vm,setVm]=useState<ViewMode>('board');
   const [ins,setIns]=useState<InspectTarget|null>(null);
@@ -485,6 +487,22 @@ export default function GameBoard(){
             <p className="text-xs text-amber-200/80">{a.message}</p>
           </div>
         ))}</div>}
+        {/* 2.2.25 §12-9c: reaction-window HUD — entry mechanism only, mirrors the resident container */}
+        {reactionWindow&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+          <div className="rounded-xl border-2 border-sky-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(14,165,233,0.35)'}}>
+            <p className="text-sm font-black text-sky-300">⏳ 反应窗口开启 · 等待通过</p>
+            <p className="mt-0.5 text-[10px] text-sky-200/60">{reactionWindow.id}</p>
+            <div className="mt-2 flex items-center justify-center gap-2">
+              {reactionWindow.participants.map(pid=>{
+                const name=players.find(p=>p.id===pid)?.name ?? `玩家${pid}`;
+                const done=reactionWindow.passed.includes(pid);
+                return done
+                  ? <span key={pid} className="rounded-full border border-emerald-500/50 px-2 py-0.5 text-xs text-emerald-300">✓ {name}</span>
+                  : <Btn key={pid} onClick={()=>passReaction(pid)}>🫱 {name} 通过</Btn>;
+              })}
+            </div>
+          </div>
+        </div>}
         {depNotice&&<div className="pointer-events-none absolute left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2"><div className="rounded-xl border-2 border-amber-500 bg-black/90 px-8 py-4 text-center animate-fadeIn"><p className="text-xl font-black text-amber-400">⚔️ 将领登场</p><p className="text-lg text-amber-200">{depNotice}</p></div></div>}
         {defeatEvent&&<div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center animate-fadeIn">
           <div className="absolute inset-0 bg-black/70 animate-screenShake"/>

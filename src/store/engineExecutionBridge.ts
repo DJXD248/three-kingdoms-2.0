@@ -6,6 +6,7 @@ import { recordLiveDispatch } from '../replay/liveReplayRecorder';
 import type { GameAction } from '../action/ActionTypes';
 import type { EngineState } from '../core/GameState';
 import type { GameEvent } from '../core/Event';
+import type { ReactionWindowState } from '../triggers/types';
 
 /**
  * Phase 5.35.2 → 2.2.21 (decision D-1, second cut)
@@ -111,4 +112,40 @@ export function dispatchStoreActionReconcile(storeState: unknown, action: GameAc
   syncPlayerSkills(engine, engineState);
   const events = engine.dispatch(action);
   return { engineState: engine.snapshot(), events };
+}
+
+/**
+ * ReactionWindow business entry (2.2.25, §12-9c). Container-layer timing
+ * only: the window is engine-container state, never EngineState, never a
+ * GameAction — TransitionCore stays untouched and the replay stream is
+ * structurally unaffected (liveReplayRecorder records dispatch flows,
+ * these calls are not dispatches). The adopt-clone semantics match
+ * dispatchStoreAction: the store projection remains the state authority.
+ */
+export function openReactionWindowStore(
+  storeState: unknown,
+  event: GameEvent,
+  participants?: number[],
+): ReactionWindowState {
+  const engineState = toEngineState(storeState);
+  const resident = acquireContainer(engineState);
+  resident.engine.state = engineState;
+  return { ...resident.engine.openReactionWindow(event, participants) };
+}
+
+export function passReactionStore(
+  storeState: unknown,
+  playerId: number,
+): { accepted: boolean; window: ReactionWindowState | null } {
+  const engineState = toEngineState(storeState);
+  const resident = acquireContainer(engineState);
+  resident.engine.state = engineState;
+  const accepted = resident.engine.passReaction(playerId);
+  const state = resident.engine.reactions.getState();
+  return { accepted, window: state ? { ...state } : null };
+}
+
+/** Drop any leftover window from the resident container (new match / reset). */
+export function resetReactionWindowStore(): void {
+  container?.engine.reactions.clear();
 }

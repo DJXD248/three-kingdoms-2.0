@@ -4,7 +4,9 @@ import type { General, Faction, SkillTag, SkillTriggerConfig, SkillEffect, Skill
 import type { GameCard } from '../data/cards';
 import type { AiSeatMode, AiSeatTier } from '../setup/runtimeSetup';
 import type { EngineState } from '../core/GameState';
+import type { GameEvent } from '../core/Event';
 import type { SkillActivation } from '../skills/dataTypes';
+import type { ReactionWindowState } from '../triggers/types';
 
 export type GamePhase =
   | 'menu' | 'codex' | 'settings' | 'createRoom' | 'lobby'
@@ -74,6 +76,9 @@ export interface GameState {
   // v2.2.9 human-vs-AI: per-seat mode chosen in CreateRoom, stamped onto
   // players at createRoom (index = pre-dice seat).
   seatModes:AiSeatMode[];
+  // 2.2.25 (§12-9c): reaction-window business entry — container-layer state
+  // mirrored for the HUD. Never part of EngineState or the replay stream.
+  reactionWindow:ReactionWindowState|null;
   settings:{
     resolution:string;windowMode:string;animationSpeed:number;masterVolume:number;musicVolume:number;sfxVolume:number;autoSave:boolean;
     // 2.2.6 replay/log saving (persisted in localStorage via replayStorage)
@@ -99,6 +104,9 @@ export interface GameState {
   supplyGeneral:(id:string,cards:(General|GameCard)[])=>void;
   armGeneral:(id:string,armorCards:GameCard[])=>boolean;
   endTurn:()=>void; surrender:(id:number)=>void;
+  // 2.2.25 reaction-window entry (no skill auto-opens this cut)
+  openReactionWindow:(sourceEvent?:GameEvent,participants?:number[])=>ReactionWindowState|null;
+  passReaction:(playerId:number)=>boolean;
   updateSettings:(s:Partial<GameState['settings']>)=>void;
   clearDefeatEvent:()=>void;
   clearSkillActivation:(id:string)=>void;
