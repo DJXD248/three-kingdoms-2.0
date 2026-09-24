@@ -307,3 +307,111 @@ describe('skill pipeline · end-to-end', () => {
     expect((second.engineState.players[1].graveyard as any[]).map((c: any) => c.id)).toContain('g2');
   });
 });
+
+describe('skill pipeline · Stage C coverage (HEAL / GAIN_ARMOR / skill-kill DEATH)', () => {
+  it('HEAL effect restores HP and caps at maxHp', () => {
+    const healer = makeGeneral('g2', [
+      {
+        name: '疗愈',
+        effects: [{ id: 'e1', trigger: { type: 'onTurnStart' }, runtime: { type: 'HEAL', value: 5, target: 'SELF' } }],
+      },
+    ]);
+    const wounded = makeFieldGeneral(healer, 2);
+    wounded.currentHp = 1;
+    const engine = buildEngine([
+      makePlayer(1),
+      makePlayer(2, { fieldGenerals: [wounded] }),
+    ]);
+
+    const events = engine.dispatch(createAction('END_TURN', 1));
+
+    expect(events.some(e => e.type === 'HEAL')).toBe(true);
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect((p2.fieldGenerals as any[])[0].currentHp).toBe(4); // maxHp, not 6
+  });
+
+  it('GAIN_ARMOR effect grants armor points to the owner general', () => {
+    const guarded = makeGeneral('g2', [
+      {
+        name: '固甲',
+        effects: [{ id: 'e1', trigger: { type: 'onTurnStart' }, runtime: { type: 'GAIN_ARMOR', value: 2, target: 'SELF' } }],
+      },
+    ]);
+    const engine = buildEngine([
+      makePlayer(1),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(guarded, 2)] }),
+    ]);
+
+    const events = engine.dispatch(createAction('END_TURN', 1));
+
+    expect(events.some(e => e.type === 'GAIN_ARMOR')).toBe(true);
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect((p2.fieldGenerals as any[])[0].currentArmor).toBe(2);
+  });
+
+  it('skill-kill derives one DEATH event, fires onKill and onDeath skills, and grants the compensating draw', () => {
+    // Victim at 3 HP: melee attack deals 2, the 烈攻 follow-up skill deals 1
+    // — the kill itself happens inside DAMAGE settlement, with no
+    // resolver-side DEATH.
+    const victim = { ...makeGeneral('g2', [
+      {
+        name: '遗志',
+        effects: [{ id: 'e1', trigger: { type: 'onDeath' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+      },
+    ]), hp: 3 };
+    const attacker = makeGeneral('g1', [
+      {
+        name: '烈攻',
+        effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DAMAGE', value: 1, target: 'TARGET' } }],
+      },
+      {
+        name: '枭斩',
+        effects: [{ id: 'e2', trigger: { type: 'onKill' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+      },
+    ]);
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(attacker, 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
+    ]);
+
+    const events = engine.dispatch(
+      createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
+    );
+
+    const deaths = events.filter(e => e.type === 'DEATH');
+    expect(deaths).toHaveLength(1);
+    expect((deaths[0].data as any).skillKill).toBe(true);
+    expect((deaths[0].data as any).attackerId).toBe('g1');
+
+    // The bounded re-entry round expanded the derived DEATH through the
+    // trigger engine: killer's 枭斩 and the victim's 遗志 each drew a card.
+    // Trigger priority order: onDeath (100) settles before onKill (60).
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect((p1.hand as any[]).map((c: any) => c.id)).toContain('deck_2');
+    expect((p2.hand as any[]).map((c: any) => c.id)).toContain('deck_1');
+    expect((p2.fieldGenerals as any[])).toHaveLength(0);
+    expect((p2.graveyard as any[]).map((c: any) => c.id)).toContain('g2');
+    // Compensating draw window opened for the victim's owner (DEATH →
+    // DRAW_REQUIRED), same as an attack kill.
+    expect(engine.state.drawState).toMatchObject({ reason: 'compensation', playerId: 2, totalCards: 1 });
+  });
+
+  it('attack kills keep exactly one DEATH event (no derived duplicate)', () => {
+    const victim = { ...makeGeneral('g2', []), hp: 2 };
+    const attacker = makeGeneral('g1', []);
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(attacker, 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
+    ]);
+
+    const events = engine.dispatch(
+      createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
+    );
+
+    const deaths = events.filter(e => e.type === 'DEATH');
+    expect(deaths).toHaveLength(1);
+    expect((deaths[0].data as any).skillKill).toBeUndefined();
+    expect(engine.state.drawState).toMatchObject({ reason: 'compensation', playerId: 2 });
+  });
+});

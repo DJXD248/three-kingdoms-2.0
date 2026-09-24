@@ -21,6 +21,8 @@ export interface GameEngineOptions {
   recordHistory?: boolean;
 }
 
+const MAX_TRIGGER_REENTRY_ROUNDS = 8;
+
 export class GameEngine {
   readonly events = new EventBus();
   readonly processor = new EventProcessor();
@@ -75,7 +77,27 @@ export class GameEngine {
     const triggeredEvents = resolveTriggerChain(this.state, this.triggers, resolvedEvents);
     events.push(...triggeredEvents);
 
-    this.state = this.processor.process(this.state, events);
+    const derived: GameEvent[] = [];
+    this.state = this.processor.process(this.state, events, derived);
+
+    // Skill kills settle inside process(), so their derived DEATH events miss
+    // the pre-dispatch trigger chain. Re-enter it (bounded) with post-apply
+    // state so onKill/onDeath skills fire for skill kills too. Each derived
+    // DEATH already had its state consequences settled where it was derived
+    // (chainedConsequences), so re-entry only processes freshly generated
+    // events — never the DEATH itself — to avoid double settlement.
+    let pendingDeaths = derived.filter(event => event.type === 'DEATH');
+    for (let round = 0; pendingDeaths.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
+      const expanded = resolveTriggerChain(this.state, this.triggers, pendingDeaths);
+      events.push(...expanded);
+      const generated = expanded.filter(event => event.type !== 'DEATH' && event.type !== 'TRIGGERED');
+      const nextDerived: GameEvent[] = [];
+      this.state = this.processor.process(this.state, generated, nextDerived);
+      pendingDeaths = nextDerived.filter(event => event.type === 'DEATH');
+    }
+    if (pendingDeaths.length > 0) {
+      events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingDeaths: pendingDeaths.length } });
+    }
 
     const afterState = this.recordHistory ? this.snapshot() : this.state;
     const changed: GameEvent = {

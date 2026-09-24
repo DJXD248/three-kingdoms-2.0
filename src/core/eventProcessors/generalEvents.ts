@@ -177,6 +177,56 @@ export function applySupplyResolvedEvent(state: EngineState, event: GameEvent): 
   };
 }
 
+/**
+ * Skill HEAL effect settlement (Phase 5 Stage C): restores HP to a field
+ * general, capped at maxHp. A general that is no longer on the field
+ * (e.g. healed by its own onDeath skill) is an honest no-op.
+ */
+export function applyHealEvent(state: EngineState, event: GameEvent): EngineState {
+  const data = event.data as { targetPlayerId?: number; targetId?: string; value?: number } | undefined;
+  const amount = Math.max(0, Number(data?.value ?? 0));
+  if (typeof data?.targetPlayerId !== 'number' || !data.targetId || amount <= 0) return state;
+
+  const players = state.players.map(player => {
+    if (player.id !== data.targetPlayerId) return player;
+    const fieldGenerals = Array.isArray(player.fieldGenerals) ? player.fieldGenerals as any[] : [];
+    const index = fieldGenerals.findIndex(fg => getRuntimeCardId(fg?.general as any) === String(data.targetId));
+    if (index < 0) return player;
+    const target = fieldGenerals[index];
+    const currentHp = Number(target.currentHp ?? 0);
+    const maxHp = Number(target.maxHp ?? target.general?.hp ?? currentHp);
+    const nextField = fieldGenerals.map((fg, i) => i === index
+      ? { ...fg, currentHp: Math.min(maxHp, currentHp + amount) }
+      : fg);
+    return { ...player, fieldGenerals: nextField };
+  });
+
+  return { ...state, players };
+}
+
+/**
+ * Skill GAIN_ARMOR effect settlement: grants armor *points* (the 2-armor-
+ * absorbs-1-damage currency from core/armorDamage), not physical armor cards.
+ */
+export function applyGainArmorEvent(state: EngineState, event: GameEvent): EngineState {
+  const data = event.data as { targetPlayerId?: number; targetId?: string; value?: number } | undefined;
+  const amount = Math.max(0, Number(data?.value ?? 0));
+  if (typeof data?.targetPlayerId !== 'number' || !data.targetId || amount <= 0) return state;
+
+  const players = state.players.map(player => {
+    if (player.id !== data.targetPlayerId) return player;
+    const fieldGenerals = Array.isArray(player.fieldGenerals) ? player.fieldGenerals as any[] : [];
+    const index = fieldGenerals.findIndex(fg => getRuntimeCardId(fg?.general as any) === String(data.targetId));
+    if (index < 0) return player;
+    const nextField = fieldGenerals.map((fg, i) => i === index
+      ? { ...fg, currentArmor: Number(fg.currentArmor ?? 0) + amount }
+      : fg);
+    return { ...player, fieldGenerals: nextField };
+  });
+
+  return { ...state, players };
+}
+
 export function applyArmorEquippedEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as {
     playerId?: number;

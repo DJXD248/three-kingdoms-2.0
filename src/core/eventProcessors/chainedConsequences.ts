@@ -1,6 +1,7 @@
 import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getTurnStartDrawCount } from '../turnRules';
+import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 
 /**
  * Some domain outcomes (player defeat, game over, compensation draw) are
@@ -28,6 +29,29 @@ export function enqueueDerivedConsequences(
             playerId: targetPlayerId,
             sourcePlayerId: data?.sourcePlayerId,
             reason: 'BASE_HP_ZERO',
+          },
+        });
+      }
+    }
+
+    // Skill DAMAGE settles (and can remove the target) inside
+    // applyDamageEvent, and unlike attacks it has no resolver-side DEATH —
+    // AttackResolver emits its own. Derive DEATH from the actual state
+    // change so skill kills also grant the compensating draw and can reach
+    // the trigger engine (see GameEngine's bounded re-entry round).
+    if (data?.damageType === 'skill' && targetPlayerId !== null && !isBase && data?.targetId !== undefined) {
+      const beforeField = before.players.find(p => p.id === targetPlayerId)?.fieldGenerals as any[] ?? [];
+      const afterField = next.players.find(p => p.id === targetPlayerId)?.fieldGenerals as any[] ?? [];
+      const matches = (fg: any) => getRuntimeCardId(fg?.general as never) === String(data.targetId);
+      if (beforeField.some(matches) && !afterField.some(matches)) {
+        queue.push({
+          type: 'DEATH',
+          data: {
+            targetPlayerId,
+            targetId: data.targetId,
+            attackerPlayerId: data?.sourcePlayerId ?? null,
+            attackerId: data?.sourceGeneralId,
+            skillKill: true,
           },
         });
       }

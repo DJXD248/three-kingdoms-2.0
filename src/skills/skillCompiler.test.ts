@@ -126,14 +126,23 @@ describe('skillCompiler · compileSkill', () => {
     expect(skipped[0].reason).toBe('TRIGGER_SUBTYPE_UNSUPPORTED');
   });
 
-  it('skips HEAL/GAIN_ARMOR effects that have no state handler yet', () => {
-    const { definitions, skipped } = compileSkill(
+  it('compiles HEAL/GAIN_ARMOR effects now that EventProcessor settles them', () => {
+    const heal = compileSkill(
       general(),
-      skill({ effects: [{ id: 'e1', trigger: { type: 'onDeath' }, runtime: { type: 'HEAL', value: 1, target: 'SELF' } }] }),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onTurnStart' }, runtime: { type: 'HEAL', value: 2, target: 'SELF' } }] }),
       'g1',
     );
-    expect(definitions).toHaveLength(0);
-    expect(skipped[0].reason).toBe('EFFECT_TYPE_UNSUPPORTED');
+    expect(heal.definitions).toHaveLength(1);
+    expect(heal.skipped).toHaveLength(0);
+    expect(heal.definitions[0].effects[0]).toMatchObject({ type: 'HEAL', value: 2, target: 'SELF' });
+
+    const armor = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onTurnStart' }, runtime: { type: 'GAIN_ARMOR', value: 2 } }] }),
+      'g1',
+    );
+    expect(armor.definitions).toHaveLength(1);
+    expect(armor.definitions[0].effects[0]).toMatchObject({ type: 'GAIN_ARMOR', value: 2 });
   });
 
   it('skips choice-mode skills until the reaction window is wired', () => {

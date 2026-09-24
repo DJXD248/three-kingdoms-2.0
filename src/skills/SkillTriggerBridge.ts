@@ -107,9 +107,10 @@ function buildCondition(
  * while runtime ownership and trigger registration live in the engine.
  *
  * Effects are translated into canonical engine events:
- *   DRAW_CARD → DRAW { playerId, count }      (deck selection in EventProcessor)
- *   DAMAGE    → DAMAGE { damageType: 'skill' } (armor settlement in EventProcessor)
- *   HEAL / GAIN_ARMOR → CUSTOM (recorded, not yet settled — see skillCompiler notes)
+ *   DRAW_CARD   → DRAW { playerId, count }        (deck selection in EventProcessor)
+ *   DAMAGE      → DAMAGE { damageType: 'skill' }  (armor settlement in EventProcessor)
+ *   HEAL        → HEAL        { targetPlayerId, targetId, value } (hp capped at maxHp)
+ *   GAIN_ARMOR  → GAIN_ARMOR  { targetPlayerId, targetId, value } (armor points, no cards)
  */
 export class SkillTriggerBridge {
   private registrations = new Map<string, string[]>();
@@ -205,6 +206,21 @@ export class SkillTriggerBridge {
               : this.playerIdFromBase(targetId),
             targetId: targetId ?? data.targetId,
             damageType: 'skill',
+            value: Math.max(1, Number(effect.value ?? 1))
+          }
+        };
+      }
+
+      if (effect.type === 'HEAL' || effect.type === 'GAIN_ARMOR') {
+        const targetRef = this.findGeneralRef(state, targetId);
+        return {
+          type: effect.type,
+          data: {
+            ...data,
+            targetPlayerId: targetRef
+              ? targetRef.player.id
+              : this.playerIdFromBase(targetId),
+            targetId: targetId ?? data.targetId,
             value: Math.max(1, Number(effect.value ?? 1))
           }
         };

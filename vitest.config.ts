@@ -40,11 +40,12 @@ export default defineConfig({
       // 2.2.7 (three-tier strategy policies + arena): stmts 37.11 / branch 31.36 / funcs 28.09 / lines 41.83.
       // 2.2.8 (faction balance stats + seat picks + dock table test): stmts 38.1 / branch 31.93 / funcs 29.01 / lines 42.88.
       // 2.2.9 (human-vs-AI driver: full store-level AI match tests): stmts 41.43 / branch 34.55 / funcs 32.33 / lines 46.47.
+      // 2.2.17 (Stage C skill coverage: HEAL/GAIN_ARMOR settlement + skill-kill DEATH chain tests): stmts 42.46-42.66 / branch 35.11-35.28 / funcs 33.85-33.97 / lines 47.49-47.72. Branch floor kept at 34 (run-to-run jitter).
       thresholds: {
-        lines: 46,
-        functions: 32,
+        lines: 47,
+        functions: 33,
         branches: 34,
-        statements: 41,
+        statements: 42,
       },
     },
   },

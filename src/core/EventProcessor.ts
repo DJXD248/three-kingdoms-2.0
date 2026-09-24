@@ -15,6 +15,8 @@ import {
   applyGeneralMovedEvent,
   applySupplyResolvedEvent,
   applyArmorEquippedEvent,
+  applyHealEvent,
+  applyGainArmorEvent,
 } from './eventProcessors/generalEvents';
 import {
   applyPlayerDefeatedEvent,
@@ -37,9 +39,14 @@ import { enqueueDerivedConsequences } from './eventProcessors/chainedConsequence
  * through process() -> apply(). Event-family handlers live under
  * eventProcessors/ as pure (state, event) => state functions; do not add a
  * second entry point that mutates EngineState from events.
+ *
+ * process() also accepts an optional `collected` array: every event derived
+ * mid-queue (by enqueueDerivedConsequences) is appended there so the caller
+ * (GameEngine.dispatch) can re-enter the trigger chain for events whose
+ * consequences were only knowable after state settled — e.g. skill kills.
  */
 export class EventProcessor {
-  process(state: EngineState, events: GameEvent[]): EngineState {
+  process(state: EngineState, events: GameEvent[], collected?: GameEvent[]): EngineState {
     let next = cloneEngineState(state);
     const queue = [...events];
 
@@ -47,7 +54,9 @@ export class EventProcessor {
       const event = queue.shift()!;
       const before = next;
       next = this.apply(next, event);
+      const derivedStart = queue.length;
       enqueueDerivedConsequences(queue, event, before, next);
+      if (collected) collected.push(...queue.slice(derivedStart));
     }
 
     return next;
@@ -71,6 +80,10 @@ export class EventProcessor {
         return applyArmorEquippedEvent(state, event);
       case 'DAMAGE':
         return applyDamageEvent(state, event);
+      case 'HEAL':
+        return applyHealEvent(state, event);
+      case 'GAIN_ARMOR':
+        return applyGainArmorEvent(state, event);
       case 'PLAYER_DEFEATED':
         return applyPlayerDefeatedEvent(state, event);
       case 'GAME_OVER':

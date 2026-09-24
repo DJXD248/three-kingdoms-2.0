@@ -10,8 +10,9 @@
  *   - Only the six event-backed triggers are supported; the remaining trigger
  *     kinds (modify*, onBase*, passive, active*, untilExpire, …) are skipped
  *     with an explicit reason.
- *   - HEAL / GAIN_ARMOR effects have no state handler in EventProcessor yet
- *     and are skipped rather than emitting no-op events.
+ *   - HEAL / GAIN_ARMOR settle in EventProcessor as hp restore (capped at
+ *     maxHp) and armor points; effect types beyond the four supported ones
+ *     are still skipped rather than emitting no-op events.
  *   - effectMode 'choice' needs the (not yet wired) ReactionWindow prompt and
  *     is skipped.
  */
@@ -38,7 +39,12 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
 };
 
 /** Effect types EventProcessor can actually settle today. */
-const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>(['DRAW_CARD', 'DAMAGE']);
+const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>([
+  'DRAW_CARD',
+  'DAMAGE',
+  'HEAL',
+  'GAIN_ARMOR',
+]);
 
 export interface SkillSkip {
   skillName: string;
