@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.15] - 2026-09-24
+
+Stabilization stage F, second cut (decision D-6, second of the last-three list): `GameBoard.tsx` shrunk 704 -> 689 lines via **pure verbatim moves, zero behavior change**.
+
+- `src/components/gameBoard/uiPrimitives.tsx` (new, 21 lines): the five stateless presentational primitives at the tail of GameBoard -- SC (stat mini-card), StatPill (count pill with toneMap), Bar (floating action bar), Btn (confirm/cancel button), Modal (overlay skeleton) -- moved verbatim. Disclosed micro-write: one aggregate `export { SC, StatPill, Bar, Btn, Modal }` line added (bodies untouched); `React.ReactNode` resolves via the UMD global type without an import (check 0 errors proves it). Grep (2026-09-24) confirms no other file referenced these primitives.
+- Scope note: `Slot` / `BSlot` / `TerritoryBottom/Top/Side`, `arrange()`, all action handlers, memos and effects **stayed** in the component (they close over component state -- further slimming requires closure disentanglement, which is a separate, non-pure work item).
+- Verified: check 0 errors / 264 tests pass (32 files, zero add/remove) / coverage ratchet gates 41/34/32/46 hold (measured 41.90/34.49/33.33/46.93, marginal dip from new-file header comments only) / lint 0 errors 30 legacy warnings / build 1,916.59 kB single file. Browser real-click E2E (dev 5203) through the split components on a full formal game (create room -> dice -> factions -> 2x10 draft -> initial draw with 2 generals in hand): general-pool and deck modals with correct StatPill counts, discard/graveyard empty states, hand and field general inspect views with all five SC cards, deploy Bar ("消耗0/4") with Btn disabled->enabled->confirm->target-selection banner->real camp-slot click landing the general, single-target advance move, pause menu save-snapshot/return/reset; console 0 errors.
+
 ## [2.2.14] - 2026-09-24
 
 Stabilization stage F, first cut (decision D-6, head of the last-three list): `SkillEditor.tsx` shrunk 1253 -> 868 lines via **pure verbatim moves, zero behavior change**.

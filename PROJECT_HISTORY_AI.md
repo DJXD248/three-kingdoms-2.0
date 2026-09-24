@@ -900,3 +900,17 @@ Unresolved & Risk：①DAMAGE 案例内 `fallbackDestroyedArmor` 仍用 Date.now
 - CI 远端复验已完成：run `35944672735` 全绿（CI #37，master@f3e295c，test(22)/test(24)/lint/build 四 job 均 completed successfully）；功能提交 `0580e08`、登记提交 `f3e295c` 与附注标签 `v2.2.14` 已推送（直推成功，未借道代理）。
 
 Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用户口令；②handleImportFile/handleExport 留守件是本文件剩余主体（868 行），下一刀若继续拆需先解闭包（非纯移动，需单独立项审批口径）；③2.2.0 登记的 §12-9 b/c/d 技能覆盖面待办不受本轮影响，维持 PENDING。
+
+## Qoder 2.2.15：稳定期 F 序列第二刀——GameBoard 纯展示原语纯移动拆分（D-6 后三件之二）[Qoder/Qwen]
+
+**背景**：用户对外报"下一步轮到棋盘与演练场"后回复"继续"，F 序列尾件获授权；按一刀一版本惯例本轮只做 GameBoard（TestArena 485 行留作下一刀，仍待口令）。盘点结论：GameBoard 704 行中，真正无状态捕获、可纯移动外迁的是**文件尾部五个顶层纯展示原语**（第 690-704 行）；`Slot`/`BSlot`/`TerritoryBottom/Top/Side`、`arrange()`、全部动作处理器/备忘录/副作用均闭包于组件 state 与 props，属非纯移动范围，本轮一律留守（与 2.2.14 SkillEditor 的 handleImportFile/handleExport 留守同理）。grep 确认五原语全库仅 GameBoard 自身引用。
+
+**变更**：
+- `components/GameBoard.tsx` 704→689 行（-16/+1）。
+- 新文件 `components/gameBoard/uiPrimitives.tsx`（21 行）：SC（体力/护甲/近战/远程/基础统计小卡）、StatPill（toneMap 六色计数药丸）、Bar（底部浮动操作条）、Btn（确认/取消按钮，含禁用态）、Modal（弹窗骨架）逐字外移。
+- 披露微改（全部关键字/注释层面）：文件尾新增一行聚合 `export { SC, StatPill, Bar, Btn, Modal }`（五个函数体一字未动）；头部中文说明注释三条。`React.ReactNode` 不 import React 亦可解析（TS UMD 全局类型规则），check 0 错误证实，未做任何类型改写。GameBoard 顶部新增一行 import。
+- AGENTS/README（无 GameBoard 行数引用，免改）、ARCH_MAP（UI 行刷新+新增 uiPrimitives 行+D-6 进度"前四刀落地"）、CHANGELOG [2.2.15]、HANDOFF §3/§9/§13 同轮登记。
+
+**验证**：check 0 错误；264 测试通过（32 文件零增删）；覆盖率棘轮 41/34/32/46 维持（实测 41.90/34.49/33.33/46.93，较 2.2.14 的 42.09/34.67/33.45/47.16 微降——纯系新文件头注释行摊薄，移动行两侧均未覆盖、状态无回归）；lint 0 错误 30 遗留警告零新增；build 单文件 1,916.59 kB/gzip 562.86 kB。浏览器真实点击回归（dev 5203，全部走拆分后组件实例）：正式流程建房(2人)→掷骰→定势力→双人征召各 10 将→初始抽牌 executeDraw(2) 两武将入手→playing；将领池 Modal+StatPill（武将9/文将1/魏7/群3 计数正确）、抽牌堆 Modal（14/12/16=42 卡片齐全）、弃牌堆/墓地空态；手牌武将 inspect 五张 SC+登场按钮；登场 Bar（消耗0/4）+Btn 禁用→选满 4 张→确认→deployTarget 提示→点营地格真实落子（廖化@camp:0，手牌清空）；场面武将 inspect SC 实时 4/4→🚶前进单目标直连（front:0）；⏸️菜单浮层七按钮+保存对局+返回+resetGame 归 menu；控制台 0 错误。注：后台标签定时器限流导致骰子动画组件卡"投掷中"，为既有环境现象非回归，改用 store 直驱跳过（2.2.13 冒烟同款手法）。
+
+**Unresolved**：①TestArena（485 行）为 D-6 后三件最后一刀，开工前待用户口令；②GameBoard 进一步瘦身（Slot/Territory 等）需解闭包=非纯移动，单独立项待评估；③§12-9 b-d（技能覆盖面，阶段 C）维持 PENDING。
