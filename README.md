@@ -8,7 +8,7 @@ React + TypeScript 单页卡牌游戏。本仓库为主线开发仓库，与 `Qo
 npm install --include=optional --ignore-scripts   # 安装依赖
 npm run dev                                       # 本地开发服务器
 npm run check                                     # TypeScript 类型检查
-npm run test                                      # Vitest 单元测试（287 例 / 35 文件，2.2.18 时点）
+npm run test                                      # Vitest 单元测试（291 例 / 36 文件，2.2.19 时点）
 npm run test:coverage                             # 测试 + 覆盖率（含棘轮阈值门禁）
 npm run lint                                      # ESLint 检查
 npm run build                                     # 生产构建 -> dist/index.html
