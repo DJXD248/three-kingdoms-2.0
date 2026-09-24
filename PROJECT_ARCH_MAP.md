@@ -1,7 +1,7 @@
 # PROJECT_ARCH_MAP — 全项目架构与权威地图
 
 基线：**v2.2.10**（本文档随 2.2.11 建立；该版本仅文档与措辞修正，无行为变更，地图内容对 2.2.10==2.2.11 均成立）。
-最近一次全量验证时点：2026-09-24（本地五项验证全绿 + CI run `35880374035`）。
+最近一次全量验证时点：2026-09-25（v2.3.0 五闸全绿：338 测试 / 40 文件、lint 0 错 30 遗留警告、ai-battle B1 内容基线锚定，详见 HANDOFF §9 与 §12-18）。
 
 ## 怎么用这份地图（给人类和 AI 协作者）
 
@@ -50,7 +50,7 @@
 | `rules/RuleEngine.ts`、`battlefieldRules.ts` | Rule | 规则查询辅助 | CANONICAL/COMPAT | 战场规则查询 | request-scoped | PURE | UT | 与 ActionValidator 边界未逐条钉死 | 1.x |
 | `domain/*`（combat/cost/regions/constants） | Rule | 数值与区域规则口径 | CANONICAL | 常量与公式 | 静态 | PURE | UT | — | 1.x |
 | `data/generals.ts`、`cards.ts`、`registries/*` | Data | 卡牌/将领静态数据与注册表 | CANONICAL | 数据内容 | 进程级 | PURE | UT/E2E | — | 1.x |
-| `skills/skillCompiler.ts`（212 行）→ `SkillTriggerBridge.ts`（283 行）→ `triggers/TriggerEngine.ts` | Skill | 数据化技能唯一运行时链路（2.2.17：可结算效果面 = DRAW_CARD/DAMAGE/HEAL/GAIN_ARMOR 四类型；bridge 把 HEAL/GAIN_ARMOR 翻译为真实事件含目标解析；致死链经 chainedConsequences 补发 DEATH 打通 onKill/onDeath/补偿抽） | CANONICAL | 技能何时触发、产出什么事件 | 随引擎 | PURE（编译）/RNG（触发结算可致伤） | UT/CI/E2E（2.2.1 真机贯通；2.2.17 store 直驱实测疗愈/固甲/技能击杀链） | 触发覆盖不全（modify*/onBase*/passive/active*/untilExpire/onOtherDeploy/onTurnEnd/onBecomingTarget/onTargetConfirmed/onOtherSkillActivated 无引擎事件支撑，仍待接；ReactionWindow **入口机制**已于 2.2.25 落地（见 D-3 c 项），但本链路无任何自动开窗触发方——触发种类覆盖面与询问语义仍等立项） | 2.1.0 |
+| `skills/skillCompiler.ts`（274 行，2.3.0 时点）→ `SkillTriggerBridge.ts`（298 行）→ `triggers/TriggerEngine.ts` | Skill | 数据化技能唯一运行时链路（2.2.17：可结算效果面 = DRAW_CARD/DAMAGE/HEAL/GAIN_ARMOR 四类型；bridge 把 HEAL/GAIN_ARMOR 翻译为真实事件含目标解析；致死链经 chainedConsequences 补发 DEATH 打通 onKill/onDeath/补偿抽；**2.3.0：SUPPORTED/DATA/TRIGGER_EVENT 三表同步扩为 7 类**——onBecomingTarget 经既有 `BEFORE_DAMAGE` 事件接通（零新增事件，契约见 F 节），编译 skip 不再无痕：skipped 项经常驻 `WeakMap getCompileDiagnostics(engine)` 带外上报（D-9 C 类首个编译期消费者），console.warn 按 **distinct 条目**去重（`技能名#效果id:原因` 键，测试缝 `__resetCompileWarnDedup`），事件流与游戏行为零变化） | CANONICAL | 技能何时触发、产出什么事件 | 随引擎 | PURE（编译）/RNG（触发结算可致伤） | UT/CI/E2E（2.2.1 真机贯通；2.2.17 store 直驱实测疗愈/固甲/技能击杀链；2.3.0 真机演练窗 20 局+dev 直驱反伤链事件序） | 触发覆盖：7 类已支撑；**其余 13 类登记为按需池（F 节，onTurnEnd 已排期 v2.3.1，余 12 类暂无业务需求）**；ReactionWindow 入口机制已于 2.2.25 落地（见 D-3 c 项），自动开窗触发方仍随 v2.3.1 落地；编辑器/Excel 消费诊断通道做 UI 提示=后续需求 | 2.1.0 |
 | `skills/skillExcelFormat.ts`（241 行）、`SkillDataRegistry.ts` | Skill | Excel 六列导入导出与数据登记（2.2.17：`SETTLEABLE_RUNTIME_TYPES` 四类型，编辑器"暂未接入结算"标注随数据源消失） | CANONICAL | — | request/进程级 | PURE | UT | — | 2.2.0 |
 | `store/gameStore.ts`（676 行，2.2.25 时点；2.2.12 拆分时 622；原 956） | Store | 会话态 + UI 投影 + 对局动作装配（编辑器/恢复/演练场切片已外移；2.2.25 增 `reactionWindow` 字段与 `openReactionWindow/passReaction` 动作——经常驻桥容器，全通过/非法 pass 时置 null，createRoom/resetGame 调 `resetReactionWindowStore()` 清新窗口） | CANONICAL（会话态） | 界面与流程状态；对局真相仍以 EngineState 为准（**reactionWindow 是容器时序投影，永不进 EngineState**） | 页面级（内存，刷新即失） | TIME/EXT | UT（reactionWindowEntry 例证 store 动作面）/E2E | D-6 阶段 B 第一刀已落地（2.2.12 纯移动拆分，见 gameStoreTypes/EditorActions/Recovery 行）；GPT 评审确认非"规则回灌"，是"应用层 Store+兼容层" | 1.x |
 | `store/gameStoreTypes.ts`（143 行，2.2.25 时点）、`gameStoreEditorActions.ts`（137 行）、`gameStoreRecovery.ts`（70 行） | Store | 2.2.12 自 gameStore 拆出：类型面全量（2.2.25 起含 reactionWindow 字段与两动作签名）、编辑器/开发者动作工厂、快照恢复动作工厂 | CANONICAL（gameStore 的组成部分；gameStore 再导出类型保持消费口径） | 无独立权威——宿主仍是 gameStore | 页面级 | 编辑器/恢复路径 EXT | UT（复用 gameStore 测试面）/E2E 冒烟 | 纯移动拆分零行为变化；后续切片按同模式继续 | 2.2.12 |
@@ -88,13 +88,13 @@
 |---|---|---|---|
 | D-1 | GameEngine action-scoped，无法满足 Reaction/网络/长生命周期 | **短期允许双路验证，禁止双路长期执行**：抽出唯一 `TransitionCore.transition(state,action,ctx)`；常驻引擎只是持有 currentState/rngState 的执行容器；重建式执行降级为对账工具；测试断言 常驻结果===重建结果。**进度（2.2.20 阶段 E 首刀）：TransitionCore.ts 已落地（校验→解析→触发链→结算→有界重入逐字移入，纯路径无 STATE_CHANGED 无打戳），GameEngine 降为容器壳（109 行），transitionEquivalence 3 例钉死 常驻===每步重建===录像重建回放（含技能击杀链与拒绝步，仅归一化容器打戳层）；ReplayPlayer 补每步 syncPlayerSkills（本轮唯一行为变化）。**进度（2.2.21 阶段 E 第二刀·收线）：store 常驻迁移落地——engineExecutionBridge 改由模块级常驻 GameEngine 容器执行（每步 adopt 入参 engineState 克隆 + 技能注册表全量重登记，与旧重建路径结构化等价；计划稿"快照同一性匹配"经设计评审改采 adopt-clone，别名改写不漏检），重建式执行降级为对账工具 dispatchStoreActionReconcile；transitionEquivalence 扩为四路对账+容器专例（实例复用/resync 清死将/别名态被消费），行为零变化以 ai-battle 300 局分布逐字一致兜底。本决议两刀收线；长生命周期业务接线（ReactionWindow/网络）随各自需求另立刀次** | 阶段 E（两刀完，本决议收线） |
 | D-2 | RNG：withSeededRandom 全局替换 Math.random（并行/服务器下有危险）；重放"重新掷骰"脆弱 | RNG 进 `EngineState.rngState`；随机行为产出 **RandomOutcome 事件**（purpose/value/稳定 id）；**录像记结果不记重掷**；禁止 Resolver 私拿随机源，统一 ExecutionContext.random()。**进度（2.2.18 阶段 D 首刀）：rngState 已进 EngineState（可选字段、缺字段惰性重播种、不 bump 任何版本号）；引擎内抽牌/弃牌堆重洗的选牌全部收敛到 applyDrawEvent 消费种子游标（Resolver 禁随机达成，测试探针钉死）；录像 initialState 含游标→重建式回放自此可复现（重掷=可复现的重掷，"记结果不记重掷"仍未达成=PENDING）。剩余刀（PENDING 登记）：RandomOutcome 事件流、建局牌堆/骰子/势力采样迁入 rngState、action.id/instanceId 确定性、withSeededRandom 彻底退役、battleRunner lockstep 清理。**进度（2.2.19 阶段 D 第二刀）：建局随机（createCardDeck/runtimeSetup 四函数加 random 注入参，gameStore 建局五步走 setupCursor/commitSetup 消费 rngState；matchSetup 自带装配流 seed^0x9e3779b9）已迁入游标/独立播种；action.id 进程计数器化、instanceId 纯计数器化（matchSetup 种子盖戳扩到卡与技能）；withSeededRandom 彻底退役（ai/rng.ts 删除，策略流经 AiPolicy 可选 random 参注入 seed^0x85ebca6b）；battleRunner lockstep 清理（复放不咨询策略，记录动作经 createAction 重建）。行为变化披露：AI 对战 seed→胜席分布改变（300 局 seed1：{1:112,2:188}→{1:109,2:191}），平衡观测台历史需重锚。D-2 仅剩：a) RandomOutcome 事件流（单独一刀）+ e) 观察项（ReactionWindow 窗口 id、DiceRoll 纯 UI 骰子，§12-16 PENDING）。**进度（2.2.22 阶段 D 收尾刀）：a) 已落地销案——RANDOM_OUTCOME 事件进事件族（purpose DRAW_SELECTION、稳定 id `ro:<turn>:<round>:<playerId>:<index>`、value 含选牌键/deckTake/reshuffleKeys/cursorAfter），TransitionCore 重入后统一盖 id 追加进 dispatch 返回流，录像随 entry.events 记录（不 bump schema 版本，旧档无此类事件天然走"记游标重掷"双读路），ReplayPlayer 每步提取记录结果注入 engine.outcomeOverrides、applyDrawEvent 严格校验后按序消费（不符即回退种子重掷），实况/回放事件流逐字相等（randomOutcome 8 例+四路对账扩言钉死），ai-battle 300 局分布与基线逐字一致（零行为变化硬证）。建局随机经决议口径不并入事件流（store 层无事件流可挂、录像文档存的是建局后 initialState，无"重掷建局"问题，2.2.19 游标化即终点）。D-2 仅剩 e) 观察项（§12-16e：ReactionWindow 窗口 id、DiceRoll 纯 UI 骰子）。**进度（2.2.23 收尾第一刀）：回退诊断旁路落地（GPT Q4 契约"可自动降级，不可无痕降级"）——严格校验失败携带精确原因（COUNT_MISMATCH/UNRESOLVABLE_KEY/MISMATCHED_SLOTS）经常驻带外通道（DrawOutcomeFlow.diagnostics→TransitionResult.overrideFailures→GameEngine.lastOverrideFailures→ReplayPlaybackResult.overrideFailures）汇总上报，ReplayPlayer 每次故障回放恰发一次聚合 console.warn；事件流与降级行为零变化（randomOutcome 原 8 例+四路对账一字未动全绿、ai-battle 300 局分布逐字一致），旧档双读不产生 failure；randomOutcome 扩至 14 例（305→311）。**进度（2.2.25 收尾第三刀）：e) 观察项全部裁决完毕，本决议整体收线**——e① ReactionWindow 窗口 id 已确定性化（`rw:<turn>:<round>:<sourceEventKey>:<seq>` 容器私有计数器，**不消费 rngState 游标**：窗口身份不是游戏随机；随 §12-9c 入口接线落地）；e② DiceRoll/testArena 装饰骰=豁免维持（引擎骰子已走 rngState，纯视觉不进真相源）；e③ generateRoomName `random=Math.random` 默认参=豁免（store 路径 2.2.19 起注入 setupCursor，默认参仅脱离 store 直调兜底）；e④ ReconnectToken/RandomStrategy/randomPolicy 回退=维持登记（dormant 脚手架与真人机 random 档位回落属预期）。至此 §12-16 a~e 五项全销** | 阶段 D（四刀完：2.2.18/2.2.19/2.2.22 + 2.2.23 诊断/2.2.25 e 项，本决议整体收线） |
-| D-3 | 技能 Effect/Trigger 覆盖半成品：**（2.2.17 已闭合两项）**HEAL/GAIN_ARMOR 已完整结算、技能致死已补发 DEATH→onKill/onDeath/补偿抽接通；**（2.2.25 闭合一项）**ReactionWindow 业务入口（§12-9c）已落地——**入口机制 only**：容器层确定性开窗+桥/store 动作+GameBoard 最小 HUD+窗口不入 EngineState/不入录像流口径钉死；**剩余**：onTurnEnd/onOtherDeploy/onBecomingTarget 等触发无引擎事件支撑仍待接，**何种技能/时机自动开窗**（含回合结束询问语义的内容侧实现）无触发方 | 先钉死 Event→Trigger→Effect→State mutation 权威边界再加覆盖面，防第二轮技能膨胀（边界已钉：EventProcessor 唯一入口 + collected 追加收集 + 有界重入）；入口已通但**不得**在稳定期偷跑技能内容。**（2026-09-25 收官体检追加钉死）**："窗口可以不录；窗口里的游戏决策不能不录"——OPEN/CLOSE 永久属容器观察（B 类，见 D-9）不进 Replay；但 Pass/技能激活等任何改变游戏状态的窗口内 action 必须走 canonical action→TransitionCore→Replay 链，未来内容化时不得留旁路 | 阶段 C（b/d 完；c 入口 2.2.25 落地，触发覆盖面等立项） |
+| D-3 | 技能 Effect/Trigger 覆盖半成品：**（2.2.17 已闭合两项）**HEAL/GAIN_ARMOR 已完整结算、技能致死已补发 DEATH→onKill/onDeath/补偿抽接通；**（2.2.25 闭合一项）**ReactionWindow 业务入口（§12-9c）已落地——**入口机制 only**：容器层确定性开窗+桥/store 动作+GameBoard 最小 HUD+窗口不入 EngineState/不入录像流口径钉死；**剩余**：onTurnEnd/onOtherDeploy/onBecomingTarget 等触发无引擎事件支撑仍待接，**何种技能/时机自动开窗**（含回合结束询问语义的内容侧实现）无触发方 | 先钉死 Event→Trigger→Effect→State mutation 权威边界再加覆盖面，防第二轮技能膨胀（边界已钉：EventProcessor 唯一入口 + collected 追加收集 + 有界重入）；入口已通但**不得**在稳定期偷跑技能内容。**（2026-09-25 收官体检追加钉死）**："窗口可以不录；窗口里的游戏决策不能不录"——OPEN/CLOSE 永久属容器观察（B 类，见 D-9）不进 Replay；但 Pass/技能激活等任何改变游戏状态的窗口内 action 必须走 canonical action→TransitionCore→Replay 链，未来内容化时不得留旁路。**进度（2.3.0 内容时代第一刀）：onBecomingTarget 已销案——零新增事件、经既有 BEFORE_DAMAGE 接通（十二格契约表见 F 节），编译 skip 无痕降级同批治掉（WeakMap 带外诊断+条目级 warn 去重）；13 类无需求触发从"欠账"重登记为 F 节"按需池"（onTurnEnd 已排期 v2.3.1=自动开窗首个业务方）** | 阶段 C（b/d 完；c 入口 2.2.25 落地；2.3 起需求驱动逐个销案，见 F 节按需池） |
 | D-4 | 曾为 legacy 护甲兜底 `legacy_armor_destroyed_${Date.now()}` 伪造牌实例（拆分后位于 `eventProcessors/damageEvents.ts:156-163`）。**已落地（2.2.24 第二刀）**：盘点裁决=b 案——a 案前提被证伪（GAIN_ARMOR 2.2.17 的点数护甲无卡实例，`armorLost>0`+无实例是合法生产路径；普攻经 destroyedArmorCardIds 供真实实例、技能 DAMAGE 不带 armorLost；录像重放的是 action 不依赖兜底形态），保留兜底分支但 id 位置确定性化（`legacy_armor_destroyed_${弃牌堆起始下标+i}`，替换 Date.now），前缀保留以兼容 ai/invariants.ts 台账豁免；ReplayHeader 已加（schemaVersion:2+gameVersion，旧档缺头=1 只读双读、永不回填改写，超界 deserialize 显式拒读）；不采 Adapter 转写（诚实双读同 2.2.22 策略） | **收线（2.2.24）** |
 | D-5 | 候选枚举"指定卡消耗"扩展性 | 标志挂 **Action 语义**不挂卡：`CardSelectionPolicy: EQUIVALENT / INSTANCE_REQUIRED (/PREFERRED)`；EQUIVALENT 保持代表卡收窄防动作空间爆炸 | 需求出现时 |
 | D-6 | 热点文件多职责 | 拆分顺序已钉：**gameStore → EventProcessor（单一 processEvent 入口+事件族分文件）→ SkillEditor → GameBoard/TestArena**；EventProcessor 拆分不许出现第二入口。**进度：五刀全部落地、本决议收线——gameStore（2.2.12，956→622 行）、EventProcessor（2.2.13，852→93 行入口 + eventProcessors/ 六族文件）、SkillEditor（2.2.14，1253→868 行 + components/skillEditor/ 三文件）、GameBoard（2.2.15，704→689 行 + components/gameBoard/uiPrimitives.tsx 纯展示原语）、TestArena（2.2.16，485→483 行 + components/testArena/compactPrimitives.tsx 紧凑原语，与棋盘原语刻意不合并），均为纯移动零行为变化；三文件余下均为闭包绑定件，再拆需解闭包——**用户已决定（2026-09-24）：不解闭包、不做，除非有明确收益**。阶段 C 首刀已落地（2.2.17，b/d 销案）；阶段 D 首刀已落地（2.2.18，rngState 见 D-2 进度）；稳定期下一轮按序：阶段 E（引擎生命周期常驻，D-1），开工前待用户口令** | 阶段 B（前二，完）/F（完） |
 | D-7 | `npm run build` 内嵌 `npm install`（构建依赖网络、伪装安装语义） | 评审异议记录在案；本仓离线单文件分发场景为初因，改动需连同分发文档，列入 2.3 议题而非 2.2.11 | 2.3 议 |
 | D-8 | 周边文档易漂移 | 2.2.11 起登记纪律扩至五文档（README/AGENTS/CHANGELOG 纳入核对），见 PROJECT_RELEASE_PIPELINE.md | **已落地** |
-| D-9 | "某事件该不该进 EngineState/Replay"的争论随 B/C/D 类数据增多会反复出现（项目已实际分化出四类数据但归类口径散落各决议） | **四类信息分类契约**（2026-09-25 收官体检提出并登记）：**A 游戏事实**（Attack/Damage/Death/Draw/SkillActivated/ArmorDestroyed）→ 必进 canonical execution/replay 语义；**B 容器观察**（ReactionWindow OPENED/CLOSED、openedAt、HUD 状态）→ 可不进 EngineState/Replay，禁止为"完整感"硬塞；**C 诊断**（COUNT_MISMATCH/UNRESOLVABLE_KEY/MISMATCHED_SLOTS）→ 带外通道，只解释 fallback 不改事实；**D legacy/migration**（legacy_armor_destroyed_*、schemaVersion 1、缺 header、旧事件形态）→ 历史兼容层，非 canonical 规则。今后一切"录不录"争论先归类再裁决（A 必录；B/C/D 默认不录，升级为 A 需显式决议） | 2.3 第一治理项（本表登记即落地；后续在契约文档统一引用措辞） |
+| D-9 | "某事件该不该进 EngineState/Replay"的争论随 B/C/D 类数据增多会反复出现（项目已实际分化出四类数据但归类口径散落各决议） | **四类信息分类契约**（2026-09-25 收官体检提出并登记）：**A 游戏事实**（Attack/Damage/Death/Draw/SkillActivated/ArmorDestroyed）→ 必进 canonical execution/replay 语义；**B 容器观察**（ReactionWindow OPENED/CLOSED、openedAt、HUD 状态）→ 可不进 EngineState/Replay，禁止为"完整感"硬塞；**C 诊断**（COUNT_MISMATCH/UNRESOLVABLE_KEY/MISMATCHED_SLOTS）→ 带外通道，只解释 fallback 不改事实；**D legacy/migration**（legacy_armor_destroyed_*、schemaVersion 1、缺 header、旧事件形态）→ 历史兼容层，非 canonical 规则。今后一切"录不录"争论先归类再裁决（A 必录；B/C/D 默认不录，升级为 A 需显式决议）。**C 类消费者扩充（2.3.0）：编译期 skip 诊断（NO_RUNTIME_PAYLOAD/TRIGGER_UNSUPPORTED 等，WeakMap `getCompileDiagnostics`+条目级 warn）是第二个带外诊断通道，与 2.2.23 回退诊断同契约——可自动降级、不可无痕降级** | 2.3 第一治理项（本表登记即落地；后续在契约文档统一引用措辞） |
 
 ## E. UNVERIFIED / 低把握条目（诚实清单）
 
@@ -102,3 +102,43 @@
 - `controllers/*` 实际调用面未逐一核实（E2E 覆盖主链路），D-1 动它之前先补读。
 - 旧 AI 三件套（Bot/Difficulty/RandomStrategy）判定 LEGACY 仅依据"全库零引用"，删除前需再确认开发者窗口无动态引用。
 - 各模块 "Introduced" 列在 1.x 区间为约记（精确到小版本需翻 1.x 仓库历史，未做）。
+
+## F. Trigger 契约表（2.3 内容时代起，需求驱动引入）
+
+用法：每个新 Trigger 上账必须先填满十二格；Effect 一律经 bridge 派生事件回流 canonical 链（TransitionCore 唯一转移），不得自带第二套状态修改机制；本表随刀次追加，未上表的触发类型=未立项。
+
+### onBecomingTarget（v2.3.0 落地，2.3 首个需求驱动闭环）
+
+| 格 | 契约 |
+|---|---|
+| Event | **复用既有 `BEFORE_DAMAGE`（零新增事件）**——AttackResolver 将领导向分支发射；本营分支不带 `targetPlayerId`，天然不匹配不发 |
+| Timing | 成为攻击目标之时、伤害结算之前发射；派生效果在触发链 BFS 尾部展开（时序冻结见 Reentrancy） |
+| Source | 攻击发起方（事件本体由 AttackResolver 产，随 dispatch 返回流走） |
+| Target | 本将=被指定目标（`data.targetId ?? data.target`） |
+| Trigger | `onBecomingTarget`（compiler SUPPORTED / dataTypes / bridge TRIGGER_EVENT_MAP 三表同步，各 7 类） |
+| Condition | `idEq(ownerId, data.targetPlayerId)` 且 `(!generalId || idEq(generalId, data.targetId ?? data.target))`；BEFORE_DAMAGE 在 EventProcessor 是 default 纯通知（不改状态），非技能路径零副作用 |
+| Effect | 经 SkillTriggerBridge 派生后续事件（如反伤 DAMAGE）回流 canonical 链，Effect 不自带状态修改 |
+| RNG | 不涉随机（反伤目标=攻击发起方，确定指向） |
+| Replay | **A 类必录**：BEFORE_DAMAGE 本体与派生反伤 DAMAGE 均在 dispatch 返回事件流内→随 entry.events 进录像，重建回放逐字一致（四路对账扩例钉死） |
+| Transition | 唯一 `TransitionCore.transition`，无旁路 |
+| Reentrancy | 有界重入 ≤8 轮既有纪律；冻结时序=派生反伤在源 DAMAGE+ATTACK_RESOLVED+AFTER_DAMAGE 之后、同 dispatch 内结算 |
+| Death chain | 目标死于源伤害时反伤**仍落**（事件先生成语义）；反伤致死走既有 DEATH→onKill/onDeath 链（2.2.17） |
+| 优先级 | TriggerEngine priority 50（介于 onDamageTaken 与 onKill 语义层） |
+| 活例 | PRACTICE_SKILLS「演練・回刺」（ai/matchSetup.ts）——2.3.0 前是全库唯一"已声明且静默失效"技能，B0→B1 逐势力差即其实火证据 |
+
+### 编译诚实契约（同刀落地，D-9 C 类）
+
+`syncPlayerSkills` 的 skipped 项（TRIGGER_UNSUPPORTED / NO_RUNTIME_PAYLOAD 等，含 reason）经 `getCompileDiagnostics(engine)`（WeakMap，引擎重建自然隔离）带外上报；console.warn 按 **distinct 条目**（`技能名#效果id:原因`）去重、测试缝 `__resetCompileWarnDedup()`。事件流与游戏行为零变化。编辑器/Excel 录入未支撑类型时消费该通道做 UI 提示=后续需求（非缺陷，已登记 HANDOFF §12-18）。
+
+### 按需池（13 类未支撑触发，2.3.0 起从"欠账"改登记为"暂无业务需求"）
+
+| 触发类型 | 状态 |
+|---|---|
+| onTurnEnd | **已排期 v2.3.1**（回合结束询问窗=§4 冻结规则落地，自动开窗首个业务方） |
+| onOtherDeploy / onTargetConfirmed / onOtherSkillActivated | 暂无业务需求（需求出现时按本节十二格上表） |
+| onBaseTargetedAtk / onBaseTargetedSkill / onBaseDamaged | 暂无业务需求（本营系触发，需先盘本营事件源） |
+| modifyAttack / modifyDefense | 暂无业务需求（**改造类触发需先设计修正器管线**，不得直改 resolver 数值） |
+| activeSelf / activeOther | 暂无业务需求（主动技=玩家决策，天然对应 A 类 action+反应窗形态，随询问语义需求立项） |
+| passive / untilExpire | 暂无业务需求（持续/过期语义需要状态机字段设计，随需求立项） |
+
+已支撑 7 类：onDeploy / onTurnStart / onDamageTaken / onDamageDealt / onKill / onDeath / onBecomingTarget。
