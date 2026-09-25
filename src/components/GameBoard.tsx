@@ -78,6 +78,16 @@ export default function GameBoard(){
   const boardContentRef=useRef<HTMLDivElement | null>(null);
   const [boardScale,setBoardScale]=useState(1);
 
+  // 回合边界守卫（纯展示层）：移动选格横幅浮起时"结束回合"仍可点，旧的
+  // 高亮/横幅会漏进下一回合（HANDOFF §12-0 P5 残留）。采用 React 官方的
+  // 渲染期 state 调整模式，回合键一变即清移动选择，不经 effect。
+  const turnKey=`${round}:${cpi}`;
+  const [adjTurnKey,setAdjTurnKey]=useState(turnKey);
+  if(adjTurnKey!==turnKey){
+    setAdjTurnKey(turnKey);
+    setMovGen(null);setMovTgt(null);setMoveOptions([]);
+  }
+
   const cp=players[cpi] ?? players.find(p => p.isAlive !== false) ?? players[0]; if(!cp) return null;
   const activeIndex=Math.max(0,players.findIndex(p=>p.id===cp.id));
   const cpColor=factionColors[cp.faction!]||'#eab308';
@@ -622,6 +632,13 @@ export default function GameBoard(){
             // Deploy: check camp has free slot
             const campFree=hasFreeCampSlot(cp.id,players);
             const canDeploy=!fg&&ins.type==='general'&&campFree&&cp.hand.length>1;
+            // Disabled-reason tooltips (display layer only, mirrors the predicates above)
+            let movReason='';if(fg&&own&&!canMov){if(fg.isArming)movReason='整备中：本回合无法移动';else if(fg.hasMoved)movReason='本回合已移动过';else if(isSch&&fg.justDeployed&&fg.hasAttacked)movReason='文将登场回合只能移动或攻击其一，已攻击';else if(!moveOk)movReason='当前没有可移动的位置';else if(isSch&&cp.hand.length===0)movReason='前进消耗1张手牌：当前无手牌';}
+            let atkReason='';if(fg&&own&&!canAtk){if(fg.isArming)atkReason='整备中：本回合无法攻击';else if(fg.hasAttacked)atkReason='本回合已攻击过';else if(isSch&&fg.justDeployed&&fg.hasMoved)atkReason='文将登场回合只能移动或攻击其一，已移动';else if(cp.hand.length===0)atkReason='攻击消耗1张手牌：当前无手牌';}
+            const meleeReason=atkReason||(meleeN===0?'近战范围内没有可攻击的敌军':'');
+            const rangeReason=atkReason||(rangeN===0?'远程射程内没有可攻击的敌军':'');
+            let supReason='';if(fg&&own&&!canSup){if(fg.hasSupplied)supReason='本回合已补给过';else if(fg.currentHp>=fg.maxHp)supReason='体力已满，无需补给';else if(cp.hand.length<supNeedCards)supReason=`补给消耗${supNeedCards}张手牌：手牌不足${inEnemy?'（敌方区域额外+1）':''}`;}
+            let armReason='';if(fg&&own&&!canArm){if(fg.isArming)armReason='已在整备中，无法再次叠甲';else if(fg.currentArmor>=fg.maxHp)armReason='护甲已达体力上限';else if(armorInHand===0)armReason='手牌中没有军备卡';}
             return(<>
               <div className="mb-3 flex items-center gap-2"><div className="h-3 w-3 rounded-full" style={{backgroundColor:factionColors[g.faction]}}/><span className="rounded px-2 py-0.5 text-sm font-bold" style={{backgroundColor:`${factionColors[g.faction]}25`,color:factionColors[g.faction]}}>{g.faction}</span><span className="text-sm text-amber-400/70">{g.type}</span>{fg&&fg.isArming&&<span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/30">整备中</span>}{fg&&<span className="ml-auto text-xs text-green-400/60">场上</span>}</div>
               <h2 className="mb-0.5 text-3xl font-black text-amber-100">{g.name}</h2>
@@ -638,11 +655,11 @@ export default function GameBoard(){
               {fg&&own&&inEnemy&&<p className="mb-2 text-center text-xs text-yellow-500/60">⚠️ 敌方区域：补给额外消耗1张手牌</p>}
               <div className="mb-4"><h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-400/80">技能</h3><div className="flex flex-wrap gap-1.5">{(skillEdits[g.id]??g.skills).map((s,i)=><div key={i} className="rounded-lg border border-amber-700/20 bg-amber-900/30 px-2.5 py-1 text-xs font-medium text-amber-200"><span className="font-bold">{s.name}</span>{s.tag&&<span className="ml-1 text-[9px] px-1 py-0.5 rounded-full font-bold border" style={{color:skillTagColors[s.tag],borderColor:skillTagColors[s.tag]+'50',backgroundColor:skillTagColors[s.tag]+'15'}}>{s.tag}</span>}{s.description&&<span className="text-amber-300/50 text-[10px] ml-1">— {s.description}</span>}</div>)}</div></div>
               {fg&&own&&<div className="flex flex-wrap gap-2 border-t border-amber-800/20 pt-3">
-                <button onClick={()=>canMov&&startMove(fg)} disabled={!canMov} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canMov?'bg-blue-700/80 text-white hover:bg-blue-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🚶前进{isSch?' (-1牌)':''}</button>
-                <button onClick={()=>canAtk&&meleeN>0&&startAtk(fg,false)} disabled={!canAtk||meleeN===0} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canAtk&&meleeN>0?'bg-red-700/80 text-white hover:bg-red-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>⚔️近战(-1牌)</button>
-                <button onClick={()=>canAtk&&rangeN>0&&startAtk(fg,true)} disabled={!canAtk||rangeN===0} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canAtk&&rangeN>0?'bg-purple-700/80 text-white hover:bg-purple-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🏹远程(-1牌)</button>
-                <button onClick={()=>canSup&&startSup(fg)} disabled={!canSup} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canSup?'bg-green-700/80 text-white hover:bg-green-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>💊补给{inEnemy?' (额外-1)':''}</button>
-                <button onClick={()=>canArm&&startArm(fg)} disabled={!canArm} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canArm?'bg-sky-700/80 text-white hover:bg-sky-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🛡️叠甲</button>
+                <button onClick={()=>canMov&&startMove(fg)} disabled={!canMov} title={movReason} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canMov?'bg-blue-700/80 text-white hover:bg-blue-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🚶前进{isSch?' (-1牌)':''}</button>
+                <button onClick={()=>canAtk&&meleeN>0&&startAtk(fg,false)} disabled={!canAtk||meleeN===0} title={canAtk?meleeReason:(atkReason||meleeReason)} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canAtk&&meleeN>0?'bg-red-700/80 text-white hover:bg-red-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>⚔️近战(-1牌)</button>
+                <button onClick={()=>canAtk&&rangeN>0&&startAtk(fg,true)} disabled={!canAtk||rangeN===0} title={canAtk?rangeReason:(atkReason||rangeReason)} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canAtk&&rangeN>0?'bg-purple-700/80 text-white hover:bg-purple-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🏹远程(-1牌)</button>
+                <button onClick={()=>canSup&&startSup(fg)} disabled={!canSup} title={supReason} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canSup?'bg-green-700/80 text-white hover:bg-green-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>💊补给{inEnemy?' (额外-1)':''}</button>
+                <button onClick={()=>canArm&&startArm(fg)} disabled={!canArm} title={armReason} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canArm?'bg-sky-700/80 text-white hover:bg-sky-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🛡️叠甲</button>
               </div>}
               {canDeploy&&<button onClick={()=>{setIns(null);startDeploy(g);}} className="mt-3 w-full rounded-xl bg-gradient-to-r from-amber-600 to-red-700 py-2.5 text-lg font-bold text-white">⚔️登场将领</button>}
               {!fg&&ins.type==='general'&&!campFree&&<p className="mt-3 text-center text-xs text-red-400/60">营地已满，无法登场</p>}

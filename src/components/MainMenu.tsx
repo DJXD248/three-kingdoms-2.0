@@ -1,6 +1,7 @@
 import { useGameStore } from '../store/gameStore';
 import { useState } from 'react';
 import { clearLocalGameSnapshot, readLocalGameSnapshot } from '../store/localGameSnapshot';
+import pkg from '../../package.json';
 import AiBattleConfig from './AiBattleConfig';
 
 export default function MainMenu() {
@@ -142,7 +143,7 @@ export default function MainMenu() {
       {/* Footer */}
       <div className="absolute bottom-4 left-0 right-0 flex justify-between px-6">
         <p className="text-amber-200/20 text-xs">三国卡牌对战模拟器</p>
-        <p className="text-amber-200/20 text-xs">Qoder V1.28</p>
+        <p className="text-amber-200/20 text-xs">Qoder V{pkg.version}</p>
       </div>
 
       {showAiBattle && <AiBattleConfig onClose={() => setShowAiBattle(false)} />}
