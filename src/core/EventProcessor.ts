@@ -18,6 +18,7 @@ import {
   applyArmorEquippedEvent,
   applyHealEvent,
   applyGainArmorEvent,
+  applyDiscardEvent,
 } from './eventProcessors/generalEvents';
 import {
   applyPlayerDefeatedEvent,
@@ -90,6 +91,8 @@ export class EventProcessor {
         return applyHealEvent(state, event);
       case 'GAIN_ARMOR':
         return applyGainArmorEvent(state, event);
+      case 'DISCARD':
+        return applyDiscardEvent(state, event);
       case 'PLAYER_DEFEATED':
         return applyPlayerDefeatedEvent(state, event);
       case 'GAME_OVER':

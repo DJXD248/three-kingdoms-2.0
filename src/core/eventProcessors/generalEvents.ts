@@ -227,6 +227,48 @@ export function applyGainArmorEvent(state: EngineState, event: GameEvent): Engin
   return { ...state, players };
 }
 
+/**
+ * Skill DISCARD effect settlement (2.5.0): moves cards out of a player's hand.
+ * Selection policy = the first `count` cards in hand-array order (count 0 is
+ * the whole-hand sentinel) — deterministic, no new RNG surface, replay byte-
+ * identical. Card routing follows the canonical consumption paths
+ * (deploy/move/supply): resource cards go to state.discardPile, general cards
+ * return to the owner's generalPool. An empty hand settles as an honest no-op
+ * (the DISCARD event is still recorded — the trigger happened).
+ */
+export function applyDiscardEvent(state: EngineState, event: GameEvent): EngineState {
+  const data = event.data as { playerId?: number; count?: number } | undefined;
+  if (typeof data?.playerId !== 'number') return state;
+  const count = Math.max(0, Math.floor(Number(data.count ?? 0)));
+
+  let discarded: any[] = [];
+  const players = state.players.map(player => {
+    if (player.id !== data.playerId) return player;
+    const hand = Array.isArray(player.hand) ? player.hand as any[] : [];
+    if (hand.length === 0) return player;
+    const take = count === 0 ? hand.length : Math.min(count, hand.length);
+    discarded = hand.slice(0, take);
+    const generalCards = discarded.filter(card => !RESOURCE_TYPES.has(String(card?.type ?? '')));
+    return {
+      ...player,
+      hand: hand.slice(take),
+      generalPool: generalCards.length > 0
+        ? [...(Array.isArray(player.generalPool) ? player.generalPool : []), ...generalCards]
+        : player.generalPool,
+    };
+  });
+
+  if (discarded.length === 0) return state;
+  const resources = discarded.filter(card => RESOURCE_TYPES.has(String(card?.type ?? '')));
+  return {
+    ...state,
+    players,
+    discardPile: resources.length > 0
+      ? [...state.discardPile, ...resources]
+      : state.discardPile,
+  };
+}
+
 export function applyArmorEquippedEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as {
     playerId?: number;

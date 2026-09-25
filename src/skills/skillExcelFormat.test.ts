@@ -65,6 +65,8 @@ describe('skillExcelFormat: runtime field parsers', () => {
     expect(parseRuntimeType('伤害')).toBe('DAMAGE');
     expect(parseRuntimeType('damage')).toBe('DAMAGE');
     expect(parseRuntimeType('回复体力')).toBe('HEAL');
+    expect(parseRuntimeType('弃牌')).toBe('DISCARD');
+    expect(parseRuntimeType('discard')).toBe('DISCARD');
     expect(parseRuntimeType('无')).toBeUndefined();
     expect(parseRuntimeType('飞行')).toBeUndefined();
   });

@@ -558,6 +558,66 @@ describe('EventProcessor', () => {
     });
   });
 
+  describe('DISCARD event（2.5.0 弃牌原语）', () => {
+    const supply = { id: 'dp_supply', name: '粮草', type: '粮草' };
+    const generalCard = { id: 'dp_general', name: '旧部', type: '武将' };
+
+    it('固定数量：从手牌头部取 N 张，资源牌入弃牌堆、将领牌回拥有者将池', () => {
+      const player = createTestPlayer(1, { hand: [{ ...supply }, { ...generalCard }, { ...supply }] });
+      const state = createTestState([player, createTestPlayer(2)]);
+
+      const result = processor.process(state, [
+        { type: 'DISCARD', data: { playerId: 1, count: 2 } },
+      ]);
+      const p1 = result.players.find(p => p.id === 1)!;
+
+      expect(p1.hand).toHaveLength(1);
+      expect((p1.hand as Array<{ id: string }>)[0].id).toBe('dp_supply'); // 剩最后那张
+      expect((p1.generalPool as Array<{ id: string }>).map(c => c.id)).toEqual(['dp_general']);
+      expect(result.discardPile.map(c => (c as { id: string }).id)).toEqual(['dp_supply']);
+    });
+
+    it('count=0 为弃光哨兵：整手清空', () => {
+      const player = createTestPlayer(1, { hand: [{ ...supply }, { ...generalCard }] });
+      const state = createTestState([player]);
+
+      const result = processor.process(state, [{ type: 'DISCARD', data: { playerId: 1, count: 0 } }]);
+      const p1 = result.players.find(p => p.id === 1)!;
+
+      expect(p1.hand).toHaveLength(0);
+      expect(p1.generalPool).toHaveLength(1);
+      expect(result.discardPile).toHaveLength(1);
+    });
+
+    it('数量超出手牌=弃到空为止（诚实少弃，不报错）', () => {
+      const player = createTestPlayer(1, { hand: [{ ...supply }] });
+      const state = createTestState([player]);
+
+      const result = processor.process(state, [{ type: 'DISCARD', data: { playerId: 1, count: 5 } }]);
+
+      expect(result.players.find(p => p.id === 1)!.hand).toHaveLength(0);
+      expect(result.discardPile).toHaveLength(1);
+    });
+
+    it('空手诚实空转：状态与弃牌堆均不动', () => {
+      const state = createTestState([createTestPlayer(1), createTestPlayer(2)]);
+
+      const result = processor.process(state, [{ type: 'DISCARD', data: { playerId: 1, count: 1 } }]);
+
+      expect(result.players.find(p => p.id === 1)!.hand).toHaveLength(0);
+      expect(result.discardPile).toEqual([]);
+    });
+
+    it('载荷缺 playerId：no-op', () => {
+      const player = createTestPlayer(1, { hand: [{ ...supply }] });
+      const state = createTestState([player]);
+
+      const result = processor.process(state, [{ type: 'DISCARD', data: { count: 1 } }]);
+
+      expect(result.players.find(p => p.id === 1)!.hand).toHaveLength(1);
+    });
+  });
+
   describe('immutability', () => {
     it('should not mutate the original state', () => {
       const player = createTestPlayer(1, { baseHp: 5 });

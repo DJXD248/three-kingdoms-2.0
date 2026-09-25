@@ -7,6 +7,7 @@ export type GameEventType =
   | 'AFTER_DAMAGE'
   | 'HEAL'
   | 'GAIN_ARMOR'
+  | 'DISCARD'
   | 'DRAW'
   | 'DRAW_REQUIRED'
   | 'DRAW_CONFIRMED'

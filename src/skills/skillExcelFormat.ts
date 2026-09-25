@@ -107,10 +107,11 @@ export const runtimeEffectTypeLabels: Record<SkillRuntimeEffect['type'], string>
   DAMAGE: '伤害',
   HEAL: '回复体力',
   GAIN_ARMOR: '获得护甲',
+  DISCARD: '弃牌',
 };
 
 /** Types the compiler can settle today (see skillCompiler SUPPORTED_EFFECT_TYPES). */
-export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR'];
+export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD'];
 
 export const runtimeTargetLabels: Record<NonNullable<SkillRuntimeEffect['target']>, string> = {
   SELF: '自身',

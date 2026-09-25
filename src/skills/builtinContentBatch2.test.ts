@@ -49,7 +49,7 @@ const DEMOTED2: Array<{ owner: string; name: string }> = [
   { owner: 'jin_012', name: '奋勇' },
 ];
 
-/** Expected compile ids for the whole library after both batches landed. */
+/** Expected compile ids for the whole library after all batches landed. */
 const ALL_IDS = [
   // batch one (v2.4.1)
   'wei_001:奸雄:e1', 'wei_003:刚烈:e1', 'wei_015:屯田:e1',
@@ -60,6 +60,8 @@ const ALL_IDS = [
   'wu_004:苦肉:e1', 'wu_004:苦肉:e2',
   ...BATCH2.filter(b => !(b.owner === 'wu_004' && b.name === '苦肉'))
     .map(b => `${b.owner}:${b.name}:e1`),
+  // batch three (v2.5.0) — the first DISCARD-primitive skills (§G tier-2 via new primitive)
+  'wei_002:反馈:e1', 'qun_012:断肠:e1',
 ];
 
 function compileAllGenerals() {
@@ -76,10 +78,10 @@ function compileAllGenerals() {
 describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () => {
   const { definitions, skipped } = compileAllGenerals();
 
-  it('21 条编译入局：全库共 31 条 runtime 定义（苦肉独占 e1+e2 双定义），onDeploy 三条按红线降级', () => {
-    expect(definitions).toHaveLength(31);
+  it('21 条编译入局：全库共 33 条 runtime 定义（含批量三 DISCARD 两条），onDeploy 三条按红线降级', () => {
+    expect(definitions).toHaveLength(33);
     expect(definitions.map(d => d.id).sort()).toEqual([...ALL_IDS].sort());
-    expect(skipped).toHaveLength(138);
+    expect(skipped).toHaveLength(136);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 
@@ -205,7 +207,7 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
         ids.add(d.id);
       }
     }
-    expect(ids.size).toBe(31);
+    expect(ids.size).toBe(33);
   });
 });
 

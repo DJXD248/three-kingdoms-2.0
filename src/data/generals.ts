@@ -133,7 +133,7 @@ export interface SkillEffect {
 
 /** 效果的结构化运行时载荷：类型 + 数值 + 目标角色 */
 export interface SkillRuntimeEffect {
-  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR';
+  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD';
   value?: number;
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
 }
@@ -506,10 +506,37 @@ const SK_SIJIE: Skill = {
   }],
 };
 
+/**
+ * 2.5.0 batch three (v2.4.0 §G tier-2 via the DISCARD primitive): the first
+ * built-in skills that discard cards. Semantics are this project's first
+ * definition — approximations and the two honest deferrals (据守/制衡/贞烈
+ * stay descriptive; reasons in PROJECT_ARCH_MAP §G batch-three notes).
+ * DISCARD value=0 is the whole-hand sentinel (data-layer only — Excel and
+ * the editor accept ≥1).
+ */
+const SK_FANKUI: Skill = {
+  name: '反馈',
+  description: '受到伤害后，伤害来源弃置一张手牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' },
+    runtime: { type: 'DISCARD', value: 1, target: 'ATTACKER' },
+  }],
+};
+const SK_DUANCHANG: Skill = {
+  name: '断肠',
+  description: '被击杀时，击杀者弃置全部手牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDeath' },
+    runtime: { type: 'DISCARD', value: 0, target: 'ATTACKER' },
+  }],
+};
+
 // 魏势力 - 界限突破标准包
 const weiGenerals: General[] = [
   createGeneral('wei_001', '曹操', '魏', 4, [SK_JIANXIONG, '护驾'], '魏武帝'),
-  createGeneral('wei_002', '司马懿', '魏', 3, ['反馈', '鬼才'], '狼顾之鬼'),
+  createGeneral('wei_002', '司马懿', '魏', 3, [SK_FANKUI, '鬼才'], '狼顾之鬼'),
   createGeneral('wei_003', '夏侯惇', '魏', 4, [SK_GANGLIE], '独眼的罗刹'),
   createGeneral('wei_004', '张辽', '魏', 4, ['突袭'], '前将军'),
   createGeneral('wei_005', '许褚', '魏', 4, ['裸衣'], '虎痴'),
@@ -595,7 +622,7 @@ const qunGenerals: General[] = [
   createGeneral('qun_009', '公孙瓒', '群', 4, ['义从'], '白马将军'),
   createGeneral('qun_010', '庞德', '群', 4, ['马术', SK_MENGJIN], '人马一体'),
   createGeneral('qun_011', '袁术', '群', 4, ['妄尊', '同疾'], '仲家帝'),
-  createGeneral('qun_012', '蔡文姬', '群', 3, ['悲歌', '断肠'], '异乡的孤女'),
+  createGeneral('qun_012', '蔡文姬', '群', 3, ['悲歌', SK_DUANCHANG], '异乡的孤女'),
   createGeneral('qun_013', '贾诩', '群', 3, ['帷幕', '乱武', '完杀'], '最强的谋士'),
   createGeneral('qun_014', '左慈', '群', 3, ['化身', '新生'], '迷之仙人'),
   createGeneral('qun_015', '陈宫', '群', 3, ['明策', '智迟'], '刚直的谋臣'),

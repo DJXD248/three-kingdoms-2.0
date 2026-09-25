@@ -23,7 +23,8 @@ export type DataSkillEffectType =
   | 'DRAW_CARD'
   | 'DAMAGE'
   | 'HEAL'
-  | 'GAIN_ARMOR';
+  | 'GAIN_ARMOR'
+  | 'DISCARD';
 
 export interface SkillEffectData {
   type: DataSkillEffectType;

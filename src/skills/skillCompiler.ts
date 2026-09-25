@@ -14,8 +14,10 @@
  *     deliberately absent from TRIGGER_EVENT_MAP, and its sole activation
  *     path is the canonical ACTIVATE_SKILL action (ask-window driven).
  *   - HEAL / GAIN_ARMOR settle in EventProcessor as hp restore (capped at
- *     maxHp) and armor points; effect types beyond the four supported ones
- *     are still skipped rather than emitting no-op events.
+ *     maxHp) and armor points; DISCARD (2.5.0) settles as a hand-card move
+ *     (resources to the discard pile, general cards back to the owner's
+ *     pool); effect types beyond the five supported ones are still skipped
+ *     rather than emitting no-op events.
  *   - effectMode 'choice' needs the (not yet wired) ReactionWindow prompt and
  *     is skipped.
  */
@@ -56,6 +58,7 @@ const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>([
   'DAMAGE',
   'HEAL',
   'GAIN_ARMOR',
+  'DISCARD',
 ]);
 
 export interface SkillSkip {

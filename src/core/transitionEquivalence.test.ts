@@ -743,6 +743,121 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect((zhuiyi!.data as any).playerId).toBe(2);
   });
 
+  it('反馈实证：受击后伤害来源弃 1（手牌数组头部选取、弃牌进弃牌堆），内置模板四路径逐事件一致 (v2.5.0)', () => {
+    const sima = builtin2As('sima2', 'wei_002'); // 司马懿：反馈 onDamageTaken(allDamage) → DISCARD 1 ATTACKER
+    const build = () => makeState([
+      makePlayer(1, {
+        fieldGenerals: [
+          makeFieldGeneral(makeGeneral('atk1', 4, []), 1, 0),
+          makeFieldGeneral(makeGeneral('atk2', 4, []), 1, 1),
+        ],
+        hand: COSTS.slice(0, 5).map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(sima, 2)] }),
+    ]);
+    // 每将每回合仅一次攻击：两次受击须由两名攻击手完成。成本放 c4/c5——
+    // 反馈从手牌头部弃牌，若弃掉尚未支付的攻击成本第二击会诚实地被拒
+    const script = [attack('atk1', 'sima2', 3), attack('atk2', 'sima2', 4)];
+
+    const engine = new GameEngine(build());
+    const steps: string[][] = [];
+    for (const action of script) {
+      syncPlayerSkills(engine, engine.state);
+      steps.push(rawEvents(engine.dispatch(action)));
+    }
+    const all = steps.flat().map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+    const feedback = all.filter(e => e.type === 'DISCARD' && String(e.data?.skillId ?? '').includes('反馈:e1'));
+    expect(feedback).toHaveLength(2); // 两次受击各反馈一次
+    expect(feedback[0].data).toMatchObject({ playerId: 1, count: 1, effectType: 'DISCARD' });
+    const finalState = engine.state;
+    const p1 = finalState.players.find(p => p.id === 1)!;
+    // c0 成本 + c1 反馈弃 → c2 成本 + c3 反馈弃：司马懿（3 血）第二击阵亡，反馈仍逐击结算
+    expect(p1.hand).toHaveLength(1); // 起手 5 - 4
+    expect((finalState.discardPile as unknown[]).length).toBe(4); // 成本与弃牌同池（canonical 消耗语义）
+    expect(fieldHp(finalState, 2, 'sima2')).toBeUndefined(); // 3-2-2 阵亡离场
+    // 桥接 / 重建对账 / 录像回放与常驻逐事件、终态一致
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = build();
+    const bridgeSteps: string[][] = [];
+    for (const action of script) {
+      const r = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = r.engineState;
+      bridgeSteps.push(rawEvents(r.events));
+    }
+    expect(bridgeSteps).toEqual(steps);
+    const reconcileSteps: string[][] = [];
+    let reconcileState = build();
+    for (const action of script) {
+      const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = r.engineState;
+      reconcileSteps.push(rawEvents(r.events));
+    }
+    expect(reconcileSteps).toEqual(steps);
+    const playback = new ReplayPlayer().play(engine.replay.getDocument()!);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+  });
+
+  it('断肠实证：致死击后击杀者弃光全部手牌（ attacker 离场仍结算、count=0 弃光哨兵） (v2.5.0)', () => {
+    const caiwen = builtin2As('cwj', 'qun_012'); // 蔡文姬：断肠 onDeath → DISCARD 0 ATTACKER
+    const s = makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(makeGeneral('killer', 4, []), 1)],
+        hand: COSTS.slice(0, 4).map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(caiwen, 2)] }),
+    ]);
+    (s.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 1;
+    const engine = new GameEngine(s);
+    syncPlayerSkills(engine, engine.state);
+    const events = engine.dispatch(attack('killer', 'cwj', 0));
+    expect(events.some(e => e.type === 'DEATH' && (e.data as any)?.targetId === 'cwj')).toBe(true);
+    const duanchang = events.filter(e => e.type === 'DISCARD' && String((e.data as any)?.skillId ?? '').includes('断肠:e1'));
+    expect(duanchang).toHaveLength(1);
+    expect(duanchang[0].data as unknown as Record<string, unknown>).toMatchObject({ playerId: 1, count: 0 });
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    expect(p1.hand).toHaveLength(0); // 剩余 3 张全部弃光（弃光哨兵=整手）
+    expect(engine.state.discardPile).toHaveLength(4); // 1 成本 + 3 弃光
+  });
+
+  it('弃牌诚实空转与确定性：成本耗尽手牌后反馈仍发 DISCARD 事件但不增弃牌堆，同配置两跑逐字节一致 (v2.5.0)', () => {
+    const build = () => {
+      const sima = builtin2As('sima3', 'wei_002');
+      return makeState([
+        makePlayer(1, {
+          fieldGenerals: [makeFieldGeneral(makeGeneral('atk3', 4, []), 1)],
+          hand: [ATTACK_COST], // 恰好一张：成本结算后手牌见底
+        }),
+        makePlayer(2, { fieldGenerals: [makeFieldGeneral(sima, 2)] }),
+      ]);
+    };
+    // 同一 action 对象复用于两跑：action id 属派发层，normalize 不剥离内嵌 action
+    const action = createAction('ATTACK', 1, {
+      attackerId: 'atk3', targetId: 'sima3', ranged: false, consumeCard: { ...ATTACK_COST },
+    });
+    const runOnce = () => {
+      const engine = new GameEngine(build());
+      syncPlayerSkills(engine, engine.state);
+      const events = engine.dispatch(action);
+      return {
+        events,
+        airSwing: events.some(e => e.type === 'DISCARD' && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('反馈:e1')),
+        pile: (engine.state.discardPile as unknown[]).length,
+        final: JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>)),
+      };
+    };
+    const normalizeStep = (events: GameEvent[]) =>
+      events.map(e => JSON.stringify(normalize({ type: e.type, data: e.data })));
+    const first = runOnce();
+    expect(first.airSwing).toBe(true); // 触发确实发生 → 事件照发，空手牌结算为诚实空转
+    expect(first.pile).toBe(1); // 只有攻击成本进堆，弃牌未凭空增产
+    // 独立两跑（同配置新建引擎）：逻辑事件流与终态逐字节一致=弃牌无新随机面
+    // （action id 属派发层噪声，normalize 口径同 D-1 对账）
+    const second = runOnce();
+    expect(normalizeStep(second.events)).toEqual(normalizeStep(first.events));
+    expect(second.final).toBe(first.final);
+  });
+
   it('onDeploy 活性探针（英慧）：部署成功但监听器尚未注册 → 永不触发，实证 §12-26 降级依据', () => {
     const wyj = builtin2As('wyj', 'jin_008');
     const s = makeState([

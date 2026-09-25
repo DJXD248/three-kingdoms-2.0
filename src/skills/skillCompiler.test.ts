@@ -152,6 +152,24 @@ describe('skillCompiler · compileSkill', () => {
     expect(armor.definitions[0].effects[0]).toMatchObject({ type: 'GAIN_ARMOR', value: 2 });
   });
 
+  it('compiles DISCARD effects — 2.5.0 fifth primitive (value 0 is the whole-hand sentinel)', () => {
+    const one = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'DISCARD', value: 1, target: 'ATTACKER' } }] }),
+      'g1',
+    );
+    expect(one.definitions).toHaveLength(1);
+    expect(one.skipped).toHaveLength(0);
+    expect(one.definitions[0].effects[0]).toMatchObject({ type: 'DISCARD', value: 1, target: 'ATTACKER' });
+
+    const all = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onDeath' }, runtime: { type: 'DISCARD', value: 0, target: 'ATTACKER' } }] }),
+      'g1',
+    );
+    expect(all.definitions[0].effects[0]).toMatchObject({ type: 'DISCARD', value: 0, target: 'ATTACKER' });
+  });
+
   it('skips choice-mode skills until the reaction window is wired', () => {
     const { definitions, skipped } = compileSkill(
       general(),

@@ -127,10 +127,12 @@ function buildCondition(
  * while runtime ownership and trigger registration live in the engine.
  *
  * Effects are translated into canonical engine events:
- *   DRAW_CARD   → DRAW { playerId, count }        (deck selection in EventProcessor)
- *   DAMAGE      → DAMAGE { damageType: 'skill' }  (armor settlement in EventProcessor)
- *   HEAL        → HEAL        { targetPlayerId, targetId, value } (hp capped at maxHp)
- *   GAIN_ARMOR  → GAIN_ARMOR  { targetPlayerId, targetId, value } (armor points, no cards)
+ *   DRAW_CARD   → DRAW         { playerId, count }        (deck selection in EventProcessor)
+ *   DAMAGE      → DAMAGE       { damageType: 'skill' }    (armor settlement in EventProcessor)
+ *   HEAL        → HEAL         { targetPlayerId, targetId, value } (hp capped at maxHp)
+ *   GAIN_ARMOR  → GAIN_ARMOR   { targetPlayerId, targetId, value } (armor points, no cards)
+ *   DISCARD     → DISCARD      { playerId, count }        (2.5.0, hand move in EventProcessor;
+ *                               count 0 = whole-hand sentinel)
  */
 export class SkillTriggerBridge {
   private registrations = new Map<string, string[]>();
@@ -246,6 +248,27 @@ export class SkillTriggerBridge {
               : SkillTriggerBridge.playerIdFromBase(targetId),
             targetId: targetId ?? data.targetId,
             value: Math.max(1, Number(effect.value ?? 1))
+          }
+        };
+      }
+
+      if (effect.type === 'DISCARD') {
+        // Discards are keyed to a PLAYER (hands live on players), not to a
+        // general instance — an attacker whose general already left the field
+        // still owes the cards (断肠 settlement after a lethal hit).
+        const eventData = asRecord(event.data);
+        const role = effect.target ?? 'TARGET';
+        const discardPlayerId = role === 'SELF'
+          ? Number(sourceId)
+          : role === 'ATTACKER'
+            ? Number(eventData.sourcePlayerId ?? eventData.attackerPlayerId)
+            : Number(eventData.targetPlayerId);
+        return {
+          type: 'DISCARD',
+          data: {
+            ...data,
+            playerId: Number.isFinite(discardPlayerId) ? discardPlayerId : undefined,
+            count: Math.max(0, Math.floor(Number(effect.value ?? 1)))
           }
         };
       }

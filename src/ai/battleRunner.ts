@@ -167,7 +167,7 @@ interface RunOptions {
 }
 
 /** Events a compiled skill effect can materialize as (SkillTriggerBridge). */
-const SKILL_EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR']);
+const SKILL_EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD']);
 
 /**
  * Batch-stable join key = the skill NAME segment of a compiled skillId:
