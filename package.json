@@ -1,11 +1,11 @@
 {
   "name": "react-vite-tailwind",
   "private": true,
-  "version": "2.3.2",
+  "version": "2.3.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm install --include=optional --ignore-scripts && vite build",
+    "build": "node scripts/preflight-build.mjs && vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "test": "vitest run",

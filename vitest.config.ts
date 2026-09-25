@@ -17,7 +17,8 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     pool: nodeMajor >= 24 ? 'vmThreads' : undefined,
-    include: ['src/**/*.test.{ts,tsx}'],
+    // scripts/preflight-build.test.mjs: v2.3.3 (D-7) build 防呆脚本的守卫测试随脚本同目录登记。
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov', 'json-summary'],
