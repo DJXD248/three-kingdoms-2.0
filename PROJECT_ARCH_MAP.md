@@ -1,7 +1,7 @@
 # PROJECT_ARCH_MAP — 全项目架构与权威地图
 
 基线：**v2.2.10**（本文档随 2.2.11 建立；该版本仅文档与措辞修正，无行为变更，地图内容对 2.2.10==2.2.11 均成立）。
-最近一次全量验证时点：2026-09-25（v2.3.2 五闸全绿：379 测试 / 44 文件、lint 0 错 30 遗留警告、非内容刀硬证 ai-battle 对 B2 {1:114,2:186} 逐字一致（耗时行除外）VIOLATIONS=0，详见 HANDOFF §9 与 §12-21）。
+最近一次全量验证时点：2026-09-25（v2.3.3 五闸全绿：384 测试 / 45 文件、lint 0 错 30 遗留警告、非内容刀硬证 ai-battle 对 B2 {1:114,2:186} 逐字一致（耗时行除外）VIOLATIONS=0，详见 HANDOFF §9 与 §12-22）。
 
 ## 怎么用这份地图（给人类和 AI 协作者）
 
@@ -73,6 +73,7 @@
 | `timeline/PrioritySystem.ts` | Rule | 优先级时序 | COMPAT | — | 对局级 | PURE | UT | 原 AGENTS 所称 PhaseManager/TurnManager 不存在（2.2.11 勘误） | 1.x |
 | `network/*`、`room/*`、`server/*`、`session/*` | Net | 多人化脚手架 | **DORMANT**（模块外零引用，2026-09-24 grep 确认） | 无（未接入生产链路） | — | — | UT 局部 | 激活前必须先完成 D-1/D-2 | 1.x |
 | `utils/runtimeIdentity.ts` | Util | 卡牌运行时身份唯一提取 | CANONICAL | 身份口径 | 静态 | PURE | UT | — | 1.19-1.20 |
+| `scripts/preflight-build.mjs`（27 行）+ `preflight-build.test.mjs`（5 例） | Tooling | build 前置防呆（D-7 落地件）：node_modules 不存在/不可读/为空/无 vite 四态拒绝并显式指路安装命令；**绝不静默安装**；仓库根按脚本自身位置派生（cwd 免疫，故测试必须在 tmpdir 沙箱复制后 spawn） | CANONICAL（构建路径唯一守卫） | 构建门槛 | 构建期 | 无随机 | UT（沙箱 spawn） | 不经 CI（各 job 自带显式 install） | 2.3.3 |
 
 ## C. 关键注记
 
@@ -92,7 +93,7 @@
 | D-4 | 曾为 legacy 护甲兜底 `legacy_armor_destroyed_${Date.now()}` 伪造牌实例（拆分后位于 `eventProcessors/damageEvents.ts:156-163`）。**已落地（2.2.24 第二刀）**：盘点裁决=b 案——a 案前提被证伪（GAIN_ARMOR 2.2.17 的点数护甲无卡实例，`armorLost>0`+无实例是合法生产路径；普攻经 destroyedArmorCardIds 供真实实例、技能 DAMAGE 不带 armorLost；录像重放的是 action 不依赖兜底形态），保留兜底分支但 id 位置确定性化（`legacy_armor_destroyed_${弃牌堆起始下标+i}`，替换 Date.now），前缀保留以兼容 ai/invariants.ts 台账豁免；ReplayHeader 已加（schemaVersion:2+gameVersion，旧档缺头=1 只读双读、永不回填改写，超界 deserialize 显式拒读）；不采 Adapter 转写（诚实双读同 2.2.22 策略） | **收线（2.2.24）** |
 | D-5 | 候选枚举"指定卡消耗"扩展性 | 标志挂 **Action 语义**不挂卡：`CardSelectionPolicy: EQUIVALENT / INSTANCE_REQUIRED (/PREFERRED)`；EQUIVALENT 保持代表卡收窄防动作空间爆炸 | 需求出现时 |
 | D-6 | 热点文件多职责 | 拆分顺序已钉：**gameStore → EventProcessor（单一 processEvent 入口+事件族分文件）→ SkillEditor → GameBoard/TestArena**；EventProcessor 拆分不许出现第二入口。**进度：五刀全部落地、本决议收线——gameStore（2.2.12，956→622 行）、EventProcessor（2.2.13，852→93 行入口 + eventProcessors/ 六族文件）、SkillEditor（2.2.14，1253→868 行 + components/skillEditor/ 三文件）、GameBoard（2.2.15，704→689 行 + components/gameBoard/uiPrimitives.tsx 纯展示原语）、TestArena（2.2.16，485→483 行 + components/testArena/compactPrimitives.tsx 紧凑原语，与棋盘原语刻意不合并），均为纯移动零行为变化；三文件余下均为闭包绑定件，再拆需解闭包——**用户已决定（2026-09-24）：不解闭包、不做，除非有明确收益**。阶段 C 首刀已落地（2.2.17，b/d 销案）；阶段 D 首刀已落地（2.2.18，rngState 见 D-2 进度）；稳定期下一轮按序：阶段 E（引擎生命周期常驻，D-1），开工前待用户口令** | 阶段 B（前二，完）/F（完） |
-| D-7 | `npm run build` 内嵌 `npm install`（构建依赖网络、伪装安装语义） | 评审异议记录在案；本仓离线单文件分发场景为初因，改动需连同分发文档，列入 2.3 议题而非 2.2.11 | 2.3 议 |
+| D-7 | `npm run build` 内嵌 `npm install`（构建依赖网络、伪装安装语义） | 评审异议记录在案；本仓离线单文件分发场景为初因，改动需连同分发文档，列入 2.3 议题而非 2.2.11。**已落地（v2.3.3）：build=`node scripts/preflight-build.mjs && vite build`——防呆脚本按脚本位置派生根、四态检查（不存在/不可读/空/无 vite）显式指路安装命令，绝不静默安装；分发文档 README/AGENTS/RELEASE_PIPELINE 三处同步；CI 预检确认各 job 本有显式 install、workflow 零改动；守卫测试沙箱 spawn 5 例（§12-22）** | **已落地** |
 | D-8 | 周边文档易漂移 | 2.2.11 起登记纪律扩至五文档（README/AGENTS/CHANGELOG 纳入核对），见 PROJECT_RELEASE_PIPELINE.md | **已落地** |
 | D-9 | "某事件该不该进 EngineState/Replay"的争论随 B/C/D 类数据增多会反复出现（项目已实际分化出四类数据但归类口径散落各决议） | **四类信息分类契约**（2026-09-25 收官体检提出并登记）：**A 游戏事实**（Attack/Damage/Death/Draw/SkillActivated/ArmorDestroyed）→ 必进 canonical execution/replay 语义；**B 容器观察**（ReactionWindow OPENED/CLOSED、openedAt、HUD 状态）→ 可不进 EngineState/Replay，禁止为"完整感"硬塞；**C 诊断**（COUNT_MISMATCH/UNRESOLVABLE_KEY/MISMATCHED_SLOTS）→ 带外通道，只解释 fallback 不改事实；**D legacy/migration**（legacy_armor_destroyed_*、schemaVersion 1、缺 header、旧事件形态）→ 历史兼容层，非 canonical 规则。今后一切"录不录"争论先归类再裁决（A 必录；B/C/D 默认不录，升级为 A 需显式决议）。**C 类消费者扩充（2.3.0）：编译期 skip 诊断（NO_RUNTIME_PAYLOAD/TRIGGER_UNSUPPORTED 等，WeakMap `getCompileDiagnostics`+条目级 warn）是第二个带外诊断通道，与 2.2.23 回退诊断同契约——可自动降级、不可无痕降级**。**A/B 类户口扩充（2.3.1，D-3c 首检）：SKILL_ACTIVATED+consumedSkills 台账=A 类必录（canonical 事件流+录像）；`turnEndAsk` 询问窗投影字段=B 类容器观察（不进 EngineState/录像/存档——快照只序列化 engineState，结构上进不了档）；窗内 ACTIVATE_SKILL/结束回合决策=A 类 canonical action 必录——"窗口可以不录；窗口里的游戏决策不能不录"自此有真机证据** | 2.3 第一治理项（本表登记即落地；后续在契约文档统一引用措辞） |
 

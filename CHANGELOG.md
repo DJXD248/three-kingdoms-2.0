@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.3] - 2026-09-25
+
+2.3 mainline, fourth cut (of the user-authorized five-cut plan): **P4 build governance — decision D-7 lands: `npm run build` no longer installs dependencies for you**. A *non-content* cut: the hard proof is ai-battle 300 seed1 staying byte-identical against baseline **B2 {1:114,2:186}** (two runs differ only on the two registered timing-line exemptions, VIOLATIONS=0).
+
+- **Build de-embedded:** `"build"` went from `npm install --include=optional --ignore-scripts && vite build` to `node scripts/preflight-build.mjs && vite build` — installing dependencies is an explicit user step again, hidden network work inside a build command is not.
+- **Guard script** (`scripts/preflight-build.mjs`, new, 27 lines): resolves the repo root from its own file location (cwd-proof), refuses — with a copy-pasteable `npm install --include=optional` line, `NPM_FLAGS` mirroring the old `--ignore-scripts` advice — when node_modules is missing/unreadable/empty (hidden-dirs-only counts as empty) or vite is absent; passes silently when dependencies are healthy. **Never installs behind your back.**
+- **Guard tests** (`scripts/preflight-build.test.mjs`, new, 5 cases): each spawns a tmpdir copy of the script so the root-resolution semantics themselves are under test; `vitest.config.ts` include extended to `scripts/**/*.test.mjs` (coverage stays src-only, so these tests contribute no coverage lines). Side discovery, registered honestly: with zero src changes this cut still measured two different coverage snapshots across runs (47.08/39.33/38.65/52.65 vs 46.9/39.18/38.53/52.44) — vmThreads-pool collection jitter, so coverage numbers are treated as per-run snapshots above the ratchet floors, never as a byte anchor (the byte anchor remains the ai-battle distribution).
+- **CI pre-check (the obligation D-7 came with):** every job in `ci.yml` and `deploy.yml` already runs its own explicit install step, so zero workflow changes were needed — the plan's risk contingency did not fire. Distribution docs updated in the same commit as the script (README quick start, AGENTS verification commands, PROJECT_RELEASE_PIPELINE gate note).
+- **Tests (+5 → 384 / 45 files).** No gameplay/UI surface touched (CLI build path only), so no browser E2E was claimed for this cut; the sandbox spawn tests are the authoritative evidence for each refusal branch.
+
 ## [2.3.2] - 2026-09-25
 
 2.3 mainline, third cut (of the user-authorized five-cut plan): **P7 save-recovery real regression matrix — the integrity of users' actual saved games, flagged by the external reviewer as "cannot keep deferring"**. A *non-content* cut: the hard proof is ai-battle 300 seed1 staying byte-identical against baseline **B2 {1:114,2:186}** (two runs self-consistent, VIOLATIONS=0). What changes is only what happens on *bad* paths: crashes and silent save-loss become honest rejection + degradation.
