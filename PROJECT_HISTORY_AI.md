@@ -1183,5 +1183,5 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **浏览器 E2E（dev 5173 热座房"白马之战4475"，真实 DOM 点击，免疫后台限流）**：本批武将庞德+夏侯惇实机入局；**两种触发真实发生**——猛进（被瞄准时对攻击者 1 点技能伤害，skillId `qun_010__inst_1:猛进:e1`）与刚烈（庞德远程攻击夏侯惇 4→3 后派生反伤 DAMAGE `wei_003__inst_c:刚烈:e1` value:1 damageType:'skill' triggerDepth:2，庞德 3→2，store 态证实）；新描述文案在真实将面面板可见；活录像 header gameVersion "2.4.1"；全程未触碰保存/下载弹窗。环境注记（营地 zone 按钮/距离规则/码点先行/拆两次调用）入 §12-25④。
 - **验证（五闸全部在文件定稿后）**：check 0 错；397 例/47 文件全过；coverage 地板 42/34/34/47 维持（定稿实测 47.12/39.26/39.19/52.89，快照口径 §12-22④）；lint 0 错 30 遗留警告零新增；build 1,935.13 kB / gzip 568.20 kB（较 2.4.0 +1.80/+0.46 kB=runtime 载荷与描述文本，尺寸变化如实登记）。
 - **GPT 沟通判断（按计划口径）**：跳过——内容量产形态首检已预钉在 v2.4.3 收敛刀（携 B2→B3→B4 漂移账与逐技能触发频次）；本刀无契约级意外。
-- **CI 状态**：PENDING（待远端复验后回填）。
+- **CI 状态**：**全绿**——GitHub Actions CI #78（run 36107333284，commit 396ba3b）completed successfully（feat f961b26 + docs 396ba3b + 标签 v2.4.1 单次顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。
 
