@@ -1227,4 +1227,15 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **GPT 沟通判断（计划口径）**：**跳过**——二检按计划预钉 v2.5.4；本刀无契约级意外（十二格表先行落地、五采纳①②按预钉执行）。
 - **CI 状态**：**全绿**——GitHub Actions CI #85（run 36131305437，commit 58f3db4）completed successfully（feat 487e024 + docs 58f3db4 + 标签 v2.5.0 单次顶端 run 全覆盖；直连推送连接重置后一次性代理 127.0.0.1:10808 推送 master+标签成功、未写持久配置）。
 
+## Qoder 2.5.1：2.5 第二刀（非内容刀）——onDeploy 注册序缺口接线销案（§12-26）：TransitionCore 补部署后 resyncSkills 钩子+该步 GENERAL_DEPLOYED 重放，活性探针翻正；B5 逐字一致硬证达成（432 例/49 文件）；接线≠转正（2026-09-25）
+
+- **模型标记**：Qoder（本会话）。五刀连做常设授权内直接开工（刀间不待口令）。范围=建议书前置项②"onDeploy 注册序接线"，采候选 a（部署结算后补注册+重放该步事件）；本刀**零内容**——英慧/拓略/奋勇三条维持纯描述，转正归 v2.5.2 四件验收（GPT 采纳①"不得自动转正"）。
+- **接线三处**：① `core/TransitionCore.ts`——`TransitionContext` 新增**可选**钩子 `resyncSkills(state)`（presence-gated：无钩子的裸测试上下文保持接线前逐字行为）；`transition()` 在首结算后、死亡回环前插部署接线块：本步存在 `GENERAL_DEPLOYED` 时先 `ctx.resyncSkills(next)` 补注册，再以该步事件重放 `resolveTriggerChain(next, …, deployedEvents)`。重放纪律=与死亡回环同族：echo 按引用过滤（`!deployedEvents.includes`）、`settleable` 排除 DEATH/TRIGGERED 二次进 `processor.process`、其派生 DEATH 汇入 `derived` 交给既有有界回环——**禁第二转移路径不破**（所有效果仍只经 EventProcessor 单点结算）。② `core/GameEngine.ts`——arrow 字段 `resyncSkills` 调 `syncPlayerSkills`（skillCompiler 对 GameEngine 仅 type-import，无运行时循环依赖）；dispatch 以 `this` 作 ctx，四路径（常驻桥/对账重建/battleRunner 每步新引擎/ReplayPlayer）一处供钩全域生效。③ 防双重触发论证入码注释：每条编译定义钉 `sourceGeneralId`、bridge onDeploy 条件比对 `getRuntimeCardId(data.general)`，deploying 将监听器补注册前不存在→重放只命中新监听器；`TriggerEngine.register` Map 键 `skill:owner:skillId`=重注册幂等覆盖。
+- **测试（净 +1：431→432 例/49 文件）**：`transitionEquivalence.test.ts` 旧负例探针（pin §12-26"永不触发"）翻为**正例活性哨兵**——合成 `英慧 onDeploy→DRAW 1 SELF` 载荷注入王元姬克隆体，断言恰 1 次、playerId=1、手牌 3→2、牌堆 4→3、随后 END_TURN 不再触发（缺口复发即红）；新增部署链**四路径逐事件一致**例（英慧摸牌+合成"登锋"onDeploy→GAIN_ARMOR，两步部署常驻/桥接/重建/回放逐字节对账）。**顺手钉死引擎事实**：进场血量=消耗牌数（`applyGeneralDeployedEvent: currentHp = consumeCards.length`——1 成本卡进场即 1 血，parity 例首跑即以此纠偏断言）。`generals.ts` 与 `builtinContentBatch2.test.ts` 头注同步"缺口已接通/接线≠转正"口径；三条降级技能的 NO_RUNTIME_PAYLOAD 诚实跳过账本（168→33/136）不动。
+- **非内容刀硬证**：ai-battle 300 局 seed1 胜席 **{"1":117,"2":183} 对 B5 逐字一致**——won=300、VIOLATIONS=0、同 seed 两轮剥离计时行（avg/wall/Done in）后 cmp 逐字节全等；逐势力锚（魏 116/56/187/132/10/0、蜀 136/71/204/131/14/2、吴 126/55/161/115/4/0、群 126/68/214/128/15/2、晋 96/50/133/89/5/0）全部吻合 §12-27①。B5 逐字成立的结构性理由（如实登记）：现存 33 条定义无一使用 onDeploy→接线后重放面对空注册表，事件流零增改。
+- **E2E 注记**：本刀无玩家可感知 UI/玩法触点（同上零内容理由），不占浏览器 E2E；真机触发证据随 v2.5.2 转正刀（四件验收含专项热座 E2E）。
+- **验证（五闸全部在文件定稿后）**：check 0 错；432 例/49 文件全过；coverage 定稿快照 48.44/40.27/39.94/54.14 四项全过地板 42/34/34/47（§12-22④ 快照口径，棘轮维持不上调）；lint 0 错 30 遗留警告零新增；build 1,941.54 kB / gzip 569.47 kB（较 2.5.0 +0.33/+0.09 kB=接线块+钩子文本体积）。package.json/lock=2.5.1。
+- **GPT 沟通判断（计划口径）**：**跳过**——二检按计划预钉 v2.5.4；本刀无契约级意外（候选 a 原样落地、防重触发论证兑现、presence-gated 保证无钩子路径零变化）。
+- **CI 状态**：**PENDING**（GitHub Actions，推送后核验回填）。
+
 
