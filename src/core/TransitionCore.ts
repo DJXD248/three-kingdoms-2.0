@@ -31,6 +31,12 @@ export interface TransitionContext {
   /** Replay-only RandomOutcome injection queue (D-2a). Absent/null on every
    * live path — selections then run the seeded RNG and get RECORDED. */
   readonly outcomeOverrides?: readonly RandomOutcomeData[] | null;
+  /** v2.5.1 onDeploy wiring (§12-26): container hook that re-derives the
+   * skill registrations from the given (post-settlement) state, so listeners
+   * created by a GENERAL_DEPLOYED in this dispatch exist before the deploy
+   * step is replayed through the trigger chain. Presence-gated: hookless
+   * contexts keep the pre-wiring behavior verbatim. */
+  readonly resyncSkills?: (state: EngineState) => void;
 }
 
 export interface TransitionResult {
@@ -81,6 +87,30 @@ export function transition(
   const flow: DrawOutcomeFlow = { produced: [], overrides: ctx.outcomeOverrides ?? undefined, overridePos: 0 };
   const derived: GameEvent[] = [];
   let next = ctx.processor.process(state, events, derived, flow);
+
+  // v2.5.1 onDeploy wiring (§12-26): syncPlayerSkills runs per-dispatch in
+  // the container, so a general deployed by THIS action had no listener when
+  // the pre-dispatch chain above ran. Resync against the settled state, then
+  // replay only this step's GENERAL_DEPLOYED events through the chain.
+  // No double-fire: every compiled onDeploy definition pins sourceGeneralId
+  // and the bridge condition matches it against the deployed general's
+  // runtime id, so a replayed deploy event can only hit the listener owned
+  // by that very general — which did not exist before the resync.
+  // settleable excludes DEATH/TRIGGERED echoes for the same reason as the
+  // death-reentry loop below; deploy-derived DEATHs fold into it via derived.
+  const deployedEvents = events.filter(event => event.type === 'GENERAL_DEPLOYED');
+  if (deployedEvents.length > 0 && ctx.resyncSkills) {
+    ctx.resyncSkills(next);
+    const expanded = resolveTriggerChain(next, ctx.triggers, deployedEvents);
+    const fresh = expanded.filter(event => !deployedEvents.includes(event));
+    events.push(...fresh);
+    const settleable = fresh.filter(event => event.type !== 'DEATH' && event.type !== 'TRIGGERED');
+    if (settleable.length > 0) {
+      const deployDerived: GameEvent[] = [];
+      next = ctx.processor.process(next, settleable, deployDerived, flow);
+      derived.push(...deployDerived);
+    }
+  }
 
   // Skill kills settle inside process(), so their derived DEATH events miss
   // the pre-dispatch trigger chain. Re-enter it (bounded) with post-apply

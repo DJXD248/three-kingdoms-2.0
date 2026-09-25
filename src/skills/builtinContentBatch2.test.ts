@@ -4,10 +4,10 @@
  * is the first built-in with TWO independently-triggered effects (e1
  * self-damage + e2 draw): the compiler must emit two definitions from one
  * skill. The three onDeploy skills (英慧/拓略/奋勇) were demoted to
- * descriptive tier-4 — the activation probe in
- * core/transitionEquivalence.test.ts proved GENERAL_DEPLOYED can never hit
- * the skill registry (registration-order gap; HANDOFF §12-26), and this
- * file pins their honest NO_RUNTIME_PAYLOAD skip.
+ * descriptive tier-4 — the then-activation probe proved GENERAL_DEPLOYED
+ * could not hit the skill registry (registration-order gap; HANDOFF
+ * §12-26, wired closed in v2.5.1; wiring ≠ promotion), and this
+ * file pins their honest NO_RUNTIME_PAYLOAD skip (still true today).
  * This file pins the DATA shape and the honest-skip sentinel; full-chain
  * behaviour (incl. the two remaining sentinels — 苦肉 SELF 自伤路径 and
  * 奋威 chain TARGET resolution) lives in core/transitionEquivalence.test.ts.

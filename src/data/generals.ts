@@ -294,6 +294,9 @@ const SK_MENGJIN: Skill = {
  * skill registry — skills are registered from on-field generals BEFORE a
  * dispatch, so the deploying general's own onDeploy listener doesn't exist
  * yet when the event fires (registration-order gap, HANDOFF §12-26).
+ * v2.5.1 WIRED that gap (TransitionCore resyncSkills: post-settlement
+ * re-register + replay of the deploy step) — wiring ≠ promotion: these
+ * three stay descriptive until the v2.5.2 four-acceptance gate.
  * Semantics remain this project's first definition (approximations
  * registered in PROJECT_ARCH_MAP §G).
  */

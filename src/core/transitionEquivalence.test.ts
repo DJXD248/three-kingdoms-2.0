@@ -858,23 +858,105 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(second.final).toBe(first.final);
   });
 
-  it('onDeploy 活性探针（英慧）：部署成功但监听器尚未注册 → 永不触发，实证 §12-26 降级依据', () => {
+  it('onDeploy 接线探针（英慧·合成载荷）：部署结算后补注册+重放该步 → 恰好触发一次 (v2.5.1, §12-26 销案)', () => {
     const wyj = builtin2As('wyj', 'jin_008');
+    // 合成 runtime 载荷：内置英慧本体仍是纯描述（转正另有四件验收，v2.5.2）。
+    // 探针证明的是"接线活着"：若 §12-26 时序缺口复发，本断言即失败。
+    wyj.skills = [{
+      name: '英慧',
+      description: '识鉴英才。',
+      trigger: { type: 'onDeploy' },
+      effects: [{ id: 'e1', trigger: { type: 'onDeploy' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+    }];
     const s = makeState([
       makePlayer(1, { fieldGenerals: [], hand: [wyj, { ...COSTS[0] }, { ...COSTS[1] }] }),
       makePlayer(2, { fieldGenerals: [] }),
     ]);
     const engine = new GameEngine(s);
-    syncPlayerSkills(engine, engine.state); // 场上无人 → 注册表里也没有英慧
+    syncPlayerSkills(engine, engine.state); // 场上无人 → 派发前注册表里确实没有英慧
     const events = engine.dispatch(createAction('DEPLOY_GENERAL', 1, {
       general: wyj, slot: 0, consumeCards: [{ ...COSTS[0] }],
     }));
-    const deployed = events.some(e => e.type === 'GENERAL_DEPLOYED');
-    const yinghui = events.some(e => e.type === 'DRAW'
+    expect(events.some(e => e.type === 'GENERAL_DEPLOYED')).toBe(true);
+    const yinghui = events.filter(e => e.type === 'DRAW'
       && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('英慧:e1'));
-    // 注册时序缺口固化：若未来为 onDeploy 接通激活路径（2.5 候选），
-    // 本断言会失败并强制同步更新 §G/§12-26 与三条降级技能的去向。
-    expect({ deployed, yinghui }).toEqual({ deployed: true, yinghui: false });
+    expect(yinghui).toHaveLength(1); // 补注册+重放：恰好一次，无双重触发
+    expect(yinghui[0].data as unknown as Record<string, unknown>).toMatchObject({ playerId: 1, count: 1 });
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    expect(p1.hand).toHaveLength(2); // 3 张 -成本1 -打出wyj +英慧摸1
+    expect(engine.state.deck).toHaveLength(3);
+    // 二次派发不重复触发：监听器已在册，但不再有新的 GENERAL_DEPLOYED
+    const second = engine.dispatch(createAction('END_TURN', 1));
+    expect(second.filter(e => e.type === 'DRAW'
+      && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('英慧:e1'))).toHaveLength(0);
+  });
+
+  it('onDeploy 部署链四路径逐事件一致（英慧摸牌+合成登场甲，v2.5.1 非内容刀硬证）', () => {
+    const makeYinghui = () => {
+      const wyj = builtin2As('wyj', 'jin_008');
+      wyj.skills = [{
+        name: '英慧',
+        description: '识鉴英才。',
+        trigger: { type: 'onDeploy' },
+        effects: [{ id: 'e1', trigger: { type: 'onDeploy' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+      }];
+      return wyj;
+    };
+    const makeArmor = () => makeGeneral('g_armor', 4, [{
+      name: '登锋',
+      effects: [{ id: 'e1', trigger: { type: 'onDeploy' }, runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' } }],
+    }]);
+    const build = (): EngineState => makeState([
+      makePlayer(1, { fieldGenerals: [], hand: [makeYinghui(), makeArmor(), { ...COSTS[0] }, { ...COSTS[1] }, { ...COSTS[2] }] }),
+      makePlayer(2, { fieldGenerals: [] }),
+    ]);
+    // 同一 action 对象复用于四路径（action id 属派发层，normalize 不剥离内嵌 action）；
+    // 手牌与 action 各自持同 runtime id 的独立副本，resolver 按 id 匹配。
+    const script: GameAction[] = [
+      createAction('DEPLOY_GENERAL', 1, { general: makeYinghui(), slot: 0, consumeCards: [{ ...COSTS[0] }] }),
+      createAction('DEPLOY_GENERAL', 1, { general: makeArmor(), slot: 1, consumeCards: [{ ...COSTS[1] }] }),
+    ];
+
+    const initial = build();
+    const engine = new GameEngine(cloneEngineState(initial));
+    const residentSteps: string[][] = [];
+    for (const action of script) {
+      syncPlayerSkills(engine, engine.state);
+      residentSteps.push(rawEvents(engine.dispatch(action)));
+    }
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    expect(fieldHp(engine.state, 1, 'g_armor')).toEqual({ hp: 1, armor: 1 }); // 1 成本进场 1 血 + 登锋登场甲
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    expect(p1.hand).toHaveLength(2); // 5 -2打出 -2成本 +英慧摸1（cost2 未消耗）
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = cloneEngineState(initial);
+    const bridgeSteps: string[][] = [];
+    for (const action of script) {
+      const result = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = result.engineState;
+      bridgeSteps.push(rawEvents(result.events));
+    }
+    expect(bridgeSteps).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = cloneEngineState(initial);
+    const reconcileSteps: string[][] = [];
+    for (const action of script) {
+      const result = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = result.engineState;
+      reconcileSteps.push(rawEvents(result.events));
+    }
+    expect(reconcileSteps).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(script.length);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
 });
 

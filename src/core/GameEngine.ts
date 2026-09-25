@@ -14,6 +14,7 @@ import { SnapshotManager } from '../replay/SnapshotManager';
 import { transition } from './TransitionCore';
 import type { OverrideFailure } from './eventProcessors/drawEvents';
 import { getLegalActions } from '../rules/legalActions';
+import { syncPlayerSkills } from '../skills/skillCompiler';
 
 export interface GameEngineOptions {
   /** Record replay entries + state snapshots (default true). AI battle runs
@@ -32,6 +33,14 @@ export class GameEngine {
   readonly rules = new RuleEngine();
   readonly replay = new ReplayRecorder();
   readonly snapshots = new SnapshotManager();
+
+  /** v2.5.1 onDeploy wiring (§12-26): satisfies TransitionContext.resyncSkills.
+   * Full-body re-derivation is idempotent (Map-keyed registrations), so the
+   * only structural effect is adding listeners for generals deployed by the
+   * action currently being transitioned. */
+  readonly resyncSkills = (state: EngineState): void => {
+    syncPlayerSkills(this, state);
+  };
 
   private readonly recordHistory: boolean;
 
