@@ -208,6 +208,26 @@
 | 三处同步 | 触发三表+两枚中文标签+RuntimeEditor/TriggerEditor 下拉随刀；数据层枚举扩枚即入库合法（编译诚实契约：录入未支撑组合仍走 skipped 通道） |
 | 活例 | **无（非内容刀）**——合成装配测试：onCardGained→DRAW 1 SELF 接收者真摸牌（重入链账形钉死）；onCardLost→DISCARD 空转负例（无 GIVE 即无 CARD_LOST，DISCARD 不派生） |
 
+### EQUIP_STRIP 拆解装备原语（v2.6.0 落地，2.6 首个新 Effect 原语=第七原语；建议书 ⑤ 装备区交互 6 条；**内容刀：本刀接线即配首批两条内置载荷 强袭/崩坏**）
+
+| 格 | 契约 |
+|---|---|
+| Event | 新事件 `EQUIP_STRIP{ targetPlayerId, targetId, count }`（`core/Event.ts` 联合新增）；SkillTriggerBridge 只产事件不自带状态修改，EventProcessor `case 'EQUIP_STRIP'`→`applyEquipStripEvent` 是唯一结算点；**本刀不派生任何 CARD_* 事件**（失牌路径事件源扩面挂 v2.6.2 转正刀，见 GIVE/触发族两表 Reentrancy 格与 EVENT SOURCE 缺口） |
+| Timing | 与 DISCARD/GIVE 同族：触发链 BFS 尾部落账，经 `TransitionCore` 重入环在**同一 dispatch** 内进入结算链 |
+| Source | 拆解发起者恒=技能拥有者将领所在玩家（不经载荷传递）；**受害者按 GENERAL 键定**——装备住在前线将领的 `armorCards` 数组上（本项目唯一装备面，无装备槽），故 `targetId=技能目标将领的 runtime card id`，其所在玩家由 `findGeneralRef` 反查得 `targetPlayerId`（AFTER_DAMAGE 载荷不带 targetPlayerId=与 GIVE TARGET 空转同一实证教训） |
+| Target | 角色解析与 DISCARD/GIVE 同表：SELF=技能源将领；ATTACKER=`data.sourcePlayerId ?? attackerPlayerId`；TARGET=`data.targetPlayerId`（由目标将领反查）。**强袭=TARGET（拆被击目标）、崩坏=SELF（拆自身）** |
+| Condition | `targetPlayerId` 缺失/非有限数、`targetId` 缺失、目标将领不在场（`findGeneralRef` 命中失败=已被本次伤害击杀）、`armorCards.length===0` →整笔诚实空转（EQUIP_STRIP 事件照样入账=触发确实发生，装备不动——与 DISCARD 空手/GIVE 空转同一纪律）；`count=Math.max(1,floor(value))`（**装备面无"全部"哨兵语义**，min=1 与载荷一致，不采 0） |
+| Effect | `armorCards` **头部确定性选取**前 count 张（与 DISCARD/GIVE 同一选择策略，账本可预测，零新随机面）；**路由随卡片类型**：资源卡→`state.discardPile`、将领卡→拥有者 `generalPool`（防御性诚实，与登场/移动/补给消耗同路由）；每拆一张 `currentArmor = max(0, currentArmor − 张数)`（点制 GAIN_ARMOR 护甲共用同一货币，拆解如实扣减）；`armorCards` 清空时 `isArming=false` |
+| RNG | **零新增随机面**：不咨询 rngState、不改游标；头部选取确定性。回放逐字节一致（同配置两跑测试） |
+| Replay | **A 类必录**：EQUIP_STRIP 经重入环回灌 dispatch 返回事件流→随 entry.events 进录像；四路对账扩例（真实拆解链、空转链、击杀后空链）逐事件一致 |
+| Transition | 唯一 `TransitionCore.transition`；`applyEquipStripEvent` 为纯 `(state,event)→state` 且仅经 EventProcessor.apply 分发调用（2.2.13 单入口纪律保持） |
+| Reentrancy | 拆解不派生可触发事件→**无新增重入面**（本刀 CARD_* 事件源仍仅 GIVE 派生，EQUIP_STRIP 结算不派生；被拆装备→CARD_LOST 挂 v2.6.2 事件源扩面刀，须先补事件源十二格节+重入评估）；单技能回合内幂等由承载触发的单次性保证（一次攻击只发一条 onDamageDealt；一次被瞄准只发一条 onBecomingTarget） |
+| Death chain | 拆解本身不造成伤害→不触 DEATH 派生；**强袭承载于 onDamageDealt**：击杀发生时目标已离场，其 EQUIP_STRIP 经 findGeneralRef 失败=诚实空转（先伤后拆、拆不到亡者，时序如实）；崩坏承载于 onBecomingTarget：结算前/后由既有触发优先级决定，不减当次伤害 |
+| 优先级 | 原语不自带优先级，承载触发走 TriggerEngine 现表（onDamageDealt=反伤族档、onBecomingTarget=v2.3.0 结算前族） |
+| 忠实度 | **强袭=A**（原技"移除目标装备区一张牌"=拆 armorCards 头部 1 张忠实，资源进弃牌堆/将领回池路由差异已在 Effect 格注死）；**崩坏=B**（原技"成为基本牌目标后弃置装备"含"基本牌"谓词、现触发为广义 onBecomingTarget，且落账时序=伤害结算后、不减当次伤害——效果相近、条件与时序归属不同，§G 行内已注）——GPT 首检采纳② A/B/C 标签第三批应用 |
+| 三处同步 | `SkillRuntimeEffect.type` 联合（`generals.ts:140` +`dataTypes.DataSkillEffectType`）+ `skillCompiler.SUPPORTED_EFFECT_TYPES`（+"EQUIP_STRIP"）+ `skillExcelFormat.runtimeEffectTypeLabels`（"剥离装备"）与 `SETTLEABLE_RUNTIME_TYPES` + `RuntimeEditor` 预览"剥离 N 张装备"+ `SkillTriggerBridge` EQUIP_STRIP 分支；**min=1 不收 0**：装备面无全清哨兵，表面缺口不同于 DISCARD/GIVE 的 0=全部（本刀刻意不同，Effect 格已注） |
+| 活例 | **两条内置技能进局（内容刀）**：`SK_QIANGXI` 典韦 wei_012（onDamageDealt/attackDamage→EQUIP_STRIP 1 TARGET，描述"造成攻击伤害后，剥离伤害目标的一张装备卡（入弃牌堆，其护甲值相应减少）。"）+`SK_BENGHUAI` 董卓 qun_004（onBecomingTarget→EQUIP_STRIP 1 SELF，描述"成为攻击目标时惊惶失据：弃置自己的一张装备卡（伤害结算后落账，不减当次伤害）。"）——均为原档2 技能因新原语到位进局；账本 168→**38 runtime 定义/131 诚实跳过**（批 +2） |
+
 ### 编译诚实契约（同刀落地，D-9 C 类）
 
 `syncPlayerSkills` 的 skipped 项（TRIGGER_UNSUPPORTED / NO_RUNTIME_PAYLOAD 等，含 reason）经 `getCompileDiagnostics(engine)`（WeakMap，引擎重建自然隔离）带外上报；console.warn 按 **distinct 条目**（`技能名#效果id:原因`）去重、测试缝 `__resetCompileWarnDedup()`。事件流与游戏行为零变化。编辑器/Excel 录入未支撑类型时消费该通道做 UI 提示=后续需求（非缺陷，已登记 HANDOFF §12-18）。
@@ -272,7 +292,7 @@
 | 巧变 | 张郃 | 4 | — | 移动/弃装备复合，移动是本游戏玩家动作非效果原语 |
 | 断粮 | 徐晃 | 4 | — | 牌型转换+弃牌限制 |
 | 据守 | 曹仁 | 2 | — | 摸3+弃光代价（DISCARD）｜**缓配（v2.5.0 评估）**：DISCARD 已到但代价与收益须原子发动——两条独立效果先后触发=可摸3后弃光不执行（或先弃后摸白赚），缺口真身=效果组原子性/自定义条件，非原语缺失 |
-| 强袭 | 典韦 | 2 | — | 装备区移除 |
+| 强袭 | 典韦 | 2 | onDamageDealt(attack)→EQUIP_STRIP 1 TARGET | 原技"移除伤害目标装备区一张牌"=本项目唯一装备面 armorCards 头部拆解 ｜**✅ v2.6.0 已实装（EQUIP_STRIP 首批；保真度 A：拆 1 装备卡忠实"移除装备"，资源卡进弃牌堆/将领卡回池，十二格表见 F 节）** |
 | 驱虎 | 荀彧 | 4 | — | 判定+跨目标伤害分配 |
 | 节命 | 荀彧 | 2 | — | 弃牌代价+回复他人 |
 | 行殇 | 曹丕 | 2 | — | 阵亡将领牌获取=坟场操作 |
@@ -388,7 +408,7 @@
 | 闭月 | 貂蝉 | 4 | — | 判定摸牌 |
 | 酒池 | 董卓 | 4 | — | 牌型转换 |
 | 肉林 | 董卓 | **1** | onDamageTaken(skill)→HEAL 1 SELF | 初定义"酒肉养伤：受技能伤害后回1血"（牌型响应不可行；与张春华绝情同为技能伤族但方向相反） ｜**✅ v2.4.1 已实装** |
-| 崩坏 | 董卓 | 2 | — | 成为基本牌目标+弃装备 |
+| 崩坏 | 董卓 | 2 | onBecomingTarget→EQUIP_STRIP 1 SELF | 原技"成为基本牌目标后弃置装备"含"基本牌"谓词，现触发为广义 onBecomingTarget、落账时序=伤害结算后不减当次伤害 ｜**✅ v2.6.0 已实装（EQUIP_STRIP 首批；保真度 B：条件面（基本牌→广义目标）与时序面差异已注，十二格表见 F 节）** |
 | 乱击 | 袁绍 | 4 | — | 手牌当万箭齐发 |
 | 双雄 | 颜良文丑 | 4 | — | 判定拼点 |
 | 雷公 | 张角 | 4 | — | 属性伤害判定 |
