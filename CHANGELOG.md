@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-09-25
+
+2.4 mainline opened (user-authorized four-cut content plan): **cut 1 — the full-inventory tier table for all built-in general skills. A *non-content* cut: docs + read-only script evidence only, zero src changes**; the hard proof is ai-battle 300 seed1 staying byte-identical against baseline **B2 {1:114,2:186}** (two runs `cmp`-equal after the registered timing-line exemptions, VIOLATIONS=0, per-faction anchors matching §12-19 verbatim).
+
+- **Base-count correction (formally registered):** every earlier doc's "77 built-in generals" was wrong. Script measurement over `src/data/generals.ts`: **95 generals (魏21/蜀22/吴21/群16/晋15), 168 skill entries, 162 unique names**. Historical "77" mentions stay as history; §12-24 is the authoritative correction.
+- **ARCH_MAP new section G — built-in skill content tiers:** the engine's real vocabulary (8 compilable triggers × 4 effect primitives × SELF/ATTACKER/TARGET, plus an explicit "cannot express" list) is pinned as the sole basis for tier-1 classification. All 168 skills tabled per faction (34/38/37/29/30 rows, row counts and tier sums cross-checked by script): **tier 1 = 33** (expressible today, each with its drafted payload — the construction blueprint for cuts 2–3), **tier 2 = 48** (need new effect primitives), **tier 3 = 26** (need on-demand-pool triggers), **tier 4 = 61** (stay descriptive: no counterpart concept in this game). Jin's 18/30 tier-1 density is honest — home-grown generals carry no original-text baggage, so their first definition was designed in engine vocabulary.
+- **Batch re-balance disclosed** (vs. the plan's 魏蜀/吴群晋 split): cut 2 v2.4.1 = 魏+蜀+群 9 payloads, cut 3 v2.4.2 = 吴+晋 24 payloads, because tier-1 clusters in Jin; both remain content cuts registering B3/B4 respectively.
+- **2.5 candidate ranking registered, not implemented:** DISCARD (19 refs) > give-to-others (7) > onCardLost/onCardGained (6) = equipment interaction (6) > deck-top (5) > custom conditions (4) = once-per-game (3).
+- **Three pre-implementation sentinels:** 苦肉 SELF-damage path, 奋威 chained TARGET resolution off AFTER_DAMAGE payloads, compile-id uniqueness for cross-faction duplicate skill names — any compiler/engine refusal demotes the entry honestly to tier 4 with a registered reason (never force semantics).
+- **Verification:** check 0 errors; 388/46 tests unchanged; coverage snapshots 47.01/39/39.13/52.79 all above the 42/34/34/47 floors (§12-22④ snapshot rule); lint 0 errors / 30 legacy warnings; build 1,933.33 kB / gzip 567.74 kB — byte-size identical to 2.3.4, consistent with zero src changes. No UI/gameplay surface touched → no browser E2E claimed. **GPT review judgment (per plan): skipped** — registration-only cut, no contract-level surprises found while classifying. Next: cut 2 v2.4.1 implements the 9 tier-1 魏/蜀/群 payloads as a content cut → baseline B3. CI: **PENDING**.
+
 ## [2.3.4] - 2026-09-25
 
 2.3 mainline, final cut (of the user-authorized five-cut plan): **P5 product-surface consistency — the accumulated quick-clean pool, all three §12-0 leftovers closed in one cut**. A *non-content* cut: the hard proof is ai-battle 300 seed1 staying byte-identical against baseline **B2 {1:114,2:186}** (two runs `cmp`-equal after the two registered timing-line exemptions, VIOLATIONS=0).
