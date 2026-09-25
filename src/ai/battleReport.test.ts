@@ -140,16 +140,19 @@ describe('battleReport', () => {
 describe('skill trigger report (2.4.3)', () => {
   it('configuredSkillRows covers exactly the runtime-bearing built-in skills', () => {
     const rows = configuredSkillRows();
-    // 批一 9 + 批二 21 + 批三 2（v2.4.0 §G 档1 全数 + DISCARD 首批；苦肉双效果仍是一行）
-    expect(rows).toHaveLength(32);
+    // 批一 9 + 批二 21 + 批三 2 + v2.5.2 onDeploy 转正 3（苦肉双效果仍是一行）
+    expect(rows).toHaveLength(35);
     const keys = rows.map(r => r.key);
-    // join key = 技能名（屯田 魏/晋 重名共两行 = 31 个唯一键）
-    expect(new Set(keys).size).toBe(31);
+    // join key = 技能名（屯田 魏/晋 重名共两行 = 34 个唯一键）
+    expect(new Set(keys).size).toBe(34);
     expect(keys.filter(k => k === '屯田')).toHaveLength(2);
     expect(rows.some(r => r.key === '奸雄' && r.label === '曹操·奸雄')).toBe(true);
     expect(rows.some(r => r.key === '苦肉' && r.label === '黄盖·苦肉')).toBe(true);
     expect(rows.some(r => r.key === '反馈' && r.label === '司马懿·反馈')).toBe(true);
     expect(rows.some(r => r.key === '断肠' && r.label === '蔡文姬·断肠')).toBe(true);
+    expect(rows.some(r => r.key === '英慧' && r.label === '王元姬·英慧')).toBe(true);
+    expect(rows.some(r => r.key === '拓略' && r.label === '杜预·拓略')).toBe(true);
+    expect(rows.some(r => r.key === '奋勇' && r.label === '文鸯·奋勇')).toBe(true);
     // pure-description skills (no runtime payload) must stay out of the set
     expect(keys).not.toContain('观星');
   });

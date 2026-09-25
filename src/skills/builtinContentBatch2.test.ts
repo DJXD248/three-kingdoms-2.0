@@ -1,16 +1,17 @@
 /**
  * 2.4.2 batch two — built-in tier-1 skills (Wu+Jin): 21 of the 24 drafted
- * entries carry runtime payloads per the v2.4.0 §G construction plan. 苦肉
- * is the first built-in with TWO independently-triggered effects (e1
- * self-damage + e2 draw): the compiler must emit two definitions from one
- * skill. The three onDeploy skills (英慧/拓略/奋勇) were demoted to
- * descriptive tier-4 — the then-activation probe proved GENERAL_DEPLOYED
- * could not hit the skill registry (registration-order gap; HANDOFF
- * §12-26, wired closed in v2.5.1; wiring ≠ promotion), and this
- * file pins their honest NO_RUNTIME_PAYLOAD skip (still true today).
- * This file pins the DATA shape and the honest-skip sentinel; full-chain
- * behaviour (incl. the two remaining sentinels — 苦肉 SELF 自伤路径 and
- * 奋威 chain TARGET resolution) lives in core/transitionEquivalence.test.ts.
+ * entries carried runtime payloads at landing; 苦肉 is the first built-in
+ * with TWO independently-triggered effects (e1 self-damage + e2 draw): the
+ * compiler must emit two definitions from one skill. The three onDeploy
+ * skills (英慧/拓略/奋勇) were demoted to descriptive tier-4 then — the
+ * then-activation probe proved GENERAL_DEPLOYED could not hit the skill
+ * registry (registration-order gap; HANDOFF §12-26). v2.5.1 wired the gap;
+ * v2.5.2 PROMOTED the three through the four-acceptance gate (recompile +
+ * dedicated hotseat E2E + replay rebuild byte-equality + existing timing
+ * contracts unregressed) — this file now pins their promoted shape.
+ * Full-chain behaviour (incl. the two remaining sentinels — 苦肉 SELF 自伤
+ * 路径 and 奋威 chain TARGET resolution — and the onDeploy real-template
+ * deploy chains) lives in core/transitionEquivalence.test.ts.
  */
 import { describe, it, expect } from 'vitest';
 import { allGenerals, type General } from '../data/generals';
@@ -42,8 +43,8 @@ const BATCH2: Array<{ owner: string; name: string }> = [
   { owner: 'jin_015', name: '死节' },
 ];
 
-/** §G tier-1 drafts demoted to descriptive tier-4 by the onDeploy probe. */
-const DEMOTED2: Array<{ owner: string; name: string }> = [
+/** §G tier-1 drafts demoted by the onDeploy probe, PROMOTED in v2.5.2. */
+const PROMOTED2: Array<{ owner: string; name: string }> = [
   { owner: 'jin_008', name: '英慧' },
   { owner: 'jin_009', name: '拓略' },
   { owner: 'jin_012', name: '奋勇' },
@@ -62,6 +63,9 @@ const ALL_IDS = [
     .map(b => `${b.owner}:${b.name}:e1`),
   // batch three (v2.5.0) — the first DISCARD-primitive skills (§G tier-2 via new primitive)
   'wei_002:反馈:e1', 'qun_012:断肠:e1',
+  // onDeploy promotions (v2.5.2) — gap wired in v2.5.1, promoted after
+  // the four-acceptance gate
+  'jin_008:英慧:e1', 'jin_009:拓略:e1', 'jin_012:奋勇:e1',
 ];
 
 function compileAllGenerals() {
@@ -78,17 +82,19 @@ function compileAllGenerals() {
 describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () => {
   const { definitions, skipped } = compileAllGenerals();
 
-  it('21 条编译入局：全库共 33 条 runtime 定义（含批量三 DISCARD 两条），onDeploy 三条按红线降级', () => {
-    expect(definitions).toHaveLength(33);
+  it('24 条编译入局：全库共 36 条 runtime 定义（含批量三 DISCARD 两条与 v2.5.2 转正 onDeploy 三条）', () => {
+    expect(definitions).toHaveLength(36);
     expect(definitions.map(d => d.id).sort()).toEqual([...ALL_IDS].sort());
-    expect(skipped).toHaveLength(136);
+    expect(skipped).toHaveLength(133);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 
-  it('降级钉死：英慧/拓略/奋勇维持 NO_RUNTIME_PAYLOAD 诚实跳过（不配死载荷）', () => {
-    for (const d of DEMOTED2) {
-      const skip = skipped.find(s => s.owner === d.owner && s.skillName === d.name);
-      expect(skip, `${d.owner}|${d.name}`).toMatchObject({ reason: 'NO_RUNTIME_PAYLOAD' });
+  it('转正钉死：英慧/拓略/奋勇已带 runtime 载荷入局（v2.5.2 四件验收），不再出现在跳过名单', () => {
+    for (const p of PROMOTED2) {
+      const skip = skipped.find(s => s.owner === p.owner && s.skillName === p.name);
+      expect(skip, `${p.owner}|${p.name}`).toBeUndefined();
+      const def = definitions.find(d => d.id === `${p.owner}:${p.name}:e1`);
+      expect(def, `${p.owner}|${p.name}`).toBeTruthy();
     }
   });
 
@@ -197,6 +203,19 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
       trigger: 'onDeath',
       effects: [{ type: 'DAMAGE', value: 2, target: 'ATTACKER' }],
     });
+    // v2.5.2 转正三条：onDeploy 载荷逐字对 §G 拟载施工图
+    expect(byId.get('jin_008:英慧:e1')).toMatchObject({
+      trigger: 'onDeploy', effectId: 'e1',
+      effects: [{ type: 'DRAW_CARD', value: 2, target: 'SELF' }],
+    });
+    expect(byId.get('jin_009:拓略:e1')).toMatchObject({
+      trigger: 'onDeploy', effectId: 'e1',
+      effects: [{ type: 'GAIN_ARMOR', value: 2, target: 'SELF' }],
+    });
+    expect(byId.get('jin_012:奋勇:e1')).toMatchObject({
+      trigger: 'onDeploy', effectId: 'e1',
+      effects: [{ type: 'DRAW_CARD', value: 1, target: 'SELF' }],
+    });
   });
 
   it('同名"屯田"双实例（魏邓艾/晋邓艾）在同一个将集合里 id 无碰撞', () => {
@@ -207,7 +226,7 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
         ids.add(d.id);
       }
     }
-    expect(ids.size).toBe(33);
+    expect(ids.size).toBe(36);
   });
 });
 

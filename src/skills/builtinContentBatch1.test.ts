@@ -53,8 +53,8 @@ describe('2.4.1 批量一 · 编译形态（§G 施工图逐字核对）', () =>
     const batchKeys = new Set(BATCH1.map(b => `${b.owner}|${b.name}`));
     const batchSkips = skipped.filter(s => batchKeys.has(`${s.owner}|${s.skillName}`));
     expect(batchSkips).toEqual([]);
-    // 全局精确账（33 定义 / 136 跳过）由批量二文件钉死，此处只做下限哨兵
-    expect(skipped.length).toBeGreaterThanOrEqual(136);
+    // 全局精确账（36 定义 / 133 跳过，含 v2.5.2 onDeploy 转正三条）由批量二文件钉死，此处只做下限哨兵
+    expect(skipped.length).toBeGreaterThanOrEqual(133);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 
@@ -127,7 +127,7 @@ describe('2.4.1 哨兵③ · 跨势力重名技能编译 id 唯一性', () => {
         ids.add(d.id);
       }
     }
-    expect(ids.size).toBe(33); // v2.5.0 批量三后全库定义数（无碰撞）
+    expect(ids.size).toBe(36); // v2.5.2 onDeploy 转正三条后全库定义数（无碰撞）
   });
 });
 

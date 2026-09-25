@@ -958,5 +958,93 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(residentSteps);
     expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
+
+  it('v2.5.2 转正：内置英慧（王元姬真实载荷 DRAW 2 SELF）部署当步恰摸一次两张', () => {
+    const wyj = builtin2As('wyj', 'jin_008'); // 真实模板：英慧已带 runtime 载荷
+    const s = makeState([
+      makePlayer(1, { fieldGenerals: [], hand: [wyj, { ...COSTS[0] }, { ...COSTS[1] }] }),
+      makePlayer(2, { fieldGenerals: [] }),
+    ]);
+    const engine = new GameEngine(s);
+    syncPlayerSkills(engine, engine.state);
+    const events = engine.dispatch(createAction('DEPLOY_GENERAL', 1, {
+      general: wyj, slot: 0, consumeCards: [{ ...COSTS[0] }],
+    }));
+    const yinghui = events.filter(e => e.type === 'DRAW'
+      && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('英慧:e1'));
+    expect(yinghui).toHaveLength(1);
+    expect(yinghui[0].data as unknown as Record<string, unknown>).toMatchObject({ playerId: 1, count: 2 });
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    expect(p1.hand).toHaveLength(3); // 3 -打出wyj -成本 +英慧摸2
+    expect(engine.state.deck).toHaveLength(2);
+    // 同将另一技能颂威=onTurnEnd，仅 ACTIVATE_SKILL 路径，回合结束不自动抢跑
+    const second = engine.dispatch(createAction('END_TURN', 1));
+    expect(second.filter(e => e.type === 'DRAW'
+      && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('颂威'))).toHaveLength(0);
+  });
+
+  it('v2.5.2 转正四件验收·真实模板部署链：英慧摸2+拓略甲2+奋勇摸1，四路径逐事件一致（录像重建含内）', () => {
+    const makeYj = () => builtin2As('wyj', 'jin_008');
+    const makeDy = () => builtin2As('duyu', 'jin_009');
+    const makeWy = () => builtin2As('wenyang', 'jin_012');
+    const build = (): EngineState => makeState([
+      makePlayer(1, {
+        fieldGenerals: [],
+        hand: [makeYj(), makeDy(), makeWy(), { ...COSTS[0] }, { ...COSTS[1] }, { ...COSTS[2] }],
+      }),
+      makePlayer(2, { fieldGenerals: [] }),
+    ]);
+    const script: GameAction[] = [
+      createAction('DEPLOY_GENERAL', 1, { general: makeYj(), slot: 0, consumeCards: [{ ...COSTS[0] }] }),
+      createAction('DEPLOY_GENERAL', 1, { general: makeDy(), slot: 1, consumeCards: [{ ...COSTS[1] }] }),
+      createAction('DEPLOY_GENERAL', 1, { general: makeWy(), slot: 2, consumeCards: [{ ...COSTS[2] }] }),
+    ];
+
+    const initial = build();
+    const engine = new GameEngine(cloneEngineState(initial));
+    const residentSteps: string[][] = [];
+    for (const action of script) {
+      syncPlayerSkills(engine, engine.state);
+      residentSteps.push(rawEvents(engine.dispatch(action)));
+    }
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    const flat = residentSteps.flat();
+    expect(flat.filter(e => e.includes('英慧:e1') && e.includes('DRAW')).length).toBe(1);
+    expect(flat.filter(e => e.includes('拓略:e1') && e.includes('GAIN_ARMOR')).length).toBe(1);
+    expect(flat.filter(e => e.includes('奋勇:e1') && e.includes('DRAW')).length).toBe(1);
+    expect(fieldHp(engine.state, 1, 'duyu')).toEqual({ hp: 1, armor: 2 }); // 1 成本进场 1 血 + 拓略登场甲2
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    expect(p1.hand).toHaveLength(3); // 6 -3打出 -3成本 +英慧2 +奋勇1
+    expect(engine.state.deck).toHaveLength(1); // 牌堆 4 张被摸走 3
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = cloneEngineState(initial);
+    const bridgeSteps: string[][] = [];
+    for (const action of script) {
+      const result = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = result.engineState;
+      bridgeSteps.push(rawEvents(result.events));
+    }
+    expect(bridgeSteps).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = cloneEngineState(initial);
+    const reconcileSteps: string[][] = [];
+    for (const action of script) {
+      const result = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = result.engineState;
+      reconcileSteps.push(rawEvents(result.events));
+    }
+    expect(reconcileSteps).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(script.length);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
 });
 

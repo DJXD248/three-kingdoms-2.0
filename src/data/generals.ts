@@ -295,8 +295,9 @@ const SK_MENGJIN: Skill = {
  * dispatch, so the deploying general's own onDeploy listener doesn't exist
  * yet when the event fires (registration-order gap, HANDOFF §12-26).
  * v2.5.1 WIRED that gap (TransitionCore resyncSkills: post-settlement
- * re-register + replay of the deploy step) — wiring ≠ promotion: these
- * three stay descriptive until the v2.5.2 four-acceptance gate.
+ * re-register + replay of the deploy step); v2.5.2 PROMOTED these three
+ * after the four-acceptance gate (recompile + dedicated hotseat E2E +
+ * replay rebuild byte-equality + existing timing contracts unregressed).
  * Semantics remain this project's first definition (approximations
  * registered in PROJECT_ARCH_MAP §G).
  */
@@ -399,7 +400,12 @@ const SK_TUNTIAN_JIN: Skill = {
 };
 const SK_YINGHUI: Skill = {
   name: '英慧',
-  description: '识鉴英才。',
+  description: '识鉴英才：登场时，摸两张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDeploy' },
+    runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' },
+  }],
 };
 const SK_SONGWEI: Skill = {
   name: '颂威',
@@ -412,7 +418,12 @@ const SK_SONGWEI: Skill = {
 };
 const SK_TUOLUE: Skill = {
   name: '拓略',
-  description: '开疆立垒。',
+  description: '开疆立垒：登场时，获得2点护甲。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDeploy' },
+    runtime: { type: 'GAIN_ARMOR', value: 2, target: 'SELF' },
+  }],
 };
 const SK_POZHU: Skill = {
   name: '破竹',
@@ -470,7 +481,12 @@ const SK_DANQI: Skill = {
 };
 const SK_FENGYONG: Skill = {
   name: '奋勇',
-  description: '敢战先登。',
+  description: '敢战先登：登场时，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDeploy' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
 };
 const SK_LUSHA: Skill = {
   name: '戮杀',
