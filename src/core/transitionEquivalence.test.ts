@@ -1208,5 +1208,93 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(JSON.stringify(normalize(again.engine.state as unknown as Record<string, unknown>)))
       .toBe(JSON.stringify(normalize(self.engine.state as unknown as Record<string, unknown>)));
   });
+
+  // ── v2.6.0 EQUIP_STRIP 装备剥离原语（内容刀：强袭/崩坏真实模板） ──
+
+  it('剥离实证：强袭打带甲靶→头部单张军备入弃牌堆+护甲点数归零，四路径逐事件一致 (v2.6.0)', () => {
+    const dianwei = builtin2As('es_atk', 'wei_012'); // 典韦：强袭 onDamageDealt(attack) → EQUIP_STRIP 1 TARGET
+    const prey = makeFieldGeneral(makeGeneral('es_prey', 6, []), 2, 0);
+    prey.armorCards = [{ id: 'es_armor_1', name: '军备', type: '军备' } as never];
+    prey.currentArmor = 1; // 单点护甲吸不住伤害（2 甲 1 吸规则）→ 卡留场等剥离
+    const build = () => makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(dianwei, 1, 0)], hand: COSTS.slice(0, 3).map(c => ({ ...c })) }),
+      makePlayer(2, { fieldGenerals: [prey] }),
+    ]);
+    const action = attack('es_atk', 'es_prey', 0);
+
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    const steps = [rawEvents(engine.dispatch(action))];
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    const flat = steps[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    const strip = flat.filter(e => e.type === 'EQUIP_STRIP' && String(e.data?.skillId ?? '').includes('强袭:e1'));
+    expect(strip).toHaveLength(1);
+    expect(strip[0].data).toMatchObject({ targetPlayerId: 2, targetId: 'es_prey', count: 1 });
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    const preyNow = (p2.fieldGenerals as unknown as Array<{ armorCards: unknown[] }>)[0];
+    expect(preyNow.armorCards).toHaveLength(0); // 头部单张真实离场
+    expect(fieldHp(engine.state, 2, 'es_prey')).toEqual({ hp: 4, armor: 0 }); // 2 伤照吃、点数随剥离扣底
+    expect((engine.state.discardPile as Array<{ id: string }>).some(c => c.id === 'es_armor_1')).toBe(true);
+    expect(engine.state.deck).toHaveLength(4); // 剥离零随机面：牌堆纹丝不动
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = build();
+    const bridgeSteps: string[][] = [];
+    {
+      const r = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = r.engineState;
+      bridgeSteps.push(rawEvents(r.events));
+    }
+    expect(bridgeSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = build();
+    {
+      const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = r.engineState;
+      expect(rawEvents(r.events)).toEqual(steps[0]);
+      expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+    }
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(1);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
+
+  it('剥离诚实空转：崩坏打空装靶→事件照入账状态零变化 + 同配置两跑逐字节一致 (v2.6.0)', () => {
+    const dongzhuo = builtin2As('es_self', 'qun_004'); // 董卓：崩坏 onBecomingTarget → EQUIP_STRIP 1 SELF
+    const build = () => makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('es_basher', 6, []), 1, 0)], hand: COSTS.slice(0, 3).map(c => ({ ...c })) }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(dongzhuo, 2, 0)] }), // armorCards 空
+    ]);
+    const action = attack('es_basher', 'es_self', 0, 1);
+    const runOnce = () => {
+      const engine = new GameEngine(build());
+      syncPlayerSkills(engine, engine.state);
+      const events = engine.dispatch(action);
+      return { engine, raw: rawEvents(events) };
+    };
+
+    const first = runOnce();
+    expect(first.raw.some(e => e.includes('EQUIP_STRIP') && e.includes('崩坏:e1'))).toBe(true);
+    const selfNow = (first.engine.state.players.find(p => p.id === 2)!.fieldGenerals as unknown as
+      Array<{ armorCards: unknown[]; currentArmor: number; isArming: boolean }>)[0];
+    expect(selfNow.armorCards).toHaveLength(0); // 空装填：无卡可剥，诚实空转
+    expect(selfNow.currentArmor).toBe(0);
+    expect(((first.engine.state.discardPile ?? []) as Array<{ id: string }>)
+      .some(c => c.id.startsWith('es_armor'))).toBe(false); // 空转不过手任何装备卡
+    // 崩坏在成为目标时落账：单点都没有 → 当次近战 2 伤照常吃满（4 血上限）
+    expect(fieldHp(first.engine.state, 2, 'es_self')).toEqual({ hp: 2, armor: 0 });
+
+    const second = runOnce();
+    expect(second.raw).toEqual(first.raw);
+    expect(JSON.stringify(normalize(second.engine.state as unknown as Record<string, unknown>)))
+      .toBe(JSON.stringify(normalize(first.engine.state as unknown as Record<string, unknown>)));
+  });
 });
 

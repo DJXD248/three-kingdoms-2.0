@@ -27,7 +27,8 @@ export type DataSkillEffectType =
   | 'HEAL'
   | 'GAIN_ARMOR'
   | 'DISCARD'
-  | 'GIVE';
+  | 'GIVE'
+  | 'EQUIP_STRIP';
 
 export interface SkillEffectData {
   type: DataSkillEffectType;

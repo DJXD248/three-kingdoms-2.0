@@ -697,6 +697,69 @@ describe('EventProcessor', () => {
     });
   });
 
+  describe('EQUIP_STRIP event (v2.6.0)', () => {
+    function stripTarget(armorCards: Array<{ id: string }>, currentArmor: number, isArming = false) {
+      return {
+        general: { id: 'ep_g', name: '剥离靶', faction: '魏', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [] },
+        currentHp: 4, maxHp: 4, meleeAtk: 2, rangedAtk: 1, armor: 0,
+        currentArmor, armorCards, isArming,
+        hasMoved: false, hasAttacked: false, hasSupplied: false, justDeployed: false,
+        ownerId: 2, position: { zone: 'front' as const, slot: 0, areaOwnerId: 1 },
+      };
+    }
+    const arm = (i: number) => ({ id: `ep_arm_${i}`, name: '军备', type: '军备' });
+    const build = (target: unknown) => createTestState([
+      createTestPlayer(1),
+      createTestPlayer(2, { fieldGenerals: [target] as never }),
+    ]);
+
+    it('头部剥离：count 张取头、护甲点数同步扣减、资源卡入弃牌堆', () => {
+      const state = build(stripTarget([arm(1), arm(2), arm(3)], 3, true));
+      const result = processor.process(state, [
+        { type: 'EQUIP_STRIP', data: { targetPlayerId: 2, targetId: 'ep_g', count: 2 } },
+      ]);
+      const fg = (result.players.find(p => p.id === 2)!.fieldGenerals as unknown as Array<Record<string, unknown>>)[0];
+      expect((fg.armorCards as unknown[]).map((c: unknown) => (c as { id: string }).id)).toEqual(['ep_arm_3']);
+      expect(fg.currentArmor).toBe(1); // 3 - 剥离 2 张
+      expect(fg.isArming).toBe(true); // 仍有余装，不强制解除武装态
+      expect((result.discardPile as Array<{ id: string }>).map(c => c.id)).toEqual(['ep_arm_1', 'ep_arm_2']);
+    });
+
+    it('剥空收场：isArming 解除、点数扣到 0 封底不为负', () => {
+      const state = build(stripTarget([arm(1)], 0));
+      const result = processor.process(state, [
+        { type: 'EQUIP_STRIP', data: { targetPlayerId: 2, targetId: 'ep_g', count: 5 } },
+      ]);
+      const fg = (result.players.find(p => p.id === 2)!.fieldGenerals as unknown as Array<Record<string, unknown>>)[0];
+      expect(fg.armorCards).toEqual([]);
+      expect(fg.currentArmor).toBe(0); // 点数 0 封底（卡曾给点已在别处消耗）
+      expect(fg.isArming).toBe(false);
+      expect((result.discardPile as unknown[])).toHaveLength(1);
+    });
+
+    it('诚实空转：空装填/离场目标/缺载荷 → 状态原样返回', () => {
+      const empty = processor.process(
+        build(stripTarget([], 0)),
+        [{ type: 'EQUIP_STRIP', data: { targetPlayerId: 2, targetId: 'ep_g', count: 1 } }],
+      );
+      expect((empty.players.find(p => p.id === 2)!.fieldGenerals as unknown as Array<{ armorCards: unknown[] }>)[0].armorCards).toEqual([]);
+      expect(empty.discardPile).toHaveLength(0);
+
+      const offField = processor.process(
+        build(stripTarget([arm(1)], 1)),
+        [{ type: 'EQUIP_STRIP', data: { targetPlayerId: 2, targetId: 'ep_ghost', count: 1 } }],
+      );
+      expect((offField.players.find(p => p.id === 2)!.fieldGenerals as unknown as Array<{ armorCards: unknown[] }>)[0].armorCards).toHaveLength(1);
+      expect(offField.discardPile).toHaveLength(0);
+
+      const noPayload = processor.process(
+        build(stripTarget([arm(1)], 1)),
+        [{ type: 'EQUIP_STRIP', data: { count: 1 } }],
+      );
+      expect(noPayload.discardPile).toHaveLength(0);
+    });
+  });
+
   describe('immutability', () => {
     it('should not mutate the original state', () => {
       const player = createTestPlayer(1, { baseHp: 5 });

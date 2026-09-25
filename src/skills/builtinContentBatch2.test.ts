@@ -66,6 +66,8 @@ const ALL_IDS = [
   // onDeploy promotions (v2.5.2) — gap wired in v2.5.1, promoted after
   // the four-acceptance gate
   'jin_008:英慧:e1', 'jin_009:拓略:e1', 'jin_012:奋勇:e1',
+  // batch four (v2.6.0) — the first EQUIP_STRIP-primitive skills (§G 装备区交互行)
+  'wei_012:强袭:e1', 'qun_004:崩坏:e1',
 ];
 
 function compileAllGenerals() {
@@ -82,10 +84,10 @@ function compileAllGenerals() {
 describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () => {
   const { definitions, skipped } = compileAllGenerals();
 
-  it('24 条编译入局：全库共 36 条 runtime 定义（含批量三 DISCARD 两条与 v2.5.2 转正 onDeploy 三条）', () => {
-    expect(definitions).toHaveLength(36);
+  it('24 条编译入局：全库共 38 条 runtime 定义（含批量三 DISCARD 两条、v2.5.2 转正 onDeploy 三条与批量四 EQUIP_STRIP 两条）', () => {
+    expect(definitions).toHaveLength(38);
     expect(definitions.map(d => d.id).sort()).toEqual([...ALL_IDS].sort());
-    expect(skipped).toHaveLength(133);
+    expect(skipped).toHaveLength(131);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 
@@ -226,7 +228,7 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
         ids.add(d.id);
       }
     }
-    expect(ids.size).toBe(36);
+    expect(ids.size).toBe(38); // v2.6.0 批量四 EQUIP_STRIP 两条后全库定义数（无碰撞）
   });
 });
 

@@ -166,8 +166,13 @@ interface RunOptions {
   trackSkillTriggers?: boolean;
 }
 
-/** Events a compiled skill effect can materialize as (SkillTriggerBridge). */
-const SKILL_EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD']);
+/**
+ * Events a compiled skill effect can materialize as (SkillTriggerBridge).
+ * The v2.5.3 GIVE sync missed this observation-only set (GIVE had no payload
+ * then; EQUIP_STRIP joins in 2.6.0). Tool surface only — trackSkillTriggers
+ * is default off, gameplay untouched.
+ */
+const SKILL_EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP']);
 
 /**
  * Batch-stable join key = the skill NAME segment of a compiled skillId:

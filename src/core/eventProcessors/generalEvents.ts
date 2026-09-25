@@ -306,6 +306,63 @@ export function applyGiveEvent(state: EngineState, event: GameEvent): EngineStat
   return { ...state, players };
 }
 
+/**
+ * Skill EQUIP_STRIP effect settlement (2.6.0): detaches up to `count` cards
+ * from the HEAD of a field general's armorCards array — the project's only
+ * equipment surface (there are no equipment slots; see §G 装备区交互 rows).
+ * Head selection is deterministic (same policy as DISCARD/GIVE, zero RNG).
+ * Routing follows the canonical consumption paths: resource cards go to
+ * state.discardPile, general cards (defensive honesty) back to the owner's
+ * generalPool. Each detached card deducts one armor point (floor 0: point-
+ * based GAIN_ARMOR armor shares the same currency). No equipment cards or an
+ * off-field general settle as honest no-ops — the EQUIP_STRIP event is still
+ * recorded, the trigger happened.
+ */
+export function applyEquipStripEvent(state: EngineState, event: GameEvent): EngineState {
+  const data = event.data as { targetPlayerId?: number; targetId?: string; count?: number } | undefined;
+  if (typeof data?.targetPlayerId !== 'number' || !data.targetId) return state;
+  const count = Math.max(1, Math.floor(Number(data.count ?? 1)));
+
+  let stripped: any[] = [];
+  const players = state.players.map(player => {
+    if (player.id !== data.targetPlayerId) return player;
+    const fieldGenerals = Array.isArray(player.fieldGenerals) ? player.fieldGenerals as any[] : [];
+    const index = fieldGenerals.findIndex(fg => getRuntimeCardId(fg?.general as any) === String(data.targetId));
+    if (index < 0) return player;
+    const attached = Array.isArray(fieldGenerals[index].armorCards) ? fieldGenerals[index].armorCards as any[] : [];
+    if (attached.length === 0) return player;
+    const take = Math.min(count, attached.length);
+    stripped = attached.slice(0, take);
+    const rest = attached.slice(take);
+    const nextField = fieldGenerals.map((fg, i) => i === index
+      ? {
+          ...fg,
+          armorCards: rest,
+          currentArmor: Math.max(0, Number(fg.currentArmor ?? 0) - stripped.length),
+          ...(rest.length === 0 ? { isArming: false } : {}),
+        }
+      : fg);
+    return { ...player, fieldGenerals: nextField };
+  });
+
+  if (stripped.length === 0) return state;
+  const generalCards = stripped.filter(card => !RESOURCE_TYPES.has(String(card?.type ?? '')));
+  const resources = stripped.filter(card => RESOURCE_TYPES.has(String(card?.type ?? '')));
+  const nextPlayers = generalCards.length > 0
+    ? players.map(player => player.id === data.targetPlayerId
+        ? {
+            ...player,
+            generalPool: [...(Array.isArray(player.generalPool) ? player.generalPool : []), ...generalCards],
+          }
+        : player)
+    : players;
+  return {
+    ...state,
+    players: nextPlayers,
+    discardPile: resources.length > 0 ? [...state.discardPile, ...resources] : state.discardPile,
+  };
+}
+
 export function applyArmorEquippedEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as {
     playerId?: number;

@@ -137,7 +137,7 @@ export interface SkillEffect {
 
 /** 效果的结构化运行时载荷：类型 + 数值 + 目标角色 */
 export interface SkillRuntimeEffect {
-  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE';
+  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE' | 'EQUIP_STRIP';
   value?: number;
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
 }
@@ -233,6 +233,15 @@ const SK_TUNTIAN_WEI: Skill = {
     runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' },
   }],
 };
+const SK_QIANGXI: Skill = {
+  name: '强袭',
+  description: '造成攻击伤害后，剥离伤害目标的一张装备卡（入弃牌堆，其护甲值相应减少）。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
+    runtime: { type: 'EQUIP_STRIP', value: 1, target: 'TARGET' },
+  }],
+};
 const SK_KUANGGU: Skill = {
   name: '狂骨',
   description: '造成攻击伤害后，回复1点体力。',
@@ -276,6 +285,15 @@ const SK_ROULIN: Skill = {
     id: 'e1',
     trigger: { type: 'onDamageTaken', damageSubType: 'skillDamage' },
     runtime: { type: 'HEAL', value: 1, target: 'SELF' },
+  }],
+};
+const SK_BENGHUAI: Skill = {
+  name: '崩坏',
+  description: '成为攻击目标时惊惶失据：弃置自己的一张装备卡（伤害结算后落账，不减当次伤害）。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onBecomingTarget' },
+    runtime: { type: 'EQUIP_STRIP', value: 1, target: 'SELF' },
   }],
 };
 const SK_MENGJIN: Skill = {
@@ -569,7 +587,7 @@ const weiGenerals: General[] = [
   createGeneral('wei_009', '张郃', '魏', 4, ['巧变'], '料敌机先'),
   createGeneral('wei_010', '徐晃', '魏', 4, ['断粮'], '周亚夫之风'),
   createGeneral('wei_011', '曹仁', '魏', 4, ['据守'], '大将军'),
-  createGeneral('wei_012', '典韦', '魏', 4, ['强袭'], '古之恶来'),
+  createGeneral('wei_012', '典韦', '魏', 4, [SK_QIANGXI], '古之恶来'),
   createGeneral('wei_013', '荀彧', '魏', 3, ['驱虎', '节命'], '王佐之才'),
   createGeneral('wei_014', '曹丕', '魏', 3, ['行殇', '放逐'], '霸业的继承者'),
   createGeneral('wei_015', '邓艾', '魏', 4, [SK_TUNTIAN_WEI, '凿险'], '矫然的壮士'),
@@ -637,7 +655,7 @@ const qunGenerals: General[] = [
   createGeneral('qun_001', '华佗', '群', 3, ['急救', '青囊'], '神医'),
   createGeneral('qun_002', '吕布', '群', 4, ['无双'], '武的化身'),
   createGeneral('qun_003', '貂蝉', '群', 3, ['离间', '闭月'], '绝世的舞姬'),
-  createGeneral('qun_004', '董卓', '群', 4, ['酒池', SK_ROULIN, '崩坏'], '魔王'),
+  createGeneral('qun_004', '董卓', '群', 4, ['酒池', SK_ROULIN, SK_BENGHUAI], '魔王'),
   createGeneral('qun_005', '袁绍', '群', 4, ['乱击'], '高贵的名门'),
   createGeneral('qun_006', '颜良文丑', '群', 4, ['双雄'], '虎狼兄弟'),
   createGeneral('qun_007', '张角', '群', 3, ['雷公', '鬼道'], '天公将军'),

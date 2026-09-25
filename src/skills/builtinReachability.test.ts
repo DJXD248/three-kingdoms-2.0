@@ -1,7 +1,7 @@
 /**
  * 2.5.4 收敛核验 · 逐技能强制触发可达性专项。
  *
- * 对全库 36 条内置 runtime 定义逐条构造"必然触发"的最小场景，断言每条
+ * 对全库 38 条内置 runtime 定义逐条构造"必然触发"的最小场景，断言每条
  * 定义都产出过带自身 skillId 的效果事件——随机档 ai-battle 里零触发的
  * 攻击链技能（v2.4.3 洞察①）在这里没有躲藏空间。onTurnEnd 走"候选在列
  * + ACTIVATE_SKILL 真响"两段（决策通道形态），onDeploy 走部署步重放
@@ -15,6 +15,7 @@ import type { GameEvent } from '../core/Event';
 import type { GameAction } from '../action/ActionTypes';
 import { createAction } from '../action/ActionTypes';
 import { allGenerals, type General } from '../data/generals';
+import type { GameCard } from '../data/cards';
 import { syncPlayerSkills, compileGeneralSkills } from './skillCompiler';
 import type { DataSkillDefinition } from './dataTypes';
 import { listTurnEndSkillCandidates } from './turnEndSkills';
@@ -46,7 +47,7 @@ function makeFieldGeneral(general: General, ownerId: number, slot = 0) {
     rangedAtk: general.rangedAtk,
     armor: 0,
     currentArmor: 0,
-    armorCards: [],
+    armorCards: [] as GameCard[],
     isArming: false,
     hasMoved: false,
     hasAttacked: false,
@@ -80,7 +81,9 @@ function makeState(players: EnginePlayer[]): EngineState {
 }
 
 const COSTS = [1, 2, 3].map(i => ({ id: `rcost_${i}`, name: '粮草', type: '粮草' }));
-const EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE']);
+const EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP']);
+const ARMOR_CARD = (index: number): GameCard =>
+  ({ id: `rc_armor_${index}`, name: '军备', type: '军备', description: '测试预挂军备' });
 
 /** 全库编译账本快照：36 定义逐条带 owner，顺序由 generals.ts 决定。 */
 function allCompiledEntries(): DefEntry[] {
@@ -230,6 +233,12 @@ function forceTrigger(
     const victimHp = def.trigger === 'onDeath' ? 1 : clone.hp;
     const victim = makeFieldGeneral(clone, 2, 0);
     victim.currentHp = victimHp;
+    if (def.effects[0]?.type === 'EQUIP_STRIP') {
+      // 单点护甲吸不住一点伤害（armorDamage 规则），当次伤害后卡仍在，
+      // 剥离必须真实落在场景里的这张军备上。
+      victim.armorCards = [ARMOR_CARD(index)];
+      victim.currentArmor = 1;
+    }
     const state = makeState([
       makePlayer(1, {
         fieldGenerals: [makeFieldGeneral(makeGeneral('rc_plain_b', 6, []), 1, 0)],
@@ -238,31 +247,31 @@ function forceTrigger(
       makePlayer(2, { fieldGenerals: [victim] }),
     ]);
     const engine = buildEngine(state);
-    return {
-      state: engine.state,
-      events: engine.dispatch(attack({
-        attackerId: 'rc_plain_b', targetId: cloneId, ranged: false, consumeCard: { ...COSTS[0] },
-      })),
-      scenarioId,
-    };
+    // 先派发再取 state：对象字面量按序求值，dispatch 之前读 engine.state
+    // 拿到的是派发前快照（可达性判定看终态时必须先落账）。
+    const events = engine.dispatch(attack({
+      attackerId: 'rc_plain_b', targetId: cloneId, ranged: false, consumeCard: { ...COSTS[0] },
+    }));
+    return { state: engine.state, events, scenarioId };
   }
 
   if (def.trigger === 'onDamageDealt' || def.trigger === 'onKill') {
     // owner 为攻击方；onKill 需靶子一击致命（直接压血）
     const prey = makeFieldGeneral(makeGeneral('rc_prey', 4, []), 2, 0);
     if (def.trigger === 'onKill') prey.currentHp = 1;
+    if (def.effects[0]?.type === 'EQUIP_STRIP') {
+      prey.armorCards = [ARMOR_CARD(index)];
+      prey.currentArmor = 1;
+    }
     const state = makeState([
       makePlayer(1, { fieldGenerals: [makeFieldGeneral(clone, 1, 0)], hand: [{ ...COSTS[0] }, { ...COSTS[1] }] }),
       makePlayer(2, { fieldGenerals: [prey] }),
     ]);
     const engine = buildEngine(state);
-    return {
-      state: engine.state,
-      events: engine.dispatch(attack({
-        attackerId: cloneId, targetId: 'rc_prey', ranged: false, consumeCard: { ...COSTS[0] },
-      })),
-      scenarioId,
-    };
+    const events = engine.dispatch(attack({
+      attackerId: cloneId, targetId: 'rc_prey', ranged: false, consumeCard: { ...COSTS[0] },
+    }));
+    return { state: engine.state, events, scenarioId };
   }
 
   throw new Error(tag);
@@ -272,14 +281,25 @@ function hasTagged(events: GameEvent[], prefix: string): boolean {
   return events.some(e => String((e.data as Record<string, unknown>)?.skillId ?? '').startsWith(prefix));
 }
 
+/** 场景终态里指定武将身上剩余的装备卡数（找不到该武将返回 undefined）。 */
+function armorCardsLeft(state: EngineState, generalId: string): number | undefined {
+  for (const p of state.players) {
+    const fg = (p.fieldGenerals ?? []).find(
+      f => (f as { general?: { id?: string } }).general?.id === generalId,
+    ) as { armorCards?: unknown[] } | undefined;
+    if (fg) return (fg.armorCards ?? []).length;
+  }
+  return undefined;
+}
+
 const ENTRIES = allCompiledEntries();
 
-describe('2.5.4 逐技能强制触发可达性专项（36/36 定义全谱）', () => {
-  it('账本钉：36 条 runtime 定义 / 133 条诚实跳过，触发类别覆盖 8+onTurnEnd 全谱', () => {
-    expect(ENTRIES).toHaveLength(36);
+describe('2.5.4 逐技能强制触发可达性专项（38/38 定义全谱）', () => {
+  it('账本钉：38 条 runtime 定义 / 131 条诚实跳过，触发类别覆盖 8+onTurnEnd 全谱', () => {
+    expect(ENTRIES).toHaveLength(38);
     let skipped = 0;
     for (const g of allGenerals) skipped += compileGeneralSkills(g).skipped.length;
-    expect(skipped).toBe(133);
+    expect(skipped).toBe(131);
     const triggers = new Set(ENTRIES.map(e => `${e.def.trigger}${e.def.damageTypeFilter ? `:${e.def.damageTypeFilter}` : ''}`));
     expect([...triggers].sort()).toEqual([
       'onBecomingTarget', 'onDamageDealt:attack', 'onDamageTaken',
@@ -291,8 +311,15 @@ describe('2.5.4 逐技能强制触发可达性专项（36/36 定义全谱）', (
   it('每一条定义都能在强制场景里打出带自身 skillId 的效果事件', () => {
     const unreachable: string[] = [];
     ENTRIES.forEach((entry, i) => {
-      const { events, scenarioId } = forceTrigger(entry, i);
+      const { state, events, scenarioId } = forceTrigger(entry, i);
       if (!hasEffectFor(events, scenarioId)) unreachable.push(entry.def.id);
+      if (entry.def.effects[0]?.type === 'EQUIP_STRIP') {
+        // 剥离不是空转：场景里预挂的那张军备必须真实离场。
+        const carrier = entry.def.effects[0].target === 'SELF'
+          ? `rc${i}_${entry.owner.id}` : 'rc_prey';
+        expect(armorCardsLeft(state, carrier),
+          `${entry.def.id} 应把预挂军备真实剥离`).toBe(0);
+      }
     });
     expect(unreachable, `以下定义强制打不响：${unreachable.join(', ')}`).toEqual([]);
   });

@@ -16,6 +16,7 @@ const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number) => stri
   GAIN_ARMOR: v => `获得 ${v} 点护甲`,
   DISCARD: v => `弃 ${v === 0 ? '全部' : v} 张手牌`,
   GIVE: v => `发放 ${v === 0 ? '全部' : v} 张手牌`,
+  EQUIP_STRIP: v => `剥离 ${v} 张装备卡`,
 };
 
 export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEffect; onChange: (r: SkillRuntimeEffect | undefined) => void }) {

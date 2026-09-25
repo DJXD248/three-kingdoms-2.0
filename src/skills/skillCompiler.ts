@@ -18,8 +18,11 @@
  *     (resources to the discard pile, general cards back to the owner's
  *     pool); GIVE (2.5.3) settles as a deterministic hand-to-hand transfer and
  *     derives the CARD_LOST/CARD_GAINED notification events its new triggers
- *     listen to; effect types beyond the six supported ones are still skipped
- *     rather than emitting no-op events.
+ *     listen to; EQUIP_STRIP (2.6.0) settles as a deterministic detach from a
+ *     field general's armorCards (the project's only equipment surface) with
+ *     one armor point deducted per detached card; effect types beyond the
+ *     seven supported ones are still skipped rather than emitting no-op
+ *     events.
  *   - effectMode 'choice' needs the (not yet wired) ReactionWindow prompt and
  *     is skipped.
  */
@@ -67,6 +70,7 @@ const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>([
   'GAIN_ARMOR',
   'DISCARD',
   'GIVE',
+  'EQUIP_STRIP',
 ]);
 
 export interface SkillSkip {

@@ -76,6 +76,8 @@ describe('skillExcelFormat: runtime field parsers', () => {
     expect(parseRuntimeType('回复体力')).toBe('HEAL');
     expect(parseRuntimeType('弃牌')).toBe('DISCARD');
     expect(parseRuntimeType('discard')).toBe('DISCARD');
+    expect(parseRuntimeType('剥离装备')).toBe('EQUIP_STRIP');
+    expect(parseRuntimeType('equip_strip')).toBe('EQUIP_STRIP');
     expect(parseRuntimeType('无')).toBeUndefined();
     expect(parseRuntimeType('飞行')).toBeUndefined();
   });

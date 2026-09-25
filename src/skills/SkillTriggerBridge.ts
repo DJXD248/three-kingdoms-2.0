@@ -316,6 +316,25 @@ export class SkillTriggerBridge {
         };
       }
 
+      if (effect.type === 'EQUIP_STRIP') {
+        // EQUIP_STRIP (2.6.0) is keyed to a GENERAL, not a player: equipment
+        // lives on the field general as armorCards. The victim's player is
+        // recovered from the resolved general id via findGeneralRef (the
+        // AFTER_DAMAGE payload carries no targetPlayerId — same lesson that
+        // makes GIVE TARGET spin there). A general already off-field (killed
+        // by the source hit) settles as an honest no-op downstream.
+        const targetRef = SkillTriggerBridge.findGeneralRef(state, targetId);
+        return {
+          type: 'EQUIP_STRIP',
+          data: {
+            ...data,
+            targetPlayerId: targetRef?.player.id,
+            targetId: targetId ?? data.targetId,
+            count: Math.max(1, Math.floor(Number(effect.value ?? 1))),
+          },
+        };
+      }
+
       return {
         type: 'CUSTOM',
         data: { ...data, kind: effect.type }
