@@ -1291,6 +1291,6 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **E2E（热座房真实点击，dev 5175，未触碰任何保存/下载入口）**：canonical 事件链逐字取证 `ACTION_ACCEPTED→BEFORE_DAMAGE→TRIGGERED→DAMAGE→ATTACK_RESOLVED→AFTER_DAMAGE→EQUIP_STRIP→STATE_CHANGED`；armorCards 头部剥离与护甲扣减台账对平。环境新事实入 §12-33：① selectDraftGeneral 是 toggle 且有 cap-10 上限（反复点同一卡=入池/出池死循环，为卡死根因）；② live-replay 首个 dispatch 会被丢弃（先 restore 再打第一击的定式）；③ 种子在场将领必须统一 `areaOwnerId:1` 否则近战 TARGET_OUT_OF_RANGE（AttackResolver sameArea 比对 areaOwnerId）；④ `__TK__.restoreEngineState(EngineState)`（isRestorableEngineState 校验 + resetLiveReplay）与 `attackTarget(...)` 是 UI 按钮同款 canonical handler，非第二转移路径。
 - **验证（五闸全部在文件定稿后）**：check 0 错；**453 例/50 文件全过**（+5）；coverage 快照 48.75/40.44/40.11/54.3 四项全过地板 42/34/34/47（§12-22④，棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,945.48 kB / gzip 570.44 kB**（较 2.5.4 +1.85 kB=原语+两条载荷+描述文本进 bundle，内容刀预期）。package.json/lock=2.6.0。
 - **GPT 沟通判断（计划口径）**：**跳过**——2.6 三检预钉 v2.6.4 收敛核验刀；本刀为纯装备原语接线 + 两条技能转正，契约表先填、B7 逐字硬证、无契约级意外，不单独约评。
-- **CI 状态**：**PENDING**（本刀登记提交推送后回填 run id/CI#/sha）。
+- **CI 状态**：**全绿**——GitHub Actions CI #97（run 36173569557，master 推送触发）在 commit 191c531 上 completed successfully（feat 2a1bf39 + docs 191c531 + 标签 v2.6.0 由单顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。
 
 
