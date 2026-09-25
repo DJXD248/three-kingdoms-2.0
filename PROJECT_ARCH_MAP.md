@@ -161,3 +161,21 @@
 | passive / untilExpire | 暂无业务需求（持续/过期语义需要状态机字段设计，随需求立项） |
 
 已支撑 7 类（事件触发映射）：onDeploy / onTurnStart / onDamageTaken / onDamageDealt / onKill / onDeath / onBecomingTarget。另有 onTurnEnd 以"玩家决策 canonical action"形态进局（不占三表，见上表），2.3.1 时点已上表闭环 2 类。
+
+### GPT 合并复核（2026-09-25，一、二刀契约形态首检；纯 docs 登记不占版本）
+
+外部评审对 v2.3.0+v2.3.1 落地形态逐问裁决（原文归档仓库外 `G:\THREE_KINGDOMS\GPT_DISCUSSION_2_3_CUTS12_REPLY.md`）：**总判定=契约形态成立、不建议因此两刀再开结构性重构**。Q1 🟡 有条件同意（不新增 GENERAL_TARGETED）/ Q2 🟢 十二格门禁成立（不加第十三格）/ Q3 🟢 store 延迟开窗=时序编排非第二转移路径 / Q4 🟡 turnEndAsk 不持久化本地可接受、需预钉 Replay 边界句 / Q5 🟢 决策型触发建议升格为正式分类 / Q6 🟢 WeakMap 带外诊断健康。
+
+**三句冻结契约（自本次登记起为长期设计档口径）**：
+
+1. `onBecomingTarget` 当前语义=目标确定且进入伤害结算前的**目标侧响应**；不是通用 target-selection 事件。
+2. **Replay 恢复游戏事实与 canonical actions，不承诺恢复 UI/window 生命周期。**
+3. **决策型 Trigger 不自动执行**；它产生的是可决策资格，最终效果必须由 canonical action 进入 TransitionCore。
+
+**随刀纪律（评审建议已采纳）**：
+
+- **GENERAL_TARGETED 升级条件按业务信号触发**（满足任一再立独立事件，反对为字面优雅提前造）：①需要"目标确定后、伤害前"插入不依赖伤害存在的效果；②存在"成为目标但被闪避/转移/取消、最终无伤害"的合法路径且规则要求"只要成为目标就触发"；③非攻击类技能指定目标也需 target 触发；④需要独立 target-resolution phase（目标修改/转移→响应→合法性复查→伤害）。
+- **十二格表下补解释纪律（不加格）**：Reentrancy 格必须写明重复进入/重复消费/重复触发的防护；若规则存在玩家可取消或窗口可中止行为，在 Transition 或 Replay 栏注明其**最终提交点**。幂等归入 Reentrancy/Transition/Condition 交叉约束（现例：`consumedSkills` 键 `` `${turn}:${skillId}` `` 即同回合二次激活封锁）。
+- **Trigger 两概念族正式成立**：自动事实触发（Event→TriggerBridge→Effect，如 onDamageTaken/onDeath/onKill）vs **决策型触发**（game fact→候选→决策机会→canonical action→Effect，如 onTurnEnd；未来 active*/onPhaseEnd 类先问"规则自动发生，还是玩家获得一次是否发动的权利"，后者一律走决策族形态，不塞自动映射表）。
+- **P2 联网前瞻（登记不实施）**：届时窗口升级为协议层 ReactionWindow（windowId/owner/legalActions/deadline/state/revision，或需 window epoch），属网络协议层；**不因此改变当前 Replay 的 A 类 canonical action 口径**（第 2 句冻结契约不变）。
+- **编译诊断去重作用域语义**：distinct 条目去重的作用域=当前运行环境/诊断生命周期，不是永久进程历史；现状（模块级集合随页面重载自然清空）符合预期不返工，若未来出现长期运行 reload 生命周期则随其清理。
