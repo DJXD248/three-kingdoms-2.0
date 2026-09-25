@@ -269,6 +269,43 @@ export function applyDiscardEvent(state: EngineState, event: GameEvent): EngineS
   };
 }
 
+/**
+ * Skill GIVE effect settlement (2.5.3): the DISCARD mirror — moves cards hand
+ * to hand instead of out of the game. Selection policy is the same head-of-
+ * array deterministic slice (count 0 = whole-hand sentinel), so both paths
+ * stay byte-identical under replay. Both card kinds stay physical: general
+ * cards handed to the receiver remain in THEIR hand (the receiver may later
+ * deploy or consume them, same as any drawn general card). Any invalid pair
+ * (missing ids, same player, dead receiver) and an empty giver hand settle
+ * as honest no-ops — the GIVE event is still recorded, the trigger happened.
+ */
+export function applyGiveEvent(state: EngineState, event: GameEvent): EngineState {
+  const data = event.data as { fromPlayerId?: number; toPlayerId?: number; count?: number } | undefined;
+  if (typeof data?.fromPlayerId !== 'number' || typeof data?.toPlayerId !== 'number') return state;
+  if (data.fromPlayerId === data.toPlayerId) return state;
+  const giver = state.players.find(player => player.id === data.fromPlayerId);
+  const receiver = state.players.find(player => player.id === data.toPlayerId);
+  if (!giver || !receiver || receiver.isAlive === false) return state;
+  const giverHand = Array.isArray(giver.hand) ? giver.hand as any[] : [];
+  if (giverHand.length === 0) return state;
+
+  const count = Math.max(0, Math.floor(Number(data.count ?? 0)));
+  const take = count === 0 ? giverHand.length : Math.min(count, giverHand.length);
+  const moved = giverHand.slice(0, take);
+  const players = state.players.map(player => {
+    if (player.id === giver.id) {
+      return { ...player, hand: giverHand.slice(take) };
+    }
+    if (player.id === receiver.id) {
+      const receiverHand = Array.isArray(receiver.hand) ? receiver.hand as any[] : [];
+      return { ...player, hand: [...receiverHand, ...moved] };
+    }
+    return player;
+  });
+
+  return { ...state, players };
+}
+
 export function applyArmorEquippedEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as {
     playerId?: number;

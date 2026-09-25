@@ -118,17 +118,23 @@ export function transition(
   // DEATH already had its state consequences settled where it was derived
   // (chainedConsequences), so re-entry only processes freshly generated
   // events — never the DEATH itself — to avoid double settlement.
-  let pendingDeaths = derived.filter(event => event.type === 'DEATH');
-  for (let round = 0; pendingDeaths.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
-    const expanded = resolveTriggerChain(next, ctx.triggers, pendingDeaths);
+  // 2.5.3: the same re-entry now also carries CARD_LOST/CARD_GAINED (derived
+  // by the GIVE settlement). They are pure notifications — no EventProcessor
+  // case, nothing to double-settle — but they must reach the trigger chain
+  // for onCardLost/onCardGained listeners within the same dispatch. The
+  // bounded rounds above already cap any give→gain→give pile-up.
+  const REACTION_EVENT_TYPES: ReadonlySet<GameEvent['type']> = new Set(['DEATH', 'CARD_LOST', 'CARD_GAINED']);
+  let pendingReactions = derived.filter(event => REACTION_EVENT_TYPES.has(event.type));
+  for (let round = 0; pendingReactions.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
+    const expanded = resolveTriggerChain(next, ctx.triggers, pendingReactions);
     events.push(...expanded);
-    const generated = expanded.filter(event => event.type !== 'DEATH' && event.type !== 'TRIGGERED');
+    const generated = expanded.filter(event => !REACTION_EVENT_TYPES.has(event.type) && event.type !== 'TRIGGERED');
     const nextDerived: GameEvent[] = [];
     next = ctx.processor.process(next, generated, nextDerived, flow);
-    pendingDeaths = nextDerived.filter(event => event.type === 'DEATH');
+    pendingReactions = nextDerived.filter(event => REACTION_EVENT_TYPES.has(event.type));
   }
-  if (pendingDeaths.length > 0) {
-    events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingDeaths: pendingDeaths.length } });
+  if (pendingReactions.length > 0) {
+    events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingReactions: pendingReactions.length } });
   }
 
   // D-2a: every random selection made in this dispatch leaves the pure path

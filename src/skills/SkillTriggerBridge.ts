@@ -18,7 +18,13 @@ const TRIGGER_EVENT_MAP: Partial<Record<DataSkillTrigger, GameEventType>> = {
   // Derived effects queue at the trigger-chain tail, so a counter hit from
   // this trigger settles AFTER the source DAMAGE within one dispatch —
   // frozen semantics, see PROJECT_ARCH_MAP "Trigger 契约表".
-  onBecomingTarget: 'BEFORE_DAMAGE'
+  onBecomingTarget: 'BEFORE_DAMAGE',
+  // 2.5.3: card-loss/gain triggers listen to the pure notification events
+  // derived by the GIVE settlement (chainedConsequences). CARD_* carries no
+  // EventProcessor case and changes no state by itself — same "pure
+  // notification in the map" shape as BEFORE_DAMAGE (2.3.0).
+  onCardLost: 'CARD_LOST',
+  onCardGained: 'CARD_GAINED'
   // onTurnEnd is DELIBERATELY absent (2.3.1, single-activation-path /
   // double-fire ban): TURN_END must never auto-fire the skill. Its only
   // activation path is the canonical ACTIVATE_SKILL action → the resolver,
@@ -33,7 +39,9 @@ const PRIORITY: Partial<Record<DataSkillTrigger, number>> = {
   onDamageDealt: 50,
   onKill: 60,
   onDeath: 100,
-  onBecomingTarget: 50
+  onBecomingTarget: 50,
+  onCardLost: 50,
+  onCardGained: 50
 };
 
 export interface SkillOwnerBinding {
@@ -115,6 +123,13 @@ function buildCondition(
         if (generalId && !idEq(generalId, data.targetId ?? data.target)) return false;
         return true;
       }
+      case 'onCardLost':
+      case 'onCardGained': {
+        // Hands live on players, not general instances (same keying lesson
+        // as DISCARD, 2.5.0): CARD_* keys the losing/gaining PLAYER only.
+        // sourceGeneralId never narrows these triggers.
+        return idEq(ownerId, data.playerId);
+      }
       default:
         return false;
     }
@@ -133,6 +148,9 @@ function buildCondition(
  *   GAIN_ARMOR  → GAIN_ARMOR   { targetPlayerId, targetId, value } (armor points, no cards)
  *   DISCARD     → DISCARD      { playerId, count }        (2.5.0, hand move in EventProcessor;
  *                               count 0 = whole-hand sentinel)
+ *   GIVE        → GIVE         { fromPlayerId, toPlayerId, count } (2.5.3, hand-to-hand
+ *                               transfer in EventProcessor; settlement derives the
+ *                               CARD_LOST/CARD_GAINED notifications)
  */
 export class SkillTriggerBridge {
   private registrations = new Map<string, string[]>();
@@ -268,6 +286,31 @@ export class SkillTriggerBridge {
           data: {
             ...data,
             playerId: Number.isFinite(discardPlayerId) ? discardPlayerId : undefined,
+            count: Math.max(0, Math.floor(Number(effect.value ?? 1)))
+          }
+        };
+      }
+
+      if (effect.type === 'GIVE') {
+        // Mirror of DISCARD (2.5.3): the giver is always the skill owner's
+        // PLAYER (hands live on players); the receiver is resolved from the
+        // effect's target role against the triggering event, same role table
+        // as above. Same-player / dead-receiver / empty-hand cases settle as
+        // honest no-ops inside applyGiveEvent — the GIVE event still records
+        // that the trigger fired.
+        const eventData = asRecord(event.data);
+        const role = effect.target ?? 'TARGET';
+        const toPlayerId = role === 'SELF'
+          ? Number(sourceId)
+          : role === 'ATTACKER'
+            ? Number(eventData.sourcePlayerId ?? eventData.attackerPlayerId)
+            : Number(eventData.targetPlayerId);
+        return {
+          type: 'GIVE',
+          data: {
+            ...data,
+            fromPlayerId: Number(sourceId),
+            toPlayerId: Number.isFinite(toPlayerId) ? toPlayerId : undefined,
             count: Math.max(0, Math.floor(Number(effect.value ?? 1)))
           }
         };

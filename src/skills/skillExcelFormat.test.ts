@@ -57,6 +57,13 @@ describe('skillExcelFormat: trigger round-trip', () => {
       expect(strToTrigger(o)?.type).toBeTruthy();
     }
   });
+  it('round-trips the 2.5.3 card-loss/gain triggers', () => {
+    expect(triggerToStr({ type: 'onCardLost' })).toBe('失去手牌时');
+    expect(strToTrigger('失去手牌时')).toEqual({ type: 'onCardLost' });
+    expect(triggerToStr({ type: 'onCardGained' })).toBe('获得手牌时');
+    expect(strToTrigger('获得手牌时')).toEqual({ type: 'onCardGained' });
+    expect(buildTriggerOptionStrings()).toContain('失去手牌时');
+  });
 });
 
 describe('skillExcelFormat: runtime field parsers', () => {
@@ -64,6 +71,8 @@ describe('skillExcelFormat: runtime field parsers', () => {
     expect(parseRuntimeType('摸牌')).toBe('DRAW_CARD');
     expect(parseRuntimeType('伤害')).toBe('DAMAGE');
     expect(parseRuntimeType('damage')).toBe('DAMAGE');
+    expect(parseRuntimeType('发放')).toBe('GIVE');
+    expect(parseRuntimeType('give')).toBe('GIVE');
     expect(parseRuntimeType('回复体力')).toBe('HEAL');
     expect(parseRuntimeType('弃牌')).toBe('DISCARD');
     expect(parseRuntimeType('discard')).toBe('DISCARD');

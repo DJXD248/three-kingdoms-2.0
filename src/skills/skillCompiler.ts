@@ -16,7 +16,9 @@
  *   - HEAL / GAIN_ARMOR settle in EventProcessor as hp restore (capped at
  *     maxHp) and armor points; DISCARD (2.5.0) settles as a hand-card move
  *     (resources to the discard pile, general cards back to the owner's
- *     pool); effect types beyond the five supported ones are still skipped
+ *     pool); GIVE (2.5.3) settles as a deterministic hand-to-hand transfer and
+ *     derives the CARD_LOST/CARD_GAINED notification events its new triggers
+ *     listen to; effect types beyond the six supported ones are still skipped
  *     rather than emitting no-op events.
  *   - effectMode 'choice' needs the (not yet wired) ReactionWindow prompt and
  *     is skipped.
@@ -46,6 +48,11 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   onKill: 'onKill',
   onDeath: 'onDeath',
   onBecomingTarget: 'onBecomingTarget',
+  // 2.5.3: card-loss/gain triggers ride on the CARD_LOST/CARD_GAINED
+  // notification events derived by the GIVE settlement (first batch of
+  // emission sources — see PROJECT_ARCH_MAP §F twelve-cell tables).
+  onCardLost: 'onCardLost',
+  onCardGained: 'onCardGained',
   // 2.3.1: compiles for the ACTIVATE_SKILL path only — deliberately NOT in
   // TRIGGER_EVENT_MAP, so TURN_END never auto-fires it (single activation
   // path, double-fire ban).
@@ -59,6 +66,7 @@ const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>([
   'HEAL',
   'GAIN_ARMOR',
   'DISCARD',
+  'GIVE',
 ]);
 
 export interface SkillSkip {

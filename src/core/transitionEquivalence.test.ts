@@ -1046,5 +1046,167 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(residentSteps);
     expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
+
+  // ── v2.5.3 GIVE 发放原语 + onCardLost/onCardGained 触发族（非内容刀：全部合成载荷） ──
+
+  it('发放实证：受击→GIVE 1 ATTACKER 手→手，派生 CARD_* 经重入环喂给失去/获得触发，四路径逐事件一致 (v2.5.3)', () => {
+    const atk = makeGeneral('gv_atk', 4, [{
+      name: '受礼',
+      effects: [{ id: 'e1', trigger: { type: 'onCardGained' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+    }]);
+    const taker = makeGeneral('gv_taker', 4, [
+      {
+        name: '分发',
+        effects: [{ id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'GIVE', value: 1, target: 'ATTACKER' } }],
+      },
+      {
+        name: '护短',
+        effects: [{ id: 'e1', trigger: { type: 'onCardLost' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+      },
+    ]);
+    const gift = (i: number) => ({ id: `gv_gift_${i}`, name: '粮草', type: '粮草' });
+    const build = () => makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(atk, 1, 0)], hand: COSTS.slice(0, 4).map(c => ({ ...c })) }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(taker, 2, 0)], hand: [gift(1), gift(2)] }),
+    ]);
+    const action = attack('gv_atk', 'gv_taker', 0);
+
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    const steps = [rawEvents(engine.dispatch(action))];
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    const flat = steps[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    const give = flat.filter(e => e.type === 'GIVE' && String(e.data?.skillId ?? '').includes('分发:e1'));
+    expect(give).toHaveLength(1);
+    expect(give[0].data).toMatchObject({ fromPlayerId: 2, toPlayerId: 1, count: 1 });
+    // 结算真实移动 → 派生纯通知对（一张 GIVE=逐批单事件，count 携带张数）
+    expect(flat.some(e => e.type === 'CARD_LOST'
+      && e.data?.playerId === 2 && e.data?.count === 1 && e.data?.via === 'GIVE')).toBe(true);
+    expect(flat.some(e => e.type === 'CARD_GAINED'
+      && e.data?.playerId === 1 && e.data?.count === 1 && e.data?.via === 'GIVE')).toBe(true);
+    // 重入环：护短（失去侧）与受礼（获得侧）各摸恰一次，且都在同一次 dispatch 内
+    const huDuan = flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('护短:e1'));
+    const shouLi = flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('受礼:e1'));
+    expect(huDuan).toHaveLength(1);
+    expect(shouLi).toHaveLength(1);
+    expect(huDuan[0].data?.playerId).toBe(2);
+    expect(shouLi[0].data?.playerId).toBe(1);
+
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect(p1.hand).toHaveLength(5); // 4 -成本1 +发放来牌1 +受礼摸1
+    expect(p2.hand).toHaveLength(2); // 2 -发放1 +护短摸1
+    expect((p1.hand as Array<{ id: string }>).some(c => c.id === 'gv_gift_1')).toBe(true); // 头部选取整卡过手
+    expect(fieldHp(engine.state, 2, 'gv_taker')).toEqual({ hp: 2, armor: 0 }); // 近战 2 伤未死
+    expect(engine.state.deck).toHaveLength(2); // 两次摸牌零新增随机面（牌堆头部消耗）
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = build();
+    const bridgeSteps: string[][] = [];
+    {
+      const r = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = r.engineState;
+      bridgeSteps.push(rawEvents(r.events));
+    }
+    expect(bridgeSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = build();
+    {
+      const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = r.engineState;
+      expect(rawEvents(r.events)).toEqual(steps[0]);
+      expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+    }
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(1);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
+
+  it('发放诚实空转三门 + DISCARD 不派生 CARD_*（无重入面）+ 同配置两跑逐字节一致 (v2.5.3)', () => {
+    // ① SELF 角色=自己给自己：toPlayerId===fromPlayerId 整笔空转，事件照入账
+    const selfGiver = makeGeneral('gs_self', 4, [{
+      name: '吝啬',
+      effects: [{ id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'GIVE', value: 1, target: 'SELF' } }],
+    }]);
+    // ② AFTER_DAMAGE 不带 targetPlayerId：攻击方身上 GIVE TARGET 角色解析为 undefined → 空转（载荷闸）
+    const afterGiver = makeGeneral('gs_after', 4, [{
+      name: '迟付',
+      effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'GIVE', value: 1, target: 'TARGET' } }],
+    }]);
+    // ③ 发放者空手：真实受击但无牌可给
+    const brokeGiver = makeGeneral('gb_broke', 4, [{
+      name: '穷送',
+      effects: [{ id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'GIVE', value: 1, target: 'ATTACKER' } }],
+    }]);
+    const observer = makeGeneral('ob_card', 4, [{
+      name: '眼热',
+      effects: [{ id: 'e1', trigger: { type: 'onCardGained' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+    }]);
+
+    const build = (attacker: General, victim: General, victimHand: unknown[]) => makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(attacker, 1, 0)], hand: COSTS.slice(0, 4).map(c => ({ ...c })) }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2, 0)], hand: victimHand }),
+      makePlayer(3, { fieldGenerals: [makeFieldGeneral(observer, 3, 0)] }),
+    ]);
+    const gift = { id: 'gs_gift', name: '粮草', type: '粮草' };
+
+    const runOnce = (attacker: General, victimId: string, victim: General, victimHand: unknown[], action?: GameAction) => {
+      const engine = new GameEngine(build(attacker, victim, victimHand));
+      syncPlayerSkills(engine, engine.state);
+      const events = engine.dispatch(action ?? createAction('ATTACK', 1, {
+        attackerId: attacker.id, targetId: victimId, ranged: false, consumeCard: { ...COSTS[0] },
+      }));
+      return { engine, raw: rawEvents(events) };
+    };
+    const plainAttacker = () => makeGeneral('gs_atk', 4, []);
+
+    // 同一 action 对象复用于两跑（v2.5.0 逐字节比较先例：action id 属派发层）
+    const selfAction = createAction('ATTACK', 1, {
+      attackerId: 'gs_atk', targetId: 'gs_self', ranged: false, consumeCard: { ...COSTS[0] },
+    });
+    const self = runOnce(plainAttacker(), 'gs_self', selfGiver, [gift], selfAction);
+    expect(self.raw.some(e => e.includes('GIVE') && e.includes('吝啬:e1'))).toBe(true);
+    expect(self.raw.some(e => e.includes('"CARD_LOST"') || e.includes('"CARD_GAINED"'))).toBe(false);
+    expect(self.engine.state.players.find(p => p.id === 2)!.hand).toHaveLength(1); // 牌原封不动
+
+    // 迟付挂攻击方：AFTER_DAMAGE 的 TARGET 角色 → toPlayerId undefined → 整笔空转
+    const after = runOnce(afterGiver, 'gs_after_v', makeGeneral('gs_after_v', 4, []), [gift]);
+    expect(after.raw.some(e => e.includes('GIVE') && e.includes('迟付:e1'))).toBe(true);
+    expect(after.raw.some(e => e.includes('"CARD_LOST"') || e.includes('"CARD_GAINED"'))).toBe(false);
+    expect(after.engine.state.players.find(p => p.id === 1)!.hand).toHaveLength(3); // 只扣攻击成本
+
+    const broke = runOnce(plainAttacker(), 'gb_broke', brokeGiver, []);
+    expect(broke.raw.some(e => e.includes('GIVE') && e.includes('穷送:e1'))).toBe(true);
+    expect(broke.raw.some(e => e.includes('"CARD_LOST"') || e.includes('"CARD_GAINED"'))).toBe(false);
+    // 眼热（p3）在三例中都未收到任何 CARD_GAINED → 键定 playerId 的归属闸
+
+    // DISCARD 不派生 CARD_*（断肠弃光仍零重入面）
+    const caiwen = builtin2As('cwj53', 'qun_012');
+    const duanState = makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('kd53', 4, []), 1)], hand: COSTS.slice(0, 4).map(c => ({ ...c })) }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(caiwen, 2)] }),
+    ]);
+    (duanState.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 1;
+    const engine = new GameEngine(duanState);
+    syncPlayerSkills(engine, engine.state);
+    const duanEvents = engine.dispatch(createAction('ATTACK', 1, {
+      attackerId: 'kd53', targetId: 'cwj53', ranged: false, consumeCard: { ...COSTS[0] },
+    }));
+    expect(duanEvents.some(e => e.type === 'DISCARD' && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('断肠:e1'))).toBe(true);
+    expect(duanEvents.some(e => e.type === 'CARD_LOST' || e.type === 'CARD_GAINED')).toBe(false);
+
+    // 同配置两跑逐字节一致：发放/派生/重入全链零新增随机面
+    const again = runOnce(plainAttacker(), 'gs_self', selfGiver, [{ ...gift }], selfAction);
+    expect(again.raw).toEqual(self.raw);
+    expect(JSON.stringify(normalize(again.engine.state as unknown as Record<string, unknown>)))
+      .toBe(JSON.stringify(normalize(self.engine.state as unknown as Record<string, unknown>)));
+  });
 });
 

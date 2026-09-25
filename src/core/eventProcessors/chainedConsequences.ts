@@ -58,6 +58,30 @@ export function enqueueDerivedConsequences(
     }
   }
 
+  if (event.type === 'GIVE') {
+    // 2.5.3: a GIVE that MOVED cards derives the pure-notification pair the
+    // onCardLost/onCardGained triggers listen to. Counts come from the actual
+    // state change (same "derive from what settled" discipline as the skill-
+    // kill DEATH above), so honest no-ops (empty giver, dead receiver, same-
+    // player) derive nothing — no phantom triggers. Other hand-loss paths
+    // (DISCARD, deploy/move/supply consumption) deliberately do NOT derive
+    // CARD_* yet; emission-source expansion is a registered follow-up in
+    // PROJECT_ARCH_MAP §F (first batch stays a closed GIVE loop).
+    const data = event.data as any;
+    const fromId = typeof data?.fromPlayerId === 'number' ? data.fromPlayerId : null;
+    const toId = typeof data?.toPlayerId === 'number' ? data.toPlayerId : null;
+    const handOf = (state: EngineState, playerId: number) =>
+      (state.players.find(player => player.id === playerId)?.hand as unknown[] | undefined)?.length ?? 0;
+    if (fromId !== null) {
+      const lost = handOf(before, fromId) - handOf(next, fromId);
+      if (lost > 0) queue.push({ type: 'CARD_LOST', data: { playerId: fromId, count: lost, via: 'GIVE' } });
+    }
+    if (toId !== null) {
+      const gained = handOf(next, toId) - handOf(before, toId);
+      if (gained > 0) queue.push({ type: 'CARD_GAINED', data: { playerId: toId, count: gained, via: 'GIVE' } });
+    }
+  }
+
   if (event.type === 'DEATH') {
     const data = event.data as any;
     const targetPlayerId = typeof data?.targetPlayerId === 'number' ? data.targetPlayerId : null;

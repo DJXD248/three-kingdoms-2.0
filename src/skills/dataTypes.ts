@@ -17,14 +17,17 @@ export type DataSkillTrigger =
   | 'onDamageDealt'
   | 'onKill'
   | 'onDeath'
-  | 'onBecomingTarget';
+  | 'onBecomingTarget'
+  | 'onCardLost'
+  | 'onCardGained';
 
 export type DataSkillEffectType =
   | 'DRAW_CARD'
   | 'DAMAGE'
   | 'HEAL'
   | 'GAIN_ARMOR'
-  | 'DISCARD';
+  | 'DISCARD'
+  | 'GIVE';
 
 export interface SkillEffectData {
   type: DataSkillEffectType;

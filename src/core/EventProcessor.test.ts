@@ -618,6 +618,85 @@ describe('EventProcessor', () => {
     });
   });
 
+  describe('GIVE event（2.5.3 发放原语=DISCARD 镜像）', () => {
+    const supply = { id: 'gv_supply', name: '粮草', type: '粮草' };
+    const generalCard = { id: 'gv_general', name: '旧部', type: '武将' };
+
+    it('手→手整卡转移：头部确定性选取，将领卡随卡走（不回将池、不进弃牌堆）', () => {
+      const state = createTestState([
+        createTestPlayer(1, { hand: [{ ...supply }, { ...generalCard }] }),
+        createTestPlayer(2, { hand: [] }),
+      ]);
+
+      const result = processor.process(state, [
+        { type: 'GIVE', data: { fromPlayerId: 1, toPlayerId: 2, count: 1 } },
+      ]);
+      const p1 = result.players.find(p => p.id === 1)!;
+      const p2 = result.players.find(p => p.id === 2)!;
+
+      expect(p1.hand).toHaveLength(1);
+      expect((p1.hand as Array<{ id: string }>)[0].id).toBe('gv_general');
+      expect((p2.hand as Array<{ id: string }>).map(c => c.id)).toEqual(['gv_supply']);
+      expect(result.discardPile).toEqual([]);
+      expect(p2.generalPool).toHaveLength(0); // 发放不折向将池
+    });
+
+    it('count=0 全手哨兵与数量超出自洽（诚实少给）', () => {
+      const state = createTestState([
+        createTestPlayer(1, { hand: [{ ...supply }, { ...generalCard }] }),
+        createTestPlayer(2, { hand: [] }),
+      ]);
+      const all = processor.process(state, [
+        { type: 'GIVE', data: { fromPlayerId: 1, toPlayerId: 2, count: 0 } },
+      ]);
+      expect(all.players.find(p => p.id === 1)!.hand).toHaveLength(0);
+      expect(all.players.find(p => p.id === 2)!.hand).toHaveLength(2);
+
+      const tooMany = processor.process(state, [
+        { type: 'GIVE', data: { fromPlayerId: 1, toPlayerId: 2, count: 9 } },
+      ]);
+      expect(tooMany.players.find(p => p.id === 1)!.hand).toHaveLength(0);
+      expect(tooMany.players.find(p => p.id === 2)!.hand).toHaveLength(2);
+    });
+
+    it('诚实空转三门：同一玩家/接收者缺席/接收者阵亡——手牌不动', () => {
+      const state = createTestState([
+        createTestPlayer(1, { hand: [{ ...supply }] }),
+        createTestPlayer(2, { hand: [], isAlive: false }),
+      ]);
+
+      const same = processor.process(state, [
+        { type: 'GIVE', data: { fromPlayerId: 1, toPlayerId: 1, count: 1 } },
+      ]);
+      expect(same.players.find(p => p.id === 1)!.hand).toHaveLength(1);
+
+      const absent = processor.process(state, [
+        { type: 'GIVE', data: { fromPlayerId: 1, toPlayerId: 9, count: 1 } },
+      ]);
+      expect(absent.players.find(p => p.id === 1)!.hand).toHaveLength(1);
+
+      const dead = processor.process(state, [
+        { type: 'GIVE', data: { fromPlayerId: 1, toPlayerId: 2, count: 1 } },
+      ]);
+      expect(dead.players.find(p => p.id === 1)!.hand).toHaveLength(1);
+      expect(dead.players.find(p => p.id === 2)!.hand).toHaveLength(0);
+    });
+
+    it('发放者空手/载荷缺 id：no-op 不报错', () => {
+      const state = createTestState([
+        createTestPlayer(1, { hand: [] }),
+        createTestPlayer(2, { hand: [] }),
+      ]);
+      const empty = processor.process(state, [
+        { type: 'GIVE', data: { fromPlayerId: 1, toPlayerId: 2, count: 1 } },
+      ]);
+      expect(empty.players.find(p => p.id === 2)!.hand).toHaveLength(0);
+
+      const noIds = processor.process(state, [{ type: 'GIVE', data: { count: 1 } }]);
+      expect(noIds.players.find(p => p.id === 1)).toBeTruthy();
+    });
+  });
+
   describe('immutability', () => {
     it('should not mutate the original state', () => {
       const player = createTestPlayer(1, { baseHp: 5 });

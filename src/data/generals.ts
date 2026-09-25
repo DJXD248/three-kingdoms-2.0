@@ -30,6 +30,8 @@ export type SkillTriggerType =
   | 'onDamageDealt'      // 造成伤害后
   | 'onKill'             // 击杀将领时
   | 'onDeath'            // 自身被击杀时
+  | 'onCardLost'         // 失去手牌时（v2.5.3：事件源首批=GIVE 发放派生）
+  | 'onCardGained'       // 获得手牌时（v2.5.3：事件源首批=GIVE 发放派生）
   | 'modifyAttack'       // 攻击结算前修改伤害值
   | 'modifyDefense'      // 受击结算前修改受到的伤害值
   | 'onBaseTargetedAtk'  // 本营成为攻击目标时
@@ -72,6 +74,8 @@ export const triggerTypeLabels: Record<SkillTriggerType, string> = {
   onDamageDealt: '造成伤害后',
   onKill: '击杀将领时',
   onDeath: '自身被击杀时',
+  onCardLost: '失去手牌时',
+  onCardGained: '获得手牌时',
   modifyAttack: '攻击结算前修改伤害值',
   modifyDefense: '受击结算前修改受到的伤害值',
   onBaseTargetedAtk: '本营成为攻击目标时',
@@ -133,7 +137,7 @@ export interface SkillEffect {
 
 /** 效果的结构化运行时载荷：类型 + 数值 + 目标角色 */
 export interface SkillRuntimeEffect {
-  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD';
+  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE';
   value?: number;
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
 }

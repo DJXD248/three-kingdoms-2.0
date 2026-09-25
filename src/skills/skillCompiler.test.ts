@@ -170,6 +170,33 @@ describe('skillCompiler · compileSkill', () => {
     expect(all.definitions[0].effects[0]).toMatchObject({ type: 'DISCARD', value: 0, target: 'ATTACKER' });
   });
 
+  it('compiles GIVE effects and onCardLost/onCardGained triggers — 2.5.3 wiring (non-content cut)', () => {
+    const give = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'GIVE', value: 2, target: 'TARGET' } }] }),
+      'g1',
+    );
+    expect(give.definitions).toHaveLength(1);
+    expect(give.skipped).toHaveLength(0);
+    expect(give.definitions[0].effects[0]).toMatchObject({ type: 'GIVE', value: 2, target: 'TARGET' });
+
+    const lost = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onCardLost' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }] }),
+      'g1',
+    );
+    expect(lost.definitions).toHaveLength(1);
+    expect(lost.definitions[0].trigger).toBe('onCardLost');
+
+    const gained = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onCardGained' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }] }),
+      'g1',
+    );
+    expect(gained.definitions).toHaveLength(1);
+    expect(gained.definitions[0].trigger).toBe('onCardGained');
+  });
+
   it('skips choice-mode skills until the reaction window is wired', () => {
     const { definitions, skipped } = compileSkill(
       general(),
