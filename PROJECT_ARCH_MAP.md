@@ -228,6 +228,46 @@
 | 三处同步 | `SkillRuntimeEffect.type` 联合（`generals.ts:140` +`dataTypes.DataSkillEffectType`）+ `skillCompiler.SUPPORTED_EFFECT_TYPES`（+"EQUIP_STRIP"）+ `skillExcelFormat.runtimeEffectTypeLabels`（"剥离装备"）与 `SETTLEABLE_RUNTIME_TYPES` + `RuntimeEditor` 预览"剥离 N 张装备"+ `SkillTriggerBridge` EQUIP_STRIP 分支；**min=1 不收 0**：装备面无全清哨兵，表面缺口不同于 DISCARD/GIVE 的 0=全部（本刀刻意不同，Effect 格已注） |
 | 活例 | **两条内置技能进局（内容刀）**：`SK_QIANGXI` 典韦 wei_012（onDamageDealt/attackDamage→EQUIP_STRIP 1 TARGET，描述"造成攻击伤害后，剥离伤害目标的一张装备卡（入弃牌堆，其护甲值相应减少）。"）+`SK_BENGHUAI` 董卓 qun_004（onBecomingTarget→EQUIP_STRIP 1 SELF，描述"成为攻击目标时惊惶失据：弃置自己的一张装备卡（伤害结算后落账，不减当次伤害）。"）——均为原档2 技能因新原语到位进局；账本 168→**38 runtime 定义/131 诚实跳过**（批 +2） |
 
+### REVEAL 观顶原语（v2.6.1 落地，2.6 第二个新 Effect 原语=第八原语；§G 档2"观牌堆顶"族；**非内容刀：本刀只接线、不配任何内置载荷**）
+
+| 格 | 契约 |
+|---|---|
+| Event | 新事件 `REVEAL{ viewerPlayerId, count }`（`core/Event.ts` 联合新增）；SkillTriggerBridge 只产事件不自带状态修改，EventProcessor `case 'REVEAL'`→`applyRevealEvent` 是唯一结算点；不派生任何 CARD_*（事件源扩面仍挂 v2.6.2） |
+| Timing | 与 DISCARD/GIVE/EQUIP_STRIP 同族：触发链 BFS 尾部落账，经 `TransitionCore` 重入环在**同一 dispatch** 内进入结算链 |
+| Source | 观看者恒=技能拥有者**玩家**（`viewerPlayerId=Number(ownerId)`）；牌堆是全局共享资产、按玩家键定观看权，无将领实例面 |
+| Target | 无目标解析——观看是技能拥有者的单方行为；载荷 target 角色字段照传但结算不使用（表面一致性，未来 HUD 若展示"给谁看"再上表） |
+| Condition | `viewerPlayerId` 缺失/非数字→诚实空转；**有效载荷同样原样返回状态**——"状态零变化"不是兜底路径而是本原语的语义本身（看牌不动牌） |
+| Effect | **零位移**：顶 count 张的身份仅信息面（编辑器/日志可见"看了"），不写入 EngineState；**零 rngState 消耗**——牌堆顺序本已定死，重放重算同一张顶牌，无需咨询随机源；事件照样入账=触发确实发生（与 DISCARD 空手/GIVE 空转/EQUIP_STRIP 空装同一"空转也记录"纪律） |
+| RNG | **全原语族首个"零位移也零随机"原语**：不咨询、不动游标；这是其回放确定性的构造性证明（非经验断言） |
+| Replay | **A 类必录**：REVEAL 经重入环回灌 dispatch 返回事件流→随 entry.events 进录像；四路对账扩例与同配置两跑逐字节一致（transitionEquivalence v2.6.1 合成例：窥看 REVEAL+归堆 DECK_PLACE 复合链） |
+| Transition | 唯一 `TransitionCore.transition`；`applyRevealEvent` 为纯 `(state,event)→state` 且实际返回同一 state（2.2.13 单入口纪律保持） |
+| Reentrancy | 不派生任何可触发事件→**零新增重入面** |
+| Death chain | 观看不造成伤害、不动牌→与 DEATH 链零交互 |
+| 优先级 | 原语不自带优先级，承载触发走 TriggerEngine 现表 |
+| 忠实度 | 本刀无内置技能进局→A/B/C 标签随转正刀补打；§G 预判：观星=观顶后**排序**（choice 决策面属 v2.6.3）、洛神=花色红黑判定（牌面无花色面→维持档4纯描述）、心战/自书/秘置=多效果组合——**五候选全部不能在本刀忠实进局，强行配=不发明玩法红线，故本刀定级非内容**（用户确认 2026-09-26） |
+| 三处同步 | `SkillRuntimeEffect.type` 联合（`generals.ts` +`dataTypes.DataSkillEffectType`）+ `skillCompiler.SUPPORTED_EFFECT_TYPES`（+"REVEAL"，共 9 原语）+ `skillExcelFormat.runtimeEffectTypeLabels`（"观顶"）与 `SETTLEABLE_RUNTIME_TYPES` + `RuntimeEditor` 预览"观看牌堆顶 N 张"+ `SkillTriggerBridge` REVEAL 分支 |
+| 活例 | **无（非内容刀）**——合成载荷测试装配进局（v2.5.1/v2.5.3 先例）：EventProcessor.test REVEAL 节 + transitionEquivalence 复合链例钉死账形；内置账本 **38/131 不动**、ai-battle 对 B7 逐字一致 |
+
+### DECK_PLACE 置牌入堆原语（v2.6.1 落地，2.6 第三个新 Effect 原语=第九原语=**GIVE 的手牌→牌堆镜像**；**同为非内容刀接线**）
+
+| 格 | 契约 |
+|---|---|
+| Event | 新事件 `DECK_PLACE{ playerId, dest, count }`（`core/Event.ts` 联合新增）；EventProcessor `case 'DECK_PLACE'`→`applyDeckPlaceEvent` 是唯一结算点；**不派生 CARD_***（手牌离手路径与 DISCARD 同纪律，事件源扩面挂 v2.6.2 转正刀） |
+| Timing | 同上族：触发链 BFS 尾部落账、同 dispatch 内结算 |
+| Source | 被置手牌的玩家恒=技能拥有者**玩家**（手牌住在玩家身上，与 DISCARD/GIVE 键定同轨） |
+| Target | 无角色解析——放置对象永远是拥有者自己的手牌；载荷 target 照传不用（同 REVEAL Target 格口径） |
+| Condition | `playerId` 缺失/非数字、玩家不存在、**空手**→整笔诚实空转（事件照样入账）；`count=Math.max(0,floor(value))`，**0=全手哨兵**（手牌面与 DISCARD/GIVE 同值同义，刻意不随 EQUIP_STRIP 的 min=1）；count 超手牌数=clamp 按实际取 |
+| Effect | 手牌**头部确定性切片**前 count 张，整段移入共享牌堆**底部（BOTTOM=缺省）或顶部（TOP）并保持相对顺序**；牌堆顶=数组头（与 DRAW 消费面同读法）；**两类卡都物理入堆**——将领卡置于牌堆即等同普通牌堆卡，可经后续空堆重洗再出土；`dest` 为载荷新增可选字段（`SkillRuntimeEffect`/`SkillEffectData`/`RuntimeEffectPayload` 三处 `dest?:'TOP'|'BOTTOM'`，skillCompiler `toEffectData` 透传） |
+| RNG | **零新增随机面**：头部切片确定性；入堆不洗牌不动游标。回放逐字节一致（同配置两跑测试） |
+| Replay | **A 类必录**；四路对账扩例（TOP 放置+观顶复合链）逐事件一致、录像重建终态逐字相等 |
+| Transition | 唯一 `TransitionCore.transition`；`applyDeckPlaceEvent` 纯 `(state,event)→state` 仅经 EventProcessor.apply 分发 |
+| Reentrancy | 不派生可触发事件→**零新增重入面**；置牌使手牌真实减张=状态位移的正确语义（手牌数类技能受影响属应有之义），非循环面 |
+| Death chain | 放置不造成伤害→不触 DEATH 派生；承载伤害致死时手牌是否仍在其名=结算时点状态决定，闸口即上述"玩家不存在/空手"两条，无特判 |
+| 优先级 | 原语不自带优先级，承载触发走 TriggerEngine 现表 |
+| 忠实度 | 本刀无内置技能进局→标签随转正刀补打；§G 预判：自书/秘置/心战=**置牌+排序**复合，排序决策属 v2.6.3 choice；观星=REVEAL+DECK_PLACE 双段复合同样待 choice——**机械面本刀就位，决策面缺=诚实不配** |
+| 三处同步 | 枚举/编译器/Excel 标签（"置牌入堆"）/SETTLEABLE/桥接分支同 REVEAL 表；**RuntimeEditor 新增 DECK_PLACE 专属"放置位置"下拉（牌堆底默认/牌堆顶）**；Excel v2 六列**无 dest 列**→导入导出一律 BOTTOM，TOP 暂仅结构化编辑器可录（表面缺口登记，本刀不扩列）；数值面沿用 §12-29 缺口：编辑器 min=1 不收 0 全手哨兵 |
+| 活例 | **无（非内容刀）**——合成装配测试：归堆（onDamageTaken→DECK_PLACE 1 SELF TOP）实证手牌头张真上堆顶、EventProcessor.test 五例钉死 BOTTOM/TOP/全手/clamp/空转账形；内置账本 38/131 不动、B7 逐字 |
+
 ### 编译诚实契约（同刀落地，D-9 C 类）
 
 `syncPlayerSkills` 的 skipped 项（TRIGGER_UNSUPPORTED / NO_RUNTIME_PAYLOAD 等，含 reason）经 `getCompileDiagnostics(engine)`（WeakMap，引擎重建自然隔离）带外上报；console.warn 按 **distinct 条目**（`技能名#效果id:原因`）去重、测试缝 `__resetCompileWarnDedup()`。事件流与游戏行为零变化。编辑器/Excel 录入未支撑类型时消费该通道做 UI 提示=后续需求（非缺陷，已登记 HANDOFF §12-18）。
@@ -287,7 +327,7 @@
 | 天妒 | 郭嘉 | 4 | — | 无判定 |
 | 遗计 | 郭嘉 | 2 | — | 分牌给别人=发放原语（纯自摸近似与奸雄同型无内容区分度，不采） |
 | 倾国 | 甄姬 | 4 | — | 牌型转换 |
-| 洛神 | 甄姬 | 2 | — | 牌堆顶连续操作 |
+| 洛神 | 甄姬 | 2 | — | 牌堆顶连续操作 ｜**v2.6.1 判定：维持档4（牌面无花色面，红黑判定无对应物，强配=发明玩法）；REVEAL/DECK_PLACE 原语与本技无涉** |
 | 神速 | 夏侯渊 | 3 | — | modifyAttack+次数 |
 | 巧变 | 张郃 | 4 | — | 移动/弃装备复合，移动是本游戏玩家动作非效果原语 |
 | 断粮 | 徐晃 | 4 | — | 牌型转换+弃牌限制 |
@@ -320,7 +360,7 @@
 | 激将 | 刘备 | 4 | — | 牌类型代打 |
 | 武圣 | 关羽 | 4 | — | 牌型转换 |
 | 咆哮 | 张飞 | 3 | — | 攻击次数修正 |
-| 观星 | 诸葛亮 | 2 | — | 牌堆顶观看重排 |
+| 观星 | 诸葛亮 | 2 | — | 牌堆顶观看重排 ｜**v2.6.1 能力已就位（REVEAL+DECK_PLACE 双段），"重排"决策面属 v2.6.3 choice→转正挂 choice 之后** |
 | 空城 | 诸葛亮 | 3 | — | passive 条件禁target |
 | 龙胆 | 赵云 | 4 | — | 牌型转换 |
 | 涯角 | 赵云 | 2 | — | 装备获取 |
@@ -341,14 +381,14 @@
 | 涅槃 | 庞统 | 4 | — | 限定技+回满+弃光（引擎无濒死救回路径） |
 | 举荐 | 徐庶 | 2 | — | 牌堆顶/他人得牌 |
 | 无言 | 徐庶 | 3 | — | 禁响应 modifier |
-| 心战 | 马谡 | 2 | — | 观顶拣选 |
+| 心战 | 马谡 | 2 | — | 观顶拣选 ｜**v2.6.1 能力已就位（REVEAL+DECK_PLACE），"拣选"决策面属 v2.6.3 choice→转正挂 choice 之后** |
 | 挥泪 | 马谡 | 2 | — | 击杀触发+choice（未接线） |
 | 父魂 | 关兴张苞 | 4 | — | 牌型合并技 |
 | 陷嗣 | 刘封 | 4 | — | "嗣"伪装备系统不存在 |
 | 龙吟 | 关平 | **1** | onBecomingTarget→GAIN_ARMOR 1 SELF | 初定义"战吼先声：被指定为攻击目标时+1护甲"（原技+伤害牌型不可行） ｜**✅ v2.4.1 已实装（护甲 BFS 尾部落账时序见 §12-25③）** |
 | 当先 | 廖化 | 3 | — | 额外攻击次数 |
 | 伏枥 | 廖化 | **1** | onTurnEnd→DRAW 1 SELF | 近似自"≤2血且<5牌补到5"，无条件原语、固定回合结束抽1（决策型询问窗） ｜**✅ v2.4.1 已实装** |
-| 自书 | 马良 | 2 | — | 观顶拣选 |
+| 自书 | 马良 | 2 | — | 观顶拣选 ｜**v2.6.1 能力已就位（REVEAL+DECK_PLACE），"拣选"决策面属 v2.6.3 choice→转正挂 choice 之后** |
 | 白眉 | 马良 | 2 | — | 抽2给1=发放 |
 | 巨象 | 祝融 | 4 | — | 牌型回收 |
 | 烈刃 | 祝融 | **1** | onDamageDealt(attack)→DRAW 1 SELF | 近似自"判定夺牌"，去判定确定抽1 ｜**✅ v2.4.1 已实装** |
@@ -444,7 +484,7 @@
 | 帷幄 | 贾充 | **1** | onTurnStart→GAIN_ARMOR 1 SELF | 初定义"运筹帷幄：回合开始+1护甲" ｜**✅ v2.4.2 已实装（热座真机触发：贾充登场后下回合卡面 🛡️1）** |
 | 矫诏 | 贾充 | 4 | — | 判定伪诏计数 |
 | 慧眼 | 张春华(晋) | **1** | onDamageDealt(attack)→DRAW 1 SELF | 初定义"鉴人于微：造成攻击伤害后摸1" ｜**✅ v2.4.2 已实装** |
-| 秘置 | 张春华(晋) | 2 | — | 回合外置牌（牌堆操作） |
+| 秘置 | 张春华(晋) | 2 | — | 回合外置牌（牌堆操作） ｜**v2.6.1 能力已就位（DECK_PLACE 机械面），回合外时机+置牌决策面属 v2.6.3 choice→转正挂 choice 之后** |
 | 权计 | 钟会(晋) | 3 | — | 计数器字段（与魏钟会同判） |
 | 自立 | 钟会(晋) | 4 | — | 觉醒 |
 | 屯田 | 邓艾(晋) | **1** | onTurnEnd→DRAW 2 SELF | 与魏邓艾同名同载（编译 id 含 ownerKey 不冲突） ｜**✅ v2.4.2 已实装（同名双实例断言钉死；询问窗候选）** |

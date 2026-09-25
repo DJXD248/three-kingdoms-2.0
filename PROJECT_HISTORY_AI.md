@@ -1293,4 +1293,21 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **GPT 沟通判断（计划口径）**：**跳过**——2.6 三检预钉 v2.6.4 收敛核验刀；本刀为纯装备原语接线 + 两条技能转正，契约表先填、B7 逐字硬证、无契约级意外，不单独约评。
 - **CI 状态**：**全绿**——GitHub Actions CI #97（run 36173569557，master 推送触发）在 commit 191c531 上 completed successfully（feat 2a1bf39 + docs 191c531 + 标签 v2.6.0 由单顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。
 
+## Qoder 2.6.1：2.6 第二刀（能力层非内容刀，用户确认重定性）——牌堆顶操作原语 REVEAL 观顶（第八）+ DECK_PLACE 置牌入堆（第九）：五候选逐条对词汇表核验后无一忠实可配（四技决策面属 v2.6.3 choice、洛神缺牌面对应物），"只接线不配置"，账本 38/131 不动；B7 {"1":117,"2":183} 逐字一致硬证达成（462 例/50 文件）（2026-09-26）
+
+模型：Qoder（Claude）。仓库 `Qoder/2.0`，链上承接 v2.6.0。
+
+- **重定性经过（本刀最重要的裁决，登记 §12-34①）**：计划书原位="内容刀→B8"（建议书 ④ 牌堆顶 5 条：观星/洛神/心战/自书/秘置）。开工逐条对照引擎词汇表：观星（观顶+重排顶序）、心战（亮顶拣选）、自书（置牌后拣选）、秘置（回合外时机+置牌决策）的**决策面全部属 choice 玩家通道**（v2.6.3 才存在，且 GPT 二检 Q4 明令 choice 不与技能转正绑定）；洛神=判定牌，本项目**无花色/判定面对应物**=维持档4。强行配定量近似载荷=违"不发明玩法"红线。经 AskUserQuestion 用户确认改立**能力层非内容刀**：只接两原语、硬锚=对 B7 逐字、五候选转正全部后移（ARCH_MAP §G 五行逐条改注"能力已就位→转正挂 choice 之后"）。这是"接线≠可配"自 2.5.3 起第二次兑现。
+- **REVEAL 观顶（第八原语·纯观察）**：`core/Event.ts` 新事件 `REVEAL{ viewerPlayerId, count }`；新文件 `core/eventProcessors/deckEvents.ts` 之 `applyRevealEvent`=**结算恒返回状态原样**（观察不产生游戏事实位移）且**零随机消耗**（rngState 一字不动）——全原语族首个"零位移且零随机"原语；事件照记=触发确实发生（"空转也记录"纪律）。bridge 分支 `viewerPlayerId=Number(ownerId)`、`count=Math.max(0,floor(value??1))`。观察本身不改变任何游戏事实——状态返回原样、被观的牌序不动，"看到了什么"只存在于事件流（录像可回看这一手是谁观的、观几张）。
+- **DECK_PLACE 置牌入堆（第九原语·GIVE 的手牌→牌堆镜像）**：新事件 `DECK_PLACE{ playerId, dest, count }`，**`dest:'TOP'|'BOTTOM'` 为 SkillRuntimeEffect 新可选载荷字段**（缺省=BOTTOM）。`applyDeckPlaceEvent`：**手牌头部确定性切片**（零新随机面）；TOP=前插牌堆头/BOTTOM=尾插牌堆底；**两类卡（资源/将领）都物理留在牌堆内**、不分流弃牌堆/将领池（与 GIVE/DISCARD 路由差异表内钉死）；牌堆顶=数组头=与 DRAW 同读侧；`count===0`=全手哨兵（沿 GIVE 手牌侧约定，刻意不同于 EQUIP_STRIP min=1）；空手/未知玩家/缺 playerId 诚实空转、超量 clamp、事件照记。
+- **三处同步扩枚**：`generals.ts` SkillRuntimeEffect 联合 +REVEAL/DECK_PLACE +`dest?`；`dataTypes.DataSkillEffectType`；`skillCompiler.SUPPORTED_EFFECT_TYPES`；`skillExcelFormat.runtimeEffectTypeLabels`"观顶"/"置牌入堆"+`SETTLEABLE_RUNTIME_TYPES`；`SkillTriggerBridge` 译表三行+两分支；`RuntimeEditor` 预览（'观看牌堆顶 N 张'/'将 N（0=全部）张手牌移入牌堆'）+**新增"放置位置"下拉**（牌堆底（默认）/牌堆顶，仅 DECK_PLACE 显示）。**表面缺口两处（§12-34⑤）**：Excel v2 六列无 dest 列→导入导出恒 BOTTOM（TOP 仅结构化编辑器可录）；编辑器数值 min=1 不收 0→全手哨兵仅代码入库（§12-29④ 同族）。
+- **账本不动（能力刀结构性佐证）**：168 条内置技能 → **38 runtime 定义 / 131 诚实跳过** 与 v2.6.0 逐字相同；观星/洛神/心战/自书/秘置 照常 NO_RUNTIME_PAYLOAD warn 诚实跳过（warn 可见=零行为变化）。Effect 原语现有 **9 种**、触发键恰 10 类不变。
+- **非内容刀硬锚达成**：ai-battle 300 局 seed1 胜席 **{"1":117,"2":183} 对 B7 逐字一致**——won=300、VIOLATIONS=0、同 seed **三轮**运行剥离计时行后 diff 仅剩计时噪声；逐势力五方锚（魏116/56/187/132/10/0、蜀136/71/204/131/14/2、吴126/55/161/115/4/0、群126/70/208/119/14/2、晋96/48/134/95/4/0）全部吻合 §12-33①。结构性成立=内置零 REVEAL/DECK_PLACE 载荷、新原语面对空配置。**v2.6.2 内容刀起须登记 B9；v2.6.3 非内容刀须对 B9 逐字**。
+- **测试 +9 → 462 例/50 文件**：`EventProcessor.test.ts` +7（REVEAL describe 2 例=合法载荷状态逐字段原样+rngState JSON 比对不动、坏/缺 viewerPlayerId no-op；DECK_PLACE describe 5 例=BOTTOM 默认尾插序、TOP 前插序、count=0 全手哨兵、超量 clamp+structuredClone 两跑含 rng 全等、空手/未知玩家 99/缺载荷三门诚实空转）；`skillCompiler.test.ts` +1（REVEAL/DECK_PLACE 编译+dest 转发：缺省 undefined、TOP 保留）；`transitionEquivalence.test.ts` +1（批量二节内：合成窥看 onDamageDealt→REVEAL 2 SELF 零位移+归堆 onDamageTaken→DECK_PLACE 1 SELF TOP 手牌入堆头 `['dt_hand_1',deck_1..4]`，事件载荷逐字段+常驻/桥接/对账重建/录像回放四路径逐事件一致+同配置两跑逐字节）；`SkillEditor.runtime.test.tsx` +1（DECK_PLACE 显示放置位置下拉、默认牌堆底、切 TOP 保存→store 载荷 `{type:'DECK_PLACE',value:1,target:'TARGET',dest:'TOP'}` 逐字；REVEAL 预览出现且无下拉）；`skillExcelFormat.test.ts` 既有例扩行（观顶/reveal/置牌入堆/deck_place 解析）。
+- **浏览器真机冒烟（dev 5173 `?t=v261smoke2`，全程未点保存/下载）**：开发者模式经真实 store 动作 `toggleDeveloperMode(密码)` 激活→卡牌图鉴→🛠️ 将领编辑器→选曹仁→切换为多效果模式→结构化效果=REVEAL：预览"观看牌堆顶"出现、**无**放置位置下拉；改 DECK_PLACE：预览"张手牌移入牌堆"+下拉出现、默认"牌堆底（默认）"；切"牌堆顶"选择保持→**关闭不保存**（不落 skillEdits；保存持久性由 jsdom 组件测试 3/3 承载）。E2E 操作新事实入 §12-34③④：开发者按钮文案=已开启/未开启（"开发者模式"是行标签）；**已开启态再点=免弹窗直接关闭**（误点即灭的本轮实踩）；确认成功自动跳回主菜单；后台限流（§12-23）下链式 sleep 脚本必碎=改小步同步单调用、页签冻结两连击超时=navigate 新 `?t=` 实例复活。
+- **验证（五闸全部在文件定稿后）**：check 0 错；**462 例/50 文件全过**（+9）；coverage 快照 48.87/40.62/40.06/54.41 四项全过地板 42/34/34/47（§12-22④，棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,947.02 kB / gzip 570.83 kB**（较 2.6.0 +1.54/+0.39 kB=两原语结算分支+桥接+编辑器下拉文本进 bundle，能力进引擎层的预期增长，B7 逐字=零行为变化的结构性证明）。package.json/lock=2.6.1。
+- **GPT 沟通判断（计划口径）**：**跳过**——2.6 三检预钉 v2.6.4；本刀最关键动作恰是守住红线（五候选够不到"忠实可配"即上报重定性，而非硬凑 B8），无契约级意外。
+- **CI 状态**：**PENDING**。
+
+
 
