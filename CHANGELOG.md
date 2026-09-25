@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.4] - 2026-09-25
+
+2.3 mainline, final cut (of the user-authorized five-cut plan): **P5 product-surface consistency — the accumulated quick-clean pool, all three §12-0 leftovers closed in one cut**. A *non-content* cut: the hard proof is ai-battle 300 seed1 staying byte-identical against baseline **B2 {1:114,2:186}** (two runs `cmp`-equal after the two registered timing-line exemptions, VIOLATIONS=0).
+
+- **Version footer never drifts again:** `MainMenu.tsx` shipped the decorative string `Qoder V1.28` since 2.2.1; it is now `Qoder V{pkg.version}` via a build-time `import pkg from '../../package.json'` (same mechanism as the 2.2.24 replay header). An anti-regression pin test asserts no `V<digits>.<digits>` literal can reappear in the source.
+- **Movement-banner turn-boundary guard:** while the "choose a highlighted zone" banner floated, ending the turn left stale highlights bleeding into the next player's turn. Fixed with React's official render-phase state adjustment — `turnKey = ${round}:${cpi}` change clears `movGen/movTgt/moveOptions` before any early return (hooks stay unconditional; the useEffect/ref variants were rejected by react-hooks/refs lint). Display layer only: zero engine-state contact, zero behaviour change.
+- **Disabled-reason tooltips on all five inspect-panel actions:** 前进/近战/远程/补给/叠甲 now carry `title` strings mirroring the very predicates that disable them (arming / already moved / attacked / no cards in hand / no targets in range / full HP / insufficient cards incl. enemy-zone +1 / no armor cards / armor capped), styled after the existing 整备/文将 hints.
+- **Tests (+4 → 388 / 46 files, `src/components/surfaceConsistency.test.tsx`).** Browser E2E verified all three surfaces on the real DOM: footer renders `Qoder V2.3.4`; tooltip strings read back verbatim on disabled buttons; and the guard's positive-negative case — banner floating with 2 highlighted cells and 结束回合 clickable → end turn anyway → banner and highlights gone after the seat switch. Console: 0 errors, only the expected v2.3.0 compile-diagnostics aggregate warns. Disclosed E2E deviations: the cosmetic dice screen was skipped through the same canonical store actions the button calls; a hotseat room was used because background tabs get Chrome intensive timer throttling (~1 fire/min) which crawls any timer-driven flow — root cause now registered as HANDOFF §12-23, correcting earlier "HMR freeze" attributions.
+- **GPT review judgment (per plan): skipped** — pure display-layer cut, no contract-level surprises. This closes the 2.3 five-cut mainline. CI: **PENDING**.
+
 ## [2.3.3] - 2026-09-25
 
 2.3 mainline, fourth cut (of the user-authorized five-cut plan): **P4 build governance — decision D-7 lands: `npm run build` no longer installs dependencies for you**. A *non-content* cut: the hard proof is ai-battle 300 seed1 staying byte-identical against baseline **B2 {1:114,2:186}** (two runs differ only on the two registered timing-line exemptions, VIOLATIONS=0).
