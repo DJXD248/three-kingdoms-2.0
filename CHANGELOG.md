@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 - **Non-content hard anchor**: ai-battle 300 seed1 → **verbatim B5 {"1":117,"2":183}**, same-seed double runs byte-identical after stripping timing banners, won=300, VIOLATIONS=0, per-faction anchors unchanged. Byte-identity is a proof, not luck: no live compiled definition uses `onDeploy`, so the replay registry is empty and the wiring cannot have altered any game's outcome.
 - **Ledger untouched**: 168 skills → **33 runtime definitions / 136 honest skips** (zero content change this cut).
 - **Browser E2E: honestly skipped** — no player-perceivable gameplay touchpoint this cut; live trigger evidence folded into v2.5.2's promotion acceptance.
-- **Verification:** check 0 errors; 432 tests green; coverage snapshots above floors 42/34/34/47 (§12-22④); lint 0 errors / 30 legacy warnings, zero new; build succeeded. **GPT communication judgment (per plan): skipped** — the second review stays pre-pinned at v2.5.4; no contract-level surprise. CI: **PENDING** — backfill after push.
+- **Verification:** check 0 errors; 432 tests green; coverage snapshots above floors 42/34/34/47 (§12-22④); lint 0 errors / 30 legacy warnings, zero new; build succeeded. **GPT communication judgment (per plan): skipped** — the second review stays pre-pinned at v2.5.4; no contract-level surprise. CI: **green** — GitHub Actions CI #87 (run 36134799473, commit 2d32941) completed successfully (feat 8886533 + docs 2d32941 + tag v2.5.1 covered by a single top-of-chain run; direct push timed out, one-shot proxy 127.0.0.1:10808 succeeded, no persistent proxy config written).
 
 ## [2.5.0] - 2026-09-25
 
