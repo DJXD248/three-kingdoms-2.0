@@ -17,6 +17,8 @@ const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number) => stri
   DISCARD: v => `弃 ${v === 0 ? '全部' : v} 张手牌`,
   GIVE: v => `发放 ${v === 0 ? '全部' : v} 张手牌`,
   EQUIP_STRIP: v => `剥离 ${v} 张装备卡`,
+  REVEAL: v => `观看牌堆顶 ${v} 张`,
+  DECK_PLACE: v => `将 ${v === 0 ? '全部' : v} 张手牌移入牌堆`,
 };
 
 export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEffect; onChange: (r: SkillRuntimeEffect | undefined) => void }) {
@@ -64,6 +66,18 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
             {(Object.entries(runtimeTargetLabels) as [NonNullable<SkillRuntimeEffect['target']>, string][]).map(([k, v]) => (
               <option key={k} value={k}>{v}</option>
             ))}
+          </select>
+        </div>
+      )}
+
+      {runtime?.type === 'DECK_PLACE' && (
+        <div className="flex items-center gap-2 pl-4">
+          <label className="text-[10px] text-emerald-400/50 whitespace-nowrap">└ 放置位置</label>
+          <select value={runtime.dest || 'BOTTOM'}
+            onChange={e => onChange({ ...runtime, dest: e.target.value as NonNullable<SkillRuntimeEffect['dest']> })}
+            className={`${runtimeSelectCls} flex-1`}>
+            <option value="BOTTOM">牌堆底（默认）</option>
+            <option value="TOP">牌堆顶</option>
           </select>
         </div>
       )}

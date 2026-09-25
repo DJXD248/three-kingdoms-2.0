@@ -78,6 +78,10 @@ describe('skillExcelFormat: runtime field parsers', () => {
     expect(parseRuntimeType('discard')).toBe('DISCARD');
     expect(parseRuntimeType('剥离装备')).toBe('EQUIP_STRIP');
     expect(parseRuntimeType('equip_strip')).toBe('EQUIP_STRIP');
+    expect(parseRuntimeType('观顶')).toBe('REVEAL');
+    expect(parseRuntimeType('reveal')).toBe('REVEAL');
+    expect(parseRuntimeType('置牌入堆')).toBe('DECK_PLACE');
+    expect(parseRuntimeType('deck_place')).toBe('DECK_PLACE');
     expect(parseRuntimeType('无')).toBeUndefined();
     expect(parseRuntimeType('飞行')).toBeUndefined();
   });

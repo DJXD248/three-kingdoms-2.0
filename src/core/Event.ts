@@ -10,6 +10,8 @@ export type GameEventType =
   | 'DISCARD'
   | 'GIVE'
   | 'EQUIP_STRIP'
+  | 'REVEAL'
+  | 'DECK_PLACE'
   | 'CARD_LOST'
   | 'CARD_GAINED'
   | 'DRAW'

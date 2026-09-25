@@ -28,12 +28,16 @@ export type DataSkillEffectType =
   | 'GAIN_ARMOR'
   | 'DISCARD'
   | 'GIVE'
-  | 'EQUIP_STRIP';
+  | 'EQUIP_STRIP'
+  | 'REVEAL'
+  | 'DECK_PLACE';
 
 export interface SkillEffectData {
   type: DataSkillEffectType;
   value?: number;
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
+  /** 仅 DECK_PLACE 使用：手牌移到牌堆顶还是底（默认 BOTTOM） */
+  dest?: 'TOP' | 'BOTTOM';
 }
 
 export interface DataSkillDefinition {

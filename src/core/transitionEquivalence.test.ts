@@ -1296,5 +1296,79 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(JSON.stringify(normalize(second.engine.state as unknown as Record<string, unknown>)))
       .toBe(JSON.stringify(normalize(first.engine.state as unknown as Record<string, unknown>)));
   });
+
+  // ── v2.6.1 牌堆顶能力层 REVEAL/DECK_PLACE（非内容刀：合成模板实证接线，内置将零载荷） ──
+
+  it('牌堆顶接线：观顶零位移+置牌入堆归手 reorder 四路径逐字一致 (v2.6.1)', () => {
+    const watcher = makeGeneral('dt_watch', 4, [{
+      name: '窥看',
+      effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'REVEAL', value: 2, target: 'SELF' } }],
+    }]);
+    const stuffer = makeGeneral('dt_stuff', 6, [{
+      name: '归堆',
+      effects: [{ id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'DECK_PLACE', value: 1, target: 'SELF', dest: 'TOP' } }],
+    }]);
+    const build = () => makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(watcher, 1, 0)], hand: COSTS.slice(0, 2).map(c => ({ ...c })) }),
+      makePlayer(2, {
+        fieldGenerals: [makeFieldGeneral(stuffer, 2, 0)],
+        hand: [{ id: 'dt_hand_1', name: '粮草', type: '粮草' }, { id: 'dt_hand_2', name: '材料', type: '材料' }],
+      }),
+    ]);
+    const action = attack('dt_watch', 'dt_stuff', 0);
+
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    const steps = [rawEvents(engine.dispatch(action))];
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    const flat = steps[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    const reveal = flat.filter(e => e.type === 'REVEAL' && String(e.data?.skillId ?? '').includes('窥看:e1'));
+    expect(reveal).toHaveLength(1);
+    expect(reveal[0].data).toMatchObject({ viewerPlayerId: 1, count: 2 });
+
+    const place = flat.filter(e => e.type === 'DECK_PLACE' && String(e.data?.skillId ?? '').includes('归堆:e1'));
+    expect(place).toHaveLength(1);
+    expect(place[0].data).toMatchObject({ playerId: 2, dest: 'TOP', count: 1 });
+
+    // 本刀唯一状态位移：手牌头一张 dt_hand_1 → 牌堆顶（makeState 原 4 张顺次后移）；观顶零位移。
+    expect((engine.state.deck as Array<{ id: string }>).map(c => c.id))
+      .toEqual(['dt_hand_1', 'deck_1', 'deck_2', 'deck_3', 'deck_4']);
+    expect((engine.state.players.find(p => p.id === 2)!.hand as Array<{ id: string }>).map(c => c.id))
+      .toEqual(['dt_hand_2']);
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = build();
+    const bridgeSteps: string[][] = [];
+    {
+      const r = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = r.engineState;
+      bridgeSteps.push(rawEvents(r.events));
+    }
+    expect(bridgeSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = build();
+    {
+      const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = r.engineState;
+      expect(rawEvents(r.events)).toEqual(steps[0]);
+      expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+    }
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(1);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    // 同配置两跑逐字节一致：牌堆顶操作零新增随机面（顺序本已定死，重放重算同一张头牌）
+    const againEngine = new GameEngine(build());
+    syncPlayerSkills(againEngine, againEngine.state);
+    expect(rawEvents(againEngine.dispatch(action))).toEqual(steps[0]);
+    expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
 });
 

@@ -151,6 +151,12 @@ function buildCondition(
  *   GIVE        → GIVE         { fromPlayerId, toPlayerId, count } (2.5.3, hand-to-hand
  *                               transfer in EventProcessor; settlement derives the
  *                               CARD_LOST/CARD_GAINED notifications)
+ *   EQUIP_STRIP → EQUIP_STRIP  { targetPlayerId, targetId, count } (2.6.0, general-keyed
+ *                               armor-card strip in EventProcessor)
+ *   REVEAL      → REVEAL       { viewerPlayerId, count } (2.6.1, pure observation —
+ *                               settlement returns state unchanged, zero rngState)
+ *   DECK_PLACE  → DECK_PLACE   { playerId, dest, count } (2.6.1, hand→deck mirror of GIVE;
+ *                               dest defaults to BOTTOM, head-of-hand deterministic slice)
  */
 export class SkillTriggerBridge {
   private registrations = new Map<string, string[]>();
@@ -332,6 +338,38 @@ export class SkillTriggerBridge {
             targetId: targetId ?? data.targetId,
             count: Math.max(1, Math.floor(Number(effect.value ?? 1))),
           },
+        };
+      }
+
+      if (effect.type === 'REVEAL') {
+        // REVEAL (2.6.1, deck-top capability layer): pure observation keyed to
+        // the skill OWNER's player (who looks). It never mutates state and
+        // consumes no rngState — settlement returns state unchanged; the event
+        // is recorded so the log/HUD shows the look happened.
+        return {
+          type: 'REVEAL',
+          data: {
+            ...data,
+            viewerPlayerId: Number(sourceId),
+            count: Math.max(0, Math.floor(Number(effect.value ?? 1)))
+          }
+        };
+      }
+
+      if (effect.type === 'DECK_PLACE') {
+        // DECK_PLACE (2.6.1, deck-top capability layer): hand→deck mirror of
+        // GIVE, keyed to the skill OWNER's player (whose hand is detached and
+        // re-attached onto the deck). dest defaults to BOTTOM (the dominant
+        // "place under the deck" semantic); TOP is carried when the runtime
+        // payload sets it. Empty-hand settles as an honest no-op downstream.
+        return {
+          type: 'DECK_PLACE',
+          data: {
+            ...data,
+            playerId: Number(sourceId),
+            dest: effect.dest === 'TOP' ? 'TOP' : 'BOTTOM',
+            count: Math.max(0, Math.floor(Number(effect.value ?? 1)))
+          }
         };
       }
 

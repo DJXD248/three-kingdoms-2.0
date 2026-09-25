@@ -760,6 +760,97 @@ describe('EventProcessor', () => {
     });
   });
 
+  describe('REVEAL event (v2.6.1 观顶原语·非内容刀)', () => {
+    const deckOf = (ids: string[]) => ids.map(id => ({ id }));
+
+    it('观看即原样返回：状态逐字不变、零 rng 消耗', () => {
+      const state = createTestState([createTestPlayer(1)]);
+      state.deck = deckOf(['d1', 'd2', 'd3']);
+      const rngBefore = JSON.stringify(state.rngState ?? null);
+
+      const result = processor.process(state, [
+        { type: 'REVEAL', data: { viewerPlayerId: 1, count: 2 } },
+      ]);
+
+      expect(result.deck).toEqual([{ id: 'd1' }, { id: 'd2' }, { id: 'd3' }]);
+      expect(result.players.find(p => p.id === 1)!.hand).toHaveLength(0);
+      expect(JSON.stringify(result.rngState ?? null)).toBe(rngBefore);
+    });
+
+    it('畸形载荷同样诚实空转（观看本就不动状态）', () => {
+      const state = createTestState([createTestPlayer(1)]);
+      state.deck = deckOf(['d1']);
+      const noViewer = processor.process(state, [{ type: 'REVEAL', data: { count: 1 } }]);
+      expect(noViewer.deck).toEqual([{ id: 'd1' }]);
+      const badViewer = processor.process(state, [
+        { type: 'REVEAL', data: { viewerPlayerId: 'one', count: 1 } },
+      ]);
+      expect(badViewer.deck).toEqual([{ id: 'd1' }]);
+    });
+  });
+
+  describe('DECK_PLACE event (v2.6.1 置牌入堆原语·GIVE 的手牌→牌堆镜像)', () => {
+    const handOf = (ids: string[]) => ids.map(id => ({ id }));
+    const placeState = (hand: string[], deck: string[]) => {
+      const state = createTestState([createTestPlayer(1, { hand: handOf(hand) as never })]);
+      state.deck = handOf(deck);
+      return state;
+    };
+    const deckIds = (s: { deck: unknown }) =>
+      (s.deck as Array<{ id: string }>).map(c => c.id);
+
+    it('默认置底：从手牌头部取 count 张、按序接在牌堆尾', () => {
+      const result = processor.process(placeState(['h1', 'h2', 'h3'], ['d1', 'd2']), [
+        { type: 'DECK_PLACE', data: { playerId: 1, count: 2 } },
+      ]);
+      expect(deckIds(result)).toEqual(['d1', 'd2', 'h1', 'h2']);
+      expect((result.players[0].hand as Array<{ id: string }>).map(c => c.id)).toEqual(['h3']);
+    });
+
+    it('dest=TOP：整段扣在牌堆顶且保持相对顺序', () => {
+      const result = processor.process(placeState(['h1', 'h2', 'h3'], ['d1']), [
+        { type: 'DECK_PLACE', data: { playerId: 1, dest: 'TOP', count: 2 } },
+      ]);
+      expect(deckIds(result)).toEqual(['h1', 'h2', 'd1']);
+      expect((result.players[0].hand as Array<{ id: string }>).map(c => c.id)).toEqual(['h3']);
+    });
+
+    it('count=0 全手牌哨兵：整副手牌入堆、手牌清空', () => {
+      const result = processor.process(placeState(['h1', 'h2'], ['d1']), [
+        { type: 'DECK_PLACE', data: { playerId: 1, count: 0 } },
+      ]);
+      expect(deckIds(result)).toEqual(['d1', 'h1', 'h2']);
+      expect(result.players[0].hand).toHaveLength(0);
+    });
+
+    it('超额 clamp 与重放逐字：count 超手牌数按实际取、rngState 不动', () => {
+      const st = placeState(['h1'], ['d1', 'd2']);
+      const a = processor.process(st, [{ type: 'DECK_PLACE', data: { playerId: 1, count: 9 } }]);
+      expect(deckIds(a)).toEqual(['d1', 'd2', 'h1']);
+      const b = processor.process(structuredClone(st), [{ type: 'DECK_PLACE', data: { playerId: 1, count: 9 } }]);
+      expect(b.deck).toEqual(a.deck);
+      expect(b.rngState).toEqual(a.rngState);
+    });
+
+    it('诚实空转：空手/未知玩家/缺载荷 → 牌堆与手牌原样', () => {
+      const emptyHand = processor.process(placeState([], ['d1']), [
+        { type: 'DECK_PLACE', data: { playerId: 1, count: 1 } },
+      ]);
+      expect(deckIds(emptyHand)).toEqual(['d1']);
+
+      const unknown = processor.process(placeState(['h1'], ['d1']), [
+        { type: 'DECK_PLACE', data: { playerId: 99, count: 1 } },
+      ]);
+      expect(deckIds(unknown)).toEqual(['d1']);
+      expect((unknown.players[0].hand as unknown[])).toHaveLength(1);
+
+      const noIds = processor.process(placeState(['h1'], ['d1']), [
+        { type: 'DECK_PLACE', data: { count: 1 } },
+      ]);
+      expect(deckIds(noIds)).toEqual(['d1']);
+    });
+  });
+
   describe('immutability', () => {
     it('should not mutate the original state', () => {
       const player = createTestPlayer(1, { baseHp: 5 });

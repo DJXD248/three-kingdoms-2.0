@@ -197,6 +197,33 @@ describe('skillCompiler · compileSkill', () => {
     expect(gained.definitions[0].trigger).toBe('onCardGained');
   });
 
+  it('compiles REVEAL/DECK_PLACE effects and forwards dest — 2.6.1 牌堆顶能力层（非内容刀）', () => {
+    const reveal = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onTurnStart' }, runtime: { type: 'REVEAL', value: 2, target: 'SELF' } }] }),
+      'g1',
+    );
+    expect(reveal.definitions).toHaveLength(1);
+    expect(reveal.skipped).toHaveLength(0);
+    expect(reveal.definitions[0].effects[0]).toMatchObject({ type: 'REVEAL', value: 2, target: 'SELF' });
+
+    const bottom = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onTurnEnd' }, runtime: { type: 'DECK_PLACE', value: 1, target: 'SELF' } }] }),
+      'g1',
+    );
+    expect(bottom.definitions).toHaveLength(1);
+    expect(bottom.definitions[0].effects[0]).toMatchObject({ type: 'DECK_PLACE', value: 1, target: 'SELF' });
+    expect(bottom.definitions[0].effects[0].dest).toBeUndefined(); // 缺省即牌堆底
+
+    const top = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onTurnEnd' }, runtime: { type: 'DECK_PLACE', value: 0, target: 'SELF', dest: 'TOP' } }] }),
+      'g1',
+    );
+    expect(top.definitions[0].effects[0]).toMatchObject({ type: 'DECK_PLACE', value: 0, dest: 'TOP' });
+  });
+
   it('skips choice-mode skills until the reaction window is wired', () => {
     const { definitions, skipped } = compileSkill(
       general(),

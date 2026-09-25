@@ -80,4 +80,33 @@ describe('SkillEditor: structured runtime entry', () => {
     const saved = useGameStore.getState().skillEdits[target.id];
     expect(saved[0].effects?.[0].runtime).toBeUndefined();
   });
+
+  it('DECK_PLACE exposes the 放置位置 selector and persists dest=TOP (v2.6.1)', () => {
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
+    render(<SkillEditor onClose={() => {}} />);
+    const listBtn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name));
+    fireEvent.click(listBtn!);
+    fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
+
+    const findDestSelect = () => Array.from(document.querySelectorAll('select'))
+      .find(s => s.options[0]?.text?.startsWith('牌堆底')) as HTMLSelectElement | undefined;
+
+    // 观顶/置牌同为上表新枚；REVEAL 无位置面→不应出现放置位置下拉
+    fireEvent.change(findRuntimeSelect(), { target: { value: 'REVEAL' } });
+    expect(screen.getByText(/观看牌堆顶/)).toBeTruthy();
+    expect(findDestSelect()).toBeUndefined();
+
+    fireEvent.change(findRuntimeSelect(), { target: { value: 'DECK_PLACE' } });
+    expect(screen.getByText(/张手牌移入牌堆/)).toBeTruthy();
+    const dest = findDestSelect();
+    expect(dest).toBeTruthy();
+    expect(dest!.value).toBe('BOTTOM'); // 缺省=牌堆底
+    fireEvent.change(dest!, { target: { value: 'TOP' } });
+
+    fireEvent.click(screen.getByText('💾 保存修改'));
+    const saved = useGameStore.getState().skillEdits[target.id];
+    expect(saved[0].effects?.[0].runtime)
+      .toEqual({ type: 'DECK_PLACE', value: 1, target: 'TARGET', dest: 'TOP' });
+  });
 });

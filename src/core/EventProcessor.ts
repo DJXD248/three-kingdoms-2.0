@@ -23,6 +23,10 @@ import {
   applyEquipStripEvent,
 } from './eventProcessors/generalEvents';
 import {
+  applyRevealEvent,
+  applyDeckPlaceEvent,
+} from './eventProcessors/deckEvents';
+import {
   applyPlayerDefeatedEvent,
   applyGameOverEvent,
 } from './eventProcessors/playerEvents';
@@ -99,6 +103,10 @@ export class EventProcessor {
         return applyGiveEvent(state, event);
       case 'EQUIP_STRIP':
         return applyEquipStripEvent(state, event);
+      case 'REVEAL':
+        return applyRevealEvent(state, event);
+      case 'DECK_PLACE':
+        return applyDeckPlaceEvent(state, event);
       case 'PLAYER_DEFEATED':
         return applyPlayerDefeatedEvent(state, event);
       case 'GAME_OVER':

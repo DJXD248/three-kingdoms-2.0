@@ -71,6 +71,8 @@ const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>([
   'DISCARD',
   'GIVE',
   'EQUIP_STRIP',
+  'REVEAL',
+  'DECK_PLACE',
 ]);
 
 export interface SkillSkip {
@@ -95,6 +97,7 @@ export interface RuntimeEffectPayload {
   type: DataSkillEffectType;
   value?: number;
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
+  dest?: 'TOP' | 'BOTTOM';
 }
 
 function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
@@ -111,6 +114,7 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
     type: runtime.type,
     value: runtime.value,
     target: runtime.target ?? 'TARGET',
+    dest: runtime.dest,
   };
 }
 
