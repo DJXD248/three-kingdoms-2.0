@@ -1266,4 +1266,16 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **GPT 沟通判断（计划口径）**：**跳过**——二检按计划预钉 v2.5.4（携策略档重测+逐技能强制触发可达性专项）；本刀无契约级意外（十二格表先行、派生面主动收口、重入=既有有界机制泛化非新机制）。
 - **CI 状态**：**全绿**——GitHub Actions CI #91（run 36147727933，master 推送触发）与 #92（run 36147728546，标签 v2.5.3 推送触发）均在 commit 06994a6 上 completed successfully（feat 7dbb818 + docs 06994a6 + 标签全覆盖；直连推送成功未借代理）。
 
+## Qoder 2.5.4：2.5 第五刀（非内容刀）——收敛核验刀（2.5 主线收官）：`--policy` 策略档接线 + 逐技能强制触发可达性专项 36/36 + 策略档攻击链重测（零触发 15→0 翻案）+ 反馈真机补验欠账清零；B6 逐字硬锚达成；448 例/50 文件（2026-09-25）
+
+- **`--policy` 策略档接线（仅 CLI 侧）**：`src/ai/battleCli.ts` 加 `policyByName` 四档（random/conservative/balanced/aggressive），未知档位显式拒收（报错列可选值），banner 回显 `policy <tier>`；`battleRunner.runBatch` 透传给驱动。默认 random=行为路径逐字不变（B6 硬锚即自证）。测试 +1：`battleRunner.test.ts` "runBatch forwards an opt-in policy tier deterministically"（2 局/pool4/deck36/maxSteps1200 seed 9301 ×两轮，胜席相等、violations 0）。
+- **逐技能强制触发可达性专项（GPT 采纳④销案）**：新文件 `src/skills/builtinReachability.test.ts` 5 例——① 36/36 条 runtime 定义逐条喂合法激励事件**必产生真实效果事件**（覆盖 DRAW/DAMAGE/HEAL/GAIN_ARMOR/DISCARD/GIVE 六原语与全部 10 类触发键）；② 账本钉 168→36 定义/133 诚实跳过；③ 触发键恰 10 类；④ onTurnEnd 恰 6 条；⑤ 同配置两跑逐字节一致。口径登记：属**测试期专项非常驻机制**，不改任何生产触发条件；与随机审计双轨互补（真实性 vs 可达性，GPT 采纳④原话）。
+- **策略档攻击链重测（2.4.3 洞察③翻案闭环）**：500 局 seed5000 同段仅换 `--policy`：balanced 胜席 {1:217,2:283}、aggressive {1:247,2:253}，两档 won=500、VIOLATIONS=0，且**配置技能 34 名键全触发、零触发 0 条**——随机档 15 条零触发实证为策略暴露面不足而非配置失效（aggressive 攻击暴露 ~7600 次/500 局 vs 随机档 ~38 次）；低频尾部=语义概率（断肠 1 需击杀者持手牌、追忆 2、司敌 5）与 36/36 可达性互证；反馈 balanced 24/aggressive 14。全表入 ARCH_MAP G 节新小节"策略档攻击链重测"。
+- **反馈真机补验（v2.5.0 欠账 §12-29①清零）**：dev 5174 热座房「官渡之战2541」（`?e2e=254` 防 HMR 双实例）真实点击——P2 蜀·姜维（前线）🏹远程射魏·司马懿（营地）：选子→🏹→点消耗卡（龙骨材）→红横幅→点目标；canonical 事件链逐字取证 `DAMAGE{src:shu_010__inst_k→wei_002__inst_1,value:1}` → `TRIGGERED{sourceEvent:DAMAGE…}` → `DISCARD{skillId:"wei_002__inst_1:反馈:e1", playerId:2, count:1, triggerDepth:2, effectType:"DISCARD"}`；台账=司马懿 HP 3→2、姜维手牌 31→29（1 攻击消耗+1 反馈弃置）逐张对账；GENERAL_DEPLOYED 载荷内证反馈 runtime（onDamageTaken-allDamage→DISCARD 1 ATTACKER）与描述"受到伤害后，伤害来源弃置一张手牌。"。**至此 2.5 真机欠账全数清零**。
+- **E2E 环境新事实（HANDOFF §12-32）**：①攻击 UI 定式=棋子（button 含名+❤️，非 `<p>` 名）→🏹→**必须再点一张手牌作消耗**→红横幅"⚔️远程攻击 - 点击高亮目标"→点目标；漏环节=静默取消回 board 无报错（本刀前两次假失败根因）；②React 渲染对同一次 evaluate_script 不可见——点击与核验必须拆相邻两次调用；点棋子=inspect 弹层 toggle，补点会关掉弹层；③抽牌窗流程=循环点"结算失去体力"→"🎴 抽取 5 张卡牌"→"⚔️ 开始行动"，每窗固定另发 2 张池将；④卡死 renderer 恢复=导航至另一真实 URL（about:blank 被拒），select_page 用 1 基 pageId；⑤策略档直跑命令=`esbuild src/ai/battleCli.ts --bundle --platform=node --format=cjs --outfile=.ai-battle/ai-battle.cjs && node .ai-battle/ai-battle.cjs --games 500 --seed 5000 --skill 0 --policy <tier> --skill-stats`。
+- **非内容刀硬锚达成**：ai-battle 300 局 seed1 胜席 **{"1":117,"2":183} 对 B6 逐字一致**（won=300、VIOLATIONS=0、同 seed 两轮剥离计时行后 cmp 逐字节全等；结构性佐证=`--policy` 接线后默认 random 行为路径零改动，策略档仅显式传参可达）。
+- **验证（五闸全部在文件定稿后）**：check 0 错；**448 例/50 文件全过**（+6）；coverage 定稿快照 48.48/40.21/39.95/54.07 四项全过地板 42/34/34/47（§12-22④ 快照口径，棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,943.63 kB / gzip 569.98 kB 与 2.5.3 逐字相同**——本刀 src 改动=CLI 侧（不进 web 产物）+两个测试文件，web bundle 零改动（产物尺寸自证改动面）。package.json/lock=2.5.4。
+- **GPT 沟通判断（计划口径）**：**执行**——2.5 二检预钉本刀；简报携可达性 36/36 表、策略档重测翻案、B2→B6 漂移账、2.5 五刀闭环与 2.6 候选路线；结论随回填补记（归档仓库外 `GPT_DISCUSSION_2_5_4_*.md`）。
+- **CI 状态**：**PENDING**（登记时点待推送后浏览器核验回填）。
+
 
