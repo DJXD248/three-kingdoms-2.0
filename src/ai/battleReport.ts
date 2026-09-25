@@ -8,6 +8,8 @@
  */
 import type { FactionBalanceStat, MatchResult, RecordedAction } from './battleRunner';
 import { aggregateFactionStats } from './battleRunner';
+import type { General } from '../data/generals';
+import { allGenerals } from '../data/generals';
 import type { Violation } from './invariants';
 
 export type { FactionBalanceStat };
@@ -47,6 +49,57 @@ export function formatFactionStats(stats: FactionBalanceStat[]): string[] {
       `登场${f.deployed} 阵亡${f.deaths}（死亡率 ${rate(f.deaths, f.deployed)}） · ` +
       `攻击${f.attacks} 击杀${f.kills}（击杀率 ${rate(f.kills, f.attacks)}）`,
   );
+}
+
+/**
+ * Per-skill trigger frequency 口径 (2.4.3 content audit): one count per
+ * skill-tagged EFFECT EVENT, keyed by the skill NAME segment of the compiled
+ * skillId (see battleRunner's skillTriggerKey) — dual-effect skills like
+ * 苦肉 credit each fired effect separately into the same row. Expected rows =
+ * every generals.ts skill with at least one `effects[].runtime` payload (the
+ * compiled set); configured-but-zero rows are surfaced for the §G
+ * content-quality notes. Extra keys present only in the counts (e.g.
+ * practice-injection 演練・ skills) are listed too, uncounted.
+ */
+export interface ExpectedSkillRow {
+  key: string;
+  label: string;
+}
+
+/** Built-in skills that carry a runtime payload → expected report rows. */
+export function configuredSkillRows(generals: General[] = allGenerals): ExpectedSkillRow[] {
+  const rows: ExpectedSkillRow[] = [];
+  for (const g of generals) {
+    for (const s of g.skills ?? []) {
+      if (s.effects?.some(e => e.runtime)) rows.push({ key: s.name, label: `${g.name}·${s.name}` });
+    }
+  }
+  return rows;
+}
+
+export function formatSkillTriggerStats(
+  counts: Record<string, number>,
+  expected: ExpectedSkillRow[],
+): string[] {
+  const labelOf = new Map(expected.map(r => [r.key, r.label]));
+  const keys = new Set([...expected.map(r => r.key), ...Object.keys(counts)]);
+  const rows = [...keys].map(key => ({
+    key,
+    label: labelOf.get(key) ?? key,
+    count: counts[key] ?? 0,
+    expected: labelOf.has(key),
+  }));
+  rows.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key, 'zh-CN'));
+  const fired = rows.filter(r => r.expected && r.count > 0).length;
+  const zero = rows.filter(r => r.expected && r.count === 0).length;
+  const out: string[] = [
+    `  配置技能 ${new Set(expected.map(r => r.key)).size} 条 · 触发过 ${fired} 条 · 零触发 ${zero} 条` +
+      (rows.some(r => !r.expected) ? '（另有名单外触发项，见下）' : ''),
+  ];
+  for (const r of rows) {
+    out.push(`  ${r.label.padEnd(14, '　')} ${String(r.count).padStart(5)}${r.expected && r.count === 0 ? '  ← 零触发' : ''}`);
+  }
+  return out;
 }
 
 export function summarizeMatches(results: MatchResult[]): BattleSummary {

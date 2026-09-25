@@ -14,6 +14,8 @@ import {
   buildReplayBundle,
   formatActionLine,
   formatFactionStats,
+  formatSkillTriggerStats,
+  configuredSkillRows,
   summarizeMatches,
 } from './battleReport';
 import { encodeSeats, parseAiBattleHash, type AiBattleSeat } from './battleHash';
@@ -132,6 +134,44 @@ describe('battleReport', () => {
     ]);
     expect(files.map(f => f.name)).toEqual(['match-7.json', 'match-8.json']);
     expect(JSON.parse(files[0].content).kind).toBe('ai-battle-failure');
+  });
+});
+
+describe('skill trigger report (2.4.3)', () => {
+  it('configuredSkillRows covers exactly the runtime-bearing built-in skills', () => {
+    const rows = configuredSkillRows();
+    // 批一 9 + 批二 21（v2.4.0 §G 档1 全数；苦肉双效果仍是一行）
+    expect(rows).toHaveLength(30);
+    const keys = rows.map(r => r.key);
+    // join key = 技能名（屯田 魏/晋 重名共一行 = 29 个唯一键）
+    expect(new Set(keys).size).toBe(29);
+    expect(keys.filter(k => k === '屯田')).toHaveLength(2);
+    expect(rows.some(r => r.key === '奸雄' && r.label === '曹操·奸雄')).toBe(true);
+    expect(rows.some(r => r.key === '苦肉' && r.label === '黄盖·苦肉')).toBe(true);
+    // pure-description skills (no runtime payload) must stay out of the set
+    expect(keys).not.toContain('观星');
+  });
+
+  it('formatter zero-fills expected rows, sorts desc by count, flags zeros', () => {
+    const expected = [
+      { key: '奸雄', label: '曹操·奸雄' },
+      { key: '苦肉', label: '黄盖·苦肉' },
+      { key: '龙吟', label: '关平·龙吟' },
+    ];
+    const lines = formatSkillTriggerStats({ '奸雄': 9, '苦肉': 3 }, expected);
+    expect(lines[0]).toContain('配置技能 3 条 · 触发过 2 条 · 零触发 1 条');
+    expect(lines[1]).toContain('曹操·奸雄');
+    expect(lines[1]).toMatch(/\s9$/);
+    expect(lines[2]).toContain('黄盖·苦肉');
+    expect(lines[3]).toContain('关平·龙吟');
+    expect(lines[3]).toContain('← 零触发');
+  });
+
+  it('counts outside the expected set still print (practice skills), flagged in header', () => {
+    const lines = formatSkillTriggerStats({ '演練・守夜': 4 }, []);
+    expect(lines[0]).toContain('配置技能 0 条 · 触发过 0 条 · 零触发 0 条');
+    expect(lines[0]).toContain('名单外触发项');
+    expect(lines[1]).toContain('演練・守夜');
   });
 });
 

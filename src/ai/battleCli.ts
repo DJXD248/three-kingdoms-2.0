@@ -10,10 +10,11 @@
  *   npm run ai-battle                                  # 10 games, seed 1
  *   npm run ai-battle -- --games 500 --seed 7          # batch soak
  *   npm run ai-battle -- --players 3 --pool 6 --skill 0.5
+ *   npm run ai-battle -- --skill 0 --skill-stats --games 500   # 真实池内容审计
  *   npm run ai-battle -- --replay ai-battle-failures/match-7.json
  */
 import { runMatch, runBatch, type RecordedAction, type MatchResult } from './battleRunner';
-import { formatFactionStats } from './battleReport';
+import { formatFactionStats, formatSkillTriggerStats, configuredSkillRows } from './battleReport';
 import type { MatchConfig } from './matchSetup';
 
 declare const process: {
@@ -34,6 +35,7 @@ interface CliArgs {
   maxSteps: number;
   replay: string | null;
   out: string | null;
+  skillStats: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -47,12 +49,17 @@ function parseArgs(argv: string[]): CliArgs {
     maxSteps: 3000,
     replay: null,
     out: null,
+    skillStats: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
     const value = argv[i + 1];
     if (!key.startsWith('--')) continue;
     const name = key.slice(2);
+    if (name === 'skill-stats') {
+      args.skillStats = true;
+      continue;
+    }
     if (name === 'replay') {
       args.replay = String(value);
       i += 1;
@@ -139,6 +146,7 @@ function main(): void {
     games: args.games,
     seed: args.seed,
     maxSteps: args.maxSteps,
+    trackSkillTriggers: args.skillStats,
     configOverrides: {
       playerCount: args.players,
       poolPerPlayer: args.pool,
@@ -159,6 +167,12 @@ function main(): void {
   if (summary.factionStats.length > 0) {
     console.log('  势力平衡（胜率=胜席/出场席 · 死亡率=阵亡/登场 · 击杀率=击杀/攻击）:');
     for (const line of formatFactionStats(summary.factionStats)) console.log(line);
+  }
+  if (args.skillStats) {
+    console.log('  逐技能触发频次（计数=带技能标记的效果事件，双效果技能分计两次）:');
+    for (const line of formatSkillTriggerStats(summary.skillTriggerCounts ?? {}, configuredSkillRows())) {
+      console.log(line);
+    }
   }
 
   if (summary.violations.length > 0) {

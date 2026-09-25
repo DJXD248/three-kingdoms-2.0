@@ -122,6 +122,10 @@ export interface MatchResult {
   finalPhase: string;
   /** Per-seat balance stats; absent only for hand-built legacy fixtures. */
   seatStats?: SeatStats[];
+  /** Per-skill effect-event counts (技能名 → 次数, see skillTriggerKey);
+   * present only when the run was started with `trackSkillTriggers`
+   * (v2.4.3 content audit). */
+  skillTriggers?: Record<string, number>;
 }
 
 export interface BatchSummary {
@@ -136,6 +140,8 @@ export interface BatchSummary {
   violations: { seed: number; step: number; code: string; detail: string }[];
   failedMatches: MatchResult[];
   factionStats: FactionBalanceStat[];
+  /** Batch roll-up of per-skill effect counts; absent unless tracking was on. */
+  skillTriggerCounts?: Record<string, number>;
 }
 
 function countAlive(state: EngineState): number {
@@ -155,6 +161,25 @@ interface RunOptions {
   maxSteps?: number;
   /** Replay mode: dispatch these actions (after the opening BEGIN_DRAW) instead of policy picks. */
   recorded?: RecordedAction[];
+  /** v2.4.3 content audit: count skill-produced effect events per skill.
+   * Off by default so the B4 baseline path stays byte-identical. */
+  trackSkillTriggers?: boolean;
+}
+
+/** Events a compiled skill effect can materialize as (SkillTriggerBridge). */
+const SKILL_EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR']);
+
+/**
+ * Batch-stable join key = the skill NAME segment of a compiled skillId:
+ * `wei_003__inst_c:刚烈:e1` → `刚烈`. Owner ids cannot serve — they differ per
+ * assembly path (matchSetup emits `ai712_c3`, the UI `wei_003__inst_c`) while
+ * the name segment is constant. Known collision by design: 屯田 (魏邓艾/晋)
+ * shares one row. Practice-injection skills carry the 演練・ name prefix, so
+ * they stay visibly separate from built-in rows.
+ */
+export function skillTriggerKey(skillId: string): string {
+  const parts = skillId.split(':');
+  return parts[1] ?? parts[0];
 }
 
 /**
@@ -191,6 +216,7 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
       won: 0 as 0 | 1,
     }));
     const statsOf = (playerId: number): SeatStats | undefined => seatStats[playerId - 1];
+    const skillTriggers: Record<string, number> | undefined = options.trackSkillTriggers ? {} : undefined;
 
     const firstPlayerId = state.currentPlayerId ?? 1;
 
@@ -238,6 +264,15 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
         if (actorStats) {
           actorStats.attacks += 1;
           actorStats.kills += removedOwners.filter(owner => owner !== action.playerId).length;
+        }
+      }
+      if (skillTriggers) {
+        for (const ev of events) {
+          if (!SKILL_EFFECT_EVENT_TYPES.has(ev.type)) continue;
+          const skillId = (ev.data as Record<string, unknown> | undefined)?.skillId;
+          if (typeof skillId !== 'string' || !skillId) continue;
+          const key = skillTriggerKey(skillId);
+          skillTriggers[key] = (skillTriggers[key] ?? 0) + 1;
         }
       }
       return true;
@@ -312,6 +347,7 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
       violations,
       finalPhase: String(state.phase),
       seatStats,
+      ...(skillTriggers ? { skillTriggers } : {}),
     };
   };
   return run();
@@ -339,6 +375,7 @@ export function runBatch(options: BatchOptions): BatchSummary {
     factionStats: [],
   };
   const factionMap = new Map<string, FactionBalanceStat>();
+  const skillMap: Record<string, number> = {};
   for (let i = 0; i < options.games; i += 1) {
     const seed = options.seed + i;
     const config = defaultMatchConfig(seed, options.configOverrides);
@@ -346,8 +383,14 @@ export function runBatch(options: BatchOptions): BatchSummary {
       policy: options.policy,
       seatPolicies: options.seatPolicies,
       maxSteps: options.maxSteps,
+      trackSkillTriggers: options.trackSkillTriggers,
     });
     absorbSeatStats(factionMap, result.seatStats);
+    if (options.trackSkillTriggers) {
+      for (const [key, n] of Object.entries(result.skillTriggers ?? {})) {
+        skillMap[key] = (skillMap[key] ?? 0) + n;
+      }
+    }
     summary.games += 1;
     summary.totalMs += result.durationMs;
     summary.slowestMs = Math.max(summary.slowestMs, result.durationMs);
@@ -367,5 +410,10 @@ export function runBatch(options: BatchOptions): BatchSummary {
   }
   summary.avgMs = summary.games > 0 ? Math.round(summary.totalMs / summary.games) : 0;
   summary.factionStats = sortFactionStats(factionMap);
+  if (options.trackSkillTriggers) {
+    const sorted: Record<string, number> = {};
+    for (const key of Object.keys(skillMap).sort()) sorted[key] = skillMap[key];
+    summary.skillTriggerCounts = sorted;
+  }
   return summary;
 }

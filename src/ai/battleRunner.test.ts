@@ -5,7 +5,7 @@
  * seed reproduces the same outcome.
  */
 import { describe, expect, it } from 'vitest';
-import { runMatch } from './battleRunner';
+import { runMatch, runBatch, skillTriggerKey } from './battleRunner';
 import { defaultMatchConfig } from './matchSetup';
 import { policyByName } from './policies/strategyPolicy';
 
@@ -93,5 +93,65 @@ describe('ai battle runner (seeded smoke)', () => {
     // Determinism: the same seeded run yields identical stats.
     const again = runMatch(config, { maxSteps: 1500, seatPolicies });
     expect(again.seatStats).toEqual(stats);
+  });
+});
+
+describe('skill trigger tracking (2.4.3 content audit)', () => {
+  it('off by default: no skillTriggers field, outcome untouched', () => {
+    const config = defaultMatchConfig(711, { poolPerPlayer: 4, deckSize: 40 });
+    const plain = runMatch(config, { maxSteps: 1500 });
+    expect(plain.skillTriggers).toBeUndefined();
+    expect(plain.skillTriggers === undefined).toBe(true);
+    // B4 default path hard证: tracking off must not perturb anything.
+    expect(plain.status).toBe('won');
+    expect(plain.violations).toEqual([]);
+  });
+
+  it('on: effect-event counts are keyed by skill name and deterministic', () => {
+    const config = defaultMatchConfig(
+      712,
+      { poolPerPlayer: 5, deckSize: 45, skillInjection: 0.99 },
+    );
+    const a = runMatch(config, { maxSteps: 2000, trackSkillTriggers: true });
+    const b = runMatch(config, { maxSteps: 2000, trackSkillTriggers: true });
+    expect(a.violations).toEqual([]);
+    expect(a.skillTriggers).toEqual(b.skillTriggers);
+    for (const key of Object.keys(a.skillTriggers ?? {})) {
+      // join key = bare skill-name segment, never an instance-salted id
+      expect(key).not.toContain(':');
+      expect(key).not.toContain('__inst');
+    }
+    // Same seed, tracking off → identical match outcome (counter is pure observer).
+    const untracked = runMatch(config, { maxSteps: 2000 });
+    expect(untracked.winnerId).toBe(a.winnerId);
+    expect(untracked.steps).toBe(a.steps);
+    expect(untracked.actions).toEqual(a.actions);
+  });
+
+  it('skillTriggerKey takes the name segment of a compiled skillId', () => {
+    expect(skillTriggerKey('wei_001__inst_a:奸雄:e1')).toBe('奸雄');
+    expect(skillTriggerKey('ai712_c3:猛进:e1')).toBe('猛进');
+    expect(skillTriggerKey('no-colon-fallback')).toBe('no-colon-fallback');
+  });
+
+  it('runBatch rolls up counts only when tracking is on', () => {
+    const overrides = { poolPerPlayer: 5, deckSize: 45, skillInjection: 0.99 };
+    const off = runBatch({ games: 20, seed: 712, maxSteps: 2000, configOverrides: overrides });
+    expect(off.skillTriggerCounts).toBeUndefined();
+    const on = runBatch({
+      games: 20,
+      seed: 712,
+      maxSteps: 2000,
+      trackSkillTriggers: true,
+      configOverrides: overrides,
+    });
+    expect(on.skillTriggerCounts).toBeDefined();
+    // 20 near-full-injection games provably fire skill effects (CLI-verified).
+    const counts = on.skillTriggerCounts ?? {};
+    expect(Object.values(counts).reduce((s, n) => s + n, 0)).toBeGreaterThan(0);
+    // Roll-up keys are sorted for byte-stable output across reruns.
+    const keys = Object.keys(counts);
+    expect(keys).toEqual([...keys].sort());
+    expect(on.winnerCounts).toEqual(off.winnerCounts);
   });
 });
