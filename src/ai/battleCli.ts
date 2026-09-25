@@ -11,10 +11,12 @@
  *   npm run ai-battle -- --games 500 --seed 7          # batch soak
  *   npm run ai-battle -- --players 3 --pool 6 --skill 0.5
  *   npm run ai-battle -- --skill 0 --skill-stats --games 500   # 真实池内容审计
+ *   npm run ai-battle -- --policy aggressive --skill 0         # 策略档分布（默认 random）
  *   npm run ai-battle -- --replay ai-battle-failures/match-7.json
  */
 import { runMatch, runBatch, type RecordedAction, type MatchResult } from './battleRunner';
 import { formatFactionStats, formatSkillTriggerStats, configuredSkillRows } from './battleReport';
+import { policyByName } from './policies/strategyPolicy';
 import type { MatchConfig } from './matchSetup';
 
 declare const process: {
@@ -36,6 +38,7 @@ interface CliArgs {
   replay: string | null;
   out: string | null;
   skillStats: boolean;
+  policy: string | null;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -50,6 +53,7 @@ function parseArgs(argv: string[]): CliArgs {
     replay: null,
     out: null,
     skillStats: false,
+    policy: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
@@ -58,6 +62,11 @@ function parseArgs(argv: string[]): CliArgs {
     const name = key.slice(2);
     if (name === 'skill-stats') {
       args.skillStats = true;
+      continue;
+    }
+    if (name === 'policy') {
+      args.policy = String(value);
+      i += 1;
       continue;
     }
     if (name === 'replay') {
@@ -141,12 +150,23 @@ function main(): void {
     return;
   }
 
+  // opt-in 策略档：不传 --policy 时保持默认 random 路径（B6 基线锚逐字成立）
+  const policy = args.policy === null ? undefined : policyByName(args.policy);
+  if (args.policy !== null && !policy) {
+    console.log(
+      `[ai-battle] 未知策略档 "${args.policy}"（可用：random / conservative / balanced / aggressive）`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const startedAt = Date.now();
   const summary = runBatch({
     games: args.games,
     seed: args.seed,
     maxSteps: args.maxSteps,
     trackSkillTriggers: args.skillStats,
+    ...(policy ? { policy } : {}),
     configOverrides: {
       playerCount: args.players,
       poolPerPlayer: args.pool,
@@ -157,7 +177,8 @@ function main(): void {
 
   console.log(
     `[ai-battle] ${summary.games} games · seed ${args.seed}..${args.seed + summary.games - 1} · ` +
-      `${args.players}p · pool ${args.pool} · deck ${args.deck} · skill ${args.skill}`,
+      `${args.players}p · pool ${args.pool} · deck ${args.deck} · skill ${args.skill}` +
+      (args.policy ? ` · policy ${args.policy}` : ''),
   );
   console.log(
     `  won=${summary.won}  exhausted=${summary.exhausted}  VIOLATIONS=${summary.violated}  ` +

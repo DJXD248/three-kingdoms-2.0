@@ -154,4 +154,14 @@ describe('skill trigger tracking (2.4.3 content audit)', () => {
     expect(keys).toEqual([...keys].sort());
     expect(on.winnerCounts).toEqual(off.winnerCounts);
   });
+
+  it('runBatch forwards an opt-in policy tier deterministically (2.5.4 CLI --policy wiring)', () => {
+    const overrides = { poolPerPlayer: 4, deckSize: 36, skillInjection: 0.9 };
+    const aggressive = policyByName('aggressive')!;
+    const a = runBatch({ games: 2, seed: 9301, maxSteps: 1200, policy: aggressive, configOverrides: overrides });
+    const b = runBatch({ games: 2, seed: 9301, maxSteps: 1200, policy: aggressive, configOverrides: overrides });
+    expect(a.violated).toBe(0);
+    expect(a.violations).toEqual([]);
+    expect(a.winnerCounts).toEqual(b.winnerCounts);
+  });
 });
