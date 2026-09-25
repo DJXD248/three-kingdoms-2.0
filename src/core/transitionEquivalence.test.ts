@@ -15,7 +15,7 @@ import type { EngineState, EnginePlayer } from './GameState';
 import type { GameEvent } from './Event';
 import type { GameAction } from '../action/ActionTypes';
 import { createAction } from '../action/ActionTypes';
-import type { General, Skill } from '../data/generals';
+import { allGenerals, type General, type Skill } from '../data/generals';
 import { syncPlayerSkills } from '../skills/skillCompiler';
 import {
   dispatchStoreAction,
@@ -338,5 +338,134 @@ describe('store resident container (decision D-1, v2.2.21 second cut)', () => {
     const viaReconcile = dispatchStoreActionReconcile({ engineState: mutated }, SCRIPT[3]);
     expect(JSON.stringify(viaBridge.engineState)).toBe(JSON.stringify(viaReconcile.engineState));
     expect(rawEvents(viaBridge.events)).toEqual(rawEvents(viaReconcile.events));
+  });
+});
+
+/**
+ * 2.4.1 batch one: REAL built-in general templates (魏蜀群 tier-1 runtime
+ * payloads) play through every transition path with byte-identical event
+ * streams and final state — the first content-era extension of the
+ * D-1 equivalence harness to ship data, not synthetic skills.
+ */
+describe('内置批量一 · 真实模板全路径对账 (v2.4.1)', () => {
+  function builtinAs(newId: string, srcId: string): General {
+    const source = allGenerals.find(g => g.id === srcId);
+    if (!source) throw new Error(`missing built-in template ${srcId}`);
+    const copy = JSON.parse(JSON.stringify(source)) as General;
+    copy.id = newId;
+    return copy;
+  }
+
+  const COSTS = [1, 2, 3, 4, 5].map(i => ({ id: `cost_${i}`, name: '粮草', type: '粮草' }));
+
+  function buildBatchInitial(): EngineState {
+    // p1 attackers: 魏延(狂骨,半血) / 祝融(烈刃) / 董卓(肉林,半血) / 无技能将×2
+    // p2 defenders: 夏侯惇(刚烈) / 曹操(奸雄) / 关平(龙吟) / 庞德(猛进)
+    const yan = makeFieldGeneral(builtinAs('g1', 'shu_009'), 1, 0);
+    yan.currentHp = 2;
+    const rong = makeFieldGeneral(builtinAs('g2', 'shu_021'), 1, 1);
+    const zhuo = makeFieldGeneral(builtinAs('g3', 'qun_004'), 1, 2);
+    zhuo.currentHp = 2;
+    return makeState([
+      makePlayer(1, {
+        fieldGenerals: [
+          yan, rong, zhuo,
+          makeFieldGeneral(makeGeneral('g4', 4, []), 1, 3),
+          makeFieldGeneral(makeGeneral('g5', 4, []), 1, 4),
+        ],
+        hand: COSTS.map(c => ({ ...c })),
+      }),
+      makePlayer(2, {
+        fieldGenerals: [
+          makeFieldGeneral(builtinAs('g7', 'wei_003'), 2, 0),
+          makeFieldGeneral(builtinAs('g8', 'wei_001'), 2, 1),
+          makeFieldGeneral(builtinAs('g9', 'shu_018'), 2, 2),
+          makeFieldGeneral(builtinAs('g10', 'qun_010'), 2, 3),
+        ],
+      }),
+    ]);
+  }
+
+  function attack(attackerId: string, targetId: string, costIndex: number): GameAction {
+    return createAction('ATTACK', 1, {
+      attackerId, targetId, ranged: false, consumeCard: COSTS[costIndex],
+    });
+  }
+
+  const BATCH_SCRIPT: GameAction[] = [
+    attack('g1', 'g7', 0), // 狂骨 vs 刚烈反伤：魏延 2-1+1 封顶回 2
+    attack('g2', 'g10', 1), // 猛进迎击祝融 -1，烈刃命中摸 1
+    attack('g4', 'g8', 2), // 奸雄：曹操受击摸 1
+    attack('g5', 'g9', 3), // 龙吟：护甲派生效果队尾晚于本击，掉 2 血但 +1 甲留在身上
+    attack('g3', 'g7', 4), // 刚烈再反伤董卓，肉林受技能伤回 1（2-1+1），夏侯惇阵亡
+  ];
+
+  it('五条攻击链在常驻/桥接/重建/录像回放四条路径逐事件一致，肉林/狂骨/奸雄/烈刃/龙吟/猛进/刚烈全部真实触发', () => {
+    const initial = buildBatchInitial();
+
+    const engine = new GameEngine(cloneEngineState(initial));
+    const residentSteps: string[][] = [];
+    for (const action of BATCH_SCRIPT) {
+      syncPlayerSkills(engine, engine.state);
+      residentSteps.push(rawEvents(engine.dispatch(action)));
+    }
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = cloneEngineState(initial);
+    const bridgeSteps: string[][] = [];
+    for (const action of BATCH_SCRIPT) {
+      const result = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = result.engineState;
+      bridgeSteps.push(rawEvents(result.events));
+    }
+    expect(bridgeSteps).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = cloneEngineState(initial);
+    const reconcileSteps: string[][] = [];
+    for (const action of BATCH_SCRIPT) {
+      const result = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = result.engineState;
+      reconcileSteps.push(rawEvents(result.events));
+    }
+    expect(reconcileSteps).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(BATCH_SCRIPT.length);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
+
+  it('技能确实改变了局面：逐项锚定七条 batch-1 技能的可观察后果', () => {
+    const engine = new GameEngine(cloneEngineState(buildBatchInitial()));
+    let damageCount = 0;
+    for (const action of BATCH_SCRIPT) {
+      syncPlayerSkills(engine, engine.state);
+      damageCount += engine.dispatch(action).filter(event => event.type === 'DAMAGE').length;
+    }
+    const [p1, p2] = engine.state.players;
+    type FieldView = { general: General; currentHp: number; currentArmor: number };
+    const field = (player: (typeof engine.state.players)[number], id: string) =>
+      (player.fieldGenerals as unknown as FieldView[]).find(f => f.general.id === id);
+
+    expect(field(p1, 'g1')?.currentHp).toBe(2); // 狂骨把刚烈的反伤血回了回来
+    expect(field(p1, 'g2')?.currentHp).toBe(3); // 猛进迎击：祝融被反 1
+    expect(field(p1, 'g3')?.currentHp).toBe(2); // 肉林把刚烈反伤血回了回来
+    expect(field(p2, 'g9')?.currentHp).toBe(2); // 龙吟护甲按 2.3.0 队尾语义晚于本击到达：不挡首发，留给后续
+    expect(field(p2, 'g9')?.currentArmor).toBe(1);
+    expect(field(p2, 'g10')?.currentHp).toBe(2);
+    expect(field(p2, 'g7')).toBeUndefined(); // 第二次攻击击杀夏侯惇
+    expect(field(p2, 'g8')?.currentHp).toBe(2);
+    // 摸牌链：祝融烈刃 +1（归 p1）、曹操奸雄 +1（归 p2），p1 五张攻击成本全部消耗
+    expect(p1.hand).toHaveLength(1);
+    expect(engine.state.deck).toHaveLength(2);
+    expect(p2.hand).toHaveLength(1); // 曹操奸雄摸的牌归曹操玩家
+    // 攻击伤害 5 + 刚烈反伤 2 + 猛进迎击 1 = 全链共 8 个 DAMAGE
+    expect(damageCount).toBe(8);
   });
 });

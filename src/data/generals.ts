@@ -173,7 +173,14 @@ export interface General {
   title?: string;
 }
 
-function createGeneral(id: string, name: string, faction: Faction, hp: number, skills: string[], title?: string): General {
+function createGeneral(
+  id: string,
+  name: string,
+  faction: Faction,
+  hp: number,
+  skills: Array<string | Skill>,
+  title?: string,
+): General {
   const type = hp >= 4 ? '武将' : '文将';
   return {
     id,
@@ -184,16 +191,104 @@ function createGeneral(id: string, name: string, faction: Faction, hp: number, s
     meleeAtk: type === '武将' ? 2 : 1,
     rangedAtk: type === '武将' ? 1 : 2,
     armor: 0,
-    skills: skills.map(s => ({ name: s })),
+    skills: skills.map(s => (typeof s === 'string' ? { name: s } : s)),
     title,
   };
 }
 
+/**
+ * 2.4.1 batch one (v2.4.0 §G tier-1, Wei+Shu+Qun): built-in skills carrying
+ * their first real runtime payloads. Semantics are this project's first
+ * definition (approximations registered in PROJECT_ARCH_MAP §G); a skill
+ * without such a payload stays descriptive and never fires.
+ */
+const SK_JIANXIONG: Skill = {
+  name: '奸雄',
+  description: '受到伤害后，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_GANGLIE: Skill = {
+  name: '刚烈',
+  description: '受到攻击伤害后，对伤害来源造成1点技能伤害。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' },
+    runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' },
+  }],
+};
+const SK_TUNTIAN_WEI: Skill = {
+  name: '屯田',
+  description: '回合结束时，可摸两张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+    runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' },
+  }],
+};
+const SK_KUANGGU: Skill = {
+  name: '狂骨',
+  description: '造成攻击伤害后，回复1点体力。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
+    runtime: { type: 'HEAL', value: 1, target: 'SELF' },
+  }],
+};
+const SK_LONGYIN: Skill = {
+  name: '龙吟',
+  description: '战吼先声：成为攻击目标时，获得1点护甲。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onBecomingTarget' },
+    runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' },
+  }],
+};
+const SK_FULI: Skill = {
+  name: '伏枥',
+  description: '回合结束时，可摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_LIEREN: Skill = {
+  name: '烈刃',
+  description: '造成攻击伤害后，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_ROULIN: Skill = {
+  name: '肉林',
+  description: '酒肉养伤：受到技能伤害后，回复1点体力。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageTaken', damageSubType: 'skillDamage' },
+    runtime: { type: 'HEAL', value: 1, target: 'SELF' },
+  }],
+};
+const SK_MENGJIN: Skill = {
+  name: '猛进',
+  description: '被瞄准时迎头痛击：成为攻击目标时，对攻击者造成1点技能伤害。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onBecomingTarget' },
+    runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' },
+  }],
+};
+
 // 魏势力 - 界限突破标准包
 const weiGenerals: General[] = [
-  createGeneral('wei_001', '曹操', '魏', 4, ['奸雄', '护驾'], '魏武帝'),
+  createGeneral('wei_001', '曹操', '魏', 4, [SK_JIANXIONG, '护驾'], '魏武帝'),
   createGeneral('wei_002', '司马懿', '魏', 3, ['反馈', '鬼才'], '狼顾之鬼'),
-  createGeneral('wei_003', '夏侯惇', '魏', 4, ['刚烈'], '独眼的罗刹'),
+  createGeneral('wei_003', '夏侯惇', '魏', 4, [SK_GANGLIE], '独眼的罗刹'),
   createGeneral('wei_004', '张辽', '魏', 4, ['突袭'], '前将军'),
   createGeneral('wei_005', '许褚', '魏', 4, ['裸衣'], '虎痴'),
   createGeneral('wei_006', '郭嘉', '魏', 3, ['天妒', '遗计'], '早终的先知'),
@@ -205,7 +300,7 @@ const weiGenerals: General[] = [
   createGeneral('wei_012', '典韦', '魏', 4, ['强袭'], '古之恶来'),
   createGeneral('wei_013', '荀彧', '魏', 3, ['驱虎', '节命'], '王佐之才'),
   createGeneral('wei_014', '曹丕', '魏', 3, ['行殇', '放逐'], '霸业的继承者'),
-  createGeneral('wei_015', '邓艾', '魏', 4, ['屯田', '凿险'], '矫然的壮士'),
+  createGeneral('wei_015', '邓艾', '魏', 4, [SK_TUNTIAN_WEI, '凿险'], '矫然的壮士'),
   createGeneral('wei_016', '钟会', '魏', 3, ['权计', '自立'], '桀骜的野心家'),
   createGeneral('wei_017', '王异', '魏', 3, ['贞烈', '秘计'], '决意的巾帼'),
   createGeneral('wei_018', '荀攸', '魏', 3, ['奇策', '智愚'], '曹操的谋主'),
@@ -224,7 +319,7 @@ const shuGenerals: General[] = [
   createGeneral('shu_006', '马超', '蜀', 4, ['马术', '铁骑'], '一骑当千'),
   createGeneral('shu_007', '黄月英', '蜀', 3, ['集智', '奇才'], '归隐的杰女'),
   createGeneral('shu_008', '黄忠', '蜀', 4, ['烈弓'], '老当益壮'),
-  createGeneral('shu_009', '魏延', '蜀', 4, ['狂骨'], '嗜血的独狼'),
+  createGeneral('shu_009', '魏延', '蜀', 4, [SK_KUANGGU], '嗜血的独狼'),
   createGeneral('shu_010', '姜维', '蜀', 4, ['挑衅', '志继'], '龙的衣钵'),
   createGeneral('shu_011', '刘禅', '蜀', 3, ['享乐', '放权'], '无为的真命主'),
   createGeneral('shu_012', '卧龙诸葛亮', '蜀', 3, ['八阵', '火计', '看破'], '卧龙'),
@@ -233,10 +328,10 @@ const shuGenerals: General[] = [
   createGeneral('shu_015', '马谡', '蜀', 3, ['心战', '挥泪'], '言过其实'),
   createGeneral('shu_016', '关兴张苞', '蜀', 4, ['父魂'], '虎父之犬子'),
   createGeneral('shu_017', '刘封', '蜀', 4, ['陷嗣'], '被放逐的继承人'),
-  createGeneral('shu_018', '关平', '蜀', 4, ['龙吟'], '忠臣之后'),
-  createGeneral('shu_019', '廖化', '蜀', 4, ['当先', '伏枥'], '蜀汉的脊梁'),
+  createGeneral('shu_018', '关平', '蜀', 4, [SK_LONGYIN], '忠臣之后'),
+  createGeneral('shu_019', '廖化', '蜀', 4, ['当先', SK_FULI], '蜀汉的脊梁'),
   createGeneral('shu_020', '马良', '蜀', 3, ['自书', '白眉'], '眉间的智者'),
-  createGeneral('shu_021', '祝融', '蜀', 4, ['巨象', '烈刃'], '野性的女王'),
+  createGeneral('shu_021', '祝融', '蜀', 4, ['巨象', SK_LIEREN], '野性的女王'),
   createGeneral('shu_022', '孟获', '蜀', 4, ['祸首', '再起'], '南蛮王'),
 ];
 
@@ -270,13 +365,13 @@ const qunGenerals: General[] = [
   createGeneral('qun_001', '华佗', '群', 3, ['急救', '青囊'], '神医'),
   createGeneral('qun_002', '吕布', '群', 4, ['无双'], '武的化身'),
   createGeneral('qun_003', '貂蝉', '群', 3, ['离间', '闭月'], '绝世的舞姬'),
-  createGeneral('qun_004', '董卓', '群', 4, ['酒池', '肉林', '崩坏'], '魔王'),
+  createGeneral('qun_004', '董卓', '群', 4, ['酒池', SK_ROULIN, '崩坏'], '魔王'),
   createGeneral('qun_005', '袁绍', '群', 4, ['乱击'], '高贵的名门'),
   createGeneral('qun_006', '颜良文丑', '群', 4, ['双雄'], '虎狼兄弟'),
   createGeneral('qun_007', '张角', '群', 3, ['雷公', '鬼道'], '天公将军'),
   createGeneral('qun_008', '于吉', '群', 3, ['蛊惑'], '太平道人'),
   createGeneral('qun_009', '公孙瓒', '群', 4, ['义从'], '白马将军'),
-  createGeneral('qun_010', '庞德', '群', 4, ['马术', '猛进'], '人马一体'),
+  createGeneral('qun_010', '庞德', '群', 4, ['马术', SK_MENGJIN], '人马一体'),
   createGeneral('qun_011', '袁术', '群', 4, ['妄尊', '同疾'], '仲家帝'),
   createGeneral('qun_012', '蔡文姬', '群', 3, ['悲歌', '断肠'], '异乡的孤女'),
   createGeneral('qun_013', '贾诩', '群', 3, ['帷幕', '乱武', '完杀'], '最强的谋士'),

@@ -25,7 +25,8 @@ describe('SkillEditor: structured runtime entry', () => {
   });
 
   it('selecting 摸牌 in the effect card saves a runtime payload the compiler accepts', () => {
-    const target = allGenerals.find(g => g.skills.length > 0)!;
+    // 2.4.1 起部分内置技能自带 runtime——编辑器冒烟须挑首技仍为纯描述的武将
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
     render(<SkillEditor onClose={() => {}} />);
 
     // Open the general in the editor (left list button contains the name)
@@ -62,7 +63,8 @@ describe('SkillEditor: structured runtime entry', () => {
   });
 
   it('choosing 纯描述 keeps the effect descriptive (no runtime, compiler skips)', () => {
-    const target = allGenerals.find(g => g.skills.length > 0)!;
+    // 2.4.1 起部分内置技能自带 runtime——编辑器冒烟须挑首技仍为纯描述的武将
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
     render(<SkillEditor onClose={() => {}} />);
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
