@@ -38,18 +38,23 @@ function compileAllGenerals() {
 describe('2.4.1 批量一 · 编译形态（§G 施工图逐字核对）', () => {
   const { definitions, skipped } = compileAllGenerals();
 
-  it('九条全部编译入局：全库恰好 9 条 runtime 定义，id 为 <将id>:<技名>:e1', () => {
-    expect(definitions).toHaveLength(9);
-    expect(definitions.map(d => d.id).sort()).toEqual(
+  it('九条全部编译入局：批量一子集恰好 9 条 runtime 定义，id 为 <将id>:<技名>:e1', () => {
+    // 批量二 (v2.4.2) 后全库口径改由 builtinContentBatch2.test.ts 钉死，
+    // 本文件只看批量一自身。
+    const batch1Ids = new Set(BATCH1.map(b => `${b.owner}:${b.name}`));
+    const mine = definitions.filter(d => batch1Ids.has(`${d.owner}:${d.name}`));
+    expect(mine).toHaveLength(9);
+    expect(mine.map(d => d.id).sort()).toEqual(
       BATCH1.map(b => `${b.owner}:${b.name}:e1`).sort(),
     );
   });
 
-  it('装配哨兵：批量一技能零 NO_RUNTIME_PAYLOAD，其余 159 条维持诚实跳过', () => {
+  it('装配哨兵：批量一技能零 NO_RUNTIME_PAYLOAD，未配载荷技能维持诚实跳过', () => {
     const batchKeys = new Set(BATCH1.map(b => `${b.owner}|${b.name}`));
     const batchSkips = skipped.filter(s => batchKeys.has(`${s.owner}|${s.skillName}`));
     expect(batchSkips).toEqual([]);
-    expect(skipped).toHaveLength(159);
+    // v2.4.2 后：168 技 − 批量一 9 − 批量二 21 = 138 条诚实跳过（全局数由批量二文件钉死）
+    expect(skipped.length).toBeGreaterThanOrEqual(138);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 
@@ -122,7 +127,7 @@ describe('2.4.1 哨兵③ · 跨势力重名技能编译 id 唯一性', () => {
         ids.add(d.id);
       }
     }
-    expect(ids.size).toBe(9);
+    expect(ids.size).toBe(31); // v2.4.2 批量二后全库定义数（无碰撞）
   });
 });
 

@@ -284,6 +284,228 @@ const SK_MENGJIN: Skill = {
   }],
 };
 
+/**
+ * 2.4.2 batch two (v2.4.0 §G tier-1, Wu+Jin): 21 of 24 entries landed with
+ * runtime payloads; 苦肉 is the first built-in with TWO independently-
+ * triggered effects (e1 self-damage + e2 draw — the SELF damage path is
+ * empirically accepted by the engine). The three onDeploy skills
+ * (英慧/拓略/奋勇) were demoted to descriptive tier-4 at the honest-degrade
+ * red line: the activation probe proved GENERAL_DEPLOYED can never hit the
+ * skill registry — skills are registered from on-field generals BEFORE a
+ * dispatch, so the deploying general's own onDeploy listener doesn't exist
+ * yet when the event fires (registration-order gap, HANDOFF §12-26).
+ * Semantics remain this project's first definition (approximations
+ * registered in PROJECT_ARCH_MAP §G).
+ */
+const SK_KUROU: Skill = {
+  name: '苦肉',
+  description: '自伤诈降：回合开始时，对自己造成1点技能伤害，然后摸两张牌。',
+  effects: [
+    {
+      id: 'e1',
+      trigger: { type: 'onTurnStart', turnSubType: 'selfTurn' },
+      runtime: { type: 'DAMAGE', value: 1, target: 'SELF' },
+    },
+    {
+      id: 'e2',
+      trigger: { type: 'onTurnStart', turnSubType: 'selfTurn' },
+      runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' },
+    },
+  ],
+};
+const SK_YINGZI: Skill = {
+  name: '英姿',
+  description: '回合结束时，可摸两张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+    runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' },
+  }],
+};
+const SK_JIANG_ANG: Skill = {
+  name: '激昂',
+  description: '战意蓄势：成为攻击目标时，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onBecomingTarget' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_ZHUIYI: Skill = {
+  name: '追忆',
+  description: '遗泽追念：被击杀时，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDeath' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_FENXUN: Skill = {
+  name: '奋迅',
+  description: '冲锋陷阵：回合开始时，获得1点护甲。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnStart', turnSubType: 'selfTurn' },
+    runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' },
+  }],
+};
+const SK_BUYI: Skill = {
+  name: '补益',
+  description: '伤病自养：受到攻击伤害后，回复1点体力。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' },
+    runtime: { type: 'HEAL', value: 1, target: 'SELF' },
+  }],
+};
+const SK_SIDI: Skill = {
+  name: '司敌',
+  description: '识破术法：受到技能伤害后，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageTaken', damageSubType: 'skillDamage' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_WEIWO: Skill = {
+  name: '帷幄',
+  description: '运筹帷幄：回合开始时，获得1点护甲。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnStart', turnSubType: 'selfTurn' },
+    runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' },
+  }],
+};
+const SK_HUIYAN: Skill = {
+  name: '慧眼',
+  description: '鉴人于微：造成攻击伤害后，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_TUNTIAN_JIN: Skill = {
+  name: '屯田',
+  description: '回合结束时，可摸两张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+    runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' },
+  }],
+};
+const SK_YINGHUI: Skill = {
+  name: '英慧',
+  description: '识鉴英才。',
+};
+const SK_SONGWEI: Skill = {
+  name: '颂威',
+  description: '母仪劝勉：回合结束时，可摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_TUOLUE: Skill = {
+  name: '拓略',
+  description: '开疆立垒。',
+};
+const SK_POZHU: Skill = {
+  name: '破竹',
+  description: '势如破竹：击杀后，摸两张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onKill' },
+    runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' },
+  }],
+};
+const SK_QINGDE: Skill = {
+  name: '清德',
+  description: '德信怀人：回合开始时，回复1点体力。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnStart', turnSubType: 'selfTurn' },
+    runtime: { type: 'HEAL', value: 1, target: 'SELF' },
+  }],
+};
+const SK_KENHUANG: Skill = {
+  name: '垦荒',
+  description: '积谷边备：回合结束时，可获得1点护甲。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+    runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' },
+  }],
+};
+const SK_FENWEI: Skill = {
+  name: '奋威',
+  description: '威震追亡：造成攻击伤害后，对受击目标追加1点技能伤害。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
+    runtime: { type: 'DAMAGE', value: 1, target: 'TARGET' },
+  }],
+};
+const SK_LINZHEN: Skill = {
+  name: '临阵',
+  description: '身先士卒：受到攻击伤害后，获得1点护甲。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' },
+    runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' },
+  }],
+};
+const SK_DANQI: Skill = {
+  name: '单骑',
+  description: '挑枪同命：被击杀时，对击杀者造成1点技能伤害。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDeath' },
+    runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' },
+  }],
+};
+const SK_FENGYONG: Skill = {
+  name: '奋勇',
+  description: '敢战先登。',
+};
+const SK_LUSHA: Skill = {
+  name: '戮杀',
+  description: '酷烈自养：击杀后，回复1点体力。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onKill' },
+    runtime: { type: 'HEAL', value: 1, target: 'SELF' },
+  }],
+};
+const SK_BINGTUN: Skill = {
+  name: '并吞',
+  description: '混一六合：击杀后，获得2点护甲。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onKill' },
+    runtime: { type: 'GAIN_ARMOR', value: 2, target: 'SELF' },
+  }],
+};
+const SK_FENGSHANG: Skill = {
+  name: '封赏',
+  description: '开国行赏：回合开始时，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onTurnStart', turnSubType: 'selfTurn' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_SIJIE: Skill = {
+  name: '死节',
+  description: '殉城烈怒：被击杀时，对击杀者造成2点技能伤害。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onDeath' },
+    runtime: { type: 'DAMAGE', value: 2, target: 'ATTACKER' },
+  }],
+};
+
 // 魏势力 - 界限突破标准包
 const weiGenerals: General[] = [
   createGeneral('wei_001', '曹操', '魏', 4, [SK_JIANXIONG, '护驾'], '魏武帝'),
@@ -340,8 +562,8 @@ const wuGenerals: General[] = [
   createGeneral('wu_001', '孙权', '吴', 4, ['制衡', '救援'], '年轻的贤君'),
   createGeneral('wu_002', '甘宁', '吴', 4, ['奇袭'], '锦帆游侠'),
   createGeneral('wu_003', '吕蒙', '吴', 4, ['克己'], '白衣渡江'),
-  createGeneral('wu_004', '黄盖', '吴', 4, ['苦肉', '诈降'], '轻身为国'),
-  createGeneral('wu_005', '周瑜', '吴', 3, ['英姿', '反间'], '大都督'),
+  createGeneral('wu_004', '黄盖', '吴', 4, [SK_KUROU, '诈降'], '轻身为国'),
+  createGeneral('wu_005', '周瑜', '吴', 3, [SK_YINGZI, '反间'], '大都督'),
   createGeneral('wu_006', '大乔', '吴', 3, ['国色', '流离'], '矜持之花'),
   createGeneral('wu_007', '陆逊', '吴', 3, ['谦逊', '连营'], '儒生雄才'),
   createGeneral('wu_008', '孙尚香', '吴', 3, ['结姻', '枭姬'], '弓腰姬'),
@@ -352,12 +574,12 @@ const wuGenerals: General[] = [
   createGeneral('wu_013', '张昭张纮', '吴', 3, ['直谏', '固政'], '经天纬地'),
   createGeneral('wu_014', '凌统', '吴', 4, ['旋风'], '豪情烈胆'),
   createGeneral('wu_015', '徐盛', '吴', 4, ['破军'], '江东的铁壁'),
-  createGeneral('wu_016', '孙策', '吴', 4, ['激昂', '魂姿'], '江东小霸王'),
+  createGeneral('wu_016', '孙策', '吴', 4, [SK_JIANG_ANG, '魂姿'], '江东小霸王'),
   createGeneral('wu_017', '吕范', '吴', 3, ['调度', '典财'], '忠实的管家'),
-  createGeneral('wu_018', '步练师', '吴', 3, ['安恤', '追忆'], '皇后之仪'),
+  createGeneral('wu_018', '步练师', '吴', 3, ['安恤', SK_ZHUIYI], '皇后之仪'),
   createGeneral('wu_019', '诸葛恪', '吴', 3, ['傲才', '名君'], '兴家赤族'),
-  createGeneral('wu_020', '丁奉', '吴', 4, ['短兵', '奋迅'], '清侧重臣'),
-  createGeneral('wu_021', '吴国太', '吴', 3, ['甘露', '补益'], '武烈皇后'),
+  createGeneral('wu_020', '丁奉', '吴', 4, ['短兵', SK_FENXUN], '清侧重臣'),
+  createGeneral('wu_021', '吴国太', '吴', 3, ['甘露', SK_BUYI], '武烈皇后'),
 ];
 
 // 群势力 - 仅保留原本势力即为"群"的将领
@@ -384,19 +606,19 @@ const qunGenerals: General[] = [
 const jinGenerals: General[] = [
   createGeneral('jin_001', '司马懿', '晋', 3, ['巧变', '大权'], '晋宣帝'),
   createGeneral('jin_002', '司马师', '晋', 3, ['鹰视', '夺嫡'], '铁腕摄政'),
-  createGeneral('jin_003', '司马昭', '晋', 3, ['赵染', '司敌'], '路人皆知'),
-  createGeneral('jin_004', '贾充', '晋', 3, ['帷幄', '矫诏'], '弑君的权臣'),
-  createGeneral('jin_005', '张春华', '晋', 3, ['慧眼', '秘置'], '毒辣的国母'),
+  createGeneral('jin_003', '司马昭', '晋', 3, ['赵染', SK_SIDI], '路人皆知'),
+  createGeneral('jin_004', '贾充', '晋', 3, [SK_WEIWO, '矫诏'], '弑君的权臣'),
+  createGeneral('jin_005', '张春华', '晋', 3, [SK_HUIYAN, '秘置'], '毒辣的国母'),
   createGeneral('jin_006', '钟会', '晋', 3, ['权计', '自立'], '野心的终局'),
-  createGeneral('jin_007', '邓艾', '晋', 4, ['屯田', '凿险'], '偷渡阴平'),
-  createGeneral('jin_008', '王元姬', '晋', 3, ['英慧', '颂威'], '贤明的皇后'),
-  createGeneral('jin_009', '杜预', '晋', 3, ['拓略', '破竹'], '文武全才'),
-  createGeneral('jin_010', '羊祜', '晋', 3, ['清德', '垦荒'], '仁德的将军'),
-  createGeneral('jin_011', '乐綝', '晋', 4, ['奋威', '临阵'], '威震边疆'),
-  createGeneral('jin_012', '文鸯', '晋', 4, ['单骑', '奋勇'], '骁勇的猛将'),
-  createGeneral('jin_013', '贾南风', '晋', 3, ['乱政', '戮杀'], '毒后'),
-  createGeneral('jin_014', '司马炎', '晋', 3, ['并吞', '封赏'], '晋武帝'),
-  createGeneral('jin_015', '诸葛诞', '晋', 4, ['举兵', '死节'], '忠义的叛将'),
+  createGeneral('jin_007', '邓艾', '晋', 4, [SK_TUNTIAN_JIN, '凿险'], '偷渡阴平'),
+  createGeneral('jin_008', '王元姬', '晋', 3, [SK_YINGHUI, SK_SONGWEI], '贤明的皇后'),
+  createGeneral('jin_009', '杜预', '晋', 3, [SK_TUOLUE, SK_POZHU], '文武全才'),
+  createGeneral('jin_010', '羊祜', '晋', 3, [SK_QINGDE, SK_KENHUANG], '仁德的将军'),
+  createGeneral('jin_011', '乐綝', '晋', 4, [SK_FENWEI, SK_LINZHEN], '威震边疆'),
+  createGeneral('jin_012', '文鸯', '晋', 4, [SK_DANQI, SK_FENGYONG], '骁勇的猛将'),
+  createGeneral('jin_013', '贾南风', '晋', 3, ['乱政', SK_LUSHA], '毒后'),
+  createGeneral('jin_014', '司马炎', '晋', 3, [SK_BINGTUN, SK_FENGSHANG], '晋武帝'),
+  createGeneral('jin_015', '诸葛诞', '晋', 4, ['举兵', SK_SIJIE], '忠义的叛将'),
 ];
 
 export const allGenerals: General[] = [

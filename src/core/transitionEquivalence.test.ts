@@ -469,3 +469,297 @@ describe('内置批量一 · 真实模板全路径对账 (v2.4.1)', () => {
     expect(damageCount).toBe(8);
   });
 });
+
+describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
+  function builtin2As(newId: string, srcId: string): General {
+    const source = allGenerals.find(g => g.id === srcId);
+    if (!source) throw new Error(`missing built-in template ${srcId}`);
+    const copy = JSON.parse(JSON.stringify(source)) as General;
+    copy.id = newId;
+    return copy;
+  }
+
+  const COSTS = [1, 2, 3, 4, 5, 6].map(i => ({ id: `b2cost_${i}`, name: '粮草', type: '粮草' }));
+
+  function attack(attackerId: string, targetId: string, costIndex: number, playerId = 1): GameAction {
+    return createAction('ATTACK', playerId, {
+      attackerId, targetId, ranged: false, consumeCard: COSTS[costIndex],
+    });
+  }
+
+  function fieldHp(state: EngineState, playerId: number, generalId: string) {
+    const player = state.players.find(p => p.id === playerId);
+    const fg = (player?.fieldGenerals as unknown as Array<{ general: General; currentHp: number; currentArmor: number }> | undefined)
+      ?.find(f => f.general.id === generalId);
+    return fg ? { hp: fg.currentHp, armor: fg.currentArmor } : undefined;
+  }
+
+  // 哨兵①（苦肉 SELF 自伤）与哨兵②（奋威链式 TARGET）在本 describe 的
+  // it('苦肉…') / it('批量二载荷…') 中以真实模板实证。
+  function buildBatch2AttackInitial(): EngineState {
+    // p1: 乐綝(奋威/临阵) 张春华(慧眼) 司马昭(司敌)
+    // p2: 孙策(激昂) 吴国太(补益) 夏侯惇(刚烈·batch-1 交叉链)
+    return makeState([
+      makePlayer(1, {
+        fieldGenerals: [
+          makeFieldGeneral(builtin2As('g1', 'jin_011'), 1, 0),
+          makeFieldGeneral(builtin2As('g2', 'jin_005'), 1, 1),
+          makeFieldGeneral(builtin2As('g3', 'jin_003'), 1, 2),
+        ],
+        hand: COSTS.map(c => ({ ...c })),
+      }),
+      makePlayer(2, {
+        fieldGenerals: [
+          makeFieldGeneral(builtin2As('g6', 'wu_016'), 2, 0),
+          makeFieldGeneral(builtin2As('g7', 'wu_021'), 2, 1),
+          makeFieldGeneral(builtin2As('g8', 'wei_003'), 2, 2),
+        ],
+      }),
+    ]);
+  }
+
+  const BATCH2_SCRIPT: GameAction[] = [
+    attack('g1', 'g6', 0), // 激昂摸1 + 奋威链式追加1（哨兵②）
+    attack('g2', 'g7', 1), // 慧眼摸1；补益受攻击伤回1
+    attack('g3', 'g8', 2), // 刚烈反伤司马昭（技能伤）→ 司敌摸1
+  ];
+
+  it('三条攻击链在常驻/桥接/重建/录像回放四条路径逐事件一致（激昂/奋威/慧眼/补益/司敌真实触发）', () => {
+    const initial = buildBatch2AttackInitial();
+
+    const engine = new GameEngine(cloneEngineState(initial));
+    const residentSteps: string[][] = [];
+    for (const action of BATCH2_SCRIPT) {
+      syncPlayerSkills(engine, engine.state);
+      residentSteps.push(rawEvents(engine.dispatch(action)));
+    }
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = cloneEngineState(initial);
+    const bridgeSteps: string[][] = [];
+    for (const action of BATCH2_SCRIPT) {
+      const result = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = result.engineState;
+      bridgeSteps.push(rawEvents(result.events));
+    }
+    expect(bridgeSteps).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = cloneEngineState(initial);
+    const reconcileSteps: string[][] = [];
+    for (const action of BATCH2_SCRIPT) {
+      const result = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = result.engineState;
+      reconcileSteps.push(rawEvents(result.events));
+    }
+    expect(reconcileSteps).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(BATCH2_SCRIPT.length);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(residentSteps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
+
+  it('批量二载荷逐项锚定：奋威链伤/激昂蓄势/慧眼鉴微/补益自养/司敌识破/刚烈交叉链全部改变局面', () => {
+    const engine = new GameEngine(cloneEngineState(buildBatch2AttackInitial()));
+    const all: GameEvent[] = [];
+    for (const action of BATCH2_SCRIPT) {
+      syncPlayerSkills(engine, engine.state);
+      all.push(...engine.dispatch(action));
+    }
+    const bySkill = (skillSuffix: string, type: string) =>
+      all.filter(e => e.type === type && String((e.data as Record<string, unknown>)?.skillId ?? '').includes(skillSuffix));
+
+    // 哨兵②实证：奋威在 AFTER_DAMAGE 之后把目标 g6 再削 1 点技能伤
+    const fenwei = bySkill('奋威:e1', 'DAMAGE');
+    expect(fenwei).toHaveLength(1);
+    expect(fenwei[0].data as unknown as Record<string, unknown>).toMatchObject({
+      targetPlayerId: 2, targetId: 'g6', damageType: 'skill', value: 1,
+    });
+    // 激昂：每次孙策被瞄准摸 1（本链只被打两次瞄准，另一次是致死击）
+    expect(bySkill('激昂:e1', 'DRAW')).toHaveLength(1);
+    expect(bySkill('慧眼:e1', 'DRAW')).toHaveLength(1);
+    expect(bySkill('司敌:e1', 'DRAW')).toHaveLength(1);
+    expect(bySkill('补益:e1', 'HEAL')).toHaveLength(1);
+    // 交叉链：batch-1 刚烈的反伤（技能伤）喂给 batch-2 司敌
+    expect(bySkill('刚烈:e1', 'DAMAGE')).toHaveLength(1);
+
+    expect(fieldHp(engine.state, 2, 'g6')).toEqual({ hp: 1, armor: 0 }); // 4-2-1(奋威)
+    expect(fieldHp(engine.state, 2, 'g7')).toEqual({ hp: 3, armor: 0 }); // 3-1+1(补益)
+    expect(fieldHp(engine.state, 2, 'g8')).toEqual({ hp: 3, armor: 0 });
+    expect(fieldHp(engine.state, 1, 'g3')).toEqual({ hp: 2, armor: 0 }); // 刚烈反伤
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect(p1.hand).toHaveLength(5); // 6-3 成本 +慧眼 +司敌
+    expect(p2.hand).toHaveLength(1); // 激昂摸的牌
+    expect(engine.state.deck).toHaveLength(1); // 4 张牌堆被摸走 3 张
+  });
+
+  it('临阵实证：乐綝受攻击伤害后 +1 护甲（p2 侧攻击手反向瞄准）', () => {
+    const state = buildBatch2AttackInitial();
+    const dingfeng = makeFieldGeneral(builtin2As('g_df', 'wu_020'), 2, 3);
+    (state.players[1].fieldGenerals as unknown as unknown[]).push(dingfeng);
+    state.players[1].hand = COSTS.map(c => ({ ...c })); // 行动方手持消耗牌
+    state.currentPlayerId = 2;
+    const engine = new GameEngine(state);
+    syncPlayerSkills(engine, engine.state);
+    const events = engine.dispatch(attack('g_df', 'g1', 3, 2));
+    const linzhen = events.filter(e => e.type === 'GAIN_ARMOR'
+      && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('临阵:e1'));
+    expect(linzhen).toHaveLength(1);
+    expect(fieldHp(engine.state, 1, 'g1')).toEqual({ hp: 2, armor: 1 }); // 4-2 攻伤，+1 甲
+  });
+
+  it('哨兵①实证：苦肉在 TURN_START 自动自伤 1 点并摸 2（合成 DAMAGE 的 SELF 受击路径被引擎接受）', () => {
+    const state = makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g_plain', 4, []), 1)] }),
+      makePlayer(2, {
+        fieldGenerals: [
+          makeFieldGeneral(builtin2As('g_hg', 'wu_004'), 2, 0),  // 苦肉
+          makeFieldGeneral(builtin2As('g_df', 'wu_020'), 2, 1),  // 奋迅：回合开始+1甲
+          makeFieldGeneral(builtin2As('g_jc', 'jin_004'), 2, 2), // 帷幄：回合开始+1甲
+          makeFieldGeneral(builtin2As('g_yh', 'jin_010'), 2, 3), // 清德：回合开始回1
+          makeFieldGeneral(builtin2As('g_sym', 'jin_014'), 2, 4), // 封赏：回合开始摸1
+        ],
+      }),
+    ]);
+    const yh = (state.players[1].fieldGenerals as unknown as Array<{ general: General; currentHp: number }>)
+      .find(f => f.general.id === 'g_yh')!;
+    yh.currentHp = 2; // 半血让清德的回血可观察
+    const engine = new GameEngine(state);
+    syncPlayerSkills(engine, engine.state);
+    const events = engine.dispatch(createAction('END_TURN', 1));
+
+    // 自伤：target 与 source 同为玩家 2 的拥有者本体
+    const kurouDmg = events.filter(e => e.type === 'DAMAGE'
+      && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('苦肉:e1'));
+    expect(kurouDmg).toHaveLength(1);
+    expect(kurouDmg[0].data as unknown as Record<string, unknown>).toMatchObject({
+      sourcePlayerId: 2, targetPlayerId: 2, targetId: 'g_hg', damageType: 'skill', value: 1,
+    });
+    // 两效果独立成义：苦肉 e2 摸 2 + 封赏摸 1
+    const draws = events.filter(e => e.type === 'DRAW');
+    expect(draws.find(e => String((e.data as Record<string, unknown>)?.skillId ?? '').includes('苦肉:e2'))).toBeTruthy();
+    expect(draws.find(e => String((e.data as Record<string, unknown>)?.skillId ?? '').includes('封赏:e1'))).toBeTruthy();
+    expect(fieldHp(engine.state, 2, 'g_hg')).toEqual({ hp: 3, armor: 0 });
+    expect(fieldHp(engine.state, 2, 'g_df')).toEqual({ hp: 4, armor: 1 }); // 奋迅
+    expect(fieldHp(engine.state, 2, 'g_jc')).toEqual({ hp: 3, armor: 1 }); // 帷幄
+    expect(fieldHp(engine.state, 2, 'g_yh')).toEqual({ hp: 3, armor: 0 }); // 清德 2→3
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect(p2.hand).toHaveLength(3); // 苦肉2 + 封赏1（TURN_START 补给窗口不逐内入手持）
+  });
+
+  it('同命族实证：单骑/追忆/死节+并吞/戮杀在真实击杀链上触发（含技能击杀→DEATH 回灌）', () => {
+    // 单骑：文鸯被普通击杀 → 反伤凶手 1
+    const s1 = makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(makeGeneral('a1', 4, []), 1)],
+        hand: COSTS.map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(builtin2As('wy', 'jin_012'), 2)] }),
+    ]);
+    const wy = (s1.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0];
+    wy.currentHp = 2;
+    const e1 = new GameEngine(s1);
+    syncPlayerSkills(e1, e1.state);
+    const ev1 = e1.dispatch(attack('a1', 'wy', 0));
+    expect(ev1.some(e => e.type === 'DEATH' && (e.data as any)?.targetId === 'wy')).toBe(true);
+    const danqi = ev1.find(e => e.type === 'DAMAGE' && String((e.data as any)?.skillId ?? '').includes('单骑:e1'));
+    expect(danqi).toBeTruthy();
+    expect(fieldHp(e1.state, 1, 'a1')?.hp).toBe(3);
+
+    // 追忆：步练师被普通击杀 → 拥有者摸 1
+    const s2 = makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(makeGeneral('a2', 4, []), 1)],
+        hand: COSTS.map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(builtin2As('bls', 'wu_018'), 2)] }),
+    ]);
+    (s2.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 2;
+    const e2 = new GameEngine(s2);
+    syncPlayerSkills(e2, e2.state);
+    const ev2 = e2.dispatch(attack('a2', 'bls', 0));
+    const zhuiyi = ev2.find(e => e.type === 'DRAW' && String((e.data as any)?.skillId ?? '').includes('追忆:e1'));
+    expect(zhuiyi).toBeTruthy();
+    expect((zhuiyi!.data as any).playerId).toBe(2);
+    expect((zhuiyi!.data as any).count).toBe(1);
+
+    // 死节+并吞：司马炎击杀诸葛诞 → +2甲（并吞）与被反伤 2（死节），顺序无关终态
+    const s3 = makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(builtin2As('sym3', 'jin_014'), 1)],
+        hand: COSTS.map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(builtin2As('zgd', 'jin_015'), 2)] }),
+    ]);
+    (s3.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 1;
+    const e3 = new GameEngine(s3);
+    syncPlayerSkills(e3, e3.state);
+    const ev3 = e3.dispatch(attack('sym3', 'zgd', 0));
+    expect(ev3.some(e => e.type === 'GAIN_ARMOR' && String((e.data as any)?.skillId ?? '').includes('并吞:e1'))).toBe(true);
+    expect(ev3.some(e => e.type === 'DAMAGE' && String((e.data as any)?.skillId ?? '').includes('死节:e1'))).toBe(true);
+    expect(fieldHp(e3.state, 1, 'sym3')).toEqual({ hp: 1, armor: 2 });
+
+    // 戮杀：贾南风击杀 → 满血也发 HEAL 事件（封顶在结算层）
+    const s4 = makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(builtin2As('jnf', 'jin_013'), 1)],
+        hand: COSTS.map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(builtin2As('bls4', 'wu_018'), 2)] }),
+    ]);
+    (s4.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 1;
+    const e4 = new GameEngine(s4);
+    syncPlayerSkills(e4, e4.state);
+    const ev4 = e4.dispatch(attack('jnf', 'bls4', 0));
+    expect(ev4.some(e => e.type === 'HEAL' && String((e.data as any)?.skillId ?? '').includes('戮杀:e1'))).toBe(true);
+    expect(fieldHp(e4.state, 1, 'jnf')?.hp).toBe(3); // 满血封顶
+  });
+
+  it('奋威击杀实证：链式技能伤完成击杀 → skillKill DEATH 回灌并喂给追忆（onDeath 于技能击杀路径）', () => {
+    const s = makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(builtin2As('lc5', 'jin_011'), 1)],
+        hand: COSTS.map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(builtin2As('bls5', 'wu_018'), 2)] }),
+    ]);
+    (s.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 3;
+    const engine = new GameEngine(s);
+    syncPlayerSkills(engine, engine.state);
+    const events = engine.dispatch(attack('lc5', 'bls5', 0)); // 2+1 奋威 → 0
+    const death = events.find(e => e.type === 'DEATH' && (e.data as any)?.targetId === 'bls5');
+    expect(death).toBeTruthy();
+    expect((death!.data as any).skillKill).toBe(true);
+    expect((death!.data as any).attackerPlayerId).toBe(1);
+    const zhuiyi = events.find(e => e.type === 'DRAW' && String((e.data as any)?.skillId ?? '').includes('追忆:e1'));
+    expect(zhuiyi).toBeTruthy();
+    expect((zhuiyi!.data as any).playerId).toBe(2);
+  });
+
+  it('onDeploy 活性探针（英慧）：部署成功但监听器尚未注册 → 永不触发，实证 §12-26 降级依据', () => {
+    const wyj = builtin2As('wyj', 'jin_008');
+    const s = makeState([
+      makePlayer(1, { fieldGenerals: [], hand: [wyj, { ...COSTS[0] }, { ...COSTS[1] }] }),
+      makePlayer(2, { fieldGenerals: [] }),
+    ]);
+    const engine = new GameEngine(s);
+    syncPlayerSkills(engine, engine.state); // 场上无人 → 注册表里也没有英慧
+    const events = engine.dispatch(createAction('DEPLOY_GENERAL', 1, {
+      general: wyj, slot: 0, consumeCards: [{ ...COSTS[0] }],
+    }));
+    const deployed = events.some(e => e.type === 'GENERAL_DEPLOYED');
+    const yinghui = events.some(e => e.type === 'DRAW'
+      && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('英慧:e1'));
+    // 注册时序缺口固化：若未来为 onDeploy 接通激活路径（2.5 候选），
+    // 本断言会失败并强制同步更新 §G/§12-26 与三条降级技能的去向。
+    expect({ deployed, yinghui }).toEqual({ deployed: true, yinghui: false });
+  });
+});
+
