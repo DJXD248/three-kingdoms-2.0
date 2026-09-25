@@ -417,17 +417,19 @@ export default function GameBoard(){
   const saveGameSnapshot = () => {
     try {
       const state = useGameStore.getState();
-      saveLocalGameSnapshot(state.createSerializedSnapshot(state.roomName));
-      setSnapshotMessage('对局已保存');
+      const saved = saveLocalGameSnapshot(state.createSerializedSnapshot(state.roomName));
+      setSnapshotMessage(saved ? '对局已保存' : '保存失败，请稍后再试');
+      return saved;
     } catch (error) {
       console.error('[Recovery] Local snapshot save failed', error);
       setSnapshotMessage('保存失败，请稍后再试');
+      return false;
     }
   };
 
   const saveAndExit = () => {
-    saveGameSnapshot();
-    window.setTimeout(() => resetGame(), 250);
+    // 保存失败时绝不退局——否则"保存并退出"会变成无痕丢档。
+    if (saveGameSnapshot()) window.setTimeout(() => resetGame(), 250);
   };
 
   const abandonAndExit = () => {

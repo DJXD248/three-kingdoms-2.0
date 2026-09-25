@@ -116,13 +116,15 @@ export function isRestorableEngineState(value: unknown): value is EngineState {
   if (!value || typeof value !== 'object') return false;
   const state = value as Partial<EngineState>;
   const players = Array.isArray(state.players) ? state.players : [];
+  // playerIds 必须在 every 验证之后派生：混入 null 的坏档曾在这里把校验器
+  // 自身打崩（.map 先于 playersAreValid 短路求值执行）。
   const playersAreValid = players.every(player => (
     !!player
     && typeof player === 'object'
     && Number.isFinite(player.id)
     && typeof player.name === 'string'
   ));
-  const playerIds = players.map(player => player.id);
+  const playerIds = playersAreValid ? players.map(player => player.id) : [];
   const playerIdsAreUnique = new Set(playerIds).size === playerIds.length;
   const currentPlayerIsValid = state.currentPlayerId === null
     || (typeof state.currentPlayerId === 'number'
