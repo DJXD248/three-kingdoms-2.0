@@ -1249,6 +1249,6 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **编译器账本**：168 条→**36 runtime 定义/133 诚实跳过**（批四 +3）；`generals.ts` 三常量 JSDoc 改"v2.5.2 PROMOTED after the four-acceptance gate"。
 - **验证（五闸全部在文件定稿后）**：check 0 错；434 例/49 文件全过；coverage 定稿快照 48.19/39.83/39.76/53.85 四项全过地板 42/34/34/47（§12-22④ 快照口径，棘轮维持不上调）；lint 0 错 30 遗留警告零新增；build 1,941.91 kB / gzip 569.52 kB（较 2.5.1 +0.37/+0.05 kB=三条载荷+描述文本体积）。package.json/lock=2.5.2。
 - **GPT 沟通判断（计划口径）**：**跳过**——二检按计划预钉 v2.5.4（携策略档重测+强制触发可达性专项）；本刀无契约级意外（四件验收即首检采纳①的兑现；热座消耗卡时序属环境操作知识非契约）。
-- **CI 状态**：**PENDING**（feat+docs+标签 v2.5.2 推送后浏览器核验回填）。
+- **CI 状态**：**全绿**——GitHub Actions CI #89（run 36141231801，commit 133134d）completed successfully（feat b154463 + docs 133134d + 标签 v2.5.2 单次顶端 run 全覆盖；**直连推送 master+标签均成功、未借道代理**）。
 
 
