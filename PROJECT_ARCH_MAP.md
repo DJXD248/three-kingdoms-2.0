@@ -160,7 +160,7 @@
 | RNG | **零新增随机面**：不咨询 rngState、不改游标；无"随机弃"语义（那需要玩家决策通道=按需池需求，登记不造）。回放逐字节一致（同配置两跑测试） |
 | Replay | **A 类必录**：DISCARD 事件在 dispatch 返回事件流→随 entry.events 进录像；四路对账扩 3 例（反馈 1 张链、断肠弃光链、空手空转）逐事件一致 |
 | Transition | 唯一 `TransitionCore.transition`；`applyDiscardEvent` 为纯 `(state,event)→state` 且仅经 EventProcessor.apply 分发调用（2.2.13 单入口纪律保持） |
-| Reentrancy | DISCARD 不派生任何可触发事件→**无新增重入面**（2.5.0 时点 onCardLost/onCardGained 在按需池；**v2.5.3 触发族上表后此判语仍逐字成立**——CARD_* 事件源首批仅 GIVE 派生，DISCARD 结算不派生，见 GIVE/触发族两表）；单技能回合内幂等由承载触发的单次性保证（一次伤害只发一条 onDamageTaken；一次死亡只发一条 DEATH） |
+| Reentrancy | 2.5.0 时点 DISCARD 不派生任何可触发事件→**无新增重入面**；**v2.6.2 此判语已兑现扩面**：DISCARD 结算现派生 `via='DISCARD'` 的 CARD_LOST（带结算后 remainingHand），闭环风险与闸口评估见下方"CARD_* 事件源扩面"表；单技能回合内幂等仍由承载触发的单次性保证（一次伤害只发一条 onDamageTaken；一次死亡只发一条 DEATH） |
 | Death chain | 断肠本身是死亡链内效果（onDeath）；弃牌不抽牌→不触牌堆重洗、与本营空池扣血链零交互；反馈反噬致死路径不适用（弃牌非伤害）——**规则交互观察**：反馈可吃掉攻击者**尚在手牌中的攻击消耗卡**（消耗卡结算后回手），账本一致、属规则后果非缺陷（HANDOFF §12-29） |
 | 优先级 | 承载触发类型既有优先级（onDamageTaken/onDeath 均走 TriggerEngine 现表），原语不自带优先级 |
 | 忠实度 | **反馈=B**（原技"获得伤害你的一张牌"=转移，转移原语缺→实现为"伤害来源弃 1"，效果相近、归属不同，§G 行已注）；**断肠=A**（"击杀者弃置其所有手牌"忠实全量）——GPT 首检采纳② A/B/C 标签首批应用 |
@@ -180,7 +180,7 @@
 | RNG | **零新增随机面**：不咨询 rngState、不改游标；无"随机给"语义。回放逐字节一致（同配置两跑测试） |
 | Replay | **A 类必录**：GIVE 与其派生 CARD_LOST/CARD_GAINED 均经重入环回灌 dispatch 返回事件流→随 entry.events 进录像；四路对账扩例（真实移动链、空转链、派生触发链）逐事件一致 |
 | Transition | 唯一 `TransitionCore.transition`；`applyGiveEvent` 为纯 `(state,event)→state` 且仅经 EventProcessor.apply 分发调用（2.2.13 单入口纪律保持） |
-| Reentrancy | **本原语是全链第一个"结算派生可触发事件"的 Effect**：GIVE→CARD_*→监听技能→新 Effect→(可再 GIVE)——由 `TransitionCore` 重入环**既有上限**约束（`MAX_TRIGGER_REENTRY_ROUNDS=8` + `EngineDispatchFlow` 深度 32/链上 256 双闸），触顶记 `CUSTOM{TRIGGER_REENTRY_LIMIT}` 哨兵（该事件 data 键 `pendingDeaths` 随泛化更名 `pendingReactions`=纯标记面、B6 内容永不触达、录像零影响）；既有 DISCARD/DRAW/DAMAGE 结算**不派生** CARD_*（事件源扩面挂按需池，见 Trigger 表）→B6 逐字一致结构性成立 |
+| Reentrancy | **本原语是全链第一个"结算派生可触发事件"的 Effect**：GIVE→CARD_*→监听技能→新 Effect→(可再 GIVE)——由 `TransitionCore` 重入环**既有上限**约束（`MAX_TRIGGER_REENTRY_ROUNDS=8` + `EngineDispatchFlow` 深度 32/链上 256 双闸），触顶记 `CUSTOM{TRIGGER_REENTRY_LIMIT}` 哨兵（该事件 data 键 `pendingDeaths` 随泛化更名 `pendingReactions`=纯标记面、B6 内容永不触达、录像零影响）；既有 DISCARD/DRAW/DAMAGE 结算**不派生** CARD_*（2.5.3 时点事件源仅 GIVE）→B6 逐字一致结构性成立。**v2.6.2 更新**：DISCARD/EQUIP_STRIP 两路已派生 CARD_LOST、GIVE 源的 CARD_LOST 加性携带 remainingHand，见下方"CARD_* 事件源扩面"表 |
 | Death chain | 发放不造成伤害→不触 DEATH 派生；接收者阵亡在派发时点已由 isAlive 闸挡住下一笔；派生 DRAW（连营类合成例）走既有 DRAW_REQUIRED/DRAW 结算与空池重洗链，零新交互 |
 | 优先级 | 原语不自带优先级，承载触发走 TriggerEngine 现表 |
 | 忠实度 | 本刀无内置技能进局→**A/B/C 标签随转正刀逐技能补打**（接线≠转正，GPT 首检采纳①）。§G 预判：仁德/好施/恂恂/白眉=发放语义，遗计"分牌给任意角色"受决策通道缺口约束 |
@@ -196,23 +196,23 @@
 | Source | 监听注册键定到**失去/获得牌的 PLAYER**（`data.playerId`）；手牌是玩家资产、将领不"拥有"手牌→**不做 sourceGeneralId 收窄**（与 DISCARD Target 格"键定 PLAYER 而非将领实例"同一实证教训；拥有者将领已离场其玩家仍欠账/受账） |
 | Target | 触发只判归属，不解析目标；派生 Effect 的目标解析走各原语既有表 |
 | Trigger | 新枚 `onCardLost`/`onCardGained` 上三表：`SkillTriggerType` 联合（+中文标签"失去手牌时/获得手牌时"，Excel 下拉经 `allExcelTriggers` 自动继承）+ `SUPPORTED_TRIGGER_MAP` + `DataSkillTrigger` + `TRIGGER_EVENT_MAP`（→CARD_LOST/CARD_GAINED）+ `PRIORITY`=50（与 onDamageTaken 等同族）+ `buildCondition` 两 case |
-| Condition | `data.playerId` 缺失/非有限数→条件不成立；一卡一事件、按事件逐张还是逐批=**逐批单事件**（一张 GIVE 只派生一条 CARD_LOST，count 携带张数；"每失去一张摸一张"类连营语义=数量函数，属⑥自定义条件/逐张拆分缺口，登记不造） |
+| Condition | `data.playerId` 缺失/非有限数→条件不成立；一卡一事件、按事件逐张还是逐批=**逐批单事件**（一张 GIVE 只派生一条 CARD_LOST，count 携带张数；"每失去一张摸一张"类连营语义=数量函数，属⑥自定义条件/逐张拆分缺口，登记不造）。**v2.6.2 谓词面补上**：编译载荷 `cardFilter` 三枚——equipment→仅 `via==='EQUIP'` 响、lastHand→仅 `remainingHand===0` 响（结算后哨兵）、hand→非装备失牌源皆响；谓词只读事件已记录事实、不二次推导，EQUIP 源不带 remainingHand 故天然喂不响 lastHand=语义正确非缺口 |
 | Effect | 触发本身只产 Effect 派生事件（复用 `createSkillEvents` 唯一翻译码）；派生 GIVE 再派生 CARD_*=循环面→由重入环上限约束（见 GIVE 表 Reentrancy 格） |
 | RNG | 触发判定零随机；派生 DRAW 的随机走既有 RANDOM_OUTCOME 记录面，无新面 |
 | Replay | 触发链事件（TRIGGERED 标记+派生 Effect）随 entry.events A 类必录；重入链四路对账例逐事件一致 |
 | Transition | 无新转移：CARD_* 零结算分支；一切状态变化仍经唯一 TransitionCore |
-| Reentrancy | **首批"结算派生事件可触发技能"的正式接线**；闭环风险=获得→发放→再获得类囤积循环，三道既有闸兜底（重入轮 8/深度 32/链上 256），触顶 TRIGGER_REENTRY_LIMIT 哨兵；**事件源覆盖=首批仅 GIVE 派生**——登场/移动/补给消耗、DISCARD、被拆装备等失牌路径**暂不派生** CARD_LOST（扩源须先补十二格事件源节+重入面评估，随连营/枭姬等转正内容刀立项）→伤逝/连营/枭姬类**接线≠可用**，智愚类（获得侧）GIVE 路径即时可达 |
+| Reentrancy | **首批"结算派生事件可触发技能"的正式接线**；闭环风险=获得→发放→再获得类囤积循环，三道既有闸兜底（重入轮 8/深度 32/链上 256），触顶 TRIGGER_REENTRY_LIMIT 哨兵；2.5.3 时点**事件源覆盖=首批仅 GIVE 派生**（DISCARD/被拆装备等暂不派生→伤逝/连营/枭姬类**接线≠可用**）。**v2.6.2 兑现扩面**：DISCARD/被拆装备两路已派生 via 标注的 CARD_LOST，连营/枭姬随刀转正（十二格事件源节+重入评估=下方"CARD_* 事件源扩面"表；仍闭面：登场/移动/补给消耗、DECK_PLACE、阵亡弃牌与获得侧非 GIVE 源；伤逝仍需失牌差值自定义条件=接线≠可用维持；智愚类获得侧 GIVE 路径即时可达不变） |
 | Death chain | 失去/获得牌非伤害零直接交互；承载 Effect 若为 DAMAGE 则走既有技能击杀→DEATH 回灌链（2.2.17），重入环同一上限覆盖叠深 |
 | 优先级 | onCardLost=onCardGained=50（与受击族同档，不抢占登场/死亡 100 档） |
-| 忠实度 | 无内置技能进局→标签随转正刀补打；§G 预判：智愚=获得侧可得、忘隙真实语义=回复触发（onHeal 缺，非本族，行内已注）、伤逝=失牌差值条件（叠加⑥自定义条件缺口） |
+| 忠实度 | 2.5.3 无内置技能进局→标签随转正刀补打；§G 预判：智愚=获得侧可得、忘隙真实语义=回复触发（onHeal 缺，非本族，行内已注）、伤逝=失牌差值条件（叠加⑥自定义条件缺口）。**v2.6.2 转正首批补打**：连营=**A**（"被顺走/被弃置"两路=GIVE/DISCARD 源均已覆盖，最后一张=remainingHand 哨兵逐读结算后事实；仍喂不响的失牌面见事件源表闭面清单）、枭姬=**B**（原技泛指"失去一张装备牌"，现装备离场面唯一=EQUIP_STRIP 被剥离，装备随主阵亡离位不派生=覆盖差异已注） |
 | 三处同步 | 触发三表+两枚中文标签+RuntimeEditor/TriggerEditor 下拉随刀；数据层枚举扩枚即入库合法（编译诚实契约：录入未支撑组合仍走 skipped 通道） |
-| 活例 | **无（非内容刀）**——合成装配测试：onCardGained→DRAW 1 SELF 接收者真摸牌（重入链账形钉死）；onCardLost→DISCARD 空转负例（无 GIVE 即无 CARD_LOST，DISCARD 不派生） |
+| 活例 | 2.5.3 本刀=非内容刀，合成装配测试：onCardGained→DRAW 1 SELF 接收者真摸牌（重入链账形钉死）；onCardLost→DISCARD 空转负例（当时 DISCARD 不派生）。**v2.6.2 活例翻正**：该"DISCARD 空转"预期随派生落地**改写为派生正例**（预期翻转非削弱，transitionEquivalence v2.5.3 节登记）；真实内置活例=连营/枭姬两条进局（转正实证例：同一次多步对局枭姬吃装备剥离摸 2、连营吃断肠弃光摸 1，四路径逐事件一致+谓词静默反例双钉） |
 
 ### EQUIP_STRIP 拆解装备原语（v2.6.0 落地，2.6 首个新 Effect 原语=第七原语；建议书 ⑤ 装备区交互 6 条；**内容刀：本刀接线即配首批两条内置载荷 强袭/崩坏**）
 
 | 格 | 契约 |
 |---|---|
-| Event | 新事件 `EQUIP_STRIP{ targetPlayerId, targetId, count }`（`core/Event.ts` 联合新增）；SkillTriggerBridge 只产事件不自带状态修改，EventProcessor `case 'EQUIP_STRIP'`→`applyEquipStripEvent` 是唯一结算点；**本刀不派生任何 CARD_* 事件**（失牌路径事件源扩面挂 v2.6.2 转正刀，见 GIVE/触发族两表 Reentrancy 格与 EVENT SOURCE 缺口） |
+| Event | 新事件 `EQUIP_STRIP{ targetPlayerId, targetId, count }`（`core/Event.ts` 联合新增）；SkillTriggerBridge 只产事件不自带状态修改，EventProcessor `case 'EQUIP_STRIP'`→`applyEquipStripEvent` 是唯一结算点；v2.6.0 本刀刻意不派生任何 CARD_*（挂账 v2.6.2）——**v2.6.2 已兑现**：被拆装备→`via='EQUIP'` 的 CARD_LOST（差值从结算前后状态读取），见下方"CARD_* 事件源扩面"表 |
 | Timing | 与 DISCARD/GIVE 同族：触发链 BFS 尾部落账，经 `TransitionCore` 重入环在**同一 dispatch** 内进入结算链 |
 | Source | 拆解发起者恒=技能拥有者将领所在玩家（不经载荷传递）；**受害者按 GENERAL 键定**——装备住在前线将领的 `armorCards` 数组上（本项目唯一装备面，无装备槽），故 `targetId=技能目标将领的 runtime card id`，其所在玩家由 `findGeneralRef` 反查得 `targetPlayerId`（AFTER_DAMAGE 载荷不带 targetPlayerId=与 GIVE TARGET 空转同一实证教训） |
 | Target | 角色解析与 DISCARD/GIVE 同表：SELF=技能源将领；ATTACKER=`data.sourcePlayerId ?? attackerPlayerId`；TARGET=`data.targetPlayerId`（由目标将领反查）。**强袭=TARGET（拆被击目标）、崩坏=SELF（拆自身）** |
@@ -221,7 +221,7 @@
 | RNG | **零新增随机面**：不咨询 rngState、不改游标；头部选取确定性。回放逐字节一致（同配置两跑测试） |
 | Replay | **A 类必录**：EQUIP_STRIP 经重入环回灌 dispatch 返回事件流→随 entry.events 进录像；四路对账扩例（真实拆解链、空转链、击杀后空链）逐事件一致 |
 | Transition | 唯一 `TransitionCore.transition`；`applyEquipStripEvent` 为纯 `(state,event)→state` 且仅经 EventProcessor.apply 分发调用（2.2.13 单入口纪律保持） |
-| Reentrancy | 拆解不派生可触发事件→**无新增重入面**（本刀 CARD_* 事件源仍仅 GIVE 派生，EQUIP_STRIP 结算不派生；被拆装备→CARD_LOST 挂 v2.6.2 事件源扩面刀，须先补事件源十二格节+重入评估）；单技能回合内幂等由承载触发的单次性保证（一次攻击只发一条 onDamageDealt；一次被瞄准只发一条 onBecomingTarget） |
+| Reentrancy | v2.6.0 时点拆解不派生可触发事件→**无新增重入面**；**v2.6.2 起被拆装备派生 `via='EQUIP'` CARD_LOST**（不带 remainingHand，装备说话不了手牌），闭环评估移交事件源扩面表（该表 Reentrancy 格=本族唯一权威口径）；单技能回合内幂等由承载触发的单次性保证（一次攻击只发一条 onDamageDealt；一次被瞄准只发一条 onBecomingTarget） |
 | Death chain | 拆解本身不造成伤害→不触 DEATH 派生；**强袭承载于 onDamageDealt**：击杀发生时目标已离场，其 EQUIP_STRIP 经 findGeneralRef 失败=诚实空转（先伤后拆、拆不到亡者，时序如实）；崩坏承载于 onBecomingTarget：结算前/后由既有触发优先级决定，不减当次伤害 |
 | 优先级 | 原语不自带优先级，承载触发走 TriggerEngine 现表（onDamageDealt=反伤族档、onBecomingTarget=v2.3.0 结算前族） |
 | 忠实度 | **强袭=A**（原技"移除目标装备区一张牌"=拆 armorCards 头部 1 张忠实，资源进弃牌堆/将领回池路由差异已在 Effect 格注死）；**崩坏=B**（原技"成为基本牌目标后弃置装备"含"基本牌"谓词、现触发为广义 onBecomingTarget，且落账时序=伤害结算后、不减当次伤害——效果相近、条件与时序归属不同，§G 行内已注）——GPT 首检采纳② A/B/C 标签第三批应用 |
@@ -232,7 +232,7 @@
 
 | 格 | 契约 |
 |---|---|
-| Event | 新事件 `REVEAL{ viewerPlayerId, count }`（`core/Event.ts` 联合新增）；SkillTriggerBridge 只产事件不自带状态修改，EventProcessor `case 'REVEAL'`→`applyRevealEvent` 是唯一结算点；不派生任何 CARD_*（事件源扩面仍挂 v2.6.2） |
+| Event | 新事件 `REVEAL{ viewerPlayerId, count }`（`core/Event.ts` 联合新增）；SkillTriggerBridge 只产事件不自带状态修改，EventProcessor `case 'REVEAL'`→`applyRevealEvent` 是唯一结算点；不派生任何 CARD_*（v2.6.2 事件源扩面落地后 REVEAL 纯观察零位移、本就不在派生面=维持，见事件源扩面表） |
 | Timing | 与 DISCARD/GIVE/EQUIP_STRIP 同族：触发链 BFS 尾部落账，经 `TransitionCore` 重入环在**同一 dispatch** 内进入结算链 |
 | Source | 观看者恒=技能拥有者**玩家**（`viewerPlayerId=Number(ownerId)`）；牌堆是全局共享资产、按玩家键定观看权，无将领实例面 |
 | Target | 无目标解析——观看是技能拥有者的单方行为；载荷 target 角色字段照传但结算不使用（表面一致性，未来 HUD 若展示"给谁看"再上表） |
@@ -252,7 +252,7 @@
 
 | 格 | 契约 |
 |---|---|
-| Event | 新事件 `DECK_PLACE{ playerId, dest, count }`（`core/Event.ts` 联合新增）；EventProcessor `case 'DECK_PLACE'`→`applyDeckPlaceEvent` 是唯一结算点；**不派生 CARD_***（手牌离手路径与 DISCARD 同纪律，事件源扩面挂 v2.6.2 转正刀） |
+| Event | 新事件 `DECK_PLACE{ playerId, dest, count }`（`core/Event.ts` 联合新增）；EventProcessor `case 'DECK_PLACE'`→`applyDeckPlaceEvent` 是唯一结算点；**不派生 CARD_***（手牌离手路径与 DISCARD 同纪律——v2.6.2 事件源扩面落地时 DECK_PLACE 手牌位移**刻意仍不派生**：本批内容无一置牌驱动、扩面对它无增益，闭面清单见事件源扩面表，未来需求须先补表再动刀） |
 | Timing | 同上族：触发链 BFS 尾部落账、同 dispatch 内结算 |
 | Source | 被置手牌的玩家恒=技能拥有者**玩家**（手牌住在玩家身上，与 DISCARD/GIVE 键定同轨） |
 | Target | 无角色解析——放置对象永远是拥有者自己的手牌；载荷 target 照传不用（同 REVEAL Target 格口径） |
@@ -261,12 +261,32 @@
 | RNG | **零新增随机面**：头部切片确定性；入堆不洗牌不动游标。回放逐字节一致（同配置两跑测试） |
 | Replay | **A 类必录**；四路对账扩例（TOP 放置+观顶复合链）逐事件一致、录像重建终态逐字相等 |
 | Transition | 唯一 `TransitionCore.transition`；`applyDeckPlaceEvent` 纯 `(state,event)→state` 仅经 EventProcessor.apply 分发 |
-| Reentrancy | 不派生可触发事件→**零新增重入面**；置牌使手牌真实减张=状态位移的正确语义（手牌数类技能受影响属应有之义），非循环面 |
+| Reentrancy | 不派生可触发事件→**零新增重入面**（v2.6.2 扩面落地时维持不派生=闭面清单内，见事件源扩面表）；置牌使手牌真实减张=状态位移的正确语义（手牌数类技能受影响属应有之义），非循环面 |
 | Death chain | 放置不造成伤害→不触 DEATH 派生；承载伤害致死时手牌是否仍在其名=结算时点状态决定，闸口即上述"玩家不存在/空手"两条，无特判 |
 | 优先级 | 原语不自带优先级，承载触发走 TriggerEngine 现表 |
 | 忠实度 | 本刀无内置技能进局→标签随转正刀补打；§G 预判：自书/秘置/心战=**置牌+排序**复合，排序决策属 v2.6.3 choice；观星=REVEAL+DECK_PLACE 双段复合同样待 choice——**机械面本刀就位，决策面缺=诚实不配** |
 | 三处同步 | 枚举/编译器/Excel 标签（"置牌入堆"）/SETTLEABLE/桥接分支同 REVEAL 表；**RuntimeEditor 新增 DECK_PLACE 专属"放置位置"下拉（牌堆底默认/牌堆顶）**；Excel v2 六列**无 dest 列**→导入导出一律 BOTTOM，TOP 暂仅结构化编辑器可录（表面缺口登记，本刀不扩列）；数值面沿用 §12-29 缺口：编辑器 min=1 不收 0 全手哨兵 |
 | 活例 | **无（非内容刀）**——合成装配测试：归堆（onDamageTaken→DECK_PLACE 1 SELF TOP）实证手牌头张真上堆顶、EventProcessor.test 五例钉死 BOTTOM/TOP/全手/clamp/空转账形；内置账本 38/131 不动、B7 逐字 |
+
+### CARD_* 事件源扩面（v2.6.2 落地，触发族表"事件源首批仅 GIVE"挂账的兑现；连带转正连营/枭姬=**内容刀**；§12-31①"先补事件源十二格节+重入评估再动刀"纪律执行）
+
+| 格 | 契约 |
+|---|---|
+| Event | 派生对仍=既有 `CARD_LOST`/`CARD_GAINED` 纯通知事件（零新事件枚、零结算分支）；本表管的不是"新事件"而是**谁能派生它们**——扩面=在 `chainedConsequences.enqueueDerivedConsequences` 唯一派生点新增两个观察分支（DISCARD、EQUIP_STRIP），GIVE 分支加性补 `remainingHand` 字段 |
+| Timing | 各承载 Effect 结算落账之后、同 dispatch 重入环内回灌监听（与 v2.5.3 GIVE 派生同时序位）；派生事件进的是**既有** REACTION_EVENT_TYPES 环（CARD_LOST/CARD_GAINED 自 2.5.3 即在集合内），不扩集合枚 |
+| Source | 三路派生源：**GIVE**（v2.5.3 既有，v2.6.2 起失去侧 CARD_LOST 补结算后 `remainingHand`）；**DISCARD**（本刀新增，`data.playerId` 手牌数差=before−after）；**EQUIP_STRIP**（本刀新增，按 `targetPlayerId`+`targetId` 定位在场将领的 `armorCards` 差）。**刻意不派生（闭面清单，扩任一须先改本表）**：DECK_PLACE/装备穿入等手牌位移、登场/移动/补给/攻击的消耗用牌、玩家阵亡弃牌倾泻、DRAW/护甲得牌/将领卡入手等获得面（获得侧保持 GIVE-only——资援类 onCardGained 需求首现时再评估） |
+| Target | CARD_LOST.data.playerId=失牌**玩家**（三路同轨，将领不收窄）；EQUIP 源归属玩家由 EQUIP_STRIP 载荷 targetPlayerId 直读（v2.6.0 已趟平的"伤害不带 targetPlayerId"教训不再适用——该事件自带） |
+| Condition | 差值一律从结算前后状态**读出**（derive from what settled=技能击杀 DEATH 同一纪律）：差>0 才派生、差=0 诚实零派生（空手弃牌、无甲可拆、目标已离场→无 phantom 触发）；count=实差张数非请求载荷值 |
+| Effect | 派生事件本身零状态位移（纯记录+监听输入事实）；谓词读取面见触发族表 Condition 格（equipment/lastHand/hand 三枚 cardFilter） |
+| RNG | **零新增随机面**：差值=确定性状态比较；不碰 rngState 游标（同配置两跑逐字节一致测试为证） |
+| Replay | 派生事件=canonical 事件随 entry.events A 类必录；重放对同一提交序列重算同一差值→四路径逐事件一致（转正实证例：枭姬摸 2/连营摸 1 同局两步全链对账） |
+| Transition | 无第二转移路径：派生只 enqueue，结算仍 EventProcessor 唯一入口；`applyDiscardEvent`/`applyEquipStripEvent` 本体一字未动 |
+| Reentrancy | **本表核心问（§12-31② 评估兑现）**：扩面只增"**谁**派生 CARD_LOST"，不引入新事件类型进环→环的形状不变；成环需"失牌监听技能的 Effect 再制造失牌"，首批转正两条均为 DRAW_CARD（摸牌**不**派生 CARD_GAINED=获得侧闭面兜底），结构上无环；叠深最坏情形仍由三道既有闸兜底（重入轮 8/深度 32/链上 256，触顶 TRIGGER_REENTRY_LIMIT 哨兵）。逐张 vs 逐批口径维持触发族表 Condition 格（逐批单事件） |
+| Death chain | DISCARD 源常生于断肠（击杀链上）：DEATH→断肠弃光→CARD_LOST→连营摸 1 在同一次 dispatch 重入环内走完（转正实证内链）；失牌玩家恰已阵亡→该玩家 hand 数差按实际状态读、无特判不派生空账 |
+| 优先级 | CARD_LOST/CARD_GAINED=50 不动（扩源不改承载触发优先级） |
+| 忠实度 | 连营=**A**（原文"失去最后一张手牌"被顺走/被弃置两路全覆盖=GIVE/DISCARD 双源；remainingHand 哨兵只在手牌面成立）；枭姬=**B**（原文泛指一切装备失去，现装备离场面唯一=EQUIP_STRIP 被剥离；装备随主阵亡离位不派生=覆盖差异，闭面清单注死） |
+| 三处同步 | **双词表**：编辑器/数据层 `cardSubType` 五枚（anyLost/equipmentLost/lastHandLost/handLost/anyGained，中文"失去装备牌/失去最后一张手牌/失去手牌/失去任意牌/获得任意牌"）↔ 编译 `cardFilter`（equipment/lastHand/hand，anyLost/缺省=不设筛）；编译器交叉组合诚实 skip（lostOnly 谓词×onCardGained、anyGained×onCardLost→TRIGGER_SUBTYPE_UNSUPPORTED）；Excel v2 六列经"失去手牌时→失去装备牌"主→子串往返（裸旧串仍可解析、下拉改列组合项）；TriggerEditor 新增"卡牌时机"子下拉；generals.ts `CardSubType` 联合+`cardSubLabels`+`getTriggerSubOptions` 'card' 分支 |
+| 活例 | **连营** 陆逊 wu_007（onCardLost/lastHandLost→DRAW 1 SELF）+ **枭姬** 孙尚香 wu_008（onCardLost/equipmentLost→DRAW 2 SELF）——批五同局进局；账本 38→**40 runtime 定义/129 诚实跳过**（两条纯名技能出跳过名单）；battleReport 频次表 37→**39 行/38 名键**；静默反例双钉（非最后一张弃牌喂不响连营、DISCARD 源喂不响枭姬） |
 
 ### 编译诚实契约（同刀落地，D-9 C 类）
 
@@ -283,7 +303,7 @@
 | activeSelf / activeOther | 暂无业务需求（主动技=玩家决策，天然对应 A 类 action+反应窗形态，随询问语义需求立项） |
 | passive / untilExpire | 暂无业务需求（持续/过期语义需要状态机字段设计，随需求立项） |
 
-已支撑 9 类（事件触发映射）：onDeploy / onTurnStart / onDamageTaken / onDamageDealt / onKill / onDeath / onBecomingTarget / **onCardLost / onCardGained（v2.5.3，事件源首批=GIVE 派生，覆盖缺口见其十二格表）**。另有 onTurnEnd 以"玩家决策 canonical action"形态进局（不占三表，见上表），2.3.1 时点已上表闭环 2 类。**onCardLost/onCardGained 注（v2.5.3）**：此二枚**不在 2.3 盘点的 12 类按需池内**（旧 `SkillTriggerType` 联合根本没有该枚举，§G 以"事件缺"记为档2 缺口）——本刀随 GIVE 原语扩枚上表，12 类按需池原样不动。**onDeploy 注（v2.5.1）**：映射自 2.1 即在表，但部署当步存在注册序缺口（§12-26）致其结构性打不到自己登场——v2.5.1 起 `TransitionCore` 部署结算后经 `ctx.resyncSkills` 补注册并对该步 `GENERAL_DEPLOYED` 重放监听（sourceGeneralId 键定防重触发），缺口接通；**接线≠转正**，三条已降档 onDeploy 技能曾维持纯描述至 **v2.5.2 四件验收全数达成、英慧/拓略/奋勇三条正式转正入局**（真机事件级触发 3/3 + 四路径逐事件一致，HANDOFF §12-30；§12-26 全销）。
+已支撑 9 类（事件触发映射）：onDeploy / onTurnStart / onDamageTaken / onDamageDealt / onKill / onDeath / onBecomingTarget / **onCardLost / onCardGained（v2.5.3；事件源 v2.6.2 起=GIVE/DISCARD/EQUIP_STRIP 三路派生 + cardFilter 谓词三枚，闭面清单见"CARD_* 事件源扩面"表）**。另有 onTurnEnd 以"玩家决策 canonical action"形态进局（不占三表，见上表），2.3.1 时点已上表闭环 2 类。**onCardLost/onCardGained 注（v2.5.3）**：此二枚**不在 2.3 盘点的 12 类按需池内**（旧 `SkillTriggerType` 联合根本没有该枚举，§G 以"事件缺"记为档2 缺口）——本刀随 GIVE 原语扩枚上表，12 类按需池原样不动。**onDeploy 注（v2.5.1）**：映射自 2.1 即在表，但部署当步存在注册序缺口（§12-26）致其结构性打不到自己登场——v2.5.1 起 `TransitionCore` 部署结算后经 `ctx.resyncSkills` 补注册并对该步 `GENERAL_DEPLOYED` 重放监听（sourceGeneralId 键定防重触发），缺口接通；**接线≠转正**，三条已降档 onDeploy 技能曾维持纯描述至 **v2.5.2 四件验收全数达成、英慧/拓略/奋勇三条正式转正入局**（真机事件级触发 3/3 + 四路径逐事件一致，HANDOFF §12-30；§12-26 全销）。
 
 ### GPT 合并复核（2026-09-25，一、二刀契约形态首检；纯 docs 登记不占版本）
 
@@ -309,7 +329,7 @@
 
 **现状**：内置技能全部只有名字（`createGeneral` 生成 `skills.map(s => ({name: s}))`，连 description 都没有），装配时整批 `NO_RUNTIME_PAYLOAD` 诚实跳过。本表是"内容量产计划（2.4 四刀）"的施工图：**档1=用现有引擎词汇即可忠实表达或已注明近似的技能，v2.4.1/2 分批配载入局；档2=需新 Effect 原语（2.5 候选，按需求排序）；档3=需 13 类按需池触发；档4=维持纯描述**（本游戏无锦囊/牌类型/判定/横置/装备区/回应等概念对应物，或近似会彻底失真）。
 
-**现有引擎词汇表（档1 判定唯一依据，全部来自 skillCompiler/SKILL_TRIGGERS 实测；系 2.4.0 分档时点口径，v2.5.0 起效果原语增至 5 种——新增 DISCARD 弃牌〔手牌头部确定性弃置，value=0 为全手哨兵〕，下列"无弃牌"一条自此失效，其余维持）**：触发 8 类（登场/回合开始/受伤后[可滤攻击|技能伤]/成为攻击目标时[结算前]/造成伤害后[仅攻击]/击杀时/被击杀时/回合结束[决策型经询问窗]）× 效果 4 原语（摸牌只归拥有者/造 N 点技能伤害[目标 SELF|ATTACKER|事件 TARGET]/回 N 血[封顶 maxHp]/得 N 护甲）× 目标 SELF/ATTACKER/事件目标。**无**：任意条件、给他人牌、弃牌、观牌堆、多目标、每局限一次、距离/响应类修正。**（v2.5.3 时点更新**：效果原语增至 6 种——+DISCARD（v2.5.0）+GIVE 发放（v2.5.3，手牌整体物理过手；"给他人牌"一条自此**接线层面解锁**，但"指定任意接收者"仍受玩家决策通道缺口约束=接线≠可配，见 F 节 GIVE 表）；事件触发增至 9 类——+onCardLost/onCardGained（v2.5.3，事件源首批仅 GIVE 派生），加 onTurnEnd 决策型合计 10 类进局。本行其余为 2.4.0 分档时点口径，档表判定不追溯重开——已分档技能如需新词汇表再档按新原语逐条复议。**）
+**现有引擎词汇表（档1 判定唯一依据，全部来自 skillCompiler/SKILL_TRIGGERS 实测；系 2.4.0 分档时点口径，v2.5.0 起效果原语增至 5 种——新增 DISCARD 弃牌〔手牌头部确定性弃置，value=0 为全手哨兵〕，下列"无弃牌"一条自此失效，其余维持）**：触发 8 类（登场/回合开始/受伤后[可滤攻击|技能伤]/成为攻击目标时[结算前]/造成伤害后[仅攻击]/击杀时/被击杀时/回合结束[决策型经询问窗]）× 效果 4 原语（摸牌只归拥有者/造 N 点技能伤害[目标 SELF|ATTACKER|事件 TARGET]/回 N 血[封顶 maxHp]/得 N 护甲）× 目标 SELF/ATTACKER/事件目标。**无**：任意条件、给他人牌、弃牌、观牌堆、多目标、每局限一次、距离/响应类修正。**（v2.5.3 时点更新**：效果原语增至 6 种——+DISCARD（v2.5.0）+GIVE 发放（v2.5.3，手牌整体物理过手；"给他人牌"一条自此**接线层面解锁**，但"指定任意接收者"仍受玩家决策通道缺口约束=接线≠可配，见 F 节 GIVE 表）；事件触发增至 9 类——+onCardLost/onCardGained（v2.5.3，事件源首批仅 GIVE 派生），加 onTurnEnd 决策型合计 10 类进局。**v2.6.2 再注**：效果原语已随 2.6 线增至九种（+EQUIP_STRIP v2.6.0、+REVEAL/DECK_PLACE v2.6.1，逐条见 F 节各十二格表）；CARD_* 事件源扩至 GIVE/DISCARD/EQUIP_STRIP 三路并上 cardFilter 谓词三枚（equipment/lastHand/hand），连营/枭姬转正——"失去手牌/装备触发"自此接线+事件源双通，仍闭面清单注死于事件源扩面表。本行其余为 2.4.0 分档时点口径，档表判定不追溯重开——已分档技能如需新词汇表再档按新原语逐条复议。**）
 
 **近似与初定义纪律**：内置技能无原文，语义即本项目首次定义；写"近似自"的表示借用了三国杀印象但词汇表无法忠实表达，差异逐条标注。档1 实装红线不变：编译器拒绝=当场诚实降级回档4并登记原因，绝不硬凑。
 
@@ -410,9 +430,9 @@
 | 国色 | 大乔 | 4 | — | 牌型转换 |
 | 流离 | 大乔 | 2 | — | 弃牌+目标转移 |
 | 谦逊 | 陆逊 | 4 | — | 锦囊免疫（无锦囊概念） |
-| 连营 | 陆逊 | 2 | — | 失去最后手牌触发（onCardLost 事件缺） |
+| 连营 | 陆逊 | 2 | onCardLost(lastHandLost)→DRAW_CARD 1 SELF | 原技"失去最后一张手牌后摸一张" ｜**✅ v2.6.2 已实装（事件源扩面首批；保真度 A：被顺走/被弃置两路=GIVE/DISCARD 源均派生带 remainingHand 的 CARD_LOST，lastHand=结算后零张哨兵直读；置牌/消耗等闭面失牌不响=清单注死，见 F 节事件源扩面表）** |
 | 结姻 | 孙尚香 | 2 | — | 弃2回他人（回血对象已移除） |
-| 枭姬 | 孙尚香 | 2 | — | 失去装备触发（onCardLost+装备） |
+| 枭姬 | 孙尚香 | 2 | onCardLost(equipmentLost)→DRAW_CARD 2 SELF | 原技"失去一张装备牌后摸两张" ｜**✅ v2.6.2 已实装（EQUIP_STRIP 被拆装备→via='EQUIP' CARD_LOST 差值派生；保真度 B：现装备离场面唯一=被剥离一路，装备随主阵亡离位不派生=覆盖差异已注，EQUIP 源不带 remainingHand"装备说话不了手牌"；见 F 节事件源扩面表）** |
 | 天香 | 小乔 | 2 | — | 弃红桃转移伤害 |
 | 红颜 | 小乔 | 4 | — | 判定牌型锁定 |
 | 天义 | 太史慈 | 3 | — | 攻击次数+距离复合修正 |
@@ -510,7 +530,7 @@
 
 **档位合计（逐表实测，脚本交叉佐证）**：档1=33（魏3/蜀4/吴6/群2/晋18）、档2=48（魏15/蜀11/吴14/群4/晋4）、档3=26、档4=61，总 168 与技能条目逐一闭环。**分布偏斜如实登记**：晋 30 条中 18 条入档1，系"晋势力为自建将、无三国杀原文包袱、初定义即按引擎词汇表设计"所致；魏蜀吴群以近似为主，密度低是诚实结果而非盘点偷懒。**批次再平衡（相对计划书披露）**：批量一 v2.4.1=魏+蜀+群共 9 条（M1），批量二 v2.4.2=吴+晋共 24 条（M2）——晋扎堆使然，两批仍各为内容刀各登记新基线（B3/B4），刀边界不因均衡诉求重切。
 
-**实装状态（随刀更新）**：**v2.4.1 批量一 9/9 已实装**（魏/蜀/群各档1 行已逐条标 ✅；编译器零拒绝、零降级；哨兵③跨势力重名 id 唯一性随魏·屯田入池经 `builtinContentBatch1.test.ts` id 无碰撞断言钉死；内容刀基线 B3 {"1":115,"2":185} 登记于 HANDOFF §12-25①）。**v2.4.2 批量二 21/24 已实装、3 条诚实降档**（吴6+晋15 行已逐条标 ✅；晋·屯田(邓艾)同名双实例经 `builtinContentBatch2.test.ts` id 无碰撞断言并入全库 31 定义；**哨兵①苦肉 SELF 自伤路径、②奋威链式 TARGET 解析均实证通过并随测试钉死**；英慧/拓略/奋勇三条 onDeploy 技能经活性探针实证"部署当步监听器尚未注册、永不触发"（注册序缺口，HANDOFF §12-26）按红线降回档4、维持 NO_RUNTIME_PAYLOAD 诚实跳过）。NO_RUNTIME_PAYLOAD 诚实跳过 168→159→**138**。内容刀基线 B4 {"1":117,"2":183} 登记于 HANDOFF §12-27①。**档1 两批合计实收 30 条（9+21）≥25，收敛核验形态按计划书第一分支走 v2.4.3（真实武将池规模局+逐技能触发频次+完整热座 E2E+2.5 建议书）。** **v2.5.0 批量三（2.5 首刀·DISCARD 原语首批）2/2 已实装**（魏·司马懿/群·蔡文姬两行已标 ✅——档2 技能因新原语到位直接进局；反馈打**保真度 B** 标签（转移→弃置近似）、断肠 **A**（GPT 首检采纳② 首批应用）；compiler/dataTypes/Excel 标签三处同步+编辑器预览随刀完成；**value=0 弃光哨兵仅数据层可用**，Excel/编辑器数值 min=1 不收 0=表面缺口登记 HANDOFF §12-29）。编译器账本：168 条→**33 runtime 定义**（批一 9+批二 22+批三 2，苦肉仍一条双定义）、NO_RUNTIME_PAYLOAD **138→136**。据守/贞烈/制衡三条虽在 DISCARD 射程内但**缓配不采**（效果组原子性/代价门槛谓词/定量失真三缺口逐条注于表内行）——DISCARD 落地不解锁它们，2.5 建议书 ⑥自定义条件族 与发放原语才是钥匙。内容刀基线 **B5 {"1":117,"2":183}** 登记于 HANDOFF §12-29①：与 B4 数字零漂移（内容刀≠必漂移，零漂移亦如实两行自洽+VIOLATIONS=0 上报）；反馈/断肠随机档 0 触发=攻击暴露不足之既有判读（v2.4.3 洞察①）非配置失效证据，验收归 v2.5.4 策略档重测+强制可达性专项；v2.5.1 起非内容刀须对 B5 逐字一致。**v2.5.1 onDeploy 接线（非内容刀）**：§12-26 注册序缺口销案——`TransitionContext.resyncSkills` 可选钩子 + `transition()` 部署结算后补注册并对该步 `GENERAL_DEPLOYED` 重放（echo 引用过滤、派生只结算新事件、四路径经 GameEngine 一处供钩全域生效、防重触发=sourceGeneralId 键定+Map 键幂等）；活性探针翻正（合成英慧 onDeploy→DRAW 恰 1 次）+ 部署链四路径逐事件一致；**零内容变化**（现存 33 条定义无一使用 onDeploy→重放面对空注册表，B5 {"1":117,"2":183} 逐字一致硬证达成、168→33/136 账本不动）；顺手钉死引擎事实=进场血量等于消耗牌数（`applyGeneralDeployedEvent: currentHp=consumeCards.length`）。英慧/拓略/奋勇转正仍待 v2.5.2 四件验收。**v2.5.2 三条 onDeploy 转正（内容刀·第三刀）**：四件验收（GPT 首检采纳①）全数达成——重新编译五闸绿 / 专项热座 E2E 真机事件级触发 3/3 / 真实模板部署链四路径逐事件一致（录像重建含内）/ 既有时序契约无回归；三条⤵行已翻 ✅（英慧 DRAW 2、拓略 GAIN_ARMOR 2、奋勇 DRAW 1，均 onDeploy→SELF，编译器零拒绝）。**§12-26 至此全销**。编译器账本 168→**36 runtime 定义/133 诚实跳过**；`--skill-stats` 真测奋勇 11/英慧 11/拓略 5=内置 onDeploy 首见 AI 战真账。内容刀基线 **B6 {"1":117,"2":183}** 登记于 HANDOFF §12-30①：**对 B5 聚合席位零漂移但逐势力真实分账**（魏蜀吴逐字同；群 126/70/208/119/14/2、晋 96/48/134/95/4/0=三条晋将入装配预期内变化）——"聚合相同≠无变化"教训随刀立；v2.5.3 起非内容刀须对 B6 逐字一致。**v2.5.3 GIVE 原语 + onCardLost/onCardGained 触发族（非内容刀·第四刀）**：只接线不配载荷——generals.ts 零新条目，账本 **36 定义/133 诚实跳过不动**（发放系 7 条+触发族 6 条内置技能仍纯名照常 NO_RUNTIME_PAYLOAD 跳过，批测试为钉）；十二格表两张已上 F 节（GIVE 原语表、触发族表），重入环泛化为 REACTION_EVENT_TYPES 集合闸（§12-31②）；B6 逐字一致硬证达成（结构性成立：内置零 GIVE 载荷、现存路径无一派生 CARD_*）。**转正前置已就位但接线≠可配**：发放系"指定任意角色接收"仍受玩家决策通道缺口约束（遗计/好施类，F 节 GIVE 表 Target 行注死）；连营/枭姬类触发族转正内容刀还需 CARD_* 事件源扩面（DISCARD/登场/补给消耗派生=主动收面待口令）。**v2.5.4 收敛核验（非内容刀·第五刀，2.5 主线收官）**：`--policy` 策略档接线（battleCli `policyByName` 四档、未知档位显式拒收、默认 random 行为逐字不变=B6 硬锚为证）+ **逐技能强制触发可达性专项达成**（`src/skills/builtinReachability.test.ts` 5 例：**36/36 条 runtime 定义逐条可强制触发且产生真实效果事件、无一死件**；账本钉 36/133、触发键恰 10 类、onTurnEnd 恰 6 条、两跑逐字节一致——GPT 采纳④销案）+ **策略档攻击链重测翻案成立**（见下节新表：34 名键两档全触发、零触发归零）+ **反馈真机补验清零 2.5.0 欠账**（dev 5174 热座房真实点击，canonical 链 `DAMAGE{shu_010__inst_k→wei_002__inst_1,value:1}→TRIGGERED→DISCARD{skillId:"wei_002__inst_1:反馈:e1",playerId:2,count:1,triggerDepth:2}` 逐字取证，姜维手牌 31→29 逐张对账，HANDOFF §12-32）。B6 {"1":117,"2":183} 逐字一致硬锚达成；448 例/50 文件；**至此 2.5 五刀全部闭环，档1 内容线无待办欠账**。
+**实装状态（随刀更新）**：**v2.4.1 批量一 9/9 已实装**（魏/蜀/群各档1 行已逐条标 ✅；编译器零拒绝、零降级；哨兵③跨势力重名 id 唯一性随魏·屯田入池经 `builtinContentBatch1.test.ts` id 无碰撞断言钉死；内容刀基线 B3 {"1":115,"2":185} 登记于 HANDOFF §12-25①）。**v2.4.2 批量二 21/24 已实装、3 条诚实降档**（吴6+晋15 行已逐条标 ✅；晋·屯田(邓艾)同名双实例经 `builtinContentBatch2.test.ts` id 无碰撞断言并入全库 31 定义；**哨兵①苦肉 SELF 自伤路径、②奋威链式 TARGET 解析均实证通过并随测试钉死**；英慧/拓略/奋勇三条 onDeploy 技能经活性探针实证"部署当步监听器尚未注册、永不触发"（注册序缺口，HANDOFF §12-26）按红线降回档4、维持 NO_RUNTIME_PAYLOAD 诚实跳过）。NO_RUNTIME_PAYLOAD 诚实跳过 168→159→**138**。内容刀基线 B4 {"1":117,"2":183} 登记于 HANDOFF §12-27①。**档1 两批合计实收 30 条（9+21）≥25，收敛核验形态按计划书第一分支走 v2.4.3（真实武将池规模局+逐技能触发频次+完整热座 E2E+2.5 建议书）。** **v2.5.0 批量三（2.5 首刀·DISCARD 原语首批）2/2 已实装**（魏·司马懿/群·蔡文姬两行已标 ✅——档2 技能因新原语到位直接进局；反馈打**保真度 B** 标签（转移→弃置近似）、断肠 **A**（GPT 首检采纳② 首批应用）；compiler/dataTypes/Excel 标签三处同步+编辑器预览随刀完成；**value=0 弃光哨兵仅数据层可用**，Excel/编辑器数值 min=1 不收 0=表面缺口登记 HANDOFF §12-29）。编译器账本：168 条→**33 runtime 定义**（批一 9+批二 22+批三 2，苦肉仍一条双定义）、NO_RUNTIME_PAYLOAD **138→136**。据守/贞烈/制衡三条虽在 DISCARD 射程内但**缓配不采**（效果组原子性/代价门槛谓词/定量失真三缺口逐条注于表内行）——DISCARD 落地不解锁它们，2.5 建议书 ⑥自定义条件族 与发放原语才是钥匙。内容刀基线 **B5 {"1":117,"2":183}** 登记于 HANDOFF §12-29①：与 B4 数字零漂移（内容刀≠必漂移，零漂移亦如实两行自洽+VIOLATIONS=0 上报）；反馈/断肠随机档 0 触发=攻击暴露不足之既有判读（v2.4.3 洞察①）非配置失效证据，验收归 v2.5.4 策略档重测+强制可达性专项；v2.5.1 起非内容刀须对 B5 逐字一致。**v2.5.1 onDeploy 接线（非内容刀）**：§12-26 注册序缺口销案——`TransitionContext.resyncSkills` 可选钩子 + `transition()` 部署结算后补注册并对该步 `GENERAL_DEPLOYED` 重放（echo 引用过滤、派生只结算新事件、四路径经 GameEngine 一处供钩全域生效、防重触发=sourceGeneralId 键定+Map 键幂等）；活性探针翻正（合成英慧 onDeploy→DRAW 恰 1 次）+ 部署链四路径逐事件一致；**零内容变化**（现存 33 条定义无一使用 onDeploy→重放面对空注册表，B5 {"1":117,"2":183} 逐字一致硬证达成、168→33/136 账本不动）；顺手钉死引擎事实=进场血量等于消耗牌数（`applyGeneralDeployedEvent: currentHp=consumeCards.length`）。英慧/拓略/奋勇转正仍待 v2.5.2 四件验收。**v2.5.2 三条 onDeploy 转正（内容刀·第三刀）**：四件验收（GPT 首检采纳①）全数达成——重新编译五闸绿 / 专项热座 E2E 真机事件级触发 3/3 / 真实模板部署链四路径逐事件一致（录像重建含内）/ 既有时序契约无回归；三条⤵行已翻 ✅（英慧 DRAW 2、拓略 GAIN_ARMOR 2、奋勇 DRAW 1，均 onDeploy→SELF，编译器零拒绝）。**§12-26 至此全销**。编译器账本 168→**36 runtime 定义/133 诚实跳过**；`--skill-stats` 真测奋勇 11/英慧 11/拓略 5=内置 onDeploy 首见 AI 战真账。内容刀基线 **B6 {"1":117,"2":183}** 登记于 HANDOFF §12-30①：**对 B5 聚合席位零漂移但逐势力真实分账**（魏蜀吴逐字同；群 126/70/208/119/14/2、晋 96/48/134/95/4/0=三条晋将入装配预期内变化）——"聚合相同≠无变化"教训随刀立；v2.5.3 起非内容刀须对 B6 逐字一致。**v2.5.3 GIVE 原语 + onCardLost/onCardGained 触发族（非内容刀·第四刀）**：只接线不配载荷——generals.ts 零新条目，账本 **36 定义/133 诚实跳过不动**（发放系 7 条+触发族 6 条内置技能仍纯名照常 NO_RUNTIME_PAYLOAD 跳过，批测试为钉）；十二格表两张已上 F 节（GIVE 原语表、触发族表），重入环泛化为 REACTION_EVENT_TYPES 集合闸（§12-31②）；B6 逐字一致硬证达成（结构性成立：内置零 GIVE 载荷、现存路径无一派生 CARD_*）。**转正前置已就位但接线≠可配**：发放系"指定任意角色接收"仍受玩家决策通道缺口约束（遗计/好施类，F 节 GIVE 表 Target 行注死）；连营/枭姬类触发族转正内容刀还需 CARD_* 事件源扩面（DISCARD/登场/补给消耗派生=主动收面待口令）。**v2.5.4 收敛核验（非内容刀·第五刀，2.5 主线收官）**：`--policy` 策略档接线（battleCli `policyByName` 四档、未知档位显式拒收、默认 random 行为逐字不变=B6 硬锚为证）+ **逐技能强制触发可达性专项达成**（`src/skills/builtinReachability.test.ts` 5 例：**36/36 条 runtime 定义逐条可强制触发且产生真实效果事件、无一死件**；账本钉 36/133、触发键恰 10 类、onTurnEnd 恰 6 条、两跑逐字节一致——GPT 采纳④销案）+ **策略档攻击链重测翻案成立**（见下节新表：34 名键两档全触发、零触发归零）+ **反馈真机补验清零 2.5.0 欠账**（dev 5174 热座房真实点击，canonical 链 `DAMAGE{shu_010__inst_k→wei_002__inst_1,value:1}→TRIGGERED→DISCARD{skillId:"wei_002__inst_1:反馈:e1",playerId:2,count:1,triggerDepth:2}` 逐字取证，姜维手牌 31→29 逐张对账，HANDOFF §12-32）。B6 {"1":117,"2":183} 逐字一致硬锚达成；448 例/50 文件；**至此 2.5 五刀全部闭环，档1 内容线无待办欠账**。**v2.6.0–2.6.2（2.6 线三刀补记，随刀细节以 HANDOFF §12-33/34/35 为准）**：v2.6.0 EQUIP_STRIP 第七原语+强袭/崩坏首批（内容刀→B7 {"1":117,"2":183}，账本 38/131）；v2.6.1 REVEAL/DECK_PLACE 第八/九原语**只接线不配置**（能力层非内容刀，对 B7 逐字硬锚；牌堆顶五候选全部因缺决策面挂 v2.6.3 choice 之后——"不发明玩法"红线第二次兑现）；**v2.6.2 CARD_* 事件源扩面+连营/枭姬转正（内容刀·2.6 第三刀）**：DISCARD/被拆装备两路派生 via 标注 CARD_LOST（弃牌/发放源带结算后 remainingHand、装备源刻意不带）、GIVE 源加性补该字段、cardFilter 谓词三枚（equipment/lastHand/hand）+编译器交叉组合两枚诚实 skip、事件源十二格表+重入评估先行（§12-31① 兑现，F 节新表）；账本 38→**40 runtime 定义/129 诚实跳过**、battleReport 37→**39 行/38 名键**；**内容刀基线 B9 {"1":117,"2":183} 登记于 HANDOFF §12-35①**——对 B7 **席位分布零漂移**（连营/枭姬触发路径需"装备被剥离/最后一张手牌被弃"niche，AI 随机档暴露不足=反馈/断肠既有判读同族，验收归 v2.6.4 策略档重测+可达性专项）；转正实证+谓词静默反例四路径逐事件一致、真机热座事件级取证两条全数集齐（HANDOFF §12-35⑤）；**v2.6.3 起非内容刀须对 B9 逐字一致**。
 
 **2.5 新原语候选（按档2需求频次排序，本刀仅登记不实施）**：①DISCARD 弃牌（19 条引用，含反馈/制衡/天香等名技）；②发放/指定他人得牌（7 条：遗计/仁德/好施/恂恂…）；③失去/获得牌触发 onCardLost/onCardGained（6 条：连营/枭姬/奋激/智愚/忘隙/伤逝）；④牌堆顶操作（5 条：观星/洛神/心战/自书/秘置）；⑤装备区交互（6 条：强袭/旋风/调度/典财/涯角/崩坏）；⑥自定义条件原语（4 条：贞烈/峻刑/节命/放权的门槛语义）；⑦每局限一次（3 条：青囊/放权/自立类，与觉醒技同属内容深水区）。choice 接线另计入档4边缘的挥泪。
 
