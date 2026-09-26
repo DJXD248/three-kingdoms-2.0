@@ -288,6 +288,27 @@
 | 三处同步 | **双词表**：编辑器/数据层 `cardSubType` 五枚（anyLost/equipmentLost/lastHandLost/handLost/anyGained，中文"失去装备牌/失去最后一张手牌/失去手牌/失去任意牌/获得任意牌"）↔ 编译 `cardFilter`（equipment/lastHand/hand，anyLost/缺省=不设筛）；编译器交叉组合诚实 skip（lostOnly 谓词×onCardGained、anyGained×onCardLost→TRIGGER_SUBTYPE_UNSUPPORTED）；Excel v2 六列经"失去手牌时→失去装备牌"主→子串往返（裸旧串仍可解析、下拉改列组合项）；TriggerEditor 新增"卡牌时机"子下拉；generals.ts `CardSubType` 联合+`cardSubLabels`+`getTriggerSubOptions` 'card' 分支 |
 | 活例 | **连营** 陆逊 wu_007（onCardLost/lastHandLost→DRAW 1 SELF）+ **枭姬** 孙尚香 wu_008（onCardLost/equipmentLost→DRAW 2 SELF）——批五同局进局；账本 38→**40 runtime 定义/129 诚实跳过**（两条纯名技能出跳过名单）；battleReport 频次表 37→**39 行/38 名键**；静默反例双钉（非最后一张弃牌喂不响连营、DISCARD 源喂不响枭姬） |
 
+### choice 玩家决策通道最小闭环（v2.6.3 落地，GPT 二检 Q4"独立能力层最小闭环"的兑现；**非内容刀：只接渠道、内置零转正**；决策型形态=onTurnEnd 表先例的通用化，按需池 activeSelf/activeOther 行所指"决策 canonical action+窗"形态的正式定基）
+
+| 格 | 契约 |
+|---|---|
+| Event | 新事件二枚：`CHOICE_REQUIRED{ choiceKey, chooserPlayerId, options:[{ label, events }] }`（欠账要约）与 `CHOICE_RESOLVED{ choiceKey, chooserPlayerId, optionIndex, label }`（决策事实），`core/Event.ts` 联合新增；**不新增 Effect 原语（原语恒 9）也不新增触发键（恒 10）**——唯一生产者面=`skillCompiler` 放行的 `effectMode:'choice'` 定义（新 `choiceMode` 标记），经 `SkillTriggerBridge.createSkillEvents` 静态分支产出要约，现有 10 触发键与 onTurnEnd 询问窗路径天然全部可承载；结算唯一入口=EventProcessor `case 'CHOICE_REQUIRED'/'CHOICE_RESOLVED'`→新文件 `eventProcessors/choiceEvents.ts` |
+| 窗（状态面） | **与反应窗/询问窗本质不同：欠账是 A 类可回放游戏事实**——新可选槽 `EngineState.pendingChoice{ key, playerId, options }`（consumedSkills 同思想：住在状态里让常驻/重建/回放三路同见；旧档缺字段=无欠账，零迁移零版本号变更）。**冻结世界闸**：pendingChoice 活跃时 `ActionValidator` 仅放行欠债玩家的 CHOOSE_OPTION（其余动作拒 `CHOICE_PENDING`、他人动作拒 `NOT_CHOICE_PLAYER`）——要约与择定之间世界不动一步，候选永不陈旧、无二次转移路径亦不引入容器时序 |
+| Timing | CHOICE_REQUIRED 与同技能其余效果事件同 dispatch 尾部落账（要约在**本步**成立）；被选分支的效果**刻意不在本步结算**——延至 CHOOSE_OPTION 那一次 dispatch 的事件队列按正常结算链落账（延后=新一次结算时点，效果面诚实闸原样适用） |
+| Source | 欠债玩家恒=技能拥有者（`chooserPlayerId=Number(ownerId)`）；候选表由桥在触发时点从 state **确定性构造**（label=效果描述兜底技能描述；events=逐效果走与"全部生效"模式同一份翻译闭包），构造过程零随机 |
+| Target | 选择对象=记录内选项序号 `optionIndex`（枚举序=编辑器效果序=数据序，三方同序即确定性）；不做角色解析——未来 SELECT_PLAYER/CARD_ORDER 型候选面属后续生产者刀，本刀不预铺 |
+| Condition | 拒收五连门（validator+resolver 双道，诚实原因）：CHOICE_PENDING（冻结期非择定动作）/NOT_CHOICE_PLAYER（他人代择）/NO_PENDING_CHOICE（无账可还）/CHOICE_KEY_MISMATCH（旧要约冒领）/CHOICE_OPTION_OUT_OF_RANGE（越界序号）；要约撞车（欠账中又来第二张 CHOICE_REQUIRED）=**单槽不覆写**、事件照记状态不动（撞账登记=多槽需求首现时先改本表）；gameOver 后择定无效=既有相位闸 |
+| Effect | CHOOSE_OPTION 结算=CHOICE_RESOLVED 先行清账（settler 置 pendingChoice=null），选中选项的预译事件随后**逐事件走既有 EventProcessor**（摸牌/伤害/弃牌等零新机制）；编译器 `CHOICE_MODE_UNSUPPORTED` 诚实 skip **撤销**→"选择其一"从纯标签变为可运行：同触发≥2 个带 runtime 效果=一张 choiceMode 定义（多 effects 一触发），孤立效果=照常独立定义，无 runtime/触发不支持=照常诚实 skip（账目逐条不变） |
+| RNG | **零新增随机面**：候选构造与择定都是确定性；被延的效果事件若含抽牌，消费 rngState 游标与 RANDOM_OUTCOME 记录都发生在**择定那一步**（record-not-reroll 纪律原样兜住） |
+| Replay | **全 A 类**：CHOICE_REQUIRED/RESOLVED 与延后效果事件都在 dispatch 返回流、CHOOSE_OPTION 是 canonical 动作→live 录像自动入账、ReplayPlayer 重派生自动重放（**outcomeOverrides 零扩展**——重建 pendingChoice 靠触发步确定性重演，非快照回填）；窗口=状态本身故随快照存恢（对比 turnEndAsk store 投影=B 类：本通道刻意反着选——账在 EngineState，才撑得起"冻结世界"） |
+| Transition | 唯一 `TransitionCore.transition`；CHOOSE_OPTION=第 13 个 canonical 动作走 ResolverRegistry（新 ChooseOptionResolver，纯描述不碰状态）；禁第二转移路径不破：择定与延后事件全部经 EventProcessor 单入口 |
+| Reentrancy | CHOICE_RESOLVED **不入** REACTION_EVENT_TYPES（集合零扩枚）；延后事件按自身类型进既有重入环（伤害致死→DEATH→onKill/onDeath 照常）=无新环面；冻结闸保证欠账期不产生第二欠账，单槽+撞账闸双兜底 |
+| Death chain | 欠账期间拥有者被灭=**账不清、人照择**（与断肠同型的事后结算姿态；validator 只认 CHOOSE_OPTION，欠账不会被其他动作吞掉→无死锁）；延后事件的效果若当事人已离场=对应结算闸诚实空转（GIVE 死接收/DISCARD 空手等既有纪律），不特判不清账 |
+| 优先级 | 要约 key=`ch:<turn>:<round>:<skillId>`（确定性不占随机流，同 rw id 造法）；多候选顺序=选项记录序，AI 与人类看到的是同一张表 |
+| 忠实度 | **内置零转正**（168 条无一 effectMode:'choice'→账本 40/129 一字不动=B9 逐字的结构性保证）；§G 五候选/遗计/好施等所需"选牌排序/选目标"候选构造器不在本刀生产者面=**接线≠可配第三次预防针**（观星系缺排序候选、遗计/好施缺选目标候选，各自需求首现时上表补行再动刀）；本刀闭环的是五要素：窗（pendingChoice）—合法候选（预译选项）—选择（CHOOSE_OPTION）—结果回写（延后事件正常结算链）—可复现日志（全 A 类进录像） |
+| 三处同步 | 动作族：`ActionTypes` 联合+"CHOOSE_OPTION"、`resolvers/ChooseOptionResolver`+index+Registry、`ActionValidator` 冻结闸+形状闸、`legalActions` 冻结期枚举（选项序=枚举序=三档策略零改动吃进）、`battleRunner` 步首 actor 路由（pendingChoice 优先于 drawing）、`aiTurnDriver` 步首分支+`applyPolicyAction` case；状态族：`GameState.ts` PendingChoice 类型+可选槽、`gameStateAdapter` 重建保留（consumedSkills 同列）、`EventProcessor` 两 case；技能层：`dataTypes` choiceMode/SkillEffectData.description、`skillCompiler` 分组编译、`SkillTriggerBridge` 翻译闭包提取+choice 分支、`gameplayLog` 择定行；**编辑器/Excel 零改动**（"选择其一"下拉与解析列 v2.4 即在）、`generals.ts` 零新载荷、内置 168 条零改动 |
+| 活例 | **无内置活例（非内容刀）**——合成装配三钉：EventProcessor 结算族（要约成账/撞账不覆写/择定清账+延后事件落账）、ChooseOptionResolver 五连门反例、transitionEquivalence 四路对账（真模板 choiceMode 触发→择定全链+同配置两跑逐字节）+ store 冻结世界例（非择定动作 CHOICE_PENDING、择定后放行）；真机=dev 受控种场面（pendingChoice 直接入 seed 态）点击 HUD 完成择定 |
+
 ### 编译诚实契约（同刀落地，D-9 C 类）
 
 `syncPlayerSkills` 的 skipped 项（TRIGGER_UNSUPPORTED / NO_RUNTIME_PAYLOAD 等，含 reason）经 `getCompileDiagnostics(engine)`（WeakMap，引擎重建自然隔离）带外上报；console.warn 按 **distinct 条目**（`技能名#效果id:原因`）去重、测试缝 `__resetCompileWarnDedup()`。事件流与游戏行为零变化。编辑器/Excel 录入未支撑类型时消费该通道做 UI 提示=后续需求（非缺陷，已登记 HANDOFF §12-18）。

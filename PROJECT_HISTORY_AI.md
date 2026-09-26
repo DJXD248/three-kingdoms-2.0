@@ -1326,3 +1326,19 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **CI 状态**：**全绿**——GitHub Actions CI #101（run 36204359196，master 推送触发）在 commit 2c8b0a3 上 completed successfully（feat d1acb3e + docs 2c8b0a3 + 标签 v2.6.2 由单顶端 run 全覆盖；**直连超时→一次性代理 127.0.0.1:10808 推 master+标签均成功，未写持久配置**）。
 
 
+## Qoder 2.6.3：2.6 第四刀（非内容刀，对 B9 逐字）——choice 玩家决策通道最小闭环：五要素全落地（pendingChoice A 类槽/CHOICE_REQUIRED 确定性预译/CHOOSE_OPTION 第 13 动作/CHOICE_RESOLVED 先行清账+延后结算/全 A 类进录像）、冻结世界双拒闸、编译器 effectMode 分组、description 透传；**观星系五候选与遗计/好施一律未借刀转正（GPT Q4 红线执行样本）**（479 例/52 文件）（2026-09-26）
+
+模型：Qoder（Claude）。仓库 `Qoder/2.0`，链上承接 v2.6.2。
+
+- **定位=能力层收口刀**：给技能系统开"玩家择一"独立通道（GPT 二检 Q4 五要素=窗口—合法候选—选择—结果回写—可复现日志）。`generals.ts` 零新载荷、内置 168 条零 `effectMode`、账本 40 定义/129 跳过不动——**B9 逐字的结构性保证**；严禁借刀批量转正（观星/洛神/心战/自书/秘置五候选、遗计/好施"指定任意角色"系）全部维持现状，转正归后续需求驱动内容刀。
+- **五要素实装**：窗=`EngineState.pendingChoice` **A 类槽**（随 engineState 进录像/进投影/进对账，非 store 局部态；`storeStateToEngineState` 保留该槽=账单不因重建蒸发）；合法候选=触发时点桥**确定性预译**（`CHOICE_REQUIRED{choiceKey,playerId,options:[{label,effects}]}`，零随机面，label 第一来源=`effect.description ?? skill.description ?? skill.name`）；选择=canonical 第 13 动作 `CHOOSE_OPTION{choiceKey,optionIndex}`；结果回写=`CHOICE_RESOLVED` 先行清账（按 key 键定防串账）+**选中分支 effects 走正常结算链=延后结算（决策时点才落账，开账零落牌）**；可复现日志=全 A 类进录像、`outcomeOverrides` 零扩展。choiceKey=`ch:<turn>:<round>:<skillId>`。
+- **冻结世界闸（本刀核心语义，§12-36①）**：`ActionValidator` else-if 链、drawing 之前——pendingChoice 活跃且非 gameOver 时非 CHOOSE_OPTION 一律拒 `CHOICE_PENDING`；CHOOSE_OPTION 非欠债人拒 `NOT_CHOICE_PLAYER`（**欠债人可非当前回合玩家仍放行**=择一不受行序绑架）。`ChooseOptionResolver` 六门含 `CHOICE_OPTION_OUT_OF_RANGE`。UI 语义=欠账期间"结束回合/跳过"=诚实拒绝、**先择后跳**；store `commitEndTurn` 对被拒 END_TURN 投影重建、turn 不动（测试+真机双证）。
+- **编译器生产者面**：数据层新开关 `effectMode:'choice'`；同触发签名 ≥2 条带 runtime 效果→编译为**一张 choiceMode 定义**（id=`${ownerKey}:${skill.name}:choice`，**无 effectId**=一技能一决策窗），孤立效果照常独立定义；`listTurnEndSkillCandidates` 按 definition 枚举→choice 定义=单候选。Effect 原语恒 9、触发键恒 10 不变。`SkillEffectData` 透传可选 `description` 的断言涟漪：编译产物 effects 多该字段→`skillExcelFormat` 严格 toEqual 期望更新（合法涟漪）；事件载荷字节不受影响（bridge 显式字段构造）。
+- **测试 +13 → 479 例/52 文件**：`ChooseOptionResolver.test.ts` 新文件 7（六门拒因/清账先行/选中分支结算/非当前玩家放行）；`transitionEquivalence.test.ts` +1（择锋闭环四路对账：开账→冻结世界**双拒**→择定落账，两个拒绝步进同一 steps 序列——**被拒动作也进录像**（D-1 SCRIPT 先例延伸），回放 processed=全动作数，拒绝 reason 本身成为四路对账对象）；`gameStore.pendingChoice.test.ts` 新文件 3（询问窗内发动→开账零落牌→endTurn 诚实拒→择定→解冻全真链；手工种账三门守卫〔非欠债人/越界/无账〕；投影不丢账）；`skillCompiler.test.ts` 净+2（分组/孤立/label 三例，旧 CHOICE 1→3）。
+- **非内容刀硬锚达成**：ai-battle 300 局 seed1 胜席 **{"1":117,"2":183} 对 B9 逐字一致**——won=300、VIOLATIONS=0、同 seed 两轮剥离计时行后 cmp 逐字节全等；逐势力锚（魏116/56/187/132/10/0、蜀136/71/204/131/14/2、吴126/55/161/115/4/0、群126/70/208/119/14/2、晋96/48/134/95/4/0）全部吻合 §12-33①。**v2.6.4 起接力锚沿用 B9（本刀非内容零漂移）**。
+- **浏览器真机 E2E（热座房 dev 5173 单实例，用完即杀含残留子进程 netstat 复查，全程未保存/下载）**：canonical store 动作直驱建房→征召→抽牌至 playing（人类座无 AI 司机=天然免疫 §12-23 后台限流）→`setState` 替换 engineState 引用种 pendingChoice（常驻桥 adopt-clone 天然消费）→**HUD 真实按钮 `◈ 选项1：A:draw2 / ◈ 选项2：B:draw1` 逐一渲染**→点⏭️结束回合 **turn 冻结 1**（账在手、无 ask 窗）→点选项2 账清 hand 5→6、HUD 消失→再点结束回合 **turn 2 解冻**。截图不可用（`NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`=页签 hidden）→改 button innerText DOM 结构证据为真机证据（§12-36⑤）。多槽撞账单缺口如实登记 §12-36④（单槽串行化，未来需求先补 ARCH_MAP 表注再动刀）。
+- **验证（五闸全部在文件定稿后）**：check 0 错；**479 例/52 文件全过**（+13）；coverage 定稿快照 **50.1/42.22/41.12/55.61** 四项全过地板 42/34/34/47（§12-22④ 快照口径，四项皆较 2.6.2 上移、棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,956.38 kB / gzip 573.16 kB**（较 2.6.2 +6.63/+1.69 kB=choice 事件族+校验/解析分支+编译器分组+HUD 文本进 bundle）。package.json/lock=2.6.3。
+- **GPT 沟通判断（计划口径）**：**跳过**——2.6 三检预钉 v2.6.4（携策略档重测+可达性扩面+2.7 建议书）；本刀无契约级意外（五要素按 Q4 口径原样走通、冻结世界=既有 validator 链加闸非第二转移路径、被拒步进录像为 D-1 既有纪律延伸）。
+- **CI 状态**：**PENDING**——待推送后核验 GitHub Actions 回填。
+
+
