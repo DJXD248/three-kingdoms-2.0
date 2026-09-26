@@ -1396,4 +1396,22 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **下一刀**=v2.7.2 choice 生产者最小验证刀（三检 Q5：目标选择器+卡牌选择器候选构造器"只接线不带内容"、内置零转正；非内容刀，对 B9 逐字）。
 - **CI 状态**：**全绿**——GitHub Actions CI #110（run 36229798799，master 推送触发）在 commit 81e5b38 上 completed successfully（feat 26b328d + docs 81e5b38 + 标签 v2.7.1 由单顶端 run 全覆盖；master 与标签**直连均失败**→按降级链一次性借道代理 `127.0.0.1:10808` 推送成功、未写任何持久 git 代理配置）。**回填提交 66ffc43 自身 CI 亦会话内核验全绿**=CI #111（run 36230098589）在 commit 66ffc43 上 completed successfully，该回填提交**直连推送成功、未借道代理**。另：上轮遗留未验的回填提交 7be5b64 本轮会话内核验=CI #109（run 36228193136）completed successfully，欠账清零。
 
+## Qoder 2.7.2：2.7 第三刀（choice 生产者最小验证·非内容刀，对 B9 逐字）——给"弹出选项等你选"那台机器装上两枚候选生成器（挑目标/挑手牌），只接线不带内容：编译模型新字段 `choiceSource?/choiceTargetScope?` 唯一入口=registerPlayerSkills（第四次"接线≠可配"预防针）、生产者型定义=恰一张模板效果、**空候选不发要约**（冻结闸死锁预防）、手牌摘取单点化 `selectHandCards(hand,count,cardKeys?)` 三路共用且无 cardKeys 形态逐字不变；`PendingChoiceOption{label,events}` 形状一字未动⇒四消费方零改动（新文件 `choiceCandidates.ts`+`handSelection.ts`+`choiceProducers.test.ts` 13 例 ⇒ 509 例/55 文件）（2026-09-26）
+
+- **模型/会话**：Qoder（2.7 五刀连做授权内第三刀，刀间不待口令）。
+- **口径来源（GPT 三检 Q5）**：问"生产者能否合法产生标准 choice 请求"，答=装候选枚举器而非配技能内容。零新事件/零新原语（恒 9）/零新触发键（恒 10）/零新 canonical 动作（恒 13）；`generals.ts` 零新载荷、内置 168 条零 `choiceSource`（B9 逐字的结构性保证）。
+- **两枚纯候选枚举器（新文件 `src/skills/choiceCandidates.ts`）**：`enumerateTargetCandidates`——场上将领=players 数组序×fieldGenerals 数组序，`isAlive===false` 玩家整域出局，作用域三档 `ENEMY_FIELD`（排他座）/`ALL_FIELD`/`SELF_FIELD`（只本座），`targetId=getRuntimeCardId(general)||String(general.id)`、label=将领名；`enumerateHandCardCandidates`——欠债人自己手牌数组序，形状 `{label,cardKeys:[id]}`。两者零随机，数组序即录像可复现序。
+- **编译模型新字段与桥内分派**：`dataTypes.DataSkillDefinition` 加 `choiceSource?:'TARGET'|'HAND_CARD'` 与 `choiceTargetScope?`；`SkillTriggerBridge.buildChoiceOptions` 按此分派枚举器。缺省=undefined=v2.6.3 逐效果行为逐字不变。**生产者型定义只认恰好一张模板效果**（`template = choiceSource && effects.length===1 ? effects[0] : undefined`），多条带 choiceSource 退回逐效果分支（负例钉）。**候选集为空⇒桥侧根本不发要约**（`options.length===0` 返回空事件）——冻结世界闸下开空账=死锁，故空账不开。
+- **"接线≠可配"第四次预防针**：两字段只住在编译模型层，唯一入口=`engine.registerPlayerSkills`；数据层 Skill 类型/SkillEditor/Excel v2 六列均无录入面——真机可达须待内容刀按需求立录入面，本刀刻意不铺。
+- **手牌摘取单点化（新文件 `src/core/eventProcessors/handSelection.ts`）**：`selectHandCards(hand,count,cardKeys?)` 由 DISCARD/GIVE/DECK_PLACE 三路结算器共用；无 cardKeys=头部切片、count=0 全手哨兵**逐字不变**（v2.6.1 语义）；cardKeys 命中=按 getRuntimeCardId 摘取保持相对序、未知 id 忽略、count 不参与、空数组=等同缺省。事件载荷新增可选 `cardKeys?:string[]`（additive 非破坏）。后续一切"玩家拣选手牌"的原语走此 helper，不再各自写切片。
+- **测试（+13 → 509 例/55 文件，新文件 `src/skills/choiceProducers.test.ts`）**：TARGET 5 例（END_TURN→链推 TURN_START 开账、choiceKey `/^ch:\d+:\d+:/`+labels+每选项预译 DAMAGE 载荷逐字、延后零落账；冻结双拒+择 index1 只被选者 6→5+RESOLVED{label}先行+账清；空候选零事件不锁桌；choiceSource+两效果=退回逐效果；同配置两跑 normalize 后 stream+final 逐字节）；HAND_CARD 4 例（labels ['乐','选','留']+逐选项 cardKeys、择 index1 后 hand=['乐','留'] 非头部切片实证+弃牌堆含'选'、空手零要约、GIVE/DECK_PLACE 载荷 cardKeys 逐字）；纯函数 4 例（三档作用域含阵亡出局、枚举器形状、selectHandCards 六断言、三路结算器直调回归钉含牌堆序逐字）。**定稿教训**：编译模型 `SkillEffectData` 无 `id` 字段（id 属数据层 SkillEffect）——测试对象写 id 直接 TS2353×5。
+- **`__TK__` dev 注入面扩为 `{useGameStore, liveReplay, choiceCandidates}`**（main.tsx dev-only 分支），供真机枚举器对账探针。
+- **真机生产者入口缺失的结构性定性（§12-40①）**：常驻容器每 dispatch `syncPlayerSkills` 全量重导出技能，页内手工注册的合成生产者下一次派发即被抹——零内容刀下真机全链"技能自动开要约"不可达，属设计后果非缺陷；桥内全链由 vitest 真实 GameEngine（非 mock）13 例实证。真机合法形态=canonical `restoreEngineState` 种账+真点 HUD。
+- **热座 E2E（dev 5173 单实例、用完即杀、netstat 复查无 LISTENING、全程未触碰保存/下载）三件承诺兑现**：① 真实枚举器对 live 热座态跑账（周泰/夏侯渊/手牌五张与场面逐一对上、三档作用域正确）；② canonical `restoreEngineState` 两次种账（受控场面+CHOICE_REQUIRED 要约）；③ **真点 HUD「◈ 选项2：夏侯渊」**→只被选者 4→3、账清、录像建档基准态与择定后现态逐字（initialState 含 currentHp:3）。两处如实披露：装饰段（骰子→征召→抽牌）因后台页签定时器限流（§12-23）按记忆第 15 条口径经**与按钮同批 canonical store 动作**直达，真点击只留给验证目标本身；录像 entries=0 非丢录=**restore 后首 dispatch 只建档不落条目**的既有语义（§12-40②，判据=initialState 与择定后现态逐字）。HUD 按钮"点击后新出现须拆下一条 evaluate"（记忆第 15 条另证）。
+- **非内容刀硬锚达成**：ai-battle 300 局 seed1 胜席 **{"1":117,"2":183} 对 B9 逐字一致**——won=300、VIOLATIONS=0、同 seed 两轮除计时行 cmp 逐字节全等；逐势力锚（魏116/56/187/132/10/0、蜀136/71/204/131/14/2、吴126/55/161/115/4/0、群126/70/208/119/14/2、晋96/48/134/95/4/0）全部吻合 §12-33①。
+- **验证（五闸全部在文件定稿后）**：check 0 错；**509 例/55 文件全过**；coverage 定稿快照 **50.66/42.73/41.56/56.2** 四项全过地板 42/34/34/47（§12-22④ 快照口径，棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,958.64 kB / gzip 573.86 kB**（较 2.7.1 +1.33/+0.40 kB=两枚举器+helper+桥分派代码面）。package.json/lock=**2.7.2**。
+- **GPT 沟通判断**：跳过——四检按计划预钉 v2.7.4 收官刀；本刀是三检 Q5 口径原样落地（枚举器形状零破坏），无契约级意外。
+- **下一刀**=v2.7.3 自定义条件原语刀（建议书第 4 项，十二格表先行；非内容刀，对 B9 逐字）。
+- **CI 状态**：**PENDING**（待推送后核验回填）。
+
 

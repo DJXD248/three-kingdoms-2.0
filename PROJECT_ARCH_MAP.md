@@ -319,6 +319,30 @@
 | 三处同步 | 动作族：`ActionTypes` 联合+"CHOOSE_OPTION"、`resolvers/ChooseOptionResolver`+index+Registry、`ActionValidator` 冻结闸+形状闸、`legalActions` 冻结期枚举（选项序=枚举序=三档策略零改动吃进）、`battleRunner` 步首 actor 路由（pendingChoice 优先于 drawing）、`aiTurnDriver` 步首分支+`applyPolicyAction` case；状态族：`GameState.ts` PendingChoice 类型+可选槽、`gameStateAdapter` 重建保留（consumedSkills 同列）、`EventProcessor` 两 case；技能层：`dataTypes` choiceMode/SkillEffectData.description、`skillCompiler` 分组编译、`SkillTriggerBridge` 翻译闭包提取+choice 分支、`gameplayLog` 择定行；**编辑器/Excel 零改动**（"选择其一"下拉与解析列 v2.4 即在）、`generals.ts` 零新载荷、内置 168 条零改动 |
 | 活例 | **无内置活例（非内容刀）**——合成装配三钉：EventProcessor 结算族（要约成账/撞账不覆写/择定清账+延后事件落账）、ChooseOptionResolver 五连门反例、transitionEquivalence 四路对账（真模板 choiceMode 触发→择定全链+同配置两跑逐字节）+ store 冻结世界例（非择定动作 CHOICE_PENDING、择定后放行）；真机=dev 受控种场面（pendingChoice 直接入 seed 态）点击 HUD 完成择定 |
 
+### choice 生产者候选构造器首批两枚（v2.7.2 落地，GPT 三检 Q5"动手扩面前先打一发明示的最小验证刀、规模明显小于 v2.5.1"的兑现；**非内容刀：只接线、内置零转正、对 B9 逐字**）
+
+| 格 | 契约 |
+|---|---|
+| Event | **零新事件、零新原语、零新触发**（原语恒 9、触发键恒 10、canonical 动作恒 13）。生产者的唯一产物仍是 v2.6.3 的标准 `CHOICE_REQUIRED{ choiceKey, chooserPlayerId, options:[{label, events}] }`——**`PendingChoiceOption` 形状一字未动**，故四个消费方（choiceEvents 过滤闸／legalActions 枚举／ChooseOptionResolver／HUD 按钮）全部零改动即承载新候选面，这就是"生产者能否合法产生标准 choice 请求"的正面答复 |
+| 生产者面 | 新文件 `src/skills/choiceCandidates.ts` 两枚**纯候选枚举器**（只读 state、零写入、零随机、零副作用）：`enumerateTargetCandidates(state, ownerId, scope)`=场上将领候选（scope `ENEMY_FIELD`〔缺省〕/`ALL_FIELD`/`SELF_FIELD`；label=将领名、generalId=runtime card id；枚举序=players 序×fieldGenerals 序）与 `enumerateHandCardCandidates(state, playerId)`=欠债玩家手牌候选（label=卡名、cardKey=runtime card id；枚举序=手牌数组序） |
+| 接线点 | 唯一接线点=`SkillTriggerBridge.createSkillEvents` 的 choiceMode 分支内按编译字段 `choiceSource` 分派：**缺省（undefined）=v2.6.3"逐效果预译分支"行为逐字不变**；`'TARGET'`=拿模板效果逐候选填 `targetId`、`'HAND_CARD'`=逐候选填 `cardKeys`。事件翻译**仍只走同一个 `translateEffect` 闭包**（新增第二个入参=候选填充，不另立第二份翻译=禁第二路径纪律）；生产者型定义刻意只取**恰好一张模板效果**（`effects.length !== 1` 时整套退回 v2.6.3 效果分支行为=不静默丢效果） |
+| Timing | 与 v2.6.3 同：要约在本步成立、被选分支延到 CHOOSE_OPTION 那次 dispatch 才落账（候选在触发时点从 state 确定性构造，冻结世界闸保证永不陈旧） |
+| Source | 欠债玩家恒=技能拥有者；TARGET 型候选域以拥有者为轴（ENEMY_FIELD 排除自己座位、SELF_FIELD 只取自己座位、ALL_FIELD 取全部存活座位）；HAND_CARD 型候选恒=**欠债人自己的手牌**（替别人选牌不在本刀面） |
+| Target | 选择对象仍是记录内选项序号 `optionIndex`（枚举序=候选序=录像序）；本刀把上表 Target 行"未来 SELECT_PLAYER/CARD_ORDER 型候选面属后续生产者刀"**兑现为首批两枚**（选目标／选一张牌）；`SELECT_PLAYER`（选玩家）与"一次择定摘多张/排序"**仍不预铺** |
+| Condition | 拒收五连门、撞账不覆写、gameOver 相位闸全部继承 v2.6.3 一字未改。**本刀新增的诚实闸在桥侧**：候选集为空（无符合 scope 的在场将领／欠债人手牌为空）⇒**根本不发要约**（零选项的 CHOICE_REQUIRED 会让冻结闸把世界永久锁死=死锁，宁可"触发发生但无候选可择"也不锁桌）；另 cardKeys 全不命中时结算侧仍是既有"诚实空转"（事件照记、状态不动） |
+| Effect | 选中选项携带的事件**已含具体对象**（targetId 或 cardKeys）→走既有 EventProcessor 单入口，零新机制。手牌面新接线=DISCARD/GIVE/DECK_PLACE 事件载荷可选 `cardKeys?: string[]`，解析收在唯一小文件 `core/eventProcessors/handSelection.ts` 的 `selectHandCards(hand, count, cardKeys)`：**有 cardKeys**=按 runtime id 命中摘取（保持手牌内相对序、未知 id 忽略、命中的即为摘走的，`count` 此时不参与）；**无 cardKeys**=沿用"手牌头部切片、count=0 全手哨兵"**逐字不变**（所有既有载荷路径零行为变化=结构性保证） |
+| RNG | 零新增随机面（枚举与择定皆确定性）；被延的效果若含抽牌，游标消费与 RANDOM_OUTCOME 记录仍在择定那一步（record-not-reroll 原样兜住） |
+| Replay | 全 A 类照旧：候选表在触发步由枚举器确定性重演（非快照回填）、CHOOSE_OPTION 是 canonical 动作故 live 录像自动入账、ReplayPlayer 重派生自动重放，`outcomeOverrides` 零扩展；`cardKeys`/`targetId` 进事件载荷=录像事实（同进程 runtime id 稳定是既有 runtimeIdentity 纪律） |
+| Transition | 唯一 `TransitionCore.transition`；枚举器与桥都只**产事件不写状态**，不构成第二转移路径 |
+| Reentrancy | 零新环面：CHOICE_RESOLVED 仍不入 REACTION_EVENT_TYPES；被选分支的 DISCARD/GIVE/DAMAGE 按自身类型进既有重入环（含 cardKeys 载荷派生的 CARD_LOST 走单点 `enqueueDerivedConsequences`，"从已结算事实派生"纪律不因显式选牌而改变） |
+| Death chain | 候选在触发时点定住，拥有者随后离场=上表既有"账不清、人照择"姿态；选中候选若已离场（目标将被本次连锁杀死）＝对应结算闸诚实空转，不特判不清账 |
+| 优先级 | key 仍是 `ch:<turn>:<round>:<skillId>` 造法不变；候选顺序=枚举顺序，AI 与人类看同一张表（AI 侧 `aiTurnDriver`/`battleRunner` 走既有"选项序号"通道，本刀零改动即可吃进生产者候选） |
+| 忠实度 | **内置零转正**：`generals.ts` 零 choiceSource 载荷、账本 **40 runtime 定义/129 诚实跳过一字不动**（=B9 逐字的结构性保证）。**接线≠可配第四次预防针**：`choiceSource`/`choiceTargetScope` **只存在于编译模型层**（`dataTypes.DataSkillDefinition`，唯一入口 `engine.registerPlayerSkills`），数据层 `Skill` 类型、SkillEditor、Excel v2 六列**均无录入面**——遗计/好施（选目标）与观星/心战/自书/秘置（选牌排序）各自需求首现时，须先补齐三处同步（generals 类型+编辑器下拉+Excel 列/解析）再回本表补行，转正仍走忠实度 A/B/C 门+四件验收，**严禁批量** |
+| 三处同步 | 技能层：`dataTypes.DataSkillDefinition` +`choiceSource`/`choiceTargetScope`、新 `skills/choiceCandidates.ts`、`SkillTriggerBridge`（choice 分支分派+translateEffect 候选入参）；结算层：新 `core/eventProcessors/handSelection.ts`＋`applyDiscardEvent`/`applyGiveEvent`/`applyDeckPlaceEvent` 三处改调同一 helper；**状态层/动作层/校验层/UI 层零改动**（选项形状未变）；数据层与录入面零改动（见忠实度行） |
+| 活例 | 无内置活例（非内容刀）。合成探针 `src/skills/choiceProducers.test.ts`：TARGET 型（候选枚举顺序与 label、开账恰一张要约、冻结/他人代择双拒、择定后**只有被选那一名**将领受伤且其 targetPlayerId 键定正确、空候选不发要约、`choiceSource`+多效果=退回逐效果分支）；HAND_CARD 型（手牌候选、择第 N 张真摘走第 N 张〔**非头部切片**=显式选牌实证，且其余手牌相对序不动〕、空手不发要约、GIVE/DECK_PLACE 载荷携 cardKeys 逐字）；确定性两跑逐字节；`cardKeys` 缺省时三路结算与旧行为逐字一致（回归钉）。真机=热座实况页用**真实枚举器**产生候选、canonical `restoreEngineState` 种账、真点 HUD 按钮择定→状态与录像逐字 |
+
+
+
 ### 编译诚实契约（同刀落地，D-9 C 类）
 
 `syncPlayerSkills` 的 skipped 项（TRIGGER_UNSUPPORTED / NO_RUNTIME_PAYLOAD 等，含 reason）经 `getCompileDiagnostics(engine)`（WeakMap，引擎重建自然隔离）带外上报；console.warn 按 **distinct 条目**（`技能名#效果id:原因`）去重、测试缝 `__resetCompileWarnDedup()`。事件流与游戏行为零变化。编辑器/Excel 录入未支撑类型时消费该通道做 UI 提示=后续需求（非缺陷，已登记 HANDOFF §12-18）。
@@ -625,7 +649,7 @@
 
 ### 2.7 立项建议书（随 v2.6.4 收敛核验刀出，登记不实施）
 
-**2.7 立项进度（2026-09-26 用户口令"进行2.7"=五刀连做授权）**：刀序=①v2.7.0 报表键定（**已落地**）→ ②v2.7.1 事件/状态事实契约治理（**已落地：本表新增 C-4 事实/呈现契约表，§12-37② 观察项收编，"MAIN→ACTION 折叠"对账补偿退役**）→ ③v2.7.2 choice 生产者最小验证刀（Q5 前置刀，只接线不带内容）→ ④v2.7.3 自定义条件原语 → ⑤v2.7.4 收敛核验收官（含 ⑦ 装备销毁 CARD_LOST 语义裁决、⑧ 积木语法纸面表、GPT 四检自判、2.8 建议书）；⑤ 每局限一次与 ⑥ 多槽 pendingChoice **等真实需求首现**（不预铺，本建议书原话）、⑨ 平衡监控**不升格**只挂线。**本系列新挂线（非建议书原条目）**：v2.7.1 E2E 发现"store 建房链从未把房间名登记为 `metadata.roomId`"（⇒live 录像恒 `'local'`，§12-39⑦），修它=新增游戏事实，列 2.8 候选、等真实需求。
+**2.7 立项进度（2026-09-26 用户口令"进行2.7"=五刀连做授权）**：刀序=①v2.7.0 报表键定（**已落地**）→ ②v2.7.1 事件/状态事实契约治理（**已落地：本表新增 C-4 事实/呈现契约表，§12-37② 观察项收编，"MAIN→ACTION 折叠"对账补偿退役**）→ ③v2.7.2 choice 生产者最小验证刀（Q5 前置刀，只接线不带内容；**已落地：本表 F 节"choice 生产者候选构造器首批两枚"十二格表，内置零转正、录入面零改动，B9 逐字**）→ ④v2.7.3 自定义条件原语 → ⑤v2.7.4 收敛核验收官（含 ⑦ 装备销毁 CARD_LOST 语义裁决、⑧ 积木语法纸面表、GPT 四检自判、2.8 建议书）；⑤ 每局限一次与 ⑥ 多槽 pendingChoice **等真实需求首现**（不预铺，本建议书原话）、⑨ 平衡监控**不升格**只挂线。**本系列新挂线（非建议书原条目）**：v2.7.1 E2E 发现"store 建房链从未把房间名登记为 `metadata.roomId`"（⇒live 录像恒 `'local'`，§12-39⑦），修它=新增游戏事实，列 2.8 候选、等真实需求。
 
 **2.6 五刀总结（能力缺口序全部走完，GPT 二检 Q2 主序兑现）**：v2.6.0 EQUIP_STRIP 第七原语+强袭/崩坏首批（内容刀→B7、账本 38/131）→ v2.6.1 REVEAL/DECK_PLACE 第八/九原语只接线（非内容刀、B7 逐字；五候选忠实度闸门全部拦下="不发明玩法"第二次兑现）→ v2.6.2 CARD_* 事件源扩面+连营/枭姬转正（内容刀→B9 {"1":117,"2":183} 对 B7 双零漂移、账本 **40/129**）→ v2.6.3 choice 玩家决策通道最小闭环（非内容刀、B9 逐字结构性成立；五要素=窗 pendingChoice—预译候选—CHOOSE_OPTION 第 13 canonical 动作—RESOLVED 先行清账+延后结算链—全 A 类进录像；冻结世界闸+被拒动作进录像新事实 §12-36②）→ v2.6.4 收敛核验（choice 面十触发键全谱可达 `choiceReachability.test.ts` 12 例 + 策略档重测欠账归口 + 热座完整局+录像逐字 + 本建议书）。**终点线事实**：Effect 原语恰 9、触发键恰 10、录像/回放/对账四路径契约无一破口；**引擎层已知缺口清零**——剩余内容全部卡在"决策候选构造器"与"门槛语义"两处，属可立项的明示需求而非未知黑洞。
 
