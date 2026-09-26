@@ -3,6 +3,7 @@ import type { GameAction } from '../ActionTypes';
 import type { EngineState } from '../../core/GameState';
 import type { GameEvent, SkillActivationEventData } from '../../core/Event';
 import { SkillTriggerBridge } from '../../skills/SkillTriggerBridge';
+import { evaluateSkillConditions } from '../../skills/skillConditions';
 import { listAllTurnEndDefinitions } from '../../skills/turnEndSkills';
 
 interface ActivateSkillPayload {
@@ -54,6 +55,16 @@ export class TurnEndSkillResolver implements ActionResolver {
     }
     if ((state.consumedSkills ?? []).some(c => c.stableId === `${turn}:${skillId}`)) {
       return [rejected(action, 'SKILL_ALREADY_ACTIVATED')];
+    }
+    // v2.7.3 threshold gate: re-derived here independently of the candidate
+    // filter, so an activation that raced a state change is honestly refused
+    // instead of settling as a silent no-op skill.
+    if (!evaluateSkillConditions(definition.conditions, {
+      state,
+      ownerId: action.playerId,
+      sourceGeneralId: definition.sourceGeneralId,
+    })) {
+      return [rejected(action, 'SKILL_CONDITION_UNMET')];
     }
 
     const stableId = `${turn}:${definition.id}`;

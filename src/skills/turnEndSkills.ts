@@ -15,6 +15,7 @@ import type { General } from '../data/generals';
 import type { EngineState } from '../core/GameState';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { compileGeneralSkills } from './skillCompiler';
+import { evaluateSkillConditions } from './skillConditions';
 import type { DataSkillDefinition } from './dataTypes';
 
 export interface TurnEndSkillCandidate {
@@ -85,6 +86,14 @@ export function listTurnEndSkillCandidates(
     // honestly); selfTurn-or-unspecified is the askable shape.
     if (definition.turnSubType === 'otherTurn') continue;
     if (consumed.has(`${turn}:${definition.id}`)) continue;
+    // v2.7.3 threshold gate — the SAME pure predicate the trigger path calls.
+    // A skill whose conditions aren't met is not a candidate at all, so the
+    // ask-window HUD, legalActions and the AI driver share one view of legality.
+    if (!evaluateSkillConditions(definition.conditions, {
+      state,
+      ownerId: playerId,
+      sourceGeneralId: definition.sourceGeneralId,
+    })) continue;
     const generalId = String(definition.sourceGeneralId ?? '');
     candidates.push({
       playerId,

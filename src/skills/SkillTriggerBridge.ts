@@ -5,6 +5,7 @@ import type { GameEvent, GameEventType } from '../core/Event';
 import type { TriggerEngine } from '../triggers/TriggerEngine';
 import type { TriggerContext } from '../triggers/types';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { evaluateSkillConditions } from './skillConditions';
 import {
   enumerateHandCardCandidates,
   enumerateTargetCandidates,
@@ -76,7 +77,7 @@ function buildCondition(
   const generalId = skill.sourceGeneralId;
   const damageFilter = skill.damageTypeFilter;
 
-  return (context) => {
+  const identityCheck = (context: TriggerContext): boolean => {
     const data = asRecord(context.event.data);
     switch (trigger) {
       case 'onTurnStart':
@@ -151,6 +152,15 @@ function buildCondition(
         return false;
     }
   };
+
+  // v2.7.3 gate conditions ride AFTER identity (先身份、再门槛). Pure predicate
+  // over already-recorded facts, fail-closed, emits nothing by itself.
+  return (context) => identityCheck(context) && evaluateSkillConditions(skill.conditions, {
+    state: context.state,
+    ownerId,
+    sourceGeneralId: generalId,
+    event: context.event,
+  });
 }
 
 /**

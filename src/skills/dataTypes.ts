@@ -32,6 +32,43 @@ export type DataSkillEffectType =
   | 'REVEAL'
   | 'DECK_PLACE';
 
+/** v2.7.3 自定义条件门槛谓词（§G 建议书第 4 项，十二格表见 ARCH_MAP F 节）。
+ * 条件不是事件也不是状态：它只决定"这条监听要不要响"，产零事件、写零状态。
+ * 只存在于编译模型层（唯一入口 engine.registerPlayerSkills）=第五次
+ * "接线≠可配"预防针，数据层/SkillEditor/Excel 均无录入面。 */
+export type SkillConditionMetric =
+  /** 主体座的手牌张数（贞烈/节命"有牌可弃"代价门槛） */
+  | 'HAND_COUNT'
+  /** 主体在场将领的当前血量（苦肉/据守类血线） */
+  | 'GENERAL_HP'
+  /** 主体在场将领的护甲点数（崩坏/装备系门槛） */
+  | 'ARMOR_POINTS'
+  /** 主体座在场将领数（多座分发/门槛） */
+  | 'FIELD_GENERAL_COUNT'
+  /** 全局牌堆剩余张数（无主体；观星/心战缺牌面） */
+  | 'DECK_COUNT'
+  /** 触发事件已记录的数值 data.value ?? data.count（无主体；
+   *  伤逝"失牌差值"、峻刑"拼弃"的事件侧。ACTIVATE_SKILL 路径的
+   *  SKILL_ACTIVATED 事件不带这两个字段 ⇒ 失败即闭） */
+  | 'EVENT_VALUE';
+
+export type SkillConditionOperator = 'LT' | 'LTE' | 'EQ' | 'GTE' | 'GT';
+
+/** 主体轴：SELF=技能拥有者（缺省）；TARGET/ATTACKER 从触发事件解析，
+ *  解析不出=失败即闭。 */
+export type SkillConditionSubject = 'SELF' | 'TARGET' | 'ATTACKER';
+
+export interface SkillCondition {
+  metric: SkillConditionMetric;
+  /** 缺省 SELF；DECK_COUNT/EVENT_VALUE 忽略主体。 */
+  subject?: SkillConditionSubject;
+  op: SkillConditionOperator;
+  /** 与常量比较。 */
+  value?: number;
+  /** 与另一枚已记录事实比较（"比多少"语义）；与 value 同时给时以此为准。 */
+  compareTo?: { metric: SkillConditionMetric; subject?: SkillConditionSubject };
+}
+
 export interface SkillEffectData {
   type: DataSkillEffectType;
   value?: number;
@@ -73,6 +110,10 @@ export interface DataSkillDefinition {
    * SkillTriggerBridge 译成 CHOICE_REQUIRED（options=effects 逐项），玩家经
    * canonical CHOOSE_OPTION 择定后才结算。孤效果照常走独立定义（零开销）。 */
   choiceMode?: boolean;
+  /** v2.7.3 自定义条件门槛谓词（AND 语义：全部成立才响）。缺省=undefined
+   *  ⇒ v2.7.2 之前的行为逐字不变。求值=skills/skillConditions.ts 单点纯函数，
+   *  触发路与 ACTIVATE_SKILL 决策路消费同一实现。 */
+  conditions?: SkillCondition[];
   /**
    * v2.7.2 choice 生产者面（GPT 三检 Q5 最小验证刀）：候选从哪里枚举。
    * 缺省（undefined）=v2.6.3 行为=逐效果预译分支，一字未动。
