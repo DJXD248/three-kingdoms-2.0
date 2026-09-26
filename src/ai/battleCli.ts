@@ -190,7 +190,7 @@ function main(): void {
     for (const line of formatFactionStats(summary.factionStats)) console.log(line);
   }
   if (args.skillStats) {
-    console.log('  逐技能触发频次（计数=带技能标记的效果事件，双效果技能分计两次）:');
+    console.log('  逐技能触发频次（计数=带技能标记的效果事件，键=将领模板id:技能名，双效果技能分计两次）:');
     for (const line of formatSkillTriggerStats(summary.skillTriggerCounts ?? {}, configuredSkillRows())) {
       console.log(line);
     }

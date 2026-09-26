@@ -107,7 +107,7 @@ describe('skill trigger tracking (2.4.3 content audit)', () => {
     expect(plain.violations).toEqual([]);
   });
 
-  it('on: effect-event counts are keyed by skill name and deterministic', () => {
+  it('on: effect-event counts are keyed by 模板id:技能名 and deterministic', () => {
     const config = defaultMatchConfig(
       712,
       { poolPerPlayer: 5, deckSize: 45, skillInjection: 0.99 },
@@ -117,9 +117,11 @@ describe('skill trigger tracking (2.4.3 content audit)', () => {
     expect(a.violations).toEqual([]);
     expect(a.skillTriggers).toEqual(b.skillTriggers);
     for (const key of Object.keys(a.skillTriggers ?? {})) {
-      // join key = bare skill-name segment, never an instance-salted id
-      expect(key).not.toContain(':');
-      expect(key).not.toContain('__inst');
+      // join key = 模板id:技能名 (2.7.0) — never an instance-salted or
+      // seat-suffixed id: the alias table resolves both forms back.
+      expect(key.split(':')[0]).not.toContain('__inst');
+      expect(key.split(':')[0]).not.toMatch(/^ai\d+_c\d+$/);
+      expect(key.split(':')[0]).not.toMatch(/_p\d+$/);
     }
     // Same seed, tracking off → identical match outcome (counter is pure observer).
     const untracked = runMatch(config, { maxSteps: 2000 });
@@ -128,9 +130,16 @@ describe('skill trigger tracking (2.4.3 content audit)', () => {
     expect(untracked.actions).toEqual(a.actions);
   });
 
-  it('skillTriggerKey takes the name segment of a compiled skillId', () => {
-    expect(skillTriggerKey('wei_001__inst_a:奸雄:e1')).toBe('奸雄');
-    expect(skillTriggerKey('ai712_c3:猛进:e1')).toBe('猛进');
+  it('skillTriggerKey joins 模板id:技能名, resolving owners via the alias table (2.7.0)', () => {
+    // Without an alias entry the raw owner segment is kept (off-list rows stay visible).
+    expect(skillTriggerKey('wei_001__inst_a:奸雄:e1')).toBe('wei_001__inst_a:奸雄');
+    // Both per-assembly forms resolve back to the template id.
+    const aliases = new Map([
+      ['ai712_c3', 'wei_003'],
+      ['jin_004_p2', 'jin_004'],
+    ]);
+    expect(skillTriggerKey('ai712_c3:猛进:e1', aliases)).toBe('wei_003:猛进');
+    expect(skillTriggerKey('jin_004_p2:帷幄:e1', aliases)).toBe('jin_004:帷幄');
     expect(skillTriggerKey('no-colon-fallback')).toBe('no-colon-fallback');
   });
 
@@ -152,6 +161,9 @@ describe('skill trigger tracking (2.4.3 content audit)', () => {
     // Roll-up keys are sorted for byte-stable output across reruns.
     const keys = Object.keys(counts);
     expect(keys).toEqual([...keys].sort());
+    // Positive pin (2.7.0): the join really lands on template ids, so the
+    // expected-row table matches — pre-keying every row sat off-list.
+    expect(keys.some(k => /^[a-z]+_\d+:.+/.test(k))).toBe(true);
     expect(on.winnerCounts).toEqual(off.winnerCounts);
   });
 

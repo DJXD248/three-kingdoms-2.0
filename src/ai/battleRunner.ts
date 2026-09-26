@@ -122,9 +122,9 @@ export interface MatchResult {
   finalPhase: string;
   /** Per-seat balance stats; absent only for hand-built legacy fixtures. */
   seatStats?: SeatStats[];
-  /** Per-skill effect-event counts (技能名 → 次数, see skillTriggerKey);
+  /** Per-skill trigger counts (将领模板id:技能名 → 次数, see skillTriggerKey);
    * present only when the run was started with `trackSkillTriggers`
-   * (v2.4.3 content audit). */
+   * (v2.4.3 content audit, keying upgraded to per-general in v2.7.0). */
   skillTriggers?: Record<string, number>;
 }
 
@@ -175,16 +175,52 @@ interface RunOptions {
 const SKILL_EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP']);
 
 /**
- * Batch-stable join key = the skill NAME segment of a compiled skillId:
- * `wei_003__inst_c:刚烈:e1` → `刚烈`. Owner ids cannot serve — they differ per
- * assembly path (matchSetup emits `ai712_c3`, the UI `wei_003__inst_c`) while
- * the name segment is constant. Known collision by design: 屯田 (魏邓艾/晋)
- * shares one row. Practice-injection skills carry the 演練・ name prefix, so
- * they stay visibly separate from built-in rows.
+ * Batch-stable join key = `模板id:技能名` (v2.7.0 report-keying cut).
+ * The compiled skillId's owner segment is whatever `syncPlayerSkills` keyed
+ * the general by at registration time — a per-assembly runtime instance id
+ * (`ai712_c3` from matchSetup) or a seat-suffixed copy id (`jin_004_p2`),
+ * neither stable across batch runs. `aliases` (accumulated per match by
+ * `collectTemplateAliases`) maps either form back to the general TEMPLATE id;
+ * unresolvable owners keep their raw segment (surfaces as an off-list row,
+ * disclosed rather than silently dropped). Name-collision rows are separated
+ * by design: 屯田 (魏邓艾 / 晋邓艾) counts into two ledger lines — the
+ * observation precondition for the same-faction-same-name content policy.
  */
-export function skillTriggerKey(skillId: string): string {
+export function skillTriggerKey(skillId: string, aliases?: Map<string, string>): string {
   const parts = skillId.split(':');
-  return parts[1] ?? parts[0];
+  if (parts.length < 2) return parts[0];
+  const owner = aliases?.get(parts[0]) ?? parts[0];
+  return `${owner}:${parts[1]}`;
+}
+
+/** Seat-suffixed copy ids (`jin_004_p2`) carry their template id as a prefix. */
+function templateOfCopyId(id: string): string {
+  return id.replace(/_p\d+$/, '');
+}
+
+/**
+ * Accumulate owner-id → template-id aliases for the trigger report: every
+ * general seen in a pool or on a field, keyed by BOTH its copy id and its
+ * runtime instance id (whichever the skill was registered under), valued by
+ * the template id. Cumulative because a registration can outlive the roster
+ * entry it came from (death-chain effects).
+ */
+function collectTemplateAliases(state: EngineState, acc: Map<string, string>): void {
+  for (const p of state.players ?? []) {
+    for (const rawList of [p.generalPool, p.fieldGenerals]) {
+      const list = Array.isArray(rawList) ? (rawList as unknown[]) : [];
+      for (const raw of list) {
+        const entry = raw as Record<string, any> | null;
+        const general = (entry?.general ?? entry) as Record<string, any> | null;
+        const copyId = String(general?.id ?? entry?.id ?? '');
+        if (!copyId) continue;
+        const templateId = templateOfCopyId(copyId);
+        const instanceId = entry?.instanceId ?? general?.instanceId;
+        if (instanceId) acc.set(String(instanceId), templateId);
+        acc.set(copyId, templateId);
+      }
+    }
+  }
 }
 
 /**
@@ -222,6 +258,8 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
     }));
     const statsOf = (playerId: number): SeatStats | undefined => seatStats[playerId - 1];
     const skillTriggers: Record<string, number> | undefined = options.trackSkillTriggers ? {} : undefined;
+    const templateAliases = skillTriggers ? new Map<string, string>() : undefined;
+    if (templateAliases) collectTemplateAliases(state, templateAliases);
 
     const firstPlayerId = state.currentPlayerId ?? 1;
 
@@ -229,6 +267,7 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
       const engine = prepared ?? new GameEngine(state, { recordHistory: false });
       const aliveBefore = countAlive(state);
       const rosterBefore = snapshotFieldRoster(state);
+      if (templateAliases) collectTemplateAliases(state, templateAliases);
       const events = engine.dispatch(action);
       state = engine.state;
       const rejected = events.filter(ev => ev.type === 'ACTION_REJECTED');
@@ -276,7 +315,7 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
           if (!SKILL_EFFECT_EVENT_TYPES.has(ev.type)) continue;
           const skillId = (ev.data as Record<string, unknown> | undefined)?.skillId;
           if (typeof skillId !== 'string' || !skillId) continue;
-          const key = skillTriggerKey(skillId);
+          const key = skillTriggerKey(skillId, templateAliases);
           skillTriggers[key] = (skillTriggers[key] ?? 0) + 1;
         }
       }

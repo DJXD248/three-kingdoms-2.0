@@ -52,14 +52,17 @@ export function formatFactionStats(stats: FactionBalanceStat[]): string[] {
 }
 
 /**
- * Per-skill trigger frequency 口径 (2.4.3 content audit): one count per
- * skill-tagged EFFECT EVENT, keyed by the skill NAME segment of the compiled
- * skillId (see battleRunner's skillTriggerKey) — dual-effect skills like
- * 苦肉 credit each fired effect separately into the same row. Expected rows =
- * every generals.ts skill with at least one `effects[].runtime` payload (the
- * compiled set); configured-but-zero rows are surfaced for the §G
- * content-quality notes. Extra keys present only in the counts (e.g.
- * practice-injection 演練・ skills) are listed too, uncounted.
+ * Per-skill trigger frequency 口径 (2.4.3 content audit; keyed per-general
+ * since 2.7.0): one count per skill-tagged EFFECT EVENT, keyed by
+ * `将领模板id:技能名` (see battleRunner's skillTriggerKey, which resolves the
+ * runtime instance owner via the pre-dispatch field roster) — dual-effect
+ * skills like 苦肉 credit each fired effect separately into the same row.
+ * Same-name skills on different generals (屯田: 魏邓艾/晋邓艾) are separate
+ * rows. Expected rows = every generals.ts skill with at least one
+ * `effects[].runtime` payload (the compiled set); configured-but-zero rows
+ * are surfaced for the §G content-quality notes. Extra keys present only in
+ * the counts (e.g. practice-injection 演練・ skills, or owners unresolvable
+ * to a template id) are listed too, uncounted.
  */
 export interface ExpectedSkillRow {
   key: string;
@@ -71,7 +74,8 @@ export function configuredSkillRows(generals: General[] = allGenerals): Expected
   const rows: ExpectedSkillRow[] = [];
   for (const g of generals) {
     for (const s of g.skills ?? []) {
-      if (s.effects?.some(e => e.runtime)) rows.push({ key: s.name, label: `${g.name}·${s.name}` });
+      if (s.effects?.some(e => e.runtime))
+        rows.push({ key: `${g.id}:${s.name}`, label: `${g.name}·${s.name}(${g.id})` });
     }
   }
   return rows;

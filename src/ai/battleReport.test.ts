@@ -18,7 +18,11 @@ import {
   configuredSkillRows,
   summarizeMatches,
 } from './battleReport';
+import { allGenerals } from '../data/generals';
 import { encodeSeats, parseAiBattleHash, type AiBattleSeat } from './battleHash';
+
+/** 模板 id lookup so the keyed rows below never hardcode an id that can drift. */
+const idOf = (name: string): string => allGenerals.find(g => g.name === name)!.id;
 
 function match(overrides: Partial<MatchResult> = {}): MatchResult {
   return {
@@ -137,48 +141,50 @@ describe('battleReport', () => {
   });
 });
 
-describe('skill trigger report (2.4.3)', () => {
+describe('skill trigger report (2.4.3, keyed per-general since 2.7.0)', () => {
   it('configuredSkillRows covers exactly the runtime-bearing built-in skills', () => {
     const rows = configuredSkillRows();
     // 批一 9 + 批二 21 + 批三 2 + v2.5.2 onDeploy 转正 3 + v2.6.0 EQUIP_STRIP 2 + v2.6.2 连营/枭姬 2（苦肉双效果仍是一行）
     expect(rows).toHaveLength(39);
     const keys = rows.map(r => r.key);
-    // join key = 技能名（屯田 魏/晋 重名共两行 = 38 个唯一键）
-    expect(new Set(keys).size).toBe(38);
-    expect(keys.filter(k => k === '屯田')).toHaveLength(2);
-    expect(rows.some(r => r.key === '奸雄' && r.label === '曹操·奸雄')).toBe(true);
-    expect(rows.some(r => r.key === '苦肉' && r.label === '黄盖·苦肉')).toBe(true);
-    expect(rows.some(r => r.key === '反馈' && r.label === '司马懿·反馈')).toBe(true);
-    expect(rows.some(r => r.key === '断肠' && r.label === '蔡文姬·断肠')).toBe(true);
-    expect(rows.some(r => r.key === '英慧' && r.label === '王元姬·英慧')).toBe(true);
-    expect(rows.some(r => r.key === '拓略' && r.label === '杜预·拓略')).toBe(true);
-    expect(rows.some(r => r.key === '奋勇' && r.label === '文鸯·奋勇')).toBe(true);
-    expect(rows.some(r => r.key === '强袭' && r.label === '典韦·强袭')).toBe(true);
-    expect(rows.some(r => r.key === '崩坏' && r.label === '董卓·崩坏')).toBe(true);
+    // join key = 模板id:技能名 → 屯田（魏/晋邓艾同名）不再共行 = 39 个唯一键
+    expect(new Set(keys).size).toBe(39);
+    expect(keys.filter(k => k.endsWith(':屯田'))).toHaveLength(2);
+    expect(keys).toContain(`${idOf('曹操')}:奸雄`);
+    expect(keys).toContain(`${idOf('司马懿')}:反馈`);
+    expect(keys).toContain(`${idOf('陆逊')}:连营`);
+    expect(keys).toContain(`${idOf('孙尚香')}:枭姬`);
+    expect(keys).toContain(`${idOf('典韦')}:强袭`);
+    expect(keys).toContain(`${idOf('董卓')}:崩坏`);
+    expect(rows.some(r => r.key === `${idOf('曹操')}:奸雄` && r.label === `曹操·奸雄(${idOf('曹操')})`)).toBe(true);
+    expect(rows.some(r => r.key === `${idOf('黄盖')}:苦肉` && r.label === `黄盖·苦肉(${idOf('黄盖')})`)).toBe(true);
     // pure-description skills (no runtime payload) must stay out of the set
-    expect(keys).not.toContain('观星');
+    expect(keys.some(k => k.endsWith(':观星'))).toBe(false);
   });
 
   it('formatter zero-fills expected rows, sorts desc by count, flags zeros', () => {
     const expected = [
-      { key: '奸雄', label: '曹操·奸雄' },
-      { key: '苦肉', label: '黄盖·苦肉' },
-      { key: '龙吟', label: '关平·龙吟' },
+      { key: `${idOf('曹操')}:奸雄`, label: `曹操·奸雄(${idOf('曹操')})` },
+      { key: `${idOf('黄盖')}:苦肉`, label: `黄盖·苦肉(${idOf('黄盖')})` },
+      { key: `${idOf('关平')}:龙吟`, label: `关平·龙吟(${idOf('关平')})` },
     ];
-    const lines = formatSkillTriggerStats({ '奸雄': 9, '苦肉': 3 }, expected);
+    const lines = formatSkillTriggerStats(
+      { [`${idOf('曹操')}:奸雄`]: 9, [`${idOf('黄盖')}:苦肉`]: 3 },
+      expected,
+    );
     expect(lines[0]).toContain('配置技能 3 条 · 触发过 2 条 · 零触发 1 条');
-    expect(lines[1]).toContain('曹操·奸雄');
+    expect(lines[1]).toContain(`曹操·奸雄(${idOf('曹操')})`);
     expect(lines[1]).toMatch(/\s9$/);
-    expect(lines[2]).toContain('黄盖·苦肉');
-    expect(lines[3]).toContain('关平·龙吟');
+    expect(lines[2]).toContain(`黄盖·苦肉(${idOf('黄盖')})`);
+    expect(lines[3]).toContain(`关平·龙吟(${idOf('关平')})`);
     expect(lines[3]).toContain('← 零触发');
   });
 
   it('counts outside the expected set still print (practice skills), flagged in header', () => {
-    const lines = formatSkillTriggerStats({ '演練・守夜': 4 }, []);
+    const lines = formatSkillTriggerStats({ 'ai712_c3:演練・守夜': 4 }, []);
     expect(lines[0]).toContain('配置技能 0 条 · 触发过 0 条 · 零触发 0 条');
     expect(lines[0]).toContain('名单外触发项');
-    expect(lines[1]).toContain('演練・守夜');
+    expect(lines[1]).toContain('ai712_c3:演練・守夜');
   });
 });
 
