@@ -1375,6 +1375,6 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **浏览器 E2E 判断**：本刀**不占**——`src/` 运行时零改动、无玩法/交互面变更，工具面证据由 CLI 实测+单测承载（如实声明，不以单测冒充真机）。
 - **GPT 沟通判断**：跳过——2.6 三检已把第四检预钉在 v2.7.4 收敛刀，本刀无契约级意外（键定属观测面，未新增语义）。
 - **下一刀**=v2.7.1 事件/状态事实契约治理刀（§12-37② engineAwareSetter 镜像重建观察项收编：呈现字段 vs 事实字段边界固定+回归锚；非内容刀，对 B9 逐字）。
-- **CI 状态**：**PENDING（本刀登记后推送核验回填）**。
+- **CI 状态**：**全绿**——GitHub Actions CI #107（run 36227547332，master 推送触发）在 commit 8007d5f 上 completed successfully（feat cfd69bb + docs 8007d5f + 标签 v2.7.0 由单顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。
 
 
