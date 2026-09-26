@@ -1488,6 +1488,53 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       && (String(e.data?.skillId ?? '').includes('连营:e1') || String(e.data?.skillId ?? '').includes('枭姬:e1')))).toBe(false);
   });
 
+  // 建议书第 7 项裁决的防漂移钉（v2.7.4）：装备离场的另外两路——被伤害吸收销毁、
+  // 随主阵阵亡——刻意**不**派生 CARD_LOST。裁决全文见 PROJECT_ARCH_MAP §F
+  // 「装备损失语义裁决」；将来若要扩面，须真实需求首现并按内容刀重换基线锚。
+  it('裁决负例：装备被伤害吸收销毁 / 随主阵阵亡均不派生 CARD_LOST，在场枭姬不响 (v2.7.4)', () => {
+    const armorCards = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `eqz_armor_${i}`, name: '军备', type: '军备' }));
+    function run(victimId: string, hp: number, armor: number, cards: number) {
+      const victimField = makeFieldGeneral(makeGeneral(victimId, 4, []), 2, 0);
+      Object.assign(victimField, { currentHp: hp, currentArmor: armor, armorCards: armorCards(cards) });
+      const engine = new GameEngine(makeState([
+        makePlayer(1, {
+          fieldGenerals: [makeFieldGeneral(makeGeneral('eqz_atk', 4, []), 1, 0)],
+          hand: COSTS.slice(0, 3).map(c => ({ ...c })),
+        }),
+        makePlayer(2, {
+          fieldGenerals: [victimField, makeFieldGeneral(builtin2As('eqz_xj', 'wu_008'), 2, 1)],
+        }),
+      ]));
+      syncPlayerSkills(engine, engine.state);
+      const flat = rawEvents(engine.dispatch(attack('eqz_atk', victimId, 0)))
+        .map(r => JSON.parse(r) as { type: string; data?: Record<string, unknown> });
+      const field = engine.state.players.find(p => p.id === 2)?.fieldGenerals as unknown as
+        Array<{ general: General; armorCards: unknown[] }>;
+      return { flat, field };
+    }
+
+    const silent = (flat: Array<{ type: string; data?: Record<string, unknown> }>) => {
+      expect(flat.some(e => e.type === 'CARD_LOST' || e.type === 'CARD_GAINED')).toBe(false);
+      expect(flat.some(e => e.type === 'DRAW'
+        && String(e.data?.skillId ?? '').includes('枭姬:e1'))).toBe(false);
+    };
+
+    // 路一：2 点护甲吞 1 点伤害 ⇒ 头部两张装备卡被销毁，将领存活
+    const absorbed = run('eqz_v1', 8, 3, 3);
+    const absorbedHit = absorbed.flat.filter(e => e.type === 'DAMAGE');
+    expect(absorbedHit).toHaveLength(1);
+    expect(absorbedHit[0].data?.destroyedArmorCardIds).toEqual(['eqz_armor_0', 'eqz_armor_1']);
+    silent(absorbed.flat);
+    expect(absorbed.field.find(f => f.general.id === 'eqz_v1')?.armorCards).toHaveLength(1);
+
+    // 路二：单点护甲不足以吸收 ⇒ 致命伤，残存两张装备随主阵离场
+    const defeated = run('eqz_v2', 1, 1, 2);
+    expect(defeated.flat.some(e => e.type === 'DEATH')).toBe(true);
+    silent(defeated.flat);
+    expect(defeated.field.some(f => f.general.id === 'eqz_v2')).toBe(false);
+  });
+
   // ── v2.6.3 choice 玩家决策通道（非内容刀：合成模板实证接线，内置零载荷） ──
 
   it('择一闭环四路对账：choiceMode 受伤开账→冻结世界双拒→择定落账，同配置两跑逐字节一致 (v2.6.3)', () => {
