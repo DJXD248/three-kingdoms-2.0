@@ -1339,6 +1339,6 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **浏览器真机 E2E（热座房 dev 5173 单实例，用完即杀含残留子进程 netstat 复查，全程未保存/下载）**：canonical store 动作直驱建房→征召→抽牌至 playing（人类座无 AI 司机=天然免疫 §12-23 后台限流）→`setState` 替换 engineState 引用种 pendingChoice（常驻桥 adopt-clone 天然消费）→**HUD 真实按钮 `◈ 选项1：A:draw2 / ◈ 选项2：B:draw1` 逐一渲染**→点⏭️结束回合 **turn 冻结 1**（账在手、无 ask 窗）→点选项2 账清 hand 5→6、HUD 消失→再点结束回合 **turn 2 解冻**。截图不可用（`NATIVE_BROWSER_VIEWPORT_UNAVAILABLE`=页签 hidden）→改 button innerText DOM 结构证据为真机证据（§12-36⑤）。多槽撞账单缺口如实登记 §12-36④（单槽串行化，未来需求先补 ARCH_MAP 表注再动刀）。
 - **验证（五闸全部在文件定稿后）**：check 0 错；**479 例/52 文件全过**（+13）；coverage 定稿快照 **50.1/42.22/41.12/55.61** 四项全过地板 42/34/34/47（§12-22④ 快照口径，四项皆较 2.6.2 上移、棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,956.38 kB / gzip 573.16 kB**（较 2.6.2 +6.63/+1.69 kB=choice 事件族+校验/解析分支+编译器分组+HUD 文本进 bundle）。package.json/lock=2.6.3。
 - **GPT 沟通判断（计划口径）**：**跳过**——2.6 三检预钉 v2.6.4（携策略档重测+可达性扩面+2.7 建议书）；本刀无契约级意外（五要素按 Q4 口径原样走通、冻结世界=既有 validator 链加闸非第二转移路径、被拒步进录像为 D-1 既有纪律延伸）。
-- **CI 状态**：**PENDING**——待推送后核验 GitHub Actions 回填。
+- **CI 状态**：**全绿**——GitHub Actions CI #103（run 36220592167，master 推送触发）在 commit 5737ade 上 completed successfully（feat d2f926f + docs 5737ade + 标签 v2.6.3 由单顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。
 
 
