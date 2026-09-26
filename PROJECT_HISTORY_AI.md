@@ -1412,6 +1412,6 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **验证（五闸全部在文件定稿后）**：check 0 错；**509 例/55 文件全过**；coverage 定稿快照 **50.66/42.73/41.56/56.2** 四项全过地板 42/34/34/47（§12-22④ 快照口径，棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,958.64 kB / gzip 573.86 kB**（较 2.7.1 +1.33/+0.40 kB=两枚举器+helper+桥分派代码面）。package.json/lock=**2.7.2**。
 - **GPT 沟通判断**：跳过——四检按计划预钉 v2.7.4 收官刀；本刀是三检 Q5 口径原样落地（枚举器形状零破坏），无契约级意外。
 - **下一刀**=v2.7.3 自定义条件原语刀（建议书第 4 项，十二格表先行；非内容刀，对 B9 逐字）。
-- **CI 状态**：**全绿**——GitHub Actions CI #113（run 36232695206，master 推送触发）在 commit 98d7cda 上 completed successfully（feat c23a04d + docs 98d7cda + 标签 v2.7.2 由单顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。
+- **CI 状态**：**全绿**——GitHub Actions CI #113（run 36232695206，master 推送触发）在 commit 98d7cda 上 completed successfully（feat c23a04d + docs 98d7cda + 标签 v2.7.2 由单顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。**回填提交 9c46484 自身 CI 亦会话内核验全绿**=CI #114（run 36233126388）在 commit 9c46484 上 completed successfully（同样直连推送成功、未借道代理）；登记层到核验记录提交为止，不再另开第四层。
 
 
