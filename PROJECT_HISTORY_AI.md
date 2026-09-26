@@ -1356,6 +1356,6 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **非内容刀硬锚达成**：ai-battle 300 局 seed1 胜席 **{"1":117,"2":183} 对 B9 逐字一致**——won=300、VIOLATIONS=0、同 seed 两轮剥离计时行后 cmp 逐字节全等（RUNS_IDENTICAL_EXCEPT_TIMING）；逐势力锚（魏116/56/187/132/10/0、蜀136/71/204/131/14/2、吴126/55/161/115/4/0、群126/70/208/119/14/2、晋96/48/134/95/4/0）全部吻合 §12-33①。
 - **验证（五闸全部在文件定稿后）**：check 0 错；**491 例/53 文件全过**（+12）；coverage 定稿快照 **50.1/42.28/41.12/55.63** 四项全过地板 42/34/34/47（快照口径 §12-22④，较 2.6.3 微升、棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,956.38 kB / gzip 573.16 kB**（与 2.6.3 逐字节同）。package.json/lock=**2.6.4**。
 - **GPT 沟通判断**：三检=本刀计划内动作（预钉），已完成并回填 ARCH_MAP §G 与 HANDOFF。
-- **CI 状态**：**PENDING**——本刀收官后推送，待 GitHub Actions 全绿回填（run id/CI #/sha）。
+- **CI 状态**：**全绿**——GitHub Actions CI #105（run 36224245104，master 推送触发）在 commit 3d5ec30 上 completed successfully（feat f6bee82 + docs 3d5ec30 + 标签 v2.6.4 由单顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。
 
 
