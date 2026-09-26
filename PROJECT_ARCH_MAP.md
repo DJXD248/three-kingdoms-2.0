@@ -341,6 +341,29 @@
 | 三处同步 | 技能层：`dataTypes.DataSkillDefinition` +`choiceSource`/`choiceTargetScope`、新 `skills/choiceCandidates.ts`、`SkillTriggerBridge`（choice 分支分派+translateEffect 候选入参）；结算层：新 `core/eventProcessors/handSelection.ts`＋`applyDiscardEvent`/`applyGiveEvent`/`applyDeckPlaceEvent` 三处改调同一 helper；**状态层/动作层/校验层/UI 层零改动**（选项形状未变）；数据层与录入面零改动（见忠实度行） |
 | 活例 | 无内置活例（非内容刀）。合成探针 `src/skills/choiceProducers.test.ts`：TARGET 型（候选枚举顺序与 label、开账恰一张要约、冻结/他人代择双拒、择定后**只有被选那一名**将领受伤且其 targetPlayerId 键定正确、空候选不发要约、`choiceSource`+多效果=退回逐效果分支）；HAND_CARD 型（手牌候选、择第 N 张真摘走第 N 张〔**非头部切片**=显式选牌实证，且其余手牌相对序不动〕、空手不发要约、GIVE/DECK_PLACE 载荷携 cardKeys 逐字）；确定性两跑逐字节；`cardKeys` 缺省时三路结算与旧行为逐字一致（回归钉）。真机=热座实况页用**真实枚举器**产生候选、canonical `restoreEngineState` 种账、真点 HUD 按钮择定→状态与录像逐字 |
 
+### 自定义条件门槛谓词首批六枚（v2.7.3 落地，§G 建议书第 4 项"自定义条件原语"=档2 引用 4 条〔贞烈/峻刑/节命/放权门槛语义〕+伤逝差值的兑现；**非内容刀：只立词汇与求值、内置零转正、对 B9 逐字**）
+
+| 格 | 契约 |
+|---|---|
+| Event | **零新事件、零新原语（恒 9）、零新触发键（恒 10）、零新 canonical 动作（恒 13）**。条件不是事件、也不是状态——它是"这条监听要不要响"的**纯谓词**，产物只有二值。既有身份面（`sourceGeneralId`/`damageTypeFilter`/`cardFilter`）一字未动，条件闸**叠在其后**（先身份、再门槛） |
+| 词汇表 | 新编译模型类型 `SkillCondition{ metric, subject?, op, value?, compareTo? }`。**度量六枚，逐枚有需求出处**：`HAND_COUNT`（玩家手牌张数｜贞烈·节命"有牌可弃"代价门槛）、`GENERAL_HP`（在场将领 `currentHp`｜苦肉·据守类血线）、`ARMOR_POINTS`（将领 `currentArmor` 点数｜崩坏·装备系门槛）、`FIELD_GENERAL_COUNT`（该玩家在场将领数｜多座分发/门槛）、`DECK_COUNT`（全局牌堆剩余张数，无 subject｜观星·心战缺牌面）、`EVENT_VALUE`（**触发事件已记录的数值** `data.value ?? data.count ?? 0`，无 subject｜伤逝"失牌差值"、峻刑"拼弃"的事件侧）。**算子五枚** `LT/LTE/EQ/GTE/GT`；右端=常量 `value` **或** `compareTo`（另一枚度量事实，"比多少"语义即此）。数组语义=**AND 全成立** |
+| 生产者面 | 唯一入口=`engine.registerPlayerSkills`（编译模型层字段 `DataSkillDefinition.conditions?`）；`skillCompiler` **不产 conditions**（数据层 `Skill`/`SkillTriggerConfig` 无对应录入形态）——与 v2.7.2 `choiceSource` 同一姿态 |
+| 接线点 | **两处消费同一份纯求值函数**（`src/skills/skillConditions.ts::evaluateSkillConditions`，全库唯此一份实现）：① 触发路=`SkillTriggerBridge` 的 `buildCondition` 末尾 AND 上条件闸（十个触发键全域生效，含 choice 要约开账前=门槛不过连要约都不发，与 v2.7.2"空候选不发要约"同族死锁预防）；② 决策路=`skills/turnEndSkills.listTurnEndSkillCandidates` 过滤候选（⇒询问窗 HUD、`legalActions` 枚举、AI 司机三消费者同口径）+ `TurnEndSkillResolver` 独立再求值一次并给出诚实拒因 `SKILL_CONDITION_UNMET`（纵深防御=候选面与结算面同一函数、不同调用，绝不允许"枚举里有、结算时静默空转"） |
+| Timing | 求值时点=**触发/发动那一刻的 state 现态**（与 v2.6.2 cardFilter"只读已记录事实、零二次推导"同纪律；条件读的是 `hand/currentHp/currentArmor/deck` 这些 A 类事实，不读呈现字段=B 类面零接触，见 C-4）。**结算时不复核**——门槛过后效果事实不足仍走各原语既有诚实空转（GIVE 死接收/DISCARD 空手等），两层各司其职不互替 |
+| Source | 主体轴三枚：`SELF`（缺省=技能拥有者座；将领类度量取其 `sourceGeneralId` 对应在场将）、`TARGET`（从触发事件解析：先以 `targetId ?? target ?? victimId` 在场反查将领与其所属座，查不到再退显式 `targetPlayerId` 只认座）、`ATTACKER`（镜像 `resolveEffectTarget` 的取值序 `sourceGeneralId ?? attackerId ?? action.payload.attackerId ?? action.attackerId`，查不到退 `sourcePlayerId ?? action.playerId`）。**无事件时 `TARGET`/`ATTACKER` 与 `EVENT_VALUE` 一律解析失败=fail-closed 不响**（读不到≠读到 0；`isAlive===false` 只出局 choice 候选枚举，不影响度量读取）。`DECK_COUNT/EVENT_VALUE` 无主体（全局/事件事实） |
+| Target | 条件**不选目标**，只判门槛——它不产出任何对象引用，故与 choice 生产者面（v2.7.2 候选构造器）正交：先过门槛，再谈候选。"以某名为目标需满足 X"类语义=choice 候选枚举 + 条件谓词两把钥匙的组合，非第三把 |
+| Condition | **失败即闭（fail-closed）**：任一谓词解析不出事实（主体座不在、将领已离场、`compareTo` 另一端不可解析、算子/度量未知）⇒**整条条件不成立=技能不触发**，宁可不响也不误响（与"不发明玩法"同向：误响=凭空多一次结算）。解析成功但比较不满足=同样不成立。合法边界值如实成立（`HAND_COUNT GTE 0` 恒真）；`value` 与 `compareTo` 同时给=以 `compareTo` 为准（确定性优先，不作 AND 复合）。**缺省（undefined 或空数组）⇒ 行为与上表之前逐字不变** |
+| Effect | 条件不产出事件、不写状态、不改载荷——它只决定"这一组事件要不要产出"。故九原语结算面零改动，`EventProcessor`/`TransitionCore` 零接触 |
+| RNG | 零新增随机面（谓词是 state/event 的纯函数）；被门槛挡下的技能**不消耗游标**⇒同 seed 下"挡/不挡"完全可复现；门槛过后的抽牌照旧在结算步消费游标 |
+| Replay | **条件本身不进录像、不入 EngineState**——三路（常驻/每步重建/录像重放）看到的是同一份 state 与同一份事件，纯函数必得同一结论；`SKILL_ACTIVATED→（条件不成立）→ACTION_REJECTED` 的**结论**进录像（决策路），触发路的"不响"=零事件=天然可复现。四路对账测试钉死（含"重建路不得比常驻路多响一次"反例） |
+| Transition | 唯一 `TransitionCore.transition`；条件闸位于监听筛选环节（TriggerEngine 的 `condition`），**产不出事件更写不了状态**⇒禁第二转移路径自查通过 |
+| Reentrancy | 零新环面：条件只减少事件产出，不新增派生、不新增集合闸；重入环内每个二次事件仍各自过一遍条件（同 state 快照⇒同结论，无振荡风险，因条件不写 state） |
+| Death chain | 拥有者或主体离场⇒度量解析失败=**闭**（不响），与既有"账不清、人照择"事后姿态不冲突（那是已开账的欠账，这是未开账的门槛）；条件绝不在致死链中途改判（求值只用触发时点现态） |
+| 优先级 | 无新优先级：条件在既有 `PRIORITY`/`TRIGGER_EVENT_MAP` 之后、`createEvents` 之前生效；多谓词数组序=书写序，短路即返回（不影响结论，仅影响求值次数） |
+| 忠实度 | **内置零转正**：`generals.ts` 零 `conditions` 载荷、账本 **40 runtime 定义/129 诚实跳过一字不动**、battleReport 39 行不变（=B9 逐字的结构性保证）。**接线≠可配第五次预防针**：条件只活在编译模型层，数据层 `Skill` 类型/SkillEditor/Excel 六列**均无录入面**——贞烈/节命/峻刑的转正须先按 §G 建议书第 1 项"积木语法表"把条件槽位定进语法（v2.7.4 纸面表），再补三处同步，转正仍走忠实度 A/B/C 门+四件验收，**严禁批量**。伤逝类"差值"语义本刀兑现为 `EVENT_VALUE` 比较（事件已记录张数），**逐张拆分/每差 1 张摸 1 张**仍属效果族缺口（见 CARD_* 事件源表 Condition 行既有注记），不借本刀偷做 |
+| 三处同步 | 技能层：`dataTypes` +`SkillCondition`/`SkillConditionMetric`/`SkillConditionOperator`/`SkillConditionSubject` 四型与 `DataSkillDefinition.conditions?`、新 `skills/skillConditions.ts`（唯一实现）、`SkillTriggerBridge`（`buildCondition` 拆成身份内函数+条件外闸）、`skills/turnEndSkills`（候选过滤）、`action/resolvers/TurnEndSkillResolver`（独立求值+新拒因）；**结算层/状态层/动作层/校验层/UI 层零改动**（无新事件、无新状态槽、无新动作）；数据层与录入面零改动（见忠实度行） |
+| 活例 | 无内置活例（非内容刀）。合成探针 `src/skills/skillConditions.test.ts`：六度量逐枚真值/边界/失败闭、`compareTo` 比较、AND 数组、算子五枚全谱、未知度量与缺字段=闭；触发路=真实 GameEngine（非 mock）下"手牌为空时贞烈型门槛不响、有一张才响"、"门槛不过连 choice 要约都不发"；决策路=`listTurnEndSkillCandidates` 过滤 + resolver 拒因 `SKILL_CONDITION_UNMET` + `legalActions` 同步不见候选；四路对账（常驻/重建/重放/isLegal 探针）同结论；`conditions` 缺省回归钉=旧行为逐字 |
+
 
 
 ### 编译诚实契约（同刀落地，D-9 C 类）
@@ -649,7 +672,7 @@
 
 ### 2.7 立项建议书（随 v2.6.4 收敛核验刀出，登记不实施）
 
-**2.7 立项进度（2026-09-26 用户口令"进行2.7"=五刀连做授权）**：刀序=①v2.7.0 报表键定（**已落地**）→ ②v2.7.1 事件/状态事实契约治理（**已落地：本表新增 C-4 事实/呈现契约表，§12-37② 观察项收编，"MAIN→ACTION 折叠"对账补偿退役**）→ ③v2.7.2 choice 生产者最小验证刀（Q5 前置刀，只接线不带内容；**已落地：本表 F 节"choice 生产者候选构造器首批两枚"十二格表，内置零转正、录入面零改动，B9 逐字**）→ ④v2.7.3 自定义条件原语 → ⑤v2.7.4 收敛核验收官（含 ⑦ 装备销毁 CARD_LOST 语义裁决、⑧ 积木语法纸面表、GPT 四检自判、2.8 建议书）；⑤ 每局限一次与 ⑥ 多槽 pendingChoice **等真实需求首现**（不预铺，本建议书原话）、⑨ 平衡监控**不升格**只挂线。**本系列新挂线（非建议书原条目）**：v2.7.1 E2E 发现"store 建房链从未把房间名登记为 `metadata.roomId`"（⇒live 录像恒 `'local'`，§12-39⑦），修它=新增游戏事实，列 2.8 候选、等真实需求。
+**2.7 立项进度（2026-09-26 用户口令"进行2.7"=五刀连做授权）**：刀序=①v2.7.0 报表键定（**已落地**）→ ②v2.7.1 事件/状态事实契约治理（**已落地：本表新增 C-4 事实/呈现契约表，§12-37② 观察项收编，"MAIN→ACTION 折叠"对账补偿退役**）→ ③v2.7.2 choice 生产者最小验证刀（Q5 前置刀，只接线不带内容；**已落地：本表 F 节"choice 生产者候选构造器首批两枚"十二格表，内置零转正、录入面零改动，B9 逐字**）→ ④v2.7.3 自定义条件原语（**已落地：本表 F 节"门槛谓词首批六度量"十二格表逐字兑现——纯函数、先身份再门槛、fail-closed、缺省/空数组逐字不变；全库唯一实现 `src/skills/skillConditions.ts` 三处消费（触发路十键同闸 / 决策路候选与 legalActions 与 AI 司机同口径 / resolver 独立再求值出 `SKILL_CONDITION_UNMET`）；内置零 `conditions`、录入面零改动、条件不进录像不入 EngineState，B9 逐字；真机自动开闸不可达已登记 §12-41①**）→ ⑤v2.7.4 收敛核验收官（含 ⑦ 装备销毁 CARD_LOST 语义裁决、⑧ 积木语法纸面表、GPT 四检自判、2.8 建议书）；⑤ 每局限一次与 ⑥ 多槽 pendingChoice **等真实需求首现**（不预铺，本建议书原话）、⑨ 平衡监控**不升格**只挂线。**本系列新挂线（非建议书原条目）**：v2.7.1 E2E 发现"store 建房链从未把房间名登记为 `metadata.roomId`"（⇒live 录像恒 `'local'`，§12-39⑦），修它=新增游戏事实，列 2.8 候选、等真实需求。
 
 **2.6 五刀总结（能力缺口序全部走完，GPT 二检 Q2 主序兑现）**：v2.6.0 EQUIP_STRIP 第七原语+强袭/崩坏首批（内容刀→B7、账本 38/131）→ v2.6.1 REVEAL/DECK_PLACE 第八/九原语只接线（非内容刀、B7 逐字；五候选忠实度闸门全部拦下="不发明玩法"第二次兑现）→ v2.6.2 CARD_* 事件源扩面+连营/枭姬转正（内容刀→B9 {"1":117,"2":183} 对 B7 双零漂移、账本 **40/129**）→ v2.6.3 choice 玩家决策通道最小闭环（非内容刀、B9 逐字结构性成立；五要素=窗 pendingChoice—预译候选—CHOOSE_OPTION 第 13 canonical 动作—RESOLVED 先行清账+延后结算链—全 A 类进录像；冻结世界闸+被拒动作进录像新事实 §12-36②）→ v2.6.4 收敛核验（choice 面十触发键全谱可达 `choiceReachability.test.ts` 12 例 + 策略档重测欠账归口 + 热座完整局+录像逐字 + 本建议书）。**终点线事实**：Effect 原语恰 9、触发键恰 10、录像/回放/对账四路径契约无一破口；**引擎层已知缺口清零**——剩余内容全部卡在"决策候选构造器"与"门槛语义"两处，属可立项的明示需求而非未知黑洞。
 
