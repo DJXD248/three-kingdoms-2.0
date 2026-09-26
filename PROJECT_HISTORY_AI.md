@@ -1323,6 +1323,6 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **浏览器 E2E（热座房 dev 5173 `?t=b9e2`，事件级双链取证，全程未保存）**：EQUIP 路 `EQUIP_STRIP(强袭)`→`CARD_LOST{via:'EQUIP',count:1,remainingHand:undefined}`→`DRAW(枭姬 count 2)`（armor 卡入弃牌堆、currentArmor 1→0、hp 8→6、p2 手牌+2 逐张对账）；DISCARD 路 致命击杀→`DEATH`→`DISCARD(断肠)`→`CARD_LOST{via:'DISCARD',count:1,remainingHand:0}`→`DRAW(连营 count 1)`；console 0 错误、悲歌/结姻/谦逊 NO_RUNTIME_PAYLOAD warn 照旧（档外技能诚实跳过=正常）。受控场面=canonical `restoreEngineState`（§12-23 授权，随机征召未出陆逊/孙尚香，如实披露）。**E2E 新事实（§12-35④）**：live-replay 复位后**被拒派发也消费文档开档槽**（§12-33④ 精化：取第 N 个真实事件须连发 N+1 次派发，预热可用一次必然被拒的攻击）；页内 `await import('/src/data/generals.ts')` 取真模板对象；`restoreEngineState` 快照带 `phase:'playing'` → store phase 随之切换、棋盘直接渲染免走 lobby；击杀补偿抽后 store phase 翻 `'drawing'`（=UI"击破补偿抽卡"窗口，正常渲染非异常）。清理=setPhase('menu')、删页内临时对象。
 - **验证（五闸全部在文件定稿后）**：check 0 错；**466 例/50 文件全过**（+4）；coverage 定稿快照 49.42/41.32/40.57/54.92 四项全过地板 42/34/34/47（§12-22④ 快照口径，棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,949.75 kB / gzip 571.47 kB**（较 2.6.1 +2.73/+0.64 kB=派生分支+桥接谓词+两技能载荷+描述文本进 bundle）。package.json/lock=2.6.2。
 - **GPT 沟通判断（计划口径）**：**跳过**——2.6 三检预钉 v2.6.4；本刀无契约级意外（双词表消化在编译诚实契约既有通道内、闭面清单主动收口=GPT Q3 口径延续、重入环成员零新增）。
-- **CI 状态**：**PENDING**
+- **CI 状态**：**全绿**——GitHub Actions CI #101（run 36204359196，master 推送触发）在 commit 2c8b0a3 上 completed successfully（feat d1acb3e + docs 2c8b0a3 + 标签 v2.6.2 由单顶端 run 全覆盖；**直连超时→一次性代理 127.0.0.1:10808 推 master+标签均成功，未写持久配置**）。
 
 
