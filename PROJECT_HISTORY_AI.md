@@ -1358,4 +1358,23 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **GPT 沟通判断**：三检=本刀计划内动作（预钉），已完成并回填 ARCH_MAP §G 与 HANDOFF。
 - **CI 状态**：**全绿**——GitHub Actions CI #105（run 36224245104，master 推送触发）在 commit 3d5ec30 上 completed successfully（feat f6bee82 + docs 3d5ec30 + 标签 v2.6.4 由单顶端 run 全覆盖；本次直连推送 master+标签均成功、未借道代理）。
 
+## Qoder 2.7.0：2.7 第一刀（纯工具面·非内容刀，对 B9 逐字）——技能触发报表键定：计数键由裸技能名段改为 `将领模板id:技能名`，累积别名表解三种装配期持有者形态；期望行同改键定⇒唯一键 38→39（屯田拆两条独立账线=同势力同名裁决的观察前置）；491 例/53 文件净零新增（改形刀）（2026-09-26）
+
+- **模型/会话**：Qoder（本轮 2.7 立项口令"进行2.7"=五刀连做授权，刀间不再待口令）。
+- **本刀定位**：2.7 建议书第 1 项=报表键定小刀。**纯工具面**：只改 `src/ai/` 观测与报表路径，`src/` 玩法运行时零改动，`trackSkillTriggers` 默认关⇒B9 逐字是结构性必然（仍按纪律实测两轮）。
+- **旧键定的真实缺陷（先取证再动手）**：v2.4.3 起计数键取 compiled skillId 的**技能名段**，期望行 `configuredSkillRows()` 取裸技能名。60 局 seed5000 `--skill-stats` 实测**命中 0 条配置行**——不是没触发，是键根本对不上。
+- **持有者段三种形态（本刀新事实，§12-38①）**：技能 id=`${ownerKey}:${skill.name}:${effectId}`，`ownerKey = runtimeGeneralId ?? general.id`（skillCompiler.ts:152），`syncPlayerSkills` 取 `getRuntimeCardId(general) || general.id`（runtimeIdentity.ts:12-15=instanceId 优先）。于是 ai-battle 里同时存在 `ai<seed>_c<n>`（matchSetup.ts:115  stamped instanceId）与 `<模板id>_p<座位>`（matchSetup.ts:138 copy.id），UI 路径是 `<模板id>__inst_<x>`——三者都不跨批次稳定。
+- **治法=累积别名表**：`collectTemplateAliases(state, acc)` 同时扫 `p.generalPool` 与 `p.fieldGenerals`（`entry.instanceId ?? general.instanceId` 与 copy id 双键入表），值=`templateOfCopyId(id)=id.replace(/_p\d+$/,'')`；**累积**而非每步快照（技能登记可长寿于名册条目：阵亡链效果在持有者离场后仍触发，单点快照必漏）；开局建一次+每步派发前并集。不可解析持有者**保留原始段**=离册行如实披露，绝不静默丢弃。旧 `snapshotFieldTemplates` 删除。
+- **报表面同步键定**：`configuredSkillRows()`→`{ key: `${g.id}:${s.name}`, label: `${g.name}·${s.name}(${g.id})` }`；`formatSkillTriggerStats` 逻辑不变；`battleCli.ts` 表头文案改"键=将领模板id:技能名，双效果技能分计两次"。
+- **唯一键 38→39（行数仍 39）**：屯田（魏邓艾 / 晋邓艾 `jin_007`）此前被并计，现拆成两条独立账线=用户"同势力同名：内容层允许存在、装配层强制唯一"裁决的**观察前置**（先能分开计数，才谈得上策略落地）。
+- **实测（60 局 seed5000 `--skill-stats`）**：配置技能 39 条 · 触发过 **10** 条 · 零触发 29 条——贾充·帷幄(jin_004) 3 / 杜预·拓略(jin_009) 2 / 羊祜·垦荒(jin_010) 2 / 司马炎·封赏(jin_014) 2 / 黄盖·苦肉(wu_004) 2 / 邓艾·屯田(jin_007) 1 / 王元姬·英慧(jin_008) 1 / 文鸯·奋勇(jin_012) 1 / 周瑜·英姿(wu_005) 1 / 吴国太·补益(wu_021) 1；`演練` 合成技能行正确判为离册（不并入内置账线）。
+- **测试改形（491 例/53 文件，净零新增）**：`skillTriggerKey` 单测重写为别名表口径（无表→原始段 `wei_001__inst_a:奸雄`；有表→`ai712_c3→wei_003:猛进`、`jin_004_p2→jin_004:帷幄`；无冒号回退）；runMatch on 例三条**负向钉**（`not.toContain('__inst')` / `not.toMatch(/^ai\d+_c\d+$/)` / `not.toMatch(/_p\d+$/)`）；**正向形状钉移入 20 局 runBatch 汇总**——单局 seed712 小池档实测 `KEYS []`，即"一次 runMatch 可以合法零技能触发"，形状断言空转即假失败（§12-38②）；battleReport 例加 `idOf()` 查模板 id（不硬编码可漂移字面量）、离册行样例改 `ai712_c3:演練・守夜`。
+- **过程坑**：首版别名表只扫 `fieldGenerals` 且值取 copy id⇒报表全零命中；补 `_p\d+` 剥离+双键+累积后 CLI 复核命中。临时探针 `src/ai/__probe.test.ts` 两次使用后 `rm -f`，提交前 suite 回到 53 文件。探针期 API 误用纠正：合法动作枚举是 `engine.legalActions(playerId)` 非 `getLegalActions`。
+- **非内容刀硬锚达成**：ai-battle 300 局 seed1 胜席 **{"1":117,"2":183} 对 B9 逐字一致**——won=300、VIOLATIONS=0、改设计后复跑两轮剥离计时行后 cmp 逐字节全等；逐势力锚（魏116/56/187/132/10/0、蜀136/71/204/131/14/2、吴126/55/161/115/4/0、群126/70/208/119/14/2、晋96/48/134/95/4/0）全部吻合 §12-33①。
+- **验证（五闸全部在文件定稿后）**：check 0 错；**491 例/53 文件全过**；coverage 定稿快照 **50.25/42.34/41.19/55.77** 四项全过地板 42/34/34/47（快照口径 §12-22④，棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,956.81 kB / gzip 573.35 kB**（较 2.6.4 +0.43/+0.19 kB=别名表+标签文本）。package.json/lock=**2.7.0**。
+- **浏览器 E2E 判断**：本刀**不占**——`src/` 运行时零改动、无玩法/交互面变更，工具面证据由 CLI 实测+单测承载（如实声明，不以单测冒充真机）。
+- **GPT 沟通判断**：跳过——2.6 三检已把第四检预钉在 v2.7.4 收敛刀，本刀无契约级意外（键定属观测面，未新增语义）。
+- **下一刀**=v2.7.1 事件/状态事实契约治理刀（§12-37② engineAwareSetter 镜像重建观察项收编：呈现字段 vs 事实字段边界固定+回归锚；非内容刀，对 B9 逐字）。
+- **CI 状态**：**PENDING（本刀登记后推送核验回填）**。
+
 
