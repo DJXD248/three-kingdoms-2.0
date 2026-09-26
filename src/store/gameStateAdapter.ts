@@ -20,11 +20,65 @@ function seedRngState(store: any) {
   return createRngState((Date.now() ^ Math.floor(Math.random() * 0x100000000)) >>> 0);
 }
 
+/**
+ * Fact vs presentation boundary for the compatibility mirror (2.7.1,
+ * 2.6.4 §12-37② observation item).
+ *
+ * `storeStateToEngineState` rebuilds EngineState out of store DISPLAY fields.
+ * Whatever the display cannot express is a game fact and must be carried over
+ * from the canonical state the store already holds — turn, consumedSkills,
+ * pendingChoice, rngState and the metadata bag (roomId/winnerId…) are all in
+ * that class. `timelinePhase` is a fact the display only reflects LOSSILY:
+ * `applyEngineStateToStore` folds DRAW/ACTION/GAME_OVER into draw/main/end, so
+ * the mirror has to invert that table rather than upper-case display
+ * vocabulary. Before this contract a display-only `set()` wrote
+ * `timelinePhase:'MAIN'` into the live snapshot and replaced metadata wholesale
+ * (losing roomId), which is why the 2.6.4 hotseat live↔replay reconciliation
+ * had to fold MAIN→ACTION inside its normalize口径 (§12-37② observation, ③ recipe).
+ *
+ * This is presentation hygiene only, never a second transition path: the
+ * engine still derives facts through `TransitionCore.transition` alone, and the
+ * mirror cannot invent or drop a canonical event (it emits nothing).
+ */
+const DISPLAY_TO_CANONICAL_TIMELINE: Record<string, string> = {
+  draw: 'DRAW',
+  main: 'ACTION',
+  end: 'GAME_OVER',
+};
+
+function canonicalTimelinePhase(
+  store: any,
+  previous?: EngineState | null,
+): string | undefined {
+  const display = store?.turnPhase ? String(store.turnPhase).toLowerCase() : '';
+  if (DISPLAY_TO_CANONICAL_TIMELINE[display]) return DISPLAY_TO_CANONICAL_TIMELINE[display];
+  // 'start' is the collapse bucket — MENU and TURN_START both project onto it.
+  if (display === 'start') {
+    return previous?.timelinePhase === 'TURN_START' ? 'TURN_START' : 'MENU';
+  }
+  return previous?.timelinePhase;
+}
+
+/** Canonical metadata keys survive a mirror rebuild; the adapter's own display
+ * observations (draw context, provenance marker) are layered on top. */
+function rebuildMetadata(store: any): EngineState['metadata'] {
+  const previous = store?.engineState?.metadata;
+  const facts = previous && typeof previous === 'object' ? previous : {};
+  return {
+    ...facts,
+    source: 'zustand-compatibility-adapter',
+    drawPlayerId: store.drawContext?.playerId ?? null,
+    drawReason: store.drawContext?.reason ?? null,
+    drawTotalCards: store.drawContext?.totalCards ?? null,
+  };
+}
+
 export function storeStateToEngineState(store: any): EngineState {
+  const previous: EngineState | undefined = store?.engineState;
   return {
     version: 1,
     phase: store.phase ?? 'menu',
-    timelinePhase: store.turnPhase ? String(store.turnPhase).toUpperCase() : undefined,
+    timelinePhase: canonicalTimelinePhase(store, previous),
     players: Array.isArray(store.players) ? store.players.map((player: any) => ({
       ...player,
       hand: Array.isArray(player.hand) ? player.hand : [],
@@ -42,12 +96,7 @@ export function storeStateToEngineState(store: any): EngineState {
     round: typeof store.currentRound === 'number' ? store.currentRound : 0,
     deck: Array.isArray(store.cardDeck) ? store.cardDeck : [],
     discardPile: Array.isArray(store.discardPile) ? store.discardPile : [],
-    metadata: {
-      source: 'zustand-compatibility-adapter',
-      drawPlayerId: store.drawContext?.playerId ?? null,
-      drawReason: store.drawContext?.reason ?? null,
-      drawTotalCards: store.drawContext?.totalCards ?? null,
-    },
+    metadata: rebuildMetadata(store),
     drawState: store.drawContext
       ? {
           reason: store.drawContext.reason,
