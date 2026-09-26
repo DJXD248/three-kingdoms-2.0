@@ -27,6 +27,10 @@ import {
   applyDeckPlaceEvent,
 } from './eventProcessors/deckEvents';
 import {
+  applyChoiceRequiredEvent,
+  applyChoiceResolvedEvent,
+} from './eventProcessors/choiceEvents';
+import {
   applyPlayerDefeatedEvent,
   applyGameOverEvent,
 } from './eventProcessors/playerEvents';
@@ -107,6 +111,10 @@ export class EventProcessor {
         return applyRevealEvent(state, event);
       case 'DECK_PLACE':
         return applyDeckPlaceEvent(state, event);
+      case 'CHOICE_REQUIRED':
+        return applyChoiceRequiredEvent(state, event);
+      case 'CHOICE_RESOLVED':
+        return applyChoiceResolvedEvent(state, event);
       case 'PLAYER_DEFEATED':
         return applyPlayerDefeatedEvent(state, event);
       case 'GAME_OVER':

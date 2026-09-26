@@ -225,7 +225,14 @@ export class SkillTriggerBridge {
   /** Effect translation — instance-free on purpose (2.3.1): the trigger path
    * and the explicit ACTIVATE_SKILL path must share ONE code, so this is a
    * static and TurnEndSkillResolver calls it directly rather than keeping a
-   * second copy of the DRAW/DAMAGE/HEAL/GAIN_ARMOR translation. */
+   * second copy of the DRAW/DAMAGE/HEAL/GAIN_ARMOR translation.
+   *
+   * choiceMode (2.6.3): instead of one event per effect, a single
+   * CHOICE_REQUIRED offer is emitted whose options are the SAME translated
+   * events, one branch each — the player picks with CHOOSE_OPTION and the
+   * chosen branch settles then ("延后结算时点=决策时点"). Deterministic by
+   * construction: label + branch events are derived from state at trigger
+   * time, zero RNG, and the choiceKey is composed like the rw: ids. */
   static createSkillEvents(
     binding: SkillOwnerBinding,
     state: EngineState,
@@ -233,7 +240,7 @@ export class SkillTriggerBridge {
   ): GameEvent[] {
     const sourceId = String(binding.ownerId);
 
-    return binding.skill.effects.map(effect => {
+    const translateEffect = (effect: SkillEffectData): GameEvent => {
       const targetId = SkillTriggerBridge.resolveEffectTarget(effect, binding, event);
       const data = {
         sourceId,
@@ -391,7 +398,24 @@ export class SkillTriggerBridge {
         type: 'CUSTOM',
         data: { ...data, kind: effect.type }
       };
-    });
+    };
+
+    if (binding.skill.choiceMode) {
+      const options = binding.skill.effects.map(effect => ({
+        label: effect.description ?? binding.skill.description ?? binding.skill.name,
+        events: [translateEffect(effect)],
+      }));
+      const choiceData = {
+        choiceKey: `ch:${state.turn ?? 0}:${state.round ?? 0}:${binding.skill.id}`,
+        chooserPlayerId: Number(sourceId),
+        options,
+        skillId: binding.skill.id,
+        skillName: binding.skill.name,
+      };
+      return [{ type: 'CHOICE_REQUIRED', data: choiceData }];
+    }
+
+    return binding.skill.effects.map(translateEffect);
   }
 
   /**

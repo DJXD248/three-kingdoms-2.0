@@ -23,8 +23,12 @@
  *     one armor point deducted per detached card; effect types beyond the
  *     seven supported ones are still skipped rather than emitting no-op
  *     events.
- *   - effectMode 'choice' needs the (not yet wired) ReactionWindow prompt and
- *     is skipped.
+ *   - effectMode 'choice' (2.6.3): effects sharing one trigger signature
+ *     compile into a SINGLE choiceMode definition — the bridge translates it
+ *     into CHOICE_REQUIRED with one option per effect and the player picks
+ *     through the canonical CHOOSE_OPTION action. A choice skill whose
+ *     runtime effects sit on different triggers degenerates honestly into
+ *     independent definitions (nothing to choose between at one moment).
  */
 
 import type { General, Skill, SkillEffect, SkillTriggerType } from '../data/generals';
@@ -83,8 +87,7 @@ export interface SkillSkip {
     | 'TRIGGER_UNSUPPORTED'
     | 'TRIGGER_SUBTYPE_UNSUPPORTED'
     | 'NO_RUNTIME_PAYLOAD'
-    | 'EFFECT_TYPE_UNSUPPORTED'
-    | 'CHOICE_MODE_UNSUPPORTED';
+    | 'EFFECT_TYPE_UNSUPPORTED';
 }
 
 export interface CompileResult {
@@ -115,12 +118,29 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
     value: runtime.value,
     target: runtime.target ?? 'TARGET',
     dest: runtime.dest,
+    // choice option label source (2.6.3) — display-only, never matched on.
+    description: effect.description,
   };
+}
+
+/** One runtime effect that survived every gate, pre-grouping. */
+interface CompiledEffect {
+  effect: SkillEffect;
+  data: SkillEffectData;
+  mapped: DataSkillTrigger;
+  damageTypeFilter?: DataSkillDefinition['damageTypeFilter'];
+  cardFilter?: DataSkillDefinition['cardFilter'];
+  turnSubType?: DataSkillDefinition['turnSubType'];
+  /** Trigger identity used by the choice grouping (2.6.3): effects compiled
+   * under one signature fire together, so they are choosable together. */
+  signature: string;
 }
 
 /**
  * Compile one skill of one general instance into zero or more canonical
- * DataSkillDefinitions (one per independently-triggered runtime effect).
+ * DataSkillDefinitions (one per independently-triggered runtime effect;
+ * effectMode 'choice' groups same-trigger effects into one choiceMode
+ * definition — 2.6.3).
  */
 export function compileSkill(
   general: Pick<General, 'id' | 'name'>,
@@ -131,27 +151,23 @@ export function compileSkill(
   const skipped: SkillSkip[] = [];
   const ownerKey = runtimeGeneralId ?? general.id;
 
-  const consider = (effect: SkillEffect | undefined, fallbackTrigger: Skill['trigger']) => {
+  const consider = (effect: SkillEffect | undefined, fallbackTrigger: Skill['trigger']): CompiledEffect | null => {
     // A skill without effect entries can never carry structured payloads.
     if (!effect) {
       skipped.push({ skillName: skill.name, reason: 'NO_RUNTIME_PAYLOAD' });
-      return;
+      return null;
     }
 
     const triggerConfig = effect?.trigger ?? fallbackTrigger ?? skill.trigger;
     if (!triggerConfig?.type) {
       skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'NO_TRIGGER' });
-      return;
-    }
-    if (skill.effectMode === 'choice') {
-      skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'CHOICE_MODE_UNSUPPORTED' });
-      return;
+      return null;
     }
 
     const mapped = SUPPORTED_TRIGGER_MAP[triggerConfig.type];
     if (!mapped) {
       skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_UNSUPPORTED' });
-      return;
+      return null;
     }
 
     let damageTypeFilter: DataSkillDefinition['damageTypeFilter'];
@@ -160,12 +176,12 @@ export function compileSkill(
       // otherTurn onTurnEnd has no honest activation path (2.3.1, same
       // discipline as the pre-existing onTurnStart guard).
       skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
-      return;
+      return null;
     }
     if (mapped === 'onKill' && triggerConfig.killSubType === 'killAlly') {
       // The engine only emits DEATH for enemy kills — never fires; skip honestly.
       skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
-      return;
+      return null;
     }
     if ((mapped === 'onDamageTaken' || mapped === 'onDamageDealt') && triggerConfig.damageSubType) {
       if (triggerConfig.damageSubType === 'attackDamage') damageTypeFilter = 'attack';
@@ -182,11 +198,11 @@ export function compileSkill(
       const lostOnly = cardSub === 'equipmentLost' || cardSub === 'lastHandLost' || cardSub === 'handLost';
       if (cardSub === 'anyGained' && mapped === 'onCardLost') {
         skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
-        return;
+        return null;
       }
       if (lostOnly && mapped === 'onCardGained') {
         skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
-        return;
+        return null;
       }
       if (mapped === 'onCardLost') {
         if (cardSub === 'equipmentLost') cardFilter = 'equipment';
@@ -198,36 +214,83 @@ export function compileSkill(
     const converted = toEffectData(effect);
     if (!converted) {
       skipped.push({ skillName: skill.name, effectId: effect.id, reason: 'NO_RUNTIME_PAYLOAD' });
-      return;
+      return null;
     }
     if ('reason' in converted) {
       converted.skillName = skill.name;
       skipped.push(converted);
-      return;
+      return null;
     }
 
-    definitions.push({
-      id: `${ownerKey}:${skill.name}:${effect.id}`,
-      name: skill.name,
-      trigger: mapped,
-      description: effect.description ?? skill.description ?? '',
-      effects: [converted],
-      sourceGeneralId: runtimeGeneralId,
+    const turnSubType = (mapped === 'onTurnStart' || mapped === 'onTurnEnd')
+      ? triggerConfig.turnSubType
+      : undefined;
+    return {
+      effect,
+      data: converted,
+      mapped,
       damageTypeFilter,
       cardFilter,
-      // ACTIVATE_SKILL addressing (2.3.1): id doubles as `<general>:<skill>:<effect>`,
-      // these two fields let resolvers/UI read the parts without parsing.
-      effectId: effect.id,
-      turnSubType: (mapped === 'onTurnStart' || mapped === 'onTurnEnd')
-        ? triggerConfig.turnSubType
-        : undefined,
-    });
+      turnSubType,
+      signature: `${mapped}|${damageTypeFilter ?? ''}|${cardFilter ?? ''}|${turnSubType ?? ''}`,
+    };
   };
 
+  const singleDefinition = (c: CompiledEffect): DataSkillDefinition => ({
+    id: `${ownerKey}:${skill.name}:${c.effect.id}`,
+    name: skill.name,
+    trigger: c.mapped,
+    description: c.effect.description ?? skill.description ?? '',
+    effects: [c.data],
+    sourceGeneralId: runtimeGeneralId,
+    damageTypeFilter: c.damageTypeFilter,
+    cardFilter: c.cardFilter,
+    // ACTIVATE_SKILL addressing (2.3.1): id doubles as `<general>:<skill>:<effect>`,
+    // these two fields let resolvers/UI read the parts without parsing.
+    effectId: c.effect.id,
+    turnSubType: c.turnSubType,
+  });
+
+  const candidates: CompiledEffect[] = [];
   if (skill.effects && skill.effects.length > 0) {
-    for (const effect of skill.effects) consider(effect, skill.trigger);
+    for (const effect of skill.effects) {
+      const compiled = consider(effect, skill.trigger);
+      if (compiled) candidates.push(compiled);
+    }
   } else {
     consider(undefined, skill.trigger);
+  }
+
+  if (skill.effectMode === 'choice' && candidates.length >= 2) {
+    // Group by trigger signature: effects that fire at the SAME moment are
+    // one choice ("select one"); an isolated effect has nothing to choose
+    // against and compiles exactly as before (id shape included).
+    const groups = new Map<string, CompiledEffect[]>();
+    for (const c of candidates) {
+      const group = groups.get(c.signature);
+      if (group) group.push(c);
+      else groups.set(c.signature, [c]);
+    }
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        definitions.push(singleDefinition(group[0]));
+        continue;
+      }
+      definitions.push({
+        id: `${ownerKey}:${skill.name}:choice`,
+        name: skill.name,
+        trigger: group[0].mapped,
+        description: skill.description ?? '',
+        effects: group.map(c => c.data),
+        sourceGeneralId: runtimeGeneralId,
+        damageTypeFilter: group[0].damageTypeFilter,
+        cardFilter: group[0].cardFilter,
+        turnSubType: group[0].turnSubType,
+        choiceMode: true,
+      });
+    }
+  } else {
+    for (const c of candidates) definitions.push(singleDefinition(c));
   }
 
   return { definitions, skipped };

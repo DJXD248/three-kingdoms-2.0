@@ -64,6 +64,10 @@ export function storeStateToEngineState(store: any): EngineState {
     // EventProcessor) — dropping it on rebuild would silently undo
     // once-per-turn activation (2.3.1).
     consumedSkills: store?.engineState?.consumedSkills,
+    // Same A-class-slot lesson for the choice channel (2.6.3): dropping an
+    // outstanding pendingChoice on rebuild would hand a frozen game back to
+    // the world with the debt erased.
+    pendingChoice: store?.engineState?.pendingChoice,
   };
 }
 

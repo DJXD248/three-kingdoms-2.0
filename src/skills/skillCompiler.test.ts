@@ -263,20 +263,64 @@ describe('skillCompiler · compileSkill', () => {
     expect(top.definitions[0].effects[0]).toMatchObject({ type: 'DECK_PLACE', value: 0, dest: 'TOP' });
   });
 
-  it('skips choice-mode skills until the reaction window is wired', () => {
+  it('choice 模式（2.6.3）：同触发两个带 runtime 效果 → 一张 choiceMode 定义（多 effects 一触发）', () => {
+    const { definitions, skipped } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'choice',
+        effects: [
+          { id: 'e1', description: '摸一张牌', trigger: { type: 'onTurnStart' }, runtime: { type: 'DRAW_CARD', value: 1 } },
+          { id: 'e2', description: '造成1点伤害', trigger: { type: 'onTurnStart' }, runtime: { type: 'DAMAGE', value: 1 } },
+        ],
+      }),
+      'g1',
+    );
+    expect(skipped).toHaveLength(0);
+    expect(definitions).toHaveLength(1);
+    const def = definitions[0];
+    expect(def.choiceMode).toBe(true);
+    expect(def.id).toBe('g1:测试技能:choice');
+    expect(def.trigger).toBe('onTurnStart');
+    expect(def.effectId).toBeUndefined();
+    // 选项 label = 效果描述透传（缺省回退技能描述），数据序=枚举序
+    expect(def.effects.map(e => e.description)).toEqual(['摸一张牌', '造成1点伤害']);
+    expect(def.effects.map(e => e.type)).toEqual(['DRAW_CARD', 'DAMAGE']);
+  });
+
+  it('choice 模式（2.6.3）：孤立效果照常独立定义（id 形态与今日一致），不支持项照常诚实 skip', () => {
     const { definitions, skipped } = compileSkill(
       general(),
       skill({
         effectMode: 'choice',
         effects: [
           { id: 'e1', trigger: { type: 'onTurnStart' }, runtime: { type: 'DRAW_CARD', value: 1 } },
-          { id: 'e2', trigger: { type: 'onTurnStart' }, runtime: { type: 'DAMAGE', value: 1 } },
+          { id: 'e2', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' } },
+          { id: 'e3', trigger: { type: 'onTurnStart' } }, // 无 runtime → 诚实 skip
+          { id: 'e4', trigger: { type: 'modifyStat' } as never, runtime: { type: 'DRAW_CARD', value: 1 } }, // 触发不支持
         ],
       }),
       'g1',
     );
-    expect(definitions).toHaveLength(0);
-    expect(skipped.every(s => s.reason === 'CHOICE_MODE_UNSUPPORTED')).toBe(true);
+    expect(definitions).toHaveLength(2);
+    expect(definitions.every(d => !d.choiceMode)).toBe(true);
+    expect(definitions.map(d => d.id)).toEqual(['g1:测试技能:e1', 'g1:测试技能:e2']);
+    expect(skipped.map(s => s.reason)).toEqual(['NO_RUNTIME_PAYLOAD', 'TRIGGER_UNSUPPORTED']);
+  });
+
+  it('choice 模式撞同触发但 damageTypeFilter 不同 → 不同签名不合并（触发时点不同即无可择）', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'choice',
+        effects: [
+          { id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' } as never, runtime: { type: 'DRAW_CARD', value: 1 } },
+          { id: 'e2', trigger: { type: 'onDamageTaken', damageSubType: 'skillDamage' } as never, runtime: { type: 'DRAW_CARD', value: 1 } },
+        ],
+      }),
+      'g1',
+    );
+    expect(definitions).toHaveLength(2);
+    expect(definitions.every(d => !d.choiceMode)).toBe(true);
   });
 
   it('compiles each independently-triggered effect into its own definition', () => {

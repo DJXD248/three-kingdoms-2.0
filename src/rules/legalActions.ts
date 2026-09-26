@@ -90,6 +90,20 @@ export function getLegalActions(engine: GameEngine, playerId: number): GameActio
   // ── Terminal / non-interactive states ──
   if (state.phase === 'gameOver' || state.phase === 'menu') return [];
 
+  // ── Frozen world (2.6.3): an outstanding offer owns the action space.
+  // Options are enumerated in recorded order, so a zero-random policy breaks
+  // ties deterministically; the probe (validator + resolver) is still the
+  // final authority. ──
+  const pending = state.pendingChoice;
+  if (pending) {
+    if (pending.playerId === playerId) {
+      pending.options.forEach((_option, index) => {
+        tryPush('CHOOSE_OPTION', { choiceKey: pending.key, optionIndex: index });
+      });
+    }
+    return out;
+  }
+
   // ── Draw window (only the designated draw player may act) ──
   const draw = state.drawState;
   if (state.phase === 'drawing' && draw && draw.playerId === playerId) {

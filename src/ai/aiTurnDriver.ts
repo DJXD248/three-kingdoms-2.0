@@ -107,6 +107,9 @@ function applyPolicyAction(state: GameState, playerId: number, action: GameActio
     // edits. Consumption drops the candidate from the next legalActions, so
     // the stagnation guard cannot loop on it.
     case 'ACTIVATE_SKILL': return state.activateTurnEndSkill(String(p?.skillId ?? ''), String(p?.generalId ?? ''));
+    // 2.6.3: the frozen world leaves the debtor's policy exactly the recorded
+    // options to pick from — the choice arrives as a canonical CHOOSE_OPTION.
+    case 'CHOOSE_OPTION': return state.chooseOption(Number(p?.optionIndex) || 0);
     case 'END_TURN': state.endTurn(); return true;
     case 'SURRENDER': state.surrender(playerId); return true;
     default: return false;
@@ -155,6 +158,19 @@ function stepPlaying(state: GameState): boolean {
  * (one per call), false when it is a human's turn or nothing is drivable.
  */
 export function runAiStep(state: GameState): boolean {
+  // Frozen world (2.6.3): an outstanding offer outranks the phase switch —
+  // only the debtor may act, so the driver must play for THAT seat, not for
+  // the turn owner. A human debtor is the choice HUD's job (return false).
+  const pending = state.engineState?.pendingChoice;
+  if (pending && (state.phase === 'playing' || state.phase === 'drawing')) {
+    const seat = aiSeatOf(state, pending.playerId);
+    if (!seat) return false;
+    const tier: AiSeatTier = seat.aiTier ?? 'balanced';
+    const action = pickPolicyAction(state, pending.playerId, tier);
+    if (action?.type === 'CHOOSE_OPTION' && applyPolicyAction(state, pending.playerId, action)) return true;
+    state.chooseOption(0); // in-range index is always legal while the offer is live
+    return true;
+  }
   switch (state.phase) {
     case 'lobby':
       if (!allSeatsAi(state)) return false;

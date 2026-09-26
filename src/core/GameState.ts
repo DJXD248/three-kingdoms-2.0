@@ -7,6 +7,7 @@
  */
 
 import { createRngState, type RngState } from './rng';
+import type { GameEvent } from './Event';
 
 export interface EngineStatusState {
   id: string;
@@ -70,6 +71,31 @@ export interface EngineState {
    * simply carry no consumption.
    */
   consumedSkills?: ConsumedSkill[];
+  /**
+   * Pending player decision (2.6.3, choice channel — a capability-layer
+   * non-content cut): an A-class replayable fact, same idea as consumedSkills
+   * — it lives in the state so 常驻/重建/回放 all see the SAME debt, and the
+   * validator's frozen-world gate keys off it (while a debt is owed, ONLY the
+   * debtor's CHOOSE_OPTION action is accepted, so candidates never go stale).
+   * Optional: legacy states/saves lack it and simply carry no debt.
+   */
+  pendingChoice?: PendingChoice | null;
+}
+
+/** One frozen candidate branch of a pending choice: label for the HUD plus
+ * the effect events pre-translated at offer time (settled verbatim when the
+ * debtor picks this option — see PROJECT_ARCH_MAP §F choice table). */
+export interface PendingChoiceOption {
+  label: string;
+  events: GameEvent[];
+}
+
+export interface PendingChoice {
+  /** `ch:<turn>:<round>:<skillId>` — deterministic, no RNG (same recipe as rw ids). */
+  key: string;
+  /** The debtor: only this player's CHOOSE_OPTION settles the offer. */
+  playerId: number;
+  options: PendingChoiceOption[];
 }
 
 export interface ConsumedSkill {

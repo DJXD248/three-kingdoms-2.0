@@ -171,6 +171,9 @@ export function formatActionLine(step: number, action: RecordedAction): string {
     case 'CONFIRM_DRAW':
       detail = '确认抽牌';
       break;
+    case 'CHOOSE_OPTION':
+      detail = `抉择 ${p.choiceKey ?? '?'} → 选项${Number(p.optionIndex ?? -1) + 1}`;
+      break;
     case 'END_TURN':
       detail = '结束回合';
       break;

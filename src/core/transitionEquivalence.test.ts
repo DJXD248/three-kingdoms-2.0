@@ -1487,5 +1487,114 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(flat.some(e => e.type === 'DRAW'
       && (String(e.data?.skillId ?? '').includes('连营:e1') || String(e.data?.skillId ?? '').includes('枭姬:e1')))).toBe(false);
   });
+
+  // ── v2.6.3 choice 玩家决策通道（非内容刀：合成模板实证接线，内置零载荷） ──
+
+  it('择一闭环四路对账：choiceMode 受伤开账→冻结世界双拒→择定落账，同配置两跑逐字节一致 (v2.6.3)', () => {
+    const chooser = makeGeneral('ch_pick', 8, [{
+      name: '择锋',
+      description: '受到伤害后：摸两张牌或获得1点护甲',
+      effectMode: 'choice',
+      effects: [
+        { id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' }, description: '摸两张牌' },
+        { id: 'e2', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' }, description: '获得1点护甲' },
+      ],
+    }]);
+    const attacker = makeGeneral('ch_atk', 4, []);
+    const choiceKey = 'ch:1:1:ch_pick:择锋:choice';
+    const build = () => makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(attacker, 1, 0)],
+        hand: COSTS.slice(0, 2).map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(chooser, 2, 0)] }),
+    ]);
+    const stepA = attack('ch_atk', 'ch_pick', 0);
+    const stepBlocked = createAction('END_TURN', 1); // 欠账未清：诚实拒绝
+    const stepStolen = createAction('CHOOSE_OPTION', 1, { choiceKey, optionIndex: 1 }); // 他人代择：拒绝
+    const stepPick = createAction('CHOOSE_OPTION', 2, { choiceKey, optionIndex: 0 }); // 欠债人择定
+    const actions = [stepA, stepBlocked, stepStolen, stepPick];
+
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    const steps = actions.map(a => rawEvents(engine.dispatch(a)));
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    const flat = steps.flat().map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    // 开账：同签名双效果并成一张 choiceMode 定义，一次触发恰一张 CHOICE_REQUIRED；
+    // 延后结算——开账瞬间未落任何效果牌
+    const required = flat.filter(e => e.type === 'CHOICE_REQUIRED');
+    expect(required).toHaveLength(1);
+    expect(required[0].data).toMatchObject({
+      choiceKey,
+      chooserPlayerId: 2,
+      options: [
+        { label: '摸两张牌', events: [{ type: 'DRAW' }] },
+        { label: '获得1点护甲', events: [{ type: 'GAIN_ARMOR' }] },
+      ],
+    });
+
+    // 冻结世界双拒逐条挂事件流：非择定动作 CHOICE_PENDING、他人代择 NOT_CHOICE_PLAYER
+    expect(steps[1]).toHaveLength(1);
+    expect(JSON.parse(steps[1][0])).toMatchObject({ type: 'ACTION_REJECTED', data: { reason: 'CHOICE_PENDING' } });
+    expect(JSON.parse(steps[2][0])).toMatchObject({ type: 'ACTION_REJECTED', data: { reason: 'NOT_CHOICE_PLAYER' } });
+
+    // 择定：CHOICE_RESOLVED 先行清账，选中分支随后走正常结算链
+    const resolvedIdx = flat.findIndex(e => e.type === 'CHOICE_RESOLVED');
+    const drawIdx = flat.findIndex(e => e.type === 'DRAW');
+    expect(resolvedIdx).toBeGreaterThanOrEqual(0);
+    expect(drawIdx).toBeGreaterThan(resolvedIdx);
+    const resolved = flat.filter(e => e.type === 'CHOICE_RESOLVED');
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].data).toMatchObject({ choiceKey, chooserPlayerId: 2, optionIndex: 0, label: '摸两张牌' });
+    const draw = flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('择锋:choice'));
+    expect(draw).toHaveLength(1);
+    expect(draw[0].data).toMatchObject({ playerId: 2, count: 2 });
+    expect(flat.some(e => e.type === 'GAIN_ARMOR')).toBe(false); // 未选分支永不发生
+
+    // 唯一状态位移：牌堆顶 2 张入 p2 手牌；护甲分毫未动；账已 keyed 清空
+    expect(engine.state.pendingChoice ?? null).toBeNull();
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect((p2.hand as Array<{ id: string }>).map(c => c.id)).toEqual(['deck_1', 'deck_2']);
+    expect((engine.state.deck as Array<{ id: string }>).map(c => c.id)).toEqual(['deck_3', 'deck_4']);
+    const pickField = (p2.fieldGenerals as unknown as Array<{ currentArmor: number; currentHp: number }>)[0];
+    expect(pickField.currentArmor).toBe(0);
+    expect(pickField.currentHp).toBe(6); // 2 点近战照常吃满，择一不豁免
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = build();
+    const bridgeSteps: string[][] = [];
+    for (const action of actions) {
+      const r = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = r.engineState;
+      bridgeSteps.push(rawEvents(r.events));
+    }
+    expect(bridgeSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = build();
+    const reconcileSteps: string[][] = [];
+    for (const action of actions) {
+      const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = r.engineState;
+      reconcileSteps.push(rawEvents(r.events));
+    }
+    expect(reconcileSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(4);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    // 同配置两跑逐字节一致：choice 通道零新增随机面（key 确定性、抽牌顺堆顶）
+    const againEngine = new GameEngine(build());
+    syncPlayerSkills(againEngine, againEngine.state);
+    expect(actions.map(a => rawEvents(againEngine.dispatch(a)))).toEqual(steps);
+    expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
 });
 

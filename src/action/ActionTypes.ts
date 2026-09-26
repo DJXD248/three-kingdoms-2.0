@@ -14,7 +14,13 @@ export type ActionType =
   | 'BEGIN_DRAW'
   | 'RESOLVE_BASE_LOSS'
   | 'ACTIVATE_SKILL'
+  | 'CHOOSE_OPTION'
   | 'SURRENDER';
+
+export interface ChooseOptionPayload {
+  choiceKey: string;
+  optionIndex: number;
+}
 
 export interface GameAction<T = unknown> {
   id: string;

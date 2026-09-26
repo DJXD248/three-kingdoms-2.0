@@ -10,6 +10,7 @@ export * from "./ArmorResolver";
 export * from "./DrawResolver";
 export * from "./TurnResolver";
 export * from "./TurnEndSkillResolver";
+export * from "./ChooseOptionResolver";
 
 export { ResolveBaseLossResolver } from './ResolveBaseLossResolver';
 export { SurrenderResolver } from './SurrenderResolver';

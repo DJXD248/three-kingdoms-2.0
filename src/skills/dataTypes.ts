@@ -38,6 +38,9 @@ export interface SkillEffectData {
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
   /** 仅 DECK_PLACE 使用：手牌移到牌堆顶还是底（默认 BOTTOM） */
   dest?: 'TOP' | 'BOTTOM';
+  /** v2.6.3 choice 通道：effect 行自带的展示文案（选项 label 的第一来源，
+   * 缺省回退技能 description）。编译透传，不参与触发匹配。 */
+  description?: string;
 }
 
 export interface DataSkillDefinition {
@@ -65,6 +68,11 @@ export interface DataSkillDefinition {
   /** onTurnStart/onTurnEnd sub-timing carried through compilation (2.3.1):
    * the turn-end ask window only offers selfTurn candidates. */
   turnSubType?: 'selfTurn' | 'otherTurn';
+  /** v2.6.3 choice 通道：源技能 effectMode==='choice'（选择其一）且同触发
+   * 签名下有 ≥2 个带 runtime 的效果时，编译成一张多效果定义——触发时由
+   * SkillTriggerBridge 译成 CHOICE_REQUIRED（options=effects 逐项），玩家经
+   * canonical CHOOSE_OPTION 择定后才结算。孤效果照常走独立定义（零开销）。 */
+  choiceMode?: boolean;
 }
 
 /**

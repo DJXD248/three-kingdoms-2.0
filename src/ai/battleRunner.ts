@@ -299,9 +299,13 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
           break;
         }
         const actor =
-          state.phase === 'drawing' && state.drawState
-            ? state.drawState.playerId
-            : state.currentPlayerId ?? firstPlayerId;
+          state.pendingChoice
+            // Frozen world (2.6.3): an outstanding offer routes the step to
+            // its debtor before the draw-window owner does.
+            ? state.pendingChoice.playerId
+            : state.phase === 'drawing' && state.drawState
+              ? state.drawState.playerId
+              : state.currentPlayerId ?? firstPlayerId;
         const engine = new GameEngine(state, { recordHistory: false });
         syncPlayerSkills(engine, state);
         let next: GameAction | null;

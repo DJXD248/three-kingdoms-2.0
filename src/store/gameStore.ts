@@ -733,6 +733,49 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     return true;
   },
 
+  // 2.6.3 choice channel: the frozen-world release valve. The offer lives in
+  // EngineState.pendingChoice (A-class slot — resident/rebuild/replay all see
+  // it), the pick is a canonical CHOOSE_OPTION action, and the chosen branch
+  // settles inside this same dispatch. Projection mirrors activateTurnEndSkill
+  // (effects can kill/defeat/end the game — never patch partially).
+  chooseOption:(optionIndex)=>{
+    const state=get();
+    const pending=state.engineState.pendingChoice;
+    if(!pending) return false;
+
+    const { engineState, events } = dispatchStoreAction(
+      state,
+      createAction('CHOOSE_OPTION', pending.playerId, { choiceKey: pending.key, optionIndex }),
+    );
+    if(!events.some(event=>event.type==='CHOICE_RESOLVED')) return false;
+
+    if(state.isTestMode){
+      set({ ...buildTestArenaState(state, engineState) });
+      return true;
+    }
+
+    const defeatedPlayerId=(events.find(event=>event.type==='PLAYER_DEFEATED')?.data as any)?.playerId;
+    const defeatedEventPlayer=typeof defeatedPlayerId==='number'
+      ? engineState.players.find(player=>player.id===defeatedPlayerId)
+      : undefined;
+    const pendingDraw=engineState.drawState;
+    const outcome=deriveResultState(state, engineState);
+
+    set({
+      ...engineStateToStoreProjection(engineState, state.currentPlayerIndex),
+      currentRound: engineState.round || state.currentRound,
+      phase: outcome.phase,
+      turnPhase: outcome.turnPhase,
+      winnerId: outcome.winnerId,
+      defeatEvent: typeof defeatedPlayerId==='number' && defeatedEventPlayer
+        ? { faction:(defeatedEventPlayer as any).faction ?? null, name:(defeatedEventPlayer as any).name ?? '' }
+        : state.defeatEvent,
+      drawContext: pendingDraw ? buildDrawContext(engineState, pendingDraw) : null,
+      revealedDrawCards: pendingDraw ? [] : state.revealedDrawCards,
+    });
+    return true;
+  },
+
   updateSettings: s => set((st: GameState) => {
     const settings = { ...st.settings, ...s };
     persistReplaySettings({

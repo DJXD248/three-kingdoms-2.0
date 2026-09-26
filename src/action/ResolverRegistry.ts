@@ -11,6 +11,7 @@ import {
   SupplyResolver,
   TurnResolver,
   TurnEndSkillResolver,
+  ChooseOptionResolver,
   ResolveBaseLossResolver,
   SurrenderResolver,
 } from './resolvers';
@@ -27,6 +28,7 @@ export class ResolverRegistry {
     new ArmorResolver(),
     new TurnResolver(),
     new TurnEndSkillResolver(),
+    new ChooseOptionResolver(),
     new ResolveBaseLossResolver(),
     new SurrenderResolver(),
   ];

@@ -41,6 +41,8 @@ export default function GameBoard(){
   const turnEndAsk=useGameStore(s=>s.turnEndAsk);
   const activateTurnEndSkill=useGameStore(s=>s.activateTurnEndSkill);
   const skipTurnEndAsk=useGameStore(s=>s.skipTurnEndAsk);
+  const pendingChoice=useGameStore(s=>s.engineState.pendingChoice);
+  const chooseOption=useGameStore(s=>s.chooseOption);
 
   const [vm,setVm]=useState<ViewMode>('board');
   const [ins,setIns]=useState<InspectTarget|null>(null);
@@ -519,10 +521,23 @@ export default function GameBoard(){
             </div>
           </div>
         </div>}
+        {/* 2.6.3 choice HUD: the frozen world — while an offer is live only
+            the debtor's pick dispatches (validator gate), so this HUD owns
+            the screen. Options are the bridge's pre-translated branches. */}
+        {pendingChoice&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+          <div className="rounded-xl border-2 border-violet-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(139,92,246,0.35)'}}>
+            <p className="text-sm font-black text-violet-300">🔀 抉择 · {players.find(p=>p.id===pendingChoice.playerId)?.name ?? `玩家${pendingChoice.playerId}`}，请选择其一</p>
+            <p className="mt-0.5 text-[10px] text-violet-200/60">{pendingChoice.key}</p>
+            <div className="mt-2 flex flex-col gap-1.5">
+              {pendingChoice.options.map((o,i)=><button key={i} onClick={()=>chooseOption(i)} title={o.label} className="rounded-lg border border-violet-600/60 bg-violet-900/50 px-3 py-1.5 text-xs font-bold text-violet-100 hover:bg-violet-800/60">◈ 选项{i+1}：{o.label}</button>)}
+            </div>
+          </div>
+        </div>}
         {/* 2.3.1 turn-end ask HUD: real END_TURN is deferred until each candidate is
             activated (canonical ACTIVATE_SKILL) or the player skips. The window itself
-            is container observation; the decisions inside it are recorded facts. */}
-        {turnEndAsk&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+            is container observation; the decisions inside it are recorded facts.
+            Hidden while a choice debt is live (the frozen world above). */}
+        {turnEndAsk&&!pendingChoice&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
           <div className="rounded-xl border-2 border-amber-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(245,158,11,0.35)'}}>
             <p className="text-sm font-black text-amber-300">🌙 回合结束询问 · 是否发动将领技能？</p>
             <p className="mt-0.5 text-[10px] text-amber-200/60">{turnEndAsk.windowId}</p>

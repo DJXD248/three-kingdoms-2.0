@@ -207,7 +207,10 @@ describe('skillExcelFormat: Excel-parsed payloads reach the runtime compiler', (
     expect(skipped).toHaveLength(0);
     expect(definitions).toHaveLength(1);
     expect(definitions[0].trigger).toBe('onDamageDealt');
-    expect(definitions[0].effects[0]).toEqual({ type: 'DAMAGE', value: 1, target: 'TARGET' });
+    // 2.6.3：编译透传 description（choice 选项 label 第一来源），事件字节不受影响
+    expect(definitions[0].effects[0]).toEqual({
+      type: 'DAMAGE', value: 1, target: 'TARGET', description: '造成伤害后追加1点技能伤害',
+    });
     expect(runtimeEffectTypeLabels.DRAW_CARD).toBe('摸牌');
     expect(runtimeTargetLabels.SELF).toBe('自身');
   });

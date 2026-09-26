@@ -132,6 +132,9 @@ export interface GameState {
   // or skip — close the window and commit the real END_TURN.
   activateTurnEndSkill:(skillId:string,generalId:string)=>boolean;
   skipTurnEndAsk:()=>void;
+  // 2.6.3 choice channel: pick option `optionIndex` of the live
+  // engineState.pendingChoice offer (canonical CHOOSE_OPTION dispatch).
+  chooseOption:(optionIndex:number)=>boolean;
   // 2.2.25 reaction-window entry (no skill auto-opens this cut)
   openReactionWindow:(sourceEvent?:GameEvent,participants?:number[])=>ReactionWindowState|null;
   passReaction:(playerId:number)=>boolean;

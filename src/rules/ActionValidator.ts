@@ -12,6 +12,18 @@ export class ActionValidator {
     if (state.phase === 'testArena') {
       // Developer test arena intentionally bypasses normal phase/turn gating.
       // The test harness can control any player and exercise gameplay actions.
+    } else if (state.pendingChoice && state.phase !== 'gameOver') {
+      // Frozen world (2.6.3): while an offer is outstanding, only the debtor's
+      // CHOOSE_OPTION passes — the recorded candidates can never go stale.
+      // gameOver is exempt so the terminal phase falls back to the ordinary
+      // gating below (a dead game must not hang on an unpaid debt).
+      if (action.type === 'CHOOSE_OPTION') {
+        if (action.playerId !== state.pendingChoice.playerId) {
+          return { valid: false, reason: 'NOT_CHOICE_PLAYER' };
+        }
+      } else {
+        return { valid: false, reason: 'CHOICE_PENDING' };
+      }
     } else if (state.phase === 'drawing') {
       // The window itself (drawState) is the authority on who may act.
       // metadata.drawPlayerId is a legacy mirror (store-adapter channel) that
@@ -70,6 +82,16 @@ export class ActionValidator {
       if (typeof payload?.skillId !== 'string' || typeof payload?.generalId !== 'string' ||
         !payload.skillId || !payload.generalId) {
         return { valid: false, reason: 'INVALID_ACTIVATE_SKILL_PAYLOAD' };
+      }
+    }
+
+    if (action.type === 'CHOOSE_OPTION') {
+      // 2.6.3: addressing-only shape check — which offer is live and whether
+      // the index is in range are game facts the resolver re-derives.
+      const payload = action.payload as any;
+      if (typeof payload?.choiceKey !== 'string' || !payload.choiceKey ||
+        !Number.isInteger(payload.optionIndex) || payload.optionIndex < 0) {
+        return { valid: false, reason: 'INVALID_CHOOSE_OPTION_PAYLOAD' };
       }
     }
 
