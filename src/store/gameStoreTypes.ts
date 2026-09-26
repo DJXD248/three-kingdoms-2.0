@@ -146,8 +146,8 @@ export interface GameState {
   updateSettings:(s:Partial<GameState['settings']>)=>void;
   clearDefeatEvent:()=>void;
   clearSkillActivation:(id:string)=>void;
-  toggleDeveloperMode:(password:string)=>boolean;
-  setDeveloperMode:(v:boolean)=>void;
+  enableDeveloperMode:(digest:string|null)=>boolean;
+  disableDeveloperMode:()=>void;
   updateSkillEdit:(generalId:string, skills:{name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[])=>void;
   updateGeneralEdit:(generalId:string, edits:{name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number;identity?:string})=>void;
   // v2.8.0 identity registry CRUD (身份管理). deleteIdentity refuses while

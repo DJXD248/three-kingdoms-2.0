@@ -10,6 +10,7 @@ import {
   persistIdentityRegistry,
 } from './editorPersistence';
 import { identityOf } from '../domain/identity';
+import { matchesDeveloperModeDigest } from '../domain/devGate';
 import type { GameState } from './gameStoreTypes';
 
 type SetState = (patch: Partial<GameState>) => void;
@@ -23,8 +24,8 @@ export function buildEditorActions(
   set: SetState,
 ): Pick<
   GameState,
-  | 'toggleDeveloperMode'
-  | 'setDeveloperMode'
+  | 'enableDeveloperMode'
+  | 'disableDeveloperMode'
   | 'updateSkillEdit'
   | 'updateGeneralEdit'
   | 'batchDeleteEdits'
@@ -37,13 +38,14 @@ export function buildEditorActions(
   | 'deleteIdentity'
 > {
   return {
-    toggleDeveloperMode: password => {
-      if (password !== 'djxdzx000') return false;
-      set({ developerMode: !get().developerMode });
+    enableDeveloperMode: digest => {
+      if (!matchesDeveloperModeDigest(digest)) return false;
+      set({ developerMode: true });
       return true;
     },
 
-    setDeveloperMode: v => set({ developerMode: v }),
+    // Leaving developer mode needs no credential: it only removes capability.
+    disableDeveloperMode: () => set({ developerMode: false }),
 
     updateSkillEdit: (generalId, skills) => {
       const next = { ...get().skillEdits, [generalId]: skills };

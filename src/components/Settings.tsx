@@ -9,13 +9,15 @@ import {
   supportsFolderPicker,
 } from '../replay/replayStorage';
 import { OPERATION_LOG_SUBFOLDER, REPLAY_SUBFOLDER } from '../replay/replayNaming';
+import { digestOfSecret, isSecureDigestAvailable } from '../domain/devGate';
 
 export default function Settings({ onBack, hideDeveloper = false }: { onBack?: () => void; hideDeveloper?: boolean }) {
   const setPhase = useGameStore(s => s.setPhase);
   const settings = useGameStore(s => s.settings);
   const updateSettings = useGameStore(s => s.updateSettings);
   const developerMode = useGameStore(s => s.developerMode);
-  const toggleDeveloperMode = useGameStore(s => s.toggleDeveloperMode);
+  const enableDeveloperMode = useGameStore(s => s.enableDeveloperMode);
+  const disableDeveloperMode = useGameStore(s => s.disableDeveloperMode);
 
   useEffect(() => {
     if (!onBack) return;
@@ -35,7 +37,7 @@ export default function Settings({ onBack, hideDeveloper = false }: { onBack?: (
 
   const handleDevToggle = () => {
     if (developerMode) {
-      toggleDeveloperMode('djxdzx000');
+      disableDeveloperMode();
       return;
     }
     setShowDevDialog(true);
@@ -43,9 +45,19 @@ export default function Settings({ onBack, hideDeveloper = false }: { onBack?: (
     setDevError('');
   };
 
-  const handleDevConfirm = () => {
-    const ok = toggleDeveloperMode(devPassword);
-    if (ok) {
+  const handleDevConfirm = async () => {
+    if (!isSecureDigestAvailable()) {
+      setDevError('当前环境不支持口令校验，请直接用浏览器打开本应用');
+      return;
+    }
+    let digest: string;
+    try {
+      digest = await digestOfSecret(devPassword);
+    } catch {
+      setDevError('口令校验失败，请重试');
+      return;
+    }
+    if (enableDeveloperMode(digest)) {
       setShowDevDialog(false);
       setPhase('menu');
     } else {
