@@ -1394,6 +1394,6 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 - **验证（五闸全部在文件定稿后）**：check 0 错；**496 例/54 文件全过**；coverage 定稿快照 **50.13/42.12/41.08/55.63** 四项全过地板 42/34/34/47（§12-22④ 快照口径，棘轮不上调）；lint 0 错 30 遗留警告零新增；build **1,957.31 kB / gzip 573.46 kB**（较 2.7.0 +0.50/+0.11 kB=折叠表与 metadata 层叠代码面）。package.json/lock=**2.7.1**。
 - **GPT 沟通判断**：跳过——四检按计划预钉 v2.7.4 收官刀；本刀是把三检 Q4 已裁决的口径落地，无契约级意外。
 - **下一刀**=v2.7.2 choice 生产者最小验证刀（三检 Q5：目标选择器+卡牌选择器候选构造器"只接线不带内容"、内置零转正；非内容刀，对 B9 逐字）。
-- **CI 状态**：**全绿**——GitHub Actions CI #110（run 36229798799，master 推送触发）在 commit 81e5b38 上 completed successfully（feat 26b328d + docs 81e5b38 + 标签 v2.7.1 由单顶端 run 全覆盖；master 与标签**直连均失败**→按降级链一次性借道代理 `127.0.0.1:10808` 推送成功、未写任何持久 git 代理配置）。另：上轮遗留未验的回填提交 7be5b64 本轮会话内核验=CI #109（run 36228193136）completed successfully，欠账清零。
+- **CI 状态**：**全绿**——GitHub Actions CI #110（run 36229798799，master 推送触发）在 commit 81e5b38 上 completed successfully（feat 26b328d + docs 81e5b38 + 标签 v2.7.1 由单顶端 run 全覆盖；master 与标签**直连均失败**→按降级链一次性借道代理 `127.0.0.1:10808` 推送成功、未写任何持久 git 代理配置）。**回填提交 66ffc43 自身 CI 亦会话内核验全绿**=CI #111（run 36230098589）在 commit 66ffc43 上 completed successfully，该回填提交**直连推送成功、未借道代理**。另：上轮遗留未验的回填提交 7be5b64 本轮会话内核验=CI #109（run 36228193136）completed successfully，欠账清零。
 
 
