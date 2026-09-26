@@ -19,7 +19,7 @@ import {
   summarizeMatches,
 } from './battleReport';
 import { allGenerals } from '../data/generals';
-import { encodeSeats, parseAiBattleHash, type AiBattleSeat } from './battleHash';
+import { encodeIdentityLock, encodeSeats, parseAiBattleHash, type AiBattleSeat } from './battleHash';
 
 /** 模板 id lookup so the keyed rows below never hardcode an id that can drift. */
 const idOf = (name: string): string => allGenerals.find(g => g.name === name)!.id;
@@ -197,6 +197,7 @@ describe('parseAiBattleHash', () => {
       games: 5000, seed: 1, players: 4, pool: 1, deck: 10, skill: 1, maxSteps: 50,
       policies: ['random', 'random', 'random', 'random'],
       seats: [0, 1, 2, 3].map(() => ({ faction: '', generals: [] })),
+      identityLock: null,
     });
   });
 
@@ -242,7 +243,22 @@ describe('parseAiBattleHash', () => {
         { faction: '', generals: [] },
         { faction: '', generals: [] },
       ],
+      identityLock: null,
     });
+  });
+
+  it('v2.8.0: lock flags + whitelist parse; absent = null (full compliance)', () => {
+    const p = parseAiBattleHash('#ai-battle?lock=off,share&lockwl=%E5%85%B3%E7%BE%BD');
+    expect(p?.identityLock).toEqual({
+      off: true,
+      allowSameFactionSeatSharing: true,
+      identityWhitelist: ['关羽'],
+    });
+    expect(parseAiBattleHash('#ai-battle?lock=&lockwl=')?.identityLock).toBeNull();
+    const encoded = encodeIdentityLock({ off: true, lockIdentityGloballyAcrossFactions: true });
+    expect(encoded).toBe('off,global');
+    expect(parseAiBattleHash(`#ai-battle?lock=${encoded}`)?.identityLock)
+      .toEqual({ off: true, lockIdentityGloballyAcrossFactions: true });
   });
 
   it('parses per-seat policy keys: trims, drops unknowns, pads to player count', () => {

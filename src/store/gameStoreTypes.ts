@@ -95,6 +95,9 @@ export interface GameState {
   // Draft
   draftGenerals:General[]; draftQunGenerals:General[];
   selectedDraftGenerals:General[]; draftPlayerIndex:number;
+  // v2.8.0 identity lock: every general DEALT to earlier seats (selected or
+  // sunk). Store-only B-class mirror; the lock reads it, nothing else does.
+  draftDistributed:General[];
   // v2.2.9 human-vs-AI: per-seat mode chosen in CreateRoom, stamped onto
   // players at createRoom (index = pre-dice seat).
   seatModes:AiSeatMode[];
@@ -110,8 +113,10 @@ export interface GameState {
   };
   developerMode:boolean;
   skillEdits:Record<string, {name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[]>;
-  generalEdits:Record<string, {name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number}>;
+  generalEdits:Record<string, {name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number;identity?:string}>;
   disabledGenerals:Set<string>;
+  // v2.8.0 identity lock: maintained registry of identity names (身份管理).
+  identityRegistry:string[];
 
   setPhase:(p:GamePhase)=>void; setPlayerCount:(c:number)=>void; setRoomName:(n:string)=>void;
   createRoom:()=>void; startGame:()=>void; rollDice:()=>void; assignFactions:()=>void;
@@ -144,7 +149,12 @@ export interface GameState {
   toggleDeveloperMode:(password:string)=>boolean;
   setDeveloperMode:(v:boolean)=>void;
   updateSkillEdit:(generalId:string, skills:{name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[])=>void;
-  updateGeneralEdit:(generalId:string, edits:{name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number})=>void;
+  updateGeneralEdit:(generalId:string, edits:{name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number;identity?:string})=>void;
+  // v2.8.0 identity registry CRUD (身份管理). deleteIdentity refuses while
+  // generals still reference the name (保守方案: 拒删 + 列出引用者).
+  addIdentity:(name:string)=>boolean;
+  renameIdentity:(oldName:string,newName:string)=>boolean;
+  deleteIdentity:(name:string)=>{ok:boolean;referrers:string[]};
   batchDeleteEdits:(generalIds:string[])=>void;
   toggleDisabledGeneral:(id:string)=>void;
   batchToggleDisabled:(ids:string[],disabled:boolean)=>void;

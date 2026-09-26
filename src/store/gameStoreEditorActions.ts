@@ -7,7 +7,9 @@ import {
   persistSkillEdits,
   persistGeneralEdits,
   persistDisabledGenerals,
+  persistIdentityRegistry,
 } from './editorPersistence';
+import { identityOf } from '../domain/identity';
 import type { GameState } from './gameStoreTypes';
 
 type SetState = (patch: Partial<GameState>) => void;
@@ -30,6 +32,9 @@ export function buildEditorActions(
   | 'batchToggleDisabled'
   | 'importSkillEditsFromText'
   | 'getGeneralWithEdits'
+  | 'addIdentity'
+  | 'renameIdentity'
+  | 'deleteIdentity'
 > {
   return {
     toggleDeveloperMode: password => {
@@ -112,6 +117,9 @@ export function buildEditorActions(
       if (gEdits) {
         if (gEdits.name) result.name = gEdits.name;
         if (gEdits.faction) result.faction = gEdits.faction;
+        // v2.8.0: '' (explicit 无身份) must survive the merge, so test
+        // undefined — not truthiness — here.
+        if (gEdits.identity !== undefined) result.identity = gEdits.identity;
         if (gEdits.hp != null) {
           result.hp = gEdits.hp;
           result.type = gEdits.hp >= 4 ? '武将' : '文将';
@@ -132,6 +140,53 @@ export function buildEditorActions(
         }));
       }
       return result;
+    },
+
+    addIdentity: rawName => {
+      const name = rawName.trim();
+      if (name === '') return false;
+      const registry = get().identityRegistry;
+      if (registry.includes(name)) return false;
+      const next = [...registry, name];
+      persistIdentityRegistry(next);
+      set({ identityRegistry: next });
+      return true;
+    },
+
+    renameIdentity: (oldName, rawNewName) => {
+      const newName = rawNewName.trim();
+      const registry = get().identityRegistry;
+      if (newName === '' || !registry.includes(oldName) || registry.includes(newName)) return false;
+      persistIdentityRegistry(registry.map(n => (n === oldName ? newName : n)));
+      set({ identityRegistry: registry.map(n => (n === oldName ? newName : n)) });
+      // Cascade: every general edit referencing the old name follows it
+      // (身份改名级联, D1 保守方案的写侧).
+      const nextEdits = { ...get().generalEdits };
+      let touched = false;
+      for (const [gid, edit] of Object.entries(nextEdits)) {
+        if (edit.identity === oldName) {
+          nextEdits[gid] = { ...edit, identity: newName };
+          touched = true;
+        }
+      }
+      if (touched) persistGeneralEdits(nextEdits);
+      set({ generalEdits: nextEdits });
+      return true;
+    },
+
+    deleteIdentity: name => {
+      const { identityRegistry, generalEdits } = get();
+      if (!identityRegistry.includes(name)) return { ok: false, referrers: [] };
+      const referrers: string[] = [];
+      for (const g of allGenerals) {
+        const explicit = generalEdits[g.id]?.identity;
+        const resolved = identityOf(explicit !== undefined ? { name: g.name, identity: explicit } : g);
+        if (resolved === name) referrers.push(g.name);
+      }
+      if (referrers.length > 0) return { ok: false, referrers };
+      persistIdentityRegistry(identityRegistry.filter(n => n !== name));
+      set({ identityRegistry: identityRegistry.filter(n => n !== name) });
+      return { ok: true, referrers: [] };
     },
   };
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { General } from '../data/generals';
+import { General, allGenerals } from '../data/generals';
 import { GameCard, createCardDeck } from '../data/cards';
 import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle, defaultSeatModes, pickAiDraftPicks } from '../setup/runtimeSetup';
 import { dispatchStoreAction, openReactionWindowStore, passReactionStore, resetReactionWindowStore } from './engineExecutionBridge';
@@ -12,6 +12,7 @@ import {
   loadPersistedSkillEdits,
   loadPersistedGeneralEdits,
   loadDisabledGenerals,
+  loadIdentityRegistry,
 } from './editorPersistence';
 import { buildTestArenaActions, buildTestArenaState } from './testArenaActions';
 import { buildEditorActions } from './gameStoreEditorActions';
@@ -168,7 +169,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   turnPhase:'start',winnerId:null,gameOverBanner:null,defeatEvent:null,pendingTurnTransition:null,isFirstTurn:true,
   skillActivations:[],
   drawContext:defaultDraw,revealedDrawCards:[],initialDrawPlayerIndex:0,
-  draftGenerals:[],draftQunGenerals:[],selectedDraftGenerals:[],draftPlayerIndex:0,
+  draftGenerals:[],draftQunGenerals:[],selectedDraftGenerals:[],draftPlayerIndex:0,draftDistributed:[],
   seatModes:defaultSeatModes(),
   reactionWindow:null,
   turnEndAsk:null,
@@ -177,6 +178,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   skillEdits:loadPersistedSkillEdits(),
   generalEdits:loadPersistedGeneralEdits(),
   disabledGenerals:loadDisabledGenerals(),
+  identityRegistry:loadIdentityRegistry(),
   isTestMode:false,
   testActionCounts:{},
 
@@ -206,8 +208,11 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const{disabledGenerals:dis}=get();
     const fp=get().players[0];if(!fp?.faction)return;
     const rng=setupCursor();
-    const candidates = buildDraftCandidates(fp.faction, dis, [], ()=>rngNext(rng));
-    commitSetup({phase:'generalDraft',draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[],draftPlayerIndex:0},rng);
+    // v2.8.0: distribution reads editor-merged reality, so an edited
+    // identity/faction steers the lock (契约表 格11 录入面).
+    const pool=allGenerals.map(g=>get().getGeneralWithEdits(g));
+    const candidates = buildDraftCandidates(fp.faction, dis, [], ()=>rngNext(rng), pool);
+    commitSetup({phase:'generalDraft',draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[],draftPlayerIndex:0,draftDistributed:[...candidates.main,...candidates.qun]},rng);
   },
   selectDraftGeneral:(g)=>{const sd=get().selectedDraftGenerals;set({selectedDraftGenerals:sd.some(x=>x.id===g.id)?sd.filter(x=>x.id!==g.id):sd.length<10?[...sd,g]:sd});},
   confirmDraft:()=>{
@@ -256,10 +261,13 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     }
     const np=u[ni];if(!np.faction)return;
     const{disabledGenerals:dis}=get();
-    const ids=u.slice(0,ni).flatMap(p=>p.generalPool.map(g=>g.id));
+    // v2.8.0 identity lock: the exclusion set is everything DEALT to earlier
+    // seats (选过 or 沉没), not just confirmed picks — 分发即锁.
+    const distributed=get().draftDistributed;
+    const pool=allGenerals.map(g=>get().getGeneralWithEdits(g));
     const rng=setupCursor();
-    const candidates = buildDraftCandidates(np.faction, dis, ids, ()=>rngNext(rng));
-    commitSetup({players:u,draftPlayerIndex:ni,draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[]},rng);
+    const candidates = buildDraftCandidates(np.faction, dis, distributed, ()=>rngNext(rng), pool);
+    commitSetup({players:u,draftPlayerIndex:ni,draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[],draftDistributed:[...distributed,...candidates.main,...candidates.qun]},rng);
   },
 
   setSeatMode:(index, patch) => set(st => ({
@@ -825,6 +833,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       draftQunGenerals:[] as General[],
       selectedDraftGenerals:[] as General[],
       draftPlayerIndex:0,
+      draftDistributed:[] as General[],
       isTestMode:false,
       reactionWindow:null as GameState['reactionWindow'],
       turnEndAsk:null as GameState['turnEndAsk'],
@@ -840,6 +849,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       skillEdits:state.skillEdits,
       generalEdits:state.generalEdits,
       disabledGenerals:state.disabledGenerals,
+      identityRegistry:state.identityRegistry,
     });
   },
 

@@ -8,7 +8,16 @@
  */
 import { useState } from 'react';
 import { allFactions, allGenerals, type Faction } from '../data/generals';
-import { encodeSeats, type AiBattleSeat } from '../ai/battleHash';
+import { encodeIdentityLock, encodeSeats, type AiBattleSeat } from '../ai/battleHash';
+import type { IdentityLockBypass } from '../ai/matchSetup';
+
+const LOCK_SWITCHES: Array<{ field: keyof Omit<IdentityLockBypass, 'identityWhitelist'>; label: string }> = [
+  { field: 'off', label: '关闭身份锁（整批完全不锁）' },
+  { field: 'allowSameFactionSeatSharing', label: '允许同势力座位共享同名将领' },
+  { field: 'allowSameIdentitySameFactionMultiCopy', label: '允许同身份同势力在同座将池中出现多份' },
+  { field: 'allowExplicitGeneralsIgnoreLock', label: '自选将领撞锁不拒批（照常入池）' },
+  { field: 'lockIdentityGloballyAcrossFactions', label: '全局同身份互斥（加强档：跨势力跨座位也互斥）' },
+];
 
 const POLICY_OPTIONS: Array<{ key: string; label: string }> = [
   { key: 'random', label: '随机（旧基线）' },
@@ -31,6 +40,10 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
   const [policies, setPolicies] = useState<string[]>(['aggressive', 'random', 'random', 'random']);
   const [seats, setSeats] = useState<AiBattleSeat[]>(EMPTY_SEATS);
   const [blockedUrl, setBlockedUrl] = useState('');
+  // v2.8.0 practice-window identity-lock bypasses — local to this dialog only,
+  // encoded into the hash for the batch; defaults = full lock compliance.
+  const [lockBypass, setLockBypass] = useState<IdentityLockBypass>({});
+  const [whitelistText, setWhitelistText] = useState('');
 
   const setSeatPolicy = (index: number, key: string) =>
     setPolicies(prev => prev.map((p, i) => (i === index ? key : p)));
@@ -54,6 +67,11 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
     // Only encode seats when at least one was touched; otherwise the whole
     // batch stays "random faction-pure pools" (2.2.8 default behaviour).
     if (anySeatPicked) q.set('seats', encodeSeats(seats.slice(0, players)));
+    // v2.8.0 identity-lock bypasses: absent from the hash = full compliance.
+    const whitelist = whitelistText.split(',').map(s => s.trim()).filter(Boolean);
+    const flags = encodeIdentityLock(lockBypass);
+    if (flags) q.set('lock', flags);
+    if (whitelist.length > 0) q.set('lockwl', whitelist.join(','));
     const base = window.location.href.split('#')[0];
     const url = `${base}#ai-battle?${q.toString()}`;
     const w = window.open(url, `ai-battle-${Date.now()}`, 'width=960,height=680');
@@ -191,8 +209,38 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
             })}
           </div>
           <p className="text-[11px] text-amber-500/40 mt-1">
-            只选势力＝从该势力武将池随机抽满将池；自选将领＝所选名单即该座位全部将池（可重复添加同名将领）。
-            同一势力或同一将领可出现在多个座位。开始后整个批次的阵容不再变化。
+            只选势力＝从该势力武将池随机抽满将池；自选将领＝所选名单即该座位全部将池。
+            v2.8.0 起默认遵循身份锁：同身份同势力的将领全局只许一座一份，撞锁会拒绝整批（下方旁路开关可放行）。
+            开始后整个批次的阵容不再变化。
+          </p>
+        </div>
+        <div className="mb-4">
+          <p className="text-sm text-amber-300/80 mb-2">身份锁旁路开关（只对这一批演练生效；全部不勾＝严格遵循身份锁）</p>
+          <div className="space-y-1">
+            {LOCK_SWITCHES.map(({ field, label }) => (
+              <label key={field} className="flex items-center gap-2 text-sm text-amber-100/80">
+                <input
+                  type="checkbox"
+                  checked={lockBypass[field] === true}
+                  onChange={() => setLockBypass(prev => ({ ...prev, [field]: !prev[field] }))}
+                  className="accent-amber-500"
+                />
+                {label}
+              </label>
+            ))}
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-amber-300/80">身份白名单（只锁这些身份，逗号分隔；留空＝全部身份参与锁）</span>
+              <input
+                type="text"
+                value={whitelistText}
+                onChange={e => setWhitelistText(e.target.value)}
+                placeholder="如：关羽,曹操"
+                className="bg-black/40 border border-amber-700/40 rounded px-2 py-1 text-amber-100 focus:outline-none focus:border-amber-400/70"
+              />
+            </label>
+          </div>
+          <p className="text-[11px] text-amber-500/40 mt-1">
+            正式建房与 AI 自动征召始终遵循身份锁，不受这些开关影响；开关也不写入录像。每人候选张数可在高级设置「每人将池」调整。
           </p>
         </div>
         <div className="grid grid-cols-3 gap-3 mb-4">

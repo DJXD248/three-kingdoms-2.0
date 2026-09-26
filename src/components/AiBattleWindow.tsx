@@ -82,6 +82,18 @@ export default function AiBattleWindow() {
       append(`策略：${policyLabel}`);
       const seatConfigs = seatConfigsFrom(params.seats);
       if (seatConfigs) append(`阵容：${params.seats.map(seatLabel).join(' · ')}（整批锁定不变）`);
+      if (params.identityLock) {
+        const b = params.identityLock;
+        const parts = [
+          b.off && '关闭身份锁',
+          b.allowSameFactionSeatSharing && '同势力座位可共享同名将',
+          b.allowSameIdentitySameFactionMultiCopy && '同身份同势力可多份',
+          b.allowExplicitGeneralsIgnoreLock && '自选将领不受锁',
+          b.lockIdentityGloballyAcrossFactions && '全局同身份互斥',
+          b.identityWhitelist && `白名单仅锁：${b.identityWhitelist.join('、')}`,
+        ].filter(Boolean);
+        append(`身份锁旁路（仅本演练批次，不进录像）：${parts.length > 0 ? parts.join(' · ') : '无（全遵循）'}`);
+      }
       append('');
       const t0 = Date.now();
       for (let i = 0; i < params.games; i += 1) {
@@ -92,8 +104,18 @@ export default function AiBattleWindow() {
           deckSize: params.deck,
           skillInjection: params.skill,
           seatConfigs,
+          identityLock: params.identityLock ?? undefined,
         });
-        const result = runMatch(config, { maxSteps: params.maxSteps, seatPolicies });
+        let result;
+        try {
+          result = runMatch(config, { maxSteps: params.maxSteps, seatPolicies });
+        } catch (err) {
+          // v2.8.0: 身份锁拒批在装配期 throw——演练窗须把原因亮出来而不是
+          // 静默卡死；阵容整批锁定 ⇒ 一局被拒=整批被拒，直接收尾。
+          append(`❌ ${err instanceof Error ? err.message : String(err)}`);
+          append('（阵容整批锁定不变 ⇒ 后续各局同样被拒，批次终止）');
+          break;
+        }
         resultsRef.current.push(result);
         const mark = result.violations.length > 0 ? ` ❌x${result.violations.length}` : '';
         const pad = String(params.games).length;

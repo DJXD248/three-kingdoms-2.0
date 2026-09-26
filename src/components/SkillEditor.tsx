@@ -16,6 +16,7 @@ import {
   parseSkillCell, isDetailedFormat, isRowPerSkillFormat, resolveGeneralByNameFaction,
   parseRowPerSkillSheet, parseLegacyDetailedRow, SkillEditEntry,
 } from './skillEditor/skillExcelParsers';
+import { describeLockKey, findIdentityConflicts } from '../domain/identity';
 import { TriggerEditor } from './skillEditor/TriggerEditor';
 import { RuntimeEditor } from './skillEditor/RuntimeEditor';
 import * as XLSX from 'xlsx';
@@ -37,6 +38,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const toggleDisabledGeneral = useGameStore(s => s.toggleDisabledGeneral);
   const batchToggleDisabled = useGameStore(s => s.batchToggleDisabled);
   const importSkillEditsFromText = useGameStore(s => s.importSkillEditsFromText);
+  const identityRegistry = useGameStore(s => s.identityRegistry);
+  const addIdentity = useGameStore(s => s.addIdentity);
+  const renameIdentity = useGameStore(s => s.renameIdentity);
+  const deleteIdentity = useGameStore(s => s.deleteIdentity);
 
   const [search, setSearch] = useState('');
   const [factionFilter, setFactionFilter] = useState<Faction | '全部'>('全部');
@@ -49,6 +54,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const [editHp, setEditHp] = useState(4);
   const [editMeleeAtk, setEditMeleeAtk] = useState(2);
   const [editRangedAtk, setEditRangedAtk] = useState(1);
+  // v2.8.0 identity pick: '__default__' = 跟随名字, '__none__' = 无身份·不锁,
+  // anything else = registry entry (选身份，不是自由文本).
+  const [editIdentity, setEditIdentity] = useState('__default__');
+  const [showIdentities, setShowIdentities] = useState(false);
+  const [newIdentityName, setNewIdentityName] = useState('');
+  const [identityNotice, setIdentityNotice] = useState('');
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState('');
   const [importResult, setImportResult] = useState('');
@@ -69,6 +80,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     if (gEdit) {
       if (gEdit.name) result.name = gEdit.name;
       if (gEdit.faction) result.faction = gEdit.faction;
+      if (gEdit.identity !== undefined) result.identity = gEdit.identity;
       if (gEdit.hp != null) { result.hp = gEdit.hp; result.type = gEdit.hp >= 4 ? '武将' : '文将'; }
       if (gEdit.meleeAtk != null) result.meleeAtk = gEdit.meleeAtk;
       if (gEdit.rangedAtk != null) result.rangedAtk = gEdit.rangedAtk;
@@ -140,21 +152,57 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     setEditHp(edited.hp);
     setEditMeleeAtk(edited.meleeAtk);
     setEditRangedAtk(edited.rangedAtk);
+    const idEdit = generalEdits[g.id]?.identity;
+    setEditIdentity(idEdit === undefined ? '__default__' : idEdit === '' ? '__none__' : idEdit);
     setSaved(false);
   };
 
   const handleSave = () => {
     if (!selectedGeneral) return;
     updateSkillEdit(selectedGeneral.id, editingSkills);
+    const identityChoice = editIdentity === '__default__' ? undefined : editIdentity === '__none__' ? '' : editIdentity;
     updateGeneralEdit(selectedGeneral.id, {
       name: editName !== selectedGeneral.name ? editName : undefined,
       faction: editFaction !== selectedGeneral.faction ? editFaction : undefined,
       hp: editHp !== selectedGeneral.hp ? editHp : undefined,
       meleeAtk: editMeleeAtk !== selectedGeneral.meleeAtk ? editMeleeAtk : undefined,
       rangedAtk: editRangedAtk !== selectedGeneral.rangedAtk ? editRangedAtk : undefined,
+      identity: identityChoice !== selectedGeneral.identity ? identityChoice : undefined,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleIdentityPickChange = (value: string) => {
+    if (value === '__new__') {
+      const raw = window.prompt('新建身份（写入身份注册表）：');
+      const name = raw?.trim() ?? '';
+      if (name === '') return;
+      if (addIdentity(name)) {
+        setEditIdentity(name);
+        setIdentityNotice(`已新建并选用身份「${name}」`);
+      } else {
+        setIdentityNotice(`身份「${name}」已存在，请直接选用`);
+      }
+      return;
+    }
+    setEditIdentity(value);
+  };
+
+  const handleDeleteIdentity = (name: string) => {
+    const result = deleteIdentity(name);
+    setIdentityNotice(result.ok
+      ? `已删除身份「${name}」`
+      : `无法删除：身份「${name}」仍被 ${result.referrers.length} 名将领使用（${result.referrers.join('、')}）`);
+  };
+
+  const handleRenameIdentity = (name: string) => {
+    const raw = window.prompt(`把身份「${name}」改名为：`, name);
+    const next = raw?.trim() ?? '';
+    if (next === '' || next === name) return;
+    setIdentityNotice(renameIdentity(name, next)
+      ? `已改名「${name}」→「${next}」，引用该身份的将领编辑已级联更新`
+      : `改名失败：「${next}」为空或已存在`);
   };
 
   const handleAddSkill = () => setEditingSkills(prev => [...prev, { name: '', description: '' }]);
@@ -439,6 +487,22 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     setTimeout(() => setImportResult(''), 3000);
   };
 
+  // v2.8.0: 撞键显式提示 — old saves may already host same-key generals;
+  // we surface them, never silently rewrite (契约表 格12).
+  const identityConflicts = useMemo(
+    () => findIdentityConflicts(allGenerals.map(g => getEditedGeneral(g))),
+    [getEditedGeneral],
+  );
+  const identityReferrers = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const g of allGenerals) {
+      const ed = getEditedGeneral(g);
+      const name = ed.identity !== undefined ? ed.identity : undefined;
+      if (name !== undefined && name.trim() !== '') map.set(name.trim(), [...(map.get(name.trim()) ?? []), ed.name]);
+    }
+    return map;
+  }, [getEditedGeneral]);
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm text-white">
       <div className="mx-4 w-full max-w-6xl h-[90vh] rounded-2xl border border-purple-600/40 bg-gradient-to-b from-gray-900 via-gray-900 to-black shadow-2xl flex flex-col overflow-hidden">
@@ -446,6 +510,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between px-6 py-3 border-b border-purple-800/30 bg-purple-900/10 flex-shrink-0">
           <h2 className="text-xl font-black text-purple-300">🛠️ 将领编辑器</h2>
           <div className="flex items-center gap-2">
+            <button onClick={() => setShowIdentities(v => !v)}
+              className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all ${showIdentities ? 'bg-cyan-700/60 border-cyan-500/40 text-cyan-100' : 'bg-purple-800/40 border-purple-700/30 text-purple-200 hover:bg-purple-700/40'}`}>
+              🪪 身份管理
+            </button>
             <button onClick={() => setShowImport(!showImport)}
               className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all ${showImport ? 'bg-purple-700/60 border-purple-500/40 text-purple-100' : 'bg-purple-800/40 border-purple-700/30 text-purple-200 hover:bg-purple-700/40'}`}>
               📄 导入
@@ -465,6 +533,52 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </div>
+
+        {/* Identity registry panel (v2.8.0 身份管理) */}
+        {showIdentities && (
+          <div className="px-6 py-3 border-b border-cyan-800/30 bg-cyan-900/10 space-y-2 flex-shrink-0 max-h-[30vh] overflow-y-auto">
+            <div className="flex items-center gap-2">
+              <input type="text" value={newIdentityName} onChange={e => setNewIdentityName(e.target.value)}
+                placeholder="新身份名（如：关羽）"
+                className="flex-1 px-2 py-1 rounded-lg bg-black/50 border border-cyan-700/30 text-cyan-100 text-sm focus:outline-none focus:border-cyan-500" />
+              <button onClick={() => {
+                  if (addIdentity(newIdentityName)) { setIdentityNotice(`已新建身份「${newIdentityName.trim()}」`); setNewIdentityName(''); }
+                  else setIdentityNotice('新建失败：名称为空或已存在');
+                }} disabled={!newIdentityName.trim()}
+                className={`px-3 py-1 rounded-lg text-sm font-bold ${newIdentityName.trim() ? 'bg-cyan-700 text-white hover:bg-cyan-600' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}>
+                ＋ 新建
+              </button>
+            </div>
+            <p className="text-[10px] text-cyan-300/50">
+              官方将领的默认身份由名字派生、不可删除；注册表身份可改名（引用级联）与删除（被引用时拒删）。
+            </p>
+            {identityRegistry.length === 0 && <p className="text-xs text-gray-500">（注册表为空）</p>}
+            {identityRegistry.map(name => {
+              const referrers = identityReferrers.get(name) ?? [];
+              return (
+                <div key={name} className="flex items-center gap-2 text-sm">
+                  <span className="w-40 truncate text-cyan-100 font-bold">{name}</span>
+                  <span className="flex-1 text-[10px] text-cyan-300/60 truncate">
+                    {referrers.length > 0 ? `被 ${referrers.length} 名编辑将领使用：${referrers.join('、')}` : '暂无引用'}
+                  </span>
+                  <button onClick={() => handleRenameIdentity(name)}
+                    className="px-2 py-0.5 rounded bg-cyan-800/40 text-cyan-200 text-[10px] font-bold hover:bg-cyan-700/40">✏️ 改名</button>
+                  <button onClick={() => handleDeleteIdentity(name)}
+                    className="px-2 py-0.5 rounded bg-red-900/40 text-red-200 text-[10px] font-bold hover:bg-red-800/40">🗑 删除</button>
+                </div>
+              );
+            })}
+            {identityConflicts.length > 0 && (
+              <div className="rounded-lg border border-amber-600/40 bg-amber-900/20 p-2 text-[11px] text-amber-200 space-y-0.5">
+                <p className="font-bold">⚠ 同身份同势力撞键（不会静默改写，仅供知悉）：</p>
+                {identityConflicts.map(c => (
+                  <p key={c.key}>{describeLockKey(c.key)}：{c.names.join('、')}</p>
+                ))}
+              </div>
+            )}
+            {identityNotice && <p className="text-xs font-bold text-cyan-300">{identityNotice}</p>}
+          </div>
+        )}
 
         {/* Import panel */}
         {showImport && (
@@ -627,11 +741,21 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                     <h3 className="text-2xl font-black text-amber-100">{editName}</h3>
                     <span className="text-sm text-purple-400/60">{editFaction} · {editHp >= 4 ? '武将' : '文将'}</span>
                   </div>
-                  <div className="grid grid-cols-5 gap-3">
+                  <div className="grid grid-cols-6 gap-3">
                     <div>
                       <label className="text-[10px] text-purple-400/60 mb-1 block">名称</label>
                       <input type="text" value={editName} onChange={e => setEditName(e.target.value)}
                         className="w-full px-2 py-1.5 rounded-lg bg-black/50 border border-purple-700/30 text-purple-100 text-sm focus:outline-none focus:border-purple-500" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-purple-400/60 mb-1 block">身份</label>
+                      <select value={editIdentity} onChange={e => handleIdentityPickChange(e.target.value)}
+                        className="w-full px-2 py-1.5 rounded-lg bg-black/50 border border-cyan-700/40 text-cyan-100 text-sm focus:outline-none focus:border-cyan-500">
+                        <option value="__default__">默认＝本名</option>
+                        <option value="__none__">无身份·不锁</option>
+                        {identityRegistry.map(name => <option key={name} value={name}>{name}</option>)}
+                        <option value="__new__">＋ 新建身份…</option>
+                      </select>
                     </div>
                     <div>
                       <label className="text-[10px] text-purple-400/60 mb-1 block">势力</label>

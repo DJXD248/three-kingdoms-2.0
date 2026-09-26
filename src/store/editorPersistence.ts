@@ -11,12 +11,15 @@ export type SkillEdit = {
 };
 
 export type SkillEdits = Record<string, SkillEdit[]>;
-export type GeneralEdit = { name?: string; faction?: Faction; hp?: number; meleeAtk?: number; rangedAtk?: number };
+export type GeneralEdit = { name?: string; faction?: Faction; hp?: number; meleeAtk?: number; rangedAtk?: number; identity?: string };
 export type GeneralEdits = Record<string, GeneralEdit>;
 
 const SKILL_EDITS_KEY = 'three_kingdoms_skill_edits';
 const GENERAL_EDITS_KEY = 'three_kingdoms_general_edits';
 const DISABLED_GENERALS_KEY = 'three_kingdoms_disabled_generals';
+// v2.8.0 identity registry (身份管理): a maintained list of identity names.
+// Old saves without this key simply start with an empty registry.
+const IDENTITY_REGISTRY_KEY = 'three_kingdoms_identity_registry';
 
 export function loadPersistedSkillEdits(): SkillEdits {
   try {
@@ -64,6 +67,24 @@ export function loadDisabledGenerals(): Set<string> {
 export function persistDisabledGenerals(disabled: Set<string>): void {
   try {
     localStorage.setItem(DISABLED_GENERALS_KEY, JSON.stringify([...disabled]));
+  } catch {
+    // Persistence is best effort.
+  }
+}
+
+export function loadIdentityRegistry(): string[] {
+  try {
+    const raw = localStorage.getItem(IDENTITY_REGISTRY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function persistIdentityRegistry(registry: string[]): void {
+  try {
+    localStorage.setItem(IDENTITY_REGISTRY_KEY, JSON.stringify(registry));
   } catch {
     // Persistence is best effort.
   }

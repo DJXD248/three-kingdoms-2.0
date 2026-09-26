@@ -1,5 +1,6 @@
 import type { General, Faction } from '../data/generals';
-import { allGenerals, getGeneralsByFaction } from '../data/generals';
+import { allGenerals } from '../data/generals';
+import { identitiesOf, isLockedForSeat, lockKeyOf, lockKeysOf, QUN_FACTION } from '../domain/identity';
 
 // ── AI seat configuration (v2.2.9 human-vs-AI) ──────────────────────────────
 // The tier keys intentionally mirror src/ai/policies/strategyPolicy (parseTier
@@ -114,17 +115,50 @@ export function assignFactions<T extends { faction: Faction | null }>(
   return players.map((player, index) => ({ ...player, faction: factions[index % factions.length] }));
 }
 
+/**
+ * v2.8.0 identity lock (ARCH_MAP §F「身份锁契约表」).
+ *
+ * Cross-seat exclusion is by lock key (identity×faction) over ALL generals
+ * DISTRIBUTED to earlier seats — a card dealt and never drafted still sinks
+ * the identity for the rest of the room. Within one seat's surface the same
+ * lock key may appear only once, and the 群 surface additionally dodges the
+ * main surface's identities (主↔群 bidirectional, same-owner scope). All
+ * lock filters sit BEFORE each shuffle and consume zero randomness; the
+ * `pool` param lets the store pass editor-merged reality so an edited
+ * identity/faction steers distribution (格11 录入面).
+ */
 export function buildDraftCandidates(
   faction: Faction,
   disabledIds: ReadonlySet<string>,
-  alreadySelectedIds: readonly string[] = [],
+  distributedGenerals: readonly General[] = [],
   random: () => number = Math.random,
+  pool: readonly General[] = allGenerals,
 ): { main: General[]; qun: General[] } {
-  const excluded = new Set(alreadySelectedIds);
-  const available = shuffle(
-    getGeneralsByFaction(faction).filter(general => !excluded.has(general.id) && !disabledIds.has(general.id)),
+  const distributedIds = new Set(distributedGenerals.map(general => general.id));
+  const distributedKeys = lockKeysOf(distributedGenerals);
+  const keyBlocked = (general: General): boolean => {
+    const key = lockKeyOf(general);
+    return key !== null && distributedKeys.has(key);
+  };
+  const dedupeSurface = (ordered: General[]): General[] => {
+    const seen = new Set<string>();
+    return ordered.filter(general => {
+      const key = lockKeyOf(general);
+      if (key === null) return true; // 无身份/DIY never locks, may coexist
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const available = dedupeSurface(shuffle(
+    pool.filter(general =>
+      general.faction === faction
+      && !distributedIds.has(general.id)
+      && !disabledIds.has(general.id)
+      && !keyBlocked(general)),
     random,
-  );
+  ));
   const warriors = available.filter(general => general.type === '武将');
   const scholars = available.filter(general => general.type === '文将');
 
@@ -134,10 +168,15 @@ export function buildDraftCandidates(
   if (main.length < 10) main.push(...warriors.slice(main.length).slice(0, 10 - main.length));
   main = shuffle(main.slice(0, 10), random);
 
-  const qun = shuffle(
-    getGeneralsByFaction('群').filter(general => !excluded.has(general.id) && !disabledIds.has(general.id)),
+  const mainIdentities = identitiesOf(main);
+  const qun = dedupeSurface(shuffle(
+    pool.filter(general =>
+      general.faction === QUN_FACTION
+      && !distributedIds.has(general.id)
+      && !disabledIds.has(general.id)
+      && !isLockedForSeat(general, distributedKeys, mainIdentities)),
     random,
-  ).slice(0, 5);
+  )).slice(0, 5);
 
   return { main, qun };
 }

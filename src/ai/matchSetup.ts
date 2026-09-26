@@ -13,18 +13,38 @@ import { allGenerals, allFactions, type Faction, type General, type Skill } from
 import { createCardDeck, type CardType } from '../data/cards';
 import { cloneWithRuntimeInstance } from '../utils/runtimeIdentity';
 import { createRngState, rngNext } from '../core/rng';
+import { describeLockKey, DIY_IDENTITY, identityOf, lockKeyOf } from '../domain/identity';
 
 /**
- * Per-seat setup for the "自选势力/将领" mode (2.2.8). Duplicates are legal —
- * the same faction or the same general id may appear on several seats and
- * several times inside one seat's pool. Empty fields fall back to seeded
- * random choice, so a batch without seatConfigs still plays (faction-pure).
+ * Per-seat setup for the "自选势力/将领" mode (2.2.8). With the v2.8.0
+ * identity lock every seat is a distinct owner, so duplicates are illegal by
+ * default: an explicit seat list that collides on a lock key aborts the whole
+ * batch with a reason (契约表「装配期新冲突拒整批」), and seeded pools draw
+ * from the not-yet-locked remainder. These bypasses ONLY live in the
+ * practice-window config (never in canonical EngineState / replays / the
+ * standard room chain); the CLI omits them → full lock compliance.
  */
 export interface SeatConfig {
   /** '' is tolerated as "not picked" so raw hash/AiBattleSeat objects pass through. */
   faction?: Faction | '' | null;
-  /** General definition ids (data/generals.ts); repeats allowed. */
+  /** General definition ids (data/generals.ts); repeats collide with the lock. */
   generals?: string[];
+}
+
+/** Practice-window identity-lock bypasses (v2.8.0). Absent = full compliance. */
+export interface IdentityLockBypass {
+  /** 关闭身份锁 — restores the pre-2.8 pooled-duplicates behaviour entirely. */
+  off?: boolean;
+  /** 允许同势力AI — later seats may reuse a lock key an earlier seat already holds. */
+  allowSameFactionSeatSharing?: boolean;
+  /** 允许同身份同势力多份 — same lock key may appear several times in ONE seat pool. */
+  allowSameIdentitySameFactionMultiCopy?: boolean;
+  /** 自选AI将领不受锁 — explicit seat picks skip the reject-the-batch validation. */
+  allowExplicitGeneralsIgnoreLock?: boolean;
+  /** 指定身份白名单 — only these identities lock; others are free. */
+  identityWhitelist?: string[];
+  /** 全局同身份互斥（加强压力档）— same identity locks across DIFFERENT factions too. */
+  lockIdentityGloballyAcrossFactions?: boolean;
 }
 
 export interface MatchConfig {
@@ -37,6 +57,8 @@ export interface MatchConfig {
   baseHp: number;
   /** One entry per seat (index 0 = player 1); missing entries = random. */
   seatConfigs?: SeatConfig[];
+  /** v2.8.0: practice-window bypass switches; CLI/standard path never sets this. */
+  identityLock?: IdentityLockBypass;
 }
 
 export function defaultMatchConfig(seed: number, overrides: Partial<MatchConfig> = {}): MatchConfig {
@@ -117,21 +139,86 @@ export function buildMatchState(config: MatchConfig): EngineState {
     return card;
   };
 
+  // v2.8.0 identity lock (ARCH_MAP §F 契约表). Locking itself consumes zero
+  // randomness; the seeded path's filter sits BEFORE sampleFrom's shuffle,
+  // so a shrunk pool changes that shuffle's iteration count — the expected
+  // content effect that re-anchors the B9 baseline to B10, not a hidden
+  // second random stream.
+  const bypass = config.identityLock ?? {};
+  const lockOn = !bypass.off;
+  const whitelisted = (identity: string | null): boolean =>
+    identity !== null && (bypass.identityWhitelist === undefined || bypass.identityWhitelist.includes(identity));
+  const lockedKeyOf = (g: General): string | null => {
+    if (!lockOn) return null;
+    const key = lockKeyOf(g);
+    return key !== null && whitelisted(identityOf(g)) ? key : null;
+  };
+  const globalIdentityLock = bypass.lockIdentityGloballyAcrossFactions === true;
+  const usedKeys = new Set<string>();
+  const usedIdentities = new Set<string>();
+  const seatConflict = (g: General): string | null => {
+    const key = lockedKeyOf(g);
+    if (key === null) return null;
+    if (usedKeys.has(key) && !bypass.allowSameFactionSeatSharing) {
+      return `与前面座位已分发的同锁将领（${describeLockKey(key)}）`;
+    }
+    if (globalIdentityLock) {
+      const identity = identityOf(g);
+      if (identity !== null && usedIdentities.has(identity)) {
+        return '与前面座位同身份（全局同身份互斥压力档）';
+      }
+    }
+    return null;
+  };
+
   for (let index = 0; index < config.playerCount; index += 1) {
     const id = index + 1;
     const seat = config.seatConfigs?.[index] ?? {};
-    // Explicit general ids win (duplicates kept); otherwise draw a faction-pure
-    // pool of poolPerPlayer. Faction label: explicit > first general > seeded random.
+    // Explicit general ids win; a collision they cause is an assembly error
+    // (拒整批 + 明确原因), never a silent filter — unless a bypass says so.
     const explicit = (seat.generals ?? [])
       .map(gid => allGenerals.find(g => g.id === gid))
       .filter((g): g is General => Boolean(g));
+    if (lockOn && !bypass.allowExplicitGeneralsIgnoreLock && explicit.length > 0) {
+      const seenKeys = new Set<string>();
+      const problems: string[] = [];
+      for (const g of explicit) {
+        const key = lockedKeyOf(g);
+        if (key === null) continue;
+        const cross = seatConflict(g);
+        if (cross) problems.push(`座${id}「${g.name}·${g.faction}」${cross}`);
+        if (seenKeys.has(key) && !bypass.allowSameIdentitySameFactionMultiCopy) {
+          problems.push(`座${id}自选列表内部同锁重复（${describeLockKey(key)}）`);
+        }
+        seenKeys.add(key);
+      }
+      if (problems.length > 0) {
+        throw new Error(`身份锁拒绝整批装配：${problems.join('；')}。演练窗旁路开关可放行。`);
+      }
+    }
     const picked = seat.faction && (allFactions as string[]).includes(seat.faction)
       ? (seat.faction as Faction)
       : undefined;
     const faction: Faction = picked ?? explicit[0]?.faction ?? takeRandom(allFactions, random);
-    const sources = explicit.length > 0
-      ? explicit
-      : sampleFrom(allGenerals.filter(g => g.faction === faction), config.poolPerPlayer, random);
+    let sources: General[];
+    if (explicit.length > 0) {
+      sources = explicit;
+    } else {
+      const unlocked = allGenerals.filter(g => g.faction === faction && seatConflict(g) === null);
+      const sampled = sampleFrom(unlocked, config.poolPerPlayer, random);
+      if (!lockOn || bypass.allowSameIdentitySameFactionMultiCopy) {
+        sources = sampled;
+      } else {
+        const seenKeys = new Set<string>();
+        sources = sampled.filter(g => {
+          const key = lockedKeyOf(g);
+          if (key === null) return true;
+          if (seenKeys.has(key)) return false;
+          seenKeys.add(key);
+          return true;
+        });
+      }
+    }
     const generalPool: General[] = [];
     for (const source of sources) {
       const copy = cloneWithRuntimeInstance(source) as General;
@@ -144,6 +231,10 @@ export function buildMatchState(config: MatchConfig): EngineState {
         copy.skills = [...(copy.skills ?? []), skill];
       }
       generalPool.push(copy);
+      const key = lockedKeyOf(source);
+      if (key !== null) usedKeys.add(key);
+      const identity = identityOf(source);
+      if (identity !== null && identity !== DIY_IDENTITY) usedIdentities.add(identity);
     }
     players.push({
       id,

@@ -1,5 +1,6 @@
 import { useGameStore } from '../store/gameStore';
 import { factionColors, General } from '../data/generals';
+import { identitiesOf, identityOf, lockKeyOf, QUN_FACTION } from '../domain/identity';
 
 export default function GeneralDraft() {
   const players = useGameStore(s => s.players);
@@ -19,9 +20,33 @@ export default function GeneralDraft() {
 
   const canConfirm = totalCount === 10 && qunCount >= 1 && qunCount <= 3;
 
+  // v2.8.0 identity lock, defensive display layer: distribution already
+  // excludes locked cards, so a same-key or 主↔群 same-identity pair on one
+  // seat surface can only come from a legacy save. Show it, block selection
+  // of it — never silently rewrite (契约表 格12).
+  const lockConflicts = (() => {
+    const keyCount = new Map<string, number>();
+    for (const g of [...draftGenerals, ...draftQunGenerals]) {
+      const k = lockKeyOf(g);
+      if (k !== null) keyCount.set(k, (keyCount.get(k) ?? 0) + 1);
+    }
+    const mainIdentities = identitiesOf(draftGenerals);
+    return (g: General): boolean => {
+      const k = lockKeyOf(g);
+      if (k !== null && (keyCount.get(k) ?? 0) > 1) return true;
+      if (g.faction === QUN_FACTION) {
+        const id = identityOf(g);
+        if (id !== null && mainIdentities.has(id)) return true;
+      }
+      return false;
+    };
+  })();
+  const conflictCount = [...draftGenerals, ...draftQunGenerals].filter(g => lockConflicts(g)).length;
+
   const isSelectable = (g: General) => {
     const isSelected = selectedDraftGenerals.some(sg => sg.id === g.id);
-    if (isSelected) return true;
+    if (isSelected) return true; // always allow deselecting
+    if (lockConflicts(g)) return false;
     if (totalCount >= 10) return false;
     if (g.faction === '群') {
       return qunCount < 3;
@@ -82,6 +107,7 @@ export default function GeneralDraft() {
           </span>
         </div>
         <div className="flex items-center gap-1 text-[10px] text-amber-500/50">
+          {conflictCount > 0 && <span className="text-red-400">⚠ {conflictCount}张卡与同座其他卡身份冲突（旧档共存，仅提示不改写）</span>}
           {totalCount < 10 && qunCount === 0 && <span>⚠ 至少选择1名群势力将领</span>}
           {qunCount > 3 && <span className="text-red-400">⚠ 群势力最多3名</span>}
         </div>
@@ -102,6 +128,7 @@ export default function GeneralDraft() {
               general={g}
               isSelected={selectedDraftGenerals.some(sg => sg.id === g.id)}
               isSelectable={isSelectable(g)}
+              conflict={lockConflicts(g)}
               onSelect={() => selectDraftGeneral(g)}
             />
           ))}
@@ -120,6 +147,7 @@ export default function GeneralDraft() {
               general={g}
               isSelected={selectedDraftGenerals.some(sg => sg.id === g.id)}
               isSelectable={isSelectable(g)}
+              conflict={lockConflicts(g)}
               onSelect={() => selectDraftGeneral(g)}
             />
           ))}
@@ -168,11 +196,13 @@ function DraftCard({
   general,
   isSelected,
   isSelectable,
+  conflict = false,
   onSelect,
 }: {
   general: General;
   isSelected: boolean;
   isSelectable: boolean;
+  conflict?: boolean;
   onSelect: () => void;
 }) {
   const pColor = factionColors[general.faction];
@@ -180,6 +210,7 @@ function DraftCard({
   return (
     <button
       onClick={isSelectable ? onSelect : undefined}
+      title={conflict ? '身份锁：与同座其他候选将领身份冲突，不可选（仅提示，不自动改写）' : undefined}
       className={`relative rounded-xl border-2 p-2.5 transition-all duration-200 text-left ${
         isSelected
           ? 'scale-[1.03] shadow-lg'
@@ -199,6 +230,11 @@ function DraftCard({
         <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-md"
           style={{ backgroundColor: pColor }}>
           ✓
+        </div>
+      )}
+      {conflict && !isSelected && (
+        <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-md bg-red-600">
+          ⚠
         </div>
       )}
       <div className="text-center">

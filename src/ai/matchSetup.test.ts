@@ -1,7 +1,9 @@
 /**
  * Match-assembly tests for the 2.2.8 seat setups (faction picks, explicit
- * general lists with duplicates, seeded determinism) plus the faction-label
- * propagation the balance stats rely on.
+ * general lists, seeded determinism) plus the faction-label propagation the
+ * balance stats rely on. v2.8.0: explicit repeats and wrap-around duplicates
+ * now collide with the identity lock — the lock rejects the whole batch with
+ * a reason unless a practice-window bypass says otherwise.
  *
  * Since the 2.2.19 D-2 second cut buildMatchState is patchless-deterministic:
  * its own setup cursor stream + seed-stamped ids for cards AND skills, so the
@@ -61,21 +63,51 @@ describe('matchSetup seat configs', () => {
     }
   });
 
-  it('explicit general list (with repeats) becomes the seat pool verbatim', () => {
+  it('explicit general list becomes the seat pool verbatim', () => {
     const seatConfigs: SeatConfig[] = [
-      { faction: '魏', generals: ['wei_001', 'wei_001', 'wei_002'] },
+      { faction: '魏', generals: ['wei_001', 'wei_002', 'wei_003'] },
     ];
     const state = build(31, { playerCount: 2, poolPerPlayer: 8, seatConfigs });
     const pool = state.players[0].generalPool as General[];
     expect(pool).toHaveLength(3); // list length wins over poolPerPlayer
-    expect(pool.map(g => g.id)).toEqual(['wei_001_p1', 'wei_001_p1', 'wei_002_p1']);
+    expect(pool.map(g => g.id)).toEqual(['wei_001_p1', 'wei_002_p1', 'wei_003_p1']);
     expect(pool.map(g => g.name)).toEqual([
       allGenerals.find(g => g.id === 'wei_001')!.name,
-      allGenerals.find(g => g.id === 'wei_001')!.name,
       allGenerals.find(g => g.id === 'wei_002')!.name,
+      allGenerals.find(g => g.id === 'wei_003')!.name,
     ]);
     // stamped deterministic instance ids keep replay comparable
     expect(new Set(pool.map(g => (g as { instanceId?: string }).instanceId)).size).toBe(3);
+  });
+
+  it('v2.8.0 lock: explicit in-seat repeat rejects the whole batch with a reason', () => {
+    const seatConfigs: SeatConfig[] = [
+      { faction: '魏', generals: ['wei_001', 'wei_001', 'wei_002'] },
+    ];
+    expect(() => build(31, { playerCount: 2, poolPerPlayer: 8, seatConfigs }))
+      .toThrow(/身份锁拒绝整批装配/);
+  });
+
+  it('v2.8.0 lock: cross-seat explicit same lock key rejects the batch', () => {
+    const seatConfigs: SeatConfig[] = [
+      { faction: '魏', generals: ['wei_001'] },
+      { faction: '魏', generals: ['wei_001'] },
+    ];
+    expect(() => build(32, { playerCount: 2, seatConfigs })).toThrow(/身份锁拒绝整批装配/);
+  });
+
+  it('v2.8.0 bypass: 自选不受锁 + 多份开关 restore the legacy verbatim-duplicates pool', () => {
+    const seatConfigs: SeatConfig[] = [
+      { faction: '魏', generals: ['wei_001', 'wei_001', 'wei_002'] },
+    ];
+    const state = build(31, {
+      playerCount: 2,
+      poolPerPlayer: 8,
+      seatConfigs,
+      identityLock: { allowExplicitGeneralsIgnoreLock: true, allowSameIdentitySameFactionMultiCopy: true },
+    });
+    const pool = state.players[0].generalPool as General[];
+    expect(pool.map(g => g.id)).toEqual(['wei_001_p1', 'wei_001_p1', 'wei_002_p1']);
   });
 
   it('generals without an explicit faction derive the label from the first pick; unknown ids are dropped', () => {
@@ -91,7 +123,7 @@ describe('matchSetup seat configs', () => {
     expect(pool[0].id).toBe(`${wu.id}_p1`);
   });
 
-  it('faction pools smaller than poolPerPlayer wrap around into duplicates', () => {
+  it('v2.8.0 lock: a faction pool smaller than poolPerPlayer yields distinct-only pools', () => {
     const smallest = [...allFactions].sort(
       (a, b) => getGeneralsByFaction(a).length - getGeneralsByFaction(b).length,
     )[0];
@@ -101,9 +133,26 @@ describe('matchSetup seat configs', () => {
       poolPerPlayer: supply + 3,
       seatConfigs: [{ faction: smallest }, { faction: smallest }],
     });
+    const first = state.players[0].generalPool as General[];
+    expect(first).toHaveLength(supply); // wrap duplicates dropped, each definition once
+    expect(new Set(first.map(g => g.id)).size).toBe(supply);
+    // seat 1 saw every definition already locked by seat 0 → empty pool
+    expect(state.players[1].generalPool as General[]).toHaveLength(0);
+  });
+
+  it('v2.8.0 bypass: 多份开关 restores the wrap-around duplicate pool', () => {
+    const smallest = [...allFactions].sort(
+      (a, b) => getGeneralsByFaction(a).length - getGeneralsByFaction(b).length,
+    )[0];
+    const supply = getGeneralsByFaction(smallest).length;
+    const state = build(51, {
+      playerCount: 1,
+      poolPerPlayer: supply + 3,
+      seatConfigs: [{ faction: smallest }],
+      identityLock: { allowSameIdentitySameFactionMultiCopy: true },
+    });
     const pool = state.players[0].generalPool as General[];
     expect(pool).toHaveLength(supply + 3);
-    const unique = new Set(pool.map(g => g.id));
-    expect(unique.size).toBe(supply); // every definition used, extras are repeats
+    expect(new Set(pool.map(g => g.id)).size).toBe(supply);
   });
 });

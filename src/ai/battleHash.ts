@@ -4,6 +4,7 @@
  * so React Fast Refresh stays clean and vitest can import it directly.
  */
 import { allFactions, type Faction } from '../data/generals';
+import type { IdentityLockBypass } from './matchSetup';
 
 /**
  * One seat's chosen setup (2.2.8). Empty faction / empty generals list mean
@@ -33,6 +34,40 @@ export interface AiBattleParams {
   policies: string[];
   /** Always exactly `players` long (empty entries = random seat). */
   seats: AiBattleSeat[];
+  /**
+   * v2.8.0 practice-window identity-lock bypasses (`lock=off,share,…` +
+   * `lockwl=关羽,张飞`). Null = full lock compliance (the CLI/standard
+   * default). Never part of EngineState or replays.
+   */
+  identityLock: IdentityLockBypass | null;
+}
+
+const LOCK_FLAG_KEYS: Record<string, keyof Omit<IdentityLockBypass, 'identityWhitelist'>> = {
+  off: 'off',
+  share: 'allowSameFactionSeatSharing',
+  multi: 'allowSameIdentitySameFactionMultiCopy',
+  noexp: 'allowExplicitGeneralsIgnoreLock',
+  global: 'lockIdentityGloballyAcrossFactions',
+};
+
+/** Bypass switches → hash fragment pairs (inverse of the parser below). */
+export function encodeIdentityLock(bypass: IdentityLockBypass): string {
+  const flags = Object.entries(LOCK_FLAG_KEYS)
+    .filter(([, field]) => bypass[field] === true)
+    .map(([flag]) => flag);
+  return flags.join(',');
+}
+
+function parseIdentityLock(q: URLSearchParams): IdentityLockBypass | null {
+  const flags = new Set((q.get('lock') ?? '').split(',').map(s => s.trim()).filter(Boolean));
+  const whitelist = (q.get('lockwl') ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  if (flags.size === 0 && whitelist.length === 0) return null;
+  const bypass: IdentityLockBypass = {};
+  for (const [flag, field] of Object.entries(LOCK_FLAG_KEYS)) {
+    if (flags.has(flag)) bypass[field] = true;
+  }
+  if (whitelist.length > 0) bypass.identityWhitelist = whitelist;
+  return bypass;
 }
 
 const POLICY_KEYS = new Set(['random', 'conservative', 'balanced', 'aggressive']);
@@ -63,6 +98,7 @@ export function parseAiBattleHash(hash: string): AiBattleParams | null {
       .map(s => s.trim().toLowerCase())
       .filter(s => POLICY_KEYS.has(s)),
     seats: parseSeats(q.get('seats')),
+    identityLock: parseIdentityLock(q),
   };
   // One key per seat; unknown/missing entries fall back to 'random'.
   while (parsed.policies.length < parsed.players) parsed.policies.push('random');

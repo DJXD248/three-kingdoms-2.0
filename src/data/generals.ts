@@ -187,6 +187,10 @@ export interface General {
   armor: number;
   skills: Skill[];
   title?: string;
+  /** v2.8.0 identity-lock: registry key of this general's 身份.
+   *  undefined ⇒ falls back to own name; '' (explicit blank) ⇒ no identity.
+   *  Resolve ONLY via identityOf() in domain/identity.ts. */
+  identity?: string;
 }
 
 function createGeneral(
