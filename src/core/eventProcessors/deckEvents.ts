@@ -1,5 +1,6 @@
 import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
+import { selectHandCards } from './handSelection';
 
 /**
  * Skill REVEAL effect settlement (2.6.1, deck-top capability layer — a
@@ -26,7 +27,8 @@ export function applyRevealEvent(state: EngineState, event: GameEvent): EngineSt
  * deck, preserving their relative order. Head selection is deterministic
  * (same policy as DISCARD/GIVE, zero RNG); `count === 0` is the whole-hand
  * sentinel (as on the hand side, deliberately unlike the equipment side which
- * has no "all"). Both card kinds stay physical — a general card placed on the
+ * has no "all"). `cardKeys` (v2.7.2 choice producer surface) overrides the head
+ * slice — see eventProcessors/handSelection. Both card kinds stay physical — a general card placed on the
  * deck is a deck card like any drawn general and may resurface via a later
  * reshuffle. An empty hand settles as an honest no-op — the DECK_PLACE event
  * is still recorded, the trigger happened. This is the mechanical "place on
@@ -34,7 +36,9 @@ export function applyRevealEvent(state: EngineState, event: GameEvent): EngineSt
  * AFTER the choice decision channel (v2.6.3) decides the order.
  */
 export function applyDeckPlaceEvent(state: EngineState, event: GameEvent): EngineState {
-  const data = event.data as { playerId?: number; dest?: string; count?: number } | undefined;
+  const data = event.data as {
+    playerId?: number; dest?: string; count?: number; cardKeys?: unknown[];
+  } | undefined;
   if (typeof data?.playerId !== 'number') return state;
 
   const player = state.players.find(p => p.id === data.playerId);
@@ -43,8 +47,7 @@ export function applyDeckPlaceEvent(state: EngineState, event: GameEvent): Engin
   if (hand.length === 0) return state;
 
   const count = Math.max(0, Math.floor(Number(data.count ?? 0)));
-  const take = count === 0 ? hand.length : Math.min(count, hand.length);
-  const moved = hand.slice(0, take);
+  const { moved, rest } = selectHandCards(hand, count, data.cardKeys);
   if (moved.length === 0) return state;
 
   const deck = Array.isArray(state.deck) ? (state.deck as unknown[]) : [];
@@ -52,7 +55,7 @@ export function applyDeckPlaceEvent(state: EngineState, event: GameEvent): Engin
   const nextDeck = toTop ? [...moved, ...deck] : [...deck, ...moved];
 
   const players = state.players.map(p =>
-    p.id === data.playerId ? { ...p, hand: hand.slice(take) } : p
+    p.id === data.playerId ? { ...p, hand: rest } : p
   );
 
   return { ...state, players, deck: nextDeck };

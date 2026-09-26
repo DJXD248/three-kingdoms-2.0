@@ -73,6 +73,17 @@ export interface DataSkillDefinition {
    * SkillTriggerBridge 译成 CHOICE_REQUIRED（options=effects 逐项），玩家经
    * canonical CHOOSE_OPTION 择定后才结算。孤效果照常走独立定义（零开销）。 */
   choiceMode?: boolean;
+  /**
+   * v2.7.2 choice 生产者面（GPT 三检 Q5 最小验证刀）：候选从哪里枚举。
+   * 缺省（undefined）=v2.6.3 行为=逐效果预译分支，一字未动。
+   * 'TARGET' = 场上将领候选（模板效果逐候选填 targetId）；
+   * 'HAND_CARD' = 欠债玩家手牌候选（模板效果逐候选填 cardKeys）。
+   * 只在编译模型层：数据层 Skill 类型 / SkillEditor / Excel 六列均无录入面，
+   * 唯一入口是 engine.registerPlayerSkills（"接线≠可配"第四次预防针）。
+   */
+  choiceSource?: 'TARGET' | 'HAND_CARD';
+  /** choiceSource='TARGET' 的候选域，缺省 ENEMY_FIELD（以技能拥有者为轴）。 */
+  choiceTargetScope?: 'ENEMY_FIELD' | 'ALL_FIELD' | 'SELF_FIELD';
 }
 
 /**

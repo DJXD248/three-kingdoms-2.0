@@ -1,10 +1,15 @@
 
 import type { DataSkillDefinition, DataSkillTrigger, SkillEffectData } from './dataTypes';
-import type { EngineState } from '../core/GameState';
+import type { EngineState, PendingChoiceOption } from '../core/GameState';
 import type { GameEvent, GameEventType } from '../core/Event';
 import type { TriggerEngine } from '../triggers/TriggerEngine';
 import type { TriggerContext } from '../triggers/types';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import {
+  enumerateHandCardCandidates,
+  enumerateTargetCandidates,
+  type ChoiceCandidate,
+} from './choiceCandidates';
 
 const TRIGGER_EVENT_MAP: Partial<Record<DataSkillTrigger, GameEventType>> = {
   onDeploy: 'GENERAL_DEPLOYED',
@@ -240,8 +245,12 @@ export class SkillTriggerBridge {
   ): GameEvent[] {
     const sourceId = String(binding.ownerId);
 
-    const translateEffect = (effect: SkillEffectData): GameEvent => {
-      const targetId = SkillTriggerBridge.resolveEffectTarget(effect, binding, event);
+    const translateEffect = (
+      effect: SkillEffectData,
+      candidate?: ChoiceCandidate,
+    ): GameEvent => {
+      const targetId = candidate?.targetId
+        ?? SkillTriggerBridge.resolveEffectTarget(effect, binding, event);
       const data = {
         sourceId,
         targetId,
@@ -251,6 +260,10 @@ export class SkillTriggerBridge {
         effectType: effect.type,
         triggerEventId: event.id
       };
+      // A choice producer candidate names the exact hand cards to settle
+      // (v2.7.2); every payload minted before this carries no cardKeys and
+      // keeps the canonical head-of-hand slice.
+      const handSelection = candidate?.cardKeys ? { cardKeys: candidate.cardKeys } : {};
 
       if (effect.type === 'DRAW_CARD') {
         // Card draw is always granted to the skill owner's hand.
@@ -312,6 +325,7 @@ export class SkillTriggerBridge {
           type: 'DISCARD',
           data: {
             ...data,
+            ...handSelection,
             playerId: Number.isFinite(discardPlayerId) ? discardPlayerId : undefined,
             count: Math.max(0, Math.floor(Number(effect.value ?? 1)))
           }
@@ -336,6 +350,7 @@ export class SkillTriggerBridge {
           type: 'GIVE',
           data: {
             ...data,
+            ...handSelection,
             fromPlayerId: Number(sourceId),
             toPlayerId: Number.isFinite(toPlayerId) ? toPlayerId : undefined,
             count: Math.max(0, Math.floor(Number(effect.value ?? 1)))
@@ -387,6 +402,7 @@ export class SkillTriggerBridge {
           type: 'DECK_PLACE',
           data: {
             ...data,
+            ...handSelection,
             playerId: Number(sourceId),
             dest: effect.dest === 'TOP' ? 'TOP' : 'BOTTOM',
             count: Math.max(0, Math.floor(Number(effect.value ?? 1)))
@@ -401,10 +417,12 @@ export class SkillTriggerBridge {
     };
 
     if (binding.skill.choiceMode) {
-      const options = binding.skill.effects.map(effect => ({
-        label: effect.description ?? binding.skill.description ?? binding.skill.name,
-        events: [translateEffect(effect)],
-      }));
+      const options = SkillTriggerBridge.buildChoiceOptions(
+        binding, state, sourceId, translateEffect);
+      // An empty candidate set never opens an offer: the frozen-world gate
+      // would lock the table with nothing legal to pick, so "the trigger
+      // happened but there was nothing to choose" stays event-free by design.
+      if (options.length === 0) return [];
       const choiceData = {
         choiceKey: `ch:${state.turn ?? 0}:${state.round ?? 0}:${binding.skill.id}`,
         chooserPlayerId: Number(sourceId),
@@ -415,7 +433,47 @@ export class SkillTriggerBridge {
       return [{ type: 'CHOICE_REQUIRED', data: choiceData }];
     }
 
-    return binding.skill.effects.map(translateEffect);
+    return binding.skill.effects.map(effect => translateEffect(effect));
+  }
+
+  /**
+   * choice 生产者面 (v2.7.2, GPT 三检 Q5 minimal verification cut): where the
+   * candidate table comes from.
+   *
+   *  - `choiceSource` unset (every definition the compiler can produce today):
+   *    v2.6.3 verbatim — one option per pre-translated effect branch.
+   *  - 'TARGET' / 'HAND_CARD': one option per candidate enumerated from
+   *    EngineState, each carrying the definition's SINGLE template effect with
+   *    that candidate filled in (targetId / cardKeys). A producer definition
+   *    with anything other than exactly one effect falls back to the
+   *    effect-branch behavior — dropping effects silently would be worse than
+   *    not offering a pick.
+   *
+   * Translation stays in one place: both shapes call the same translateEffect
+   * closure handed in by createSkillEvents (no second translation path).
+   */
+  private static buildChoiceOptions(
+    binding: SkillOwnerBinding,
+    state: EngineState,
+    sourceId: string,
+    translate: (effect: SkillEffectData, candidate?: ChoiceCandidate) => GameEvent,
+  ): PendingChoiceOption[] {
+    const { effects, choiceSource } = binding.skill;
+    const template = choiceSource && effects.length === 1 ? effects[0] : undefined;
+    if (!template) {
+      return effects.map(effect => ({
+        label: effect.description ?? binding.skill.description ?? binding.skill.name,
+        events: [translate(effect)],
+      }));
+    }
+    const ownerId = Number(sourceId);
+    const candidates = choiceSource === 'TARGET'
+      ? enumerateTargetCandidates(state, ownerId, binding.skill.choiceTargetScope)
+      : enumerateHandCardCandidates(state, ownerId);
+    return candidates.map(candidate => ({
+      label: candidate.label,
+      events: [translate(template, candidate)],
+    }));
   }
 
   /**

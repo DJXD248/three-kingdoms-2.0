@@ -1,6 +1,7 @@
 import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
+import { selectHandCards } from './handSelection';
 
 const RESOURCE_TYPES = new Set(['粮草', '材料', '军备', 'SUPPLY', 'MATERIAL', 'ARMAMENT']);
 
@@ -231,13 +232,15 @@ export function applyGainArmorEvent(state: EngineState, event: GameEvent): Engin
  * Skill DISCARD effect settlement (2.5.0): moves cards out of a player's hand.
  * Selection policy = the first `count` cards in hand-array order (count 0 is
  * the whole-hand sentinel) — deterministic, no new RNG surface, replay byte-
- * identical. Card routing follows the canonical consumption paths
+ * identical. A payload may instead carry `cardKeys` (v2.7.2 choice producer
+ * surface: the player named these cards) — see eventProcessors/handSelection.
+ * Card routing follows the canonical consumption paths
  * (deploy/move/supply): resource cards go to state.discardPile, general cards
  * return to the owner's generalPool. An empty hand settles as an honest no-op
  * (the DISCARD event is still recorded — the trigger happened).
  */
 export function applyDiscardEvent(state: EngineState, event: GameEvent): EngineState {
-  const data = event.data as { playerId?: number; count?: number } | undefined;
+  const data = event.data as { playerId?: number; count?: number; cardKeys?: unknown[] } | undefined;
   if (typeof data?.playerId !== 'number') return state;
   const count = Math.max(0, Math.floor(Number(data.count ?? 0)));
 
@@ -246,12 +249,12 @@ export function applyDiscardEvent(state: EngineState, event: GameEvent): EngineS
     if (player.id !== data.playerId) return player;
     const hand = Array.isArray(player.hand) ? player.hand as any[] : [];
     if (hand.length === 0) return player;
-    const take = count === 0 ? hand.length : Math.min(count, hand.length);
-    discarded = hand.slice(0, take);
+    const { moved, rest } = selectHandCards(hand, count, data.cardKeys);
+    discarded = moved;
     const generalCards = discarded.filter(card => !RESOURCE_TYPES.has(String(card?.type ?? '')));
     return {
       ...player,
-      hand: hand.slice(take),
+      hand: rest,
       generalPool: generalCards.length > 0
         ? [...(Array.isArray(player.generalPool) ? player.generalPool : []), ...generalCards]
         : player.generalPool,
@@ -278,9 +281,13 @@ export function applyDiscardEvent(state: EngineState, event: GameEvent): EngineS
  * deploy or consume them, same as any drawn general card). Any invalid pair
  * (missing ids, same player, dead receiver) and an empty giver hand settle
  * as honest no-ops — the GIVE event is still recorded, the trigger happened.
+ * `cardKeys` (v2.7.2 choice producer surface) overrides the head slice — see
+ * eventProcessors/handSelection.
  */
 export function applyGiveEvent(state: EngineState, event: GameEvent): EngineState {
-  const data = event.data as { fromPlayerId?: number; toPlayerId?: number; count?: number } | undefined;
+  const data = event.data as {
+    fromPlayerId?: number; toPlayerId?: number; count?: number; cardKeys?: unknown[];
+  } | undefined;
   if (typeof data?.fromPlayerId !== 'number' || typeof data?.toPlayerId !== 'number') return state;
   if (data.fromPlayerId === data.toPlayerId) return state;
   const giver = state.players.find(player => player.id === data.fromPlayerId);
@@ -290,11 +297,11 @@ export function applyGiveEvent(state: EngineState, event: GameEvent): EngineStat
   if (giverHand.length === 0) return state;
 
   const count = Math.max(0, Math.floor(Number(data.count ?? 0)));
-  const take = count === 0 ? giverHand.length : Math.min(count, giverHand.length);
-  const moved = giverHand.slice(0, take);
+  const { moved, rest } = selectHandCards(giverHand, count, data.cardKeys);
+  if (moved.length === 0) return state;
   const players = state.players.map(player => {
     if (player.id === giver.id) {
-      return { ...player, hand: giverHand.slice(take) };
+      return { ...player, hand: rest };
     }
     if (player.id === receiver.id) {
       const receiverHand = Array.isArray(receiver.hand) ? receiver.hand as any[] : [];
