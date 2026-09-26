@@ -54,6 +54,10 @@ export interface DataSkillDefinition {
   sourceGeneralId?: string;
   /** Restrict damage triggers to a single damage source category. */
   damageTypeFilter?: 'attack' | 'skill';
+  /** v2.6.2: restrict onCardLost triggers to an emission-source predicate
+   * (equipment strip / hand paths with a remainingHand fact / any source).
+   * CARD_GAINED has no source variety yet — the filter never narrows it. */
+  cardFilter?: 'any' | 'equipment' | 'lastHand' | 'hand';
   /** Source SkillEffect id, kept for the explicit-activation path (2.3.1:
    * ACTIVATE_SKILL addresses a definition as generalId + skillName + effectId
    * so the payload stays human-readable and stable across recompiles). */

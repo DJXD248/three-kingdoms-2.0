@@ -1,7 +1,7 @@
 /**
  * 2.5.4 收敛核验 · 逐技能强制触发可达性专项。
  *
- * 对全库 38 条内置 runtime 定义逐条构造"必然触发"的最小场景，断言每条
+ * 对全库 40 条内置 runtime 定义逐条构造"必然触发"的最小场景，断言每条
  * 定义都产出过带自身 skillId 的效果事件——随机档 ai-battle 里零触发的
  * 攻击链技能（v2.4.3 洞察①）在这里没有躲藏空间。onTurnEnd 走"候选在列
  * + ACTIVATE_SKILL 真响"两段（决策通道形态），onDeploy 走部署步重放
@@ -121,6 +121,12 @@ function hasEffectFor(events: GameEvent[], scenarioId: string): boolean {
 
 /** 与 forceTrigger 场景同形的攻击 action 的 attacker/target 选择。 */
 function attackPair(def: DataSkillDefinition, cloneId: string, index: number) {
+  if (def.trigger === 'onCardLost') {
+    // v2.6.2 场景：枭姬=强袭克隆剥离我装备（我是 TARGET）；连营=我击杀断肠将
+    // 后被弃光手牌（我是 ATTACKER）。
+    if (def.cardFilter === 'equipment') return { attackerId: `rc_qx_${index}`, targetId: cloneId };
+    return { attackerId: cloneId, targetId: `rc_cw_${index}` };
+  }
   if (def.damageTypeFilter === 'skill') {
     return { attackerId: cloneId, targetId: `rc_feeder_${index}` };
   }
@@ -274,6 +280,45 @@ function forceTrigger(
     return { state: engine.state, events, scenarioId };
   }
 
+  if (def.trigger === 'onCardLost') {
+    if (def.cardFilter === 'equipment') {
+      // 枭姬场景：p1 强袭克隆攻击预挂军备的 p2 克隆 → 剥离结算派生
+      // CARD_LOST via='EQUIP' → 装备谓词命中等量摸牌。
+      const qiangxiId = `rc_qx_${index}`;
+      const qiangxiTpl = allGenerals.find(g => g.id === 'wei_012');
+      expect(qiangxiTpl, '喂招强袭模板必须存在').toBeDefined();
+      const victim = makeFieldGeneral(clone, 2, 0);
+      victim.currentHp = 8; // 典韦 4 点近战-1 护甲会打死 3 血孙尚香，先喂饱血
+      victim.armorCards = [ARMOR_CARD(index)];
+      victim.currentArmor = 1;
+      const state = makeState([
+        makePlayer(1, { fieldGenerals: [makeFieldGeneral(cloneGeneral(qiangxiId, qiangxiTpl!), 1, 0)], hand: [{ ...COSTS[0] }, { ...COSTS[1] }] }),
+        makePlayer(2, { fieldGenerals: [victim] }),
+      ]);
+      const engine = buildEngine(state);
+      const events = engine.dispatch(attack({
+        attackerId: qiangxiId, targetId: cloneId, ranged: false, consumeCard: { ...COSTS[0] },
+      }));
+      return { state: engine.state, events, scenarioId };
+    }
+    // 连营场景（lastHandLost 及其余手牌谓词）：克隆攻击断肠靶子 → 击杀弃光
+    // 攻击方手牌 → DISCARD 派生 CARD_LOST remainingHand=0 → 摸回一张。
+    const caiwenId = `rc_cw_${index}`;
+    const caiwenTpl = allGenerals.find(g => g.id === 'qun_012');
+    expect(caiwenTpl, '喂招断肠模板必须存在').toBeDefined();
+    const prey = makeFieldGeneral(cloneGeneral(caiwenId, caiwenTpl!), 2, 0);
+    prey.currentHp = 1;
+    const state = makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(clone, 1, 0)], hand: [{ ...COSTS[0] }, { ...COSTS[1] }] }),
+      makePlayer(2, { fieldGenerals: [prey] }),
+    ]);
+    const engine = buildEngine(state);
+    const events = engine.dispatch(attack({
+      attackerId: cloneId, targetId: caiwenId, ranged: false, consumeCard: { ...COSTS[0] },
+    }));
+    return { state: engine.state, events, scenarioId };
+  }
+
   throw new Error(tag);
 }
 
@@ -294,15 +339,15 @@ function armorCardsLeft(state: EngineState, generalId: string): number | undefin
 
 const ENTRIES = allCompiledEntries();
 
-describe('2.5.4 逐技能强制触发可达性专项（38/38 定义全谱）', () => {
-  it('账本钉：38 条 runtime 定义 / 131 条诚实跳过，触发类别覆盖 8+onTurnEnd 全谱', () => {
-    expect(ENTRIES).toHaveLength(38);
+describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', () => {
+  it('账本钉：40 条 runtime 定义 / 129 条诚实跳过，触发类别覆盖 8+onTurnEnd 全谱', () => {
+    expect(ENTRIES).toHaveLength(40);
     let skipped = 0;
     for (const g of allGenerals) skipped += compileGeneralSkills(g).skipped.length;
-    expect(skipped).toBe(131);
+    expect(skipped).toBe(129);
     const triggers = new Set(ENTRIES.map(e => `${e.def.trigger}${e.def.damageTypeFilter ? `:${e.def.damageTypeFilter}` : ''}`));
     expect([...triggers].sort()).toEqual([
-      'onBecomingTarget', 'onDamageDealt:attack', 'onDamageTaken',
+      'onBecomingTarget', 'onCardLost', 'onDamageDealt:attack', 'onDamageTaken',
       'onDamageTaken:attack', 'onDamageTaken:skill', 'onDeath', 'onDeploy', 'onKill',
       'onTurnEnd', 'onTurnStart',
     ]);

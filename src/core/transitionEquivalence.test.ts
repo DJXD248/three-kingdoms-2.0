@@ -1083,6 +1083,8 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     // 结算真实移动 → 派生纯通知对（一张 GIVE=逐批单事件，count 携带张数）
     expect(flat.some(e => e.type === 'CARD_LOST'
       && e.data?.playerId === 2 && e.data?.count === 1 && e.data?.via === 'GIVE')).toBe(true);
+    // v2.6.2 加性字段：GIVE 源同样携带结算后手牌数（2-1=1）
+    expect(flat.some(e => e.type === 'CARD_LOST' && e.data?.remainingHand === 1)).toBe(true);
     expect(flat.some(e => e.type === 'CARD_GAINED'
       && e.data?.playerId === 1 && e.data?.count === 1 && e.data?.via === 'GIVE')).toBe(true);
     // 重入环：护短（失去侧）与受礼（获得侧）各摸恰一次，且都在同一次 dispatch 内
@@ -1129,7 +1131,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
 
-  it('发放诚实空转三门 + DISCARD 不派生 CARD_*（无重入面）+ 同配置两跑逐字节一致 (v2.5.3)', () => {
+  it('发放诚实空转三门 + DISCARD 派生 CARD_LOST（v2.6.2 扩面，不派生 CARD_GAINED）+ 同配置两跑逐字节一致 (v2.5.3/2.6.2)', () => {
     // ① SELF 角色=自己给自己：toPlayerId===fromPlayerId 整笔空转，事件照入账
     const selfGiver = makeGeneral('gs_self', 4, [{
       name: '吝啬',
@@ -1187,7 +1189,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(broke.raw.some(e => e.includes('"CARD_LOST"') || e.includes('"CARD_GAINED"'))).toBe(false);
     // 眼热（p3）在三例中都未收到任何 CARD_GAINED → 键定 playerId 的归属闸
 
-    // DISCARD 不派生 CARD_*（断肠弃光仍零重入面）
+    // v2.6.2 扩面：断肠弃光 → DISCARD 结算派生 CARD_LOST（via DISCARD、remainingHand 0）
     const caiwen = builtin2As('cwj53', 'qun_012');
     const duanState = makeState([
       makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('kd53', 4, []), 1)], hand: COSTS.slice(0, 4).map(c => ({ ...c })) }),
@@ -1200,7 +1202,10 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       attackerId: 'kd53', targetId: 'cwj53', ranged: false, consumeCard: { ...COSTS[0] },
     }));
     expect(duanEvents.some(e => e.type === 'DISCARD' && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('断肠:e1'))).toBe(true);
-    expect(duanEvents.some(e => e.type === 'CARD_LOST' || e.type === 'CARD_GAINED')).toBe(false);
+    const duanLost = duanEvents.filter(e => e.type === 'CARD_LOST');
+    expect(duanLost).toHaveLength(1);
+    expect(duanLost[0].data).toMatchObject({ playerId: 1, count: 3, via: 'DISCARD', remainingHand: 0 });
+    expect(duanEvents.some(e => e.type === 'CARD_GAINED')).toBe(false);
 
     // 同配置两跑逐字节一致：发放/派生/重入全链零新增随机面
     const again = runOnce(plainAttacker(), 'gs_self', selfGiver, [{ ...gift }], selfAction);
@@ -1369,6 +1374,118 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     syncPlayerSkills(againEngine, againEngine.state);
     expect(rawEvents(againEngine.dispatch(action))).toEqual(steps[0]);
     expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    // v2.6.2 非派生收口：DECK_PLACE 的手牌离场没有内容驱动，保持沉默
+    expect(flat.some(e => e.type === 'CARD_LOST' || e.type === 'CARD_GAINED')).toBe(false);
+  });
+
+  // ── v2.6.2 CARD_* 事件源扩面 + 连营/枭姬转正（内容刀：真实模板） ──
+
+  it('转正实证：枭姬吃装备剥离摸2、连营吃断肠弃光摸1，同一次多步对局四路径逐事件一致 (v2.6.2)', () => {
+    const dianwei = builtin2As('ct_qx', 'wei_012');   // 典韦·强袭：造 EQUIP_STRIP → via EQUIP 的 CARD_LOST
+    const lian = builtin2As('ct_lian', 'wu_007');      // 陆逊·连营：lastHand 谓词
+    const xiaoji = builtin2As('ct_xj', 'wu_008');      // 孙尚香·枭姬：equipment 谓词
+    const caiwen = builtin2As('ct_cw', 'qun_012');     // 蔡文姬·断肠：造 via DISCARD 的 CARD_LOST
+    const xjField = makeFieldGeneral(xiaoji, 2, 0);
+    (xjField as unknown as { currentHp: number }).currentHp = 8; // 强袭 2 伤不吃死，剥离落在装备上
+    (xjField as unknown as { armorCards: unknown[] }).armorCards = [{ id: 'ct_armor_1', name: '军备', type: '军备' }];
+    (xjField as unknown as { currentArmor: number }).currentArmor = 1;
+    const cwField = makeFieldGeneral(caiwen, 2, 1);
+    (cwField as unknown as { currentHp: number }).currentHp = 1; // 一步致命，触发断肠
+    const build = () => makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(dianwei, 1, 0), makeFieldGeneral(lian, 1, 1)],
+        hand: COSTS.slice(0, 3).map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [xjField, cwField] }),
+    ]);
+    const stepA = attack('ct_qx', 'ct_xj', 0); // 强袭剥离 → 枭姬摸2
+    const stepB = attack('ct_lian', 'ct_cw', 1); // 击杀断肠将 → 弃光 → 连营摸1
+
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    const steps = [rawEvents(engine.dispatch(stepA)), rawEvents(engine.dispatch(stepB))];
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    const flat = steps.flat().map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    // 派生对：EQUIP 源（不带 remainingHand——装备说话不了手牌）与 DISCARD 源（带）
+    const equipLost = flat.filter(e => e.type === 'CARD_LOST' && e.data?.via === 'EQUIP');
+    expect(equipLost).toHaveLength(1);
+    expect(equipLost[0].data).toMatchObject({ playerId: 2, count: 1 });
+    expect(equipLost[0].data?.remainingHand).toBeUndefined();
+    const discardLost = flat.filter(e => e.type === 'CARD_LOST' && e.data?.via === 'DISCARD');
+    expect(discardLost).toHaveLength(1);
+    expect(discardLost[0].data).toMatchObject({ playerId: 1, count: 1, remainingHand: 0 });
+
+    // 触发对：枭姬恰一次摸2（stepA 内）；连营恰一次摸1（stepB 内，弃光后补回）
+    const xjDraws = steps[0].map(r => JSON.parse(r) as { type: string; data?: Record<string, unknown> })
+      .filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('枭姬:e1'));
+    expect(xjDraws).toHaveLength(1);
+    expect(xjDraws[0].data).toMatchObject({ playerId: 2, count: 2 });
+    const lianDraws = steps[1].map(r => JSON.parse(r) as { type: string; data?: Record<string, unknown> })
+      .filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('连营:e1'));
+    expect(lianDraws).toHaveLength(1);
+    expect(lianDraws[0].data).toMatchObject({ playerId: 1, count: 1 });
+    // 跨步串火：枭姬对 DISCARD 源静默、连营对 EQUIP 源静默（各自只在自家事件里响）
+    expect(flat.filter(e => e.type === 'DRAW'
+      && (String(e.data?.skillId ?? '').includes('枭姬:e1') || String(e.data?.skillId ?? '').includes('连营:e1')))
+    ).toHaveLength(2);
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    const rebuild = () => {
+      const s = build();
+      // 每次重建要换新对象（dispatch 会改状态），克隆同一模板即可
+      return s;
+    };
+    let bridgeState = rebuild();
+    const bridgeSteps: string[][] = [];
+    for (const action of [stepA, stepB]) {
+      const r = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = r.engineState;
+      bridgeSteps.push(rawEvents(r.events));
+    }
+    expect(bridgeSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = rebuild();
+    const reconcileSteps: string[][] = [];
+    for (const action of [stepA, stepB]) {
+      const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = r.engineState;
+      reconcileSteps.push(rawEvents(r.events));
+    }
+    expect(reconcileSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(2);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
+
+  it('谓词静默反例：非最后一张手牌的弃牌喂不响连营、DISCARD 源喂不响枭姬（同玩家在场）(v2.6.2)', () => {
+    const lian = builtin2As('ns_lian', 'wu_007');
+    const xiaoji = builtin2As('ns_xj', 'wu_008'); // 与陆逊同属 p1：playerId 闸放行，卡 in 谓词闸拦下
+    const sima = builtin2As('ns_ym', 'wei_002');  // 司马懿·反馈：受击→弃攻击方 1 张（remainingHand>0）
+    const build = () => makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(lian, 1, 0), makeFieldGeneral(xiaoji, 1, 1)],
+        hand: COSTS.slice(0, 3).map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(sima, 2, 0)] }),
+    ]);
+    const action = attack('ns_lian', 'ns_ym', 0); // 成本后手剩2，反馈再弃1 → remainingHand=1≠0
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    const flat = rawEvents(engine.dispatch(action)).map(r => JSON.parse(r) as { type: string; data?: Record<string, unknown> });
+    const lost = flat.filter(e => e.type === 'CARD_LOST');
+    expect(lost).toHaveLength(1);
+    expect(lost[0].data).toMatchObject({ playerId: 1, count: 1, via: 'DISCARD', remainingHand: 1 });
+    expect(flat.some(e => e.type === 'DRAW'
+      && (String(e.data?.skillId ?? '').includes('连营:e1') || String(e.data?.skillId ?? '').includes('枭姬:e1')))).toBe(false);
   });
 });
 

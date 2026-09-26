@@ -140,11 +140,11 @@ describe('battleReport', () => {
 describe('skill trigger report (2.4.3)', () => {
   it('configuredSkillRows covers exactly the runtime-bearing built-in skills', () => {
     const rows = configuredSkillRows();
-    // 批一 9 + 批二 21 + 批三 2 + v2.5.2 onDeploy 转正 3 + v2.6.0 EQUIP_STRIP 2（苦肉双效果仍是一行）
-    expect(rows).toHaveLength(37);
+    // 批一 9 + 批二 21 + 批三 2 + v2.5.2 onDeploy 转正 3 + v2.6.0 EQUIP_STRIP 2 + v2.6.2 连营/枭姬 2（苦肉双效果仍是一行）
+    expect(rows).toHaveLength(39);
     const keys = rows.map(r => r.key);
-    // join key = 技能名（屯田 魏/晋 重名共两行 = 36 个唯一键）
-    expect(new Set(keys).size).toBe(36);
+    // join key = 技能名（屯田 魏/晋 重名共两行 = 38 个唯一键）
+    expect(new Set(keys).size).toBe(38);
     expect(keys.filter(k => k === '屯田')).toHaveLength(2);
     expect(rows.some(r => r.key === '奸雄' && r.label === '曹操·奸雄')).toBe(true);
     expect(rows.some(r => r.key === '苦肉' && r.label === '黄盖·苦肉')).toBe(true);

@@ -23,6 +23,7 @@ import type {
   TurnSubType,
   DamageSubType,
   KillSubType,
+  CardSubType,
   ExpireCondition,
 } from '../data/generals';
 import {
@@ -33,6 +34,7 @@ import {
   turnSubLabels,
   damageSubLabels,
   killSubLabels,
+  cardSubLabels,
   expireLabels,
 } from '../data/generals';
 
@@ -55,6 +57,7 @@ export function triggerToStr(t?: SkillTriggerConfig): string {
   if (sub === 'turn' && t.turnSubType) s += '→' + turnSubLabels[t.turnSubType];
   if (sub === 'damage' && t.damageSubType) s += '→' + damageSubLabels[t.damageSubType];
   if (sub === 'kill' && t.killSubType) s += '→' + killSubLabels[t.killSubType];
+  if (sub === 'card' && t.cardSubType) s += '→' + cardSubLabels[t.cardSubType];
   if (sub === 'expire' && t.expireCondition) s += '→' + expireLabels[t.expireCondition];
   return s;
 }
@@ -71,6 +74,7 @@ export function buildTriggerOptionStrings(): string[] {
     else if (subKind === 'turn') labels = Object.values(turnSubLabels);
     else if (subKind === 'damage') labels = Object.values(damageSubLabels);
     else if (subKind === 'kill') labels = Object.values(killSubLabels);
+    else if (subKind === 'card') labels = Object.values(cardSubLabels);
     else labels = Object.values(expireLabels);
     for (const label of labels) opts.push(`${main}→${label}`);
   }
@@ -95,6 +99,7 @@ export function strToTrigger(s: string): SkillTriggerConfig | undefined {
     if (subKind === 'turn') cfg.turnSubType = (Object.entries(turnSubLabels) as [TurnSubType, string][]).find(([, v]) => v === subLabel)?.[0];
     if (subKind === 'damage') cfg.damageSubType = (Object.entries(damageSubLabels) as [DamageSubType, string][]).find(([, v]) => v === subLabel)?.[0];
     if (subKind === 'kill') cfg.killSubType = (Object.entries(killSubLabels) as [KillSubType, string][]).find(([, v]) => v === subLabel)?.[0];
+    if (subKind === 'card') cfg.cardSubType = (Object.entries(cardSubLabels) as [CardSubType, string][]).find(([, v]) => v === subLabel)?.[0];
     if (subKind === 'expire') cfg.expireCondition = (Object.entries(expireLabels) as [ExpireCondition, string][]).find(([, v]) => v === subLabel)?.[0];
   }
   return cfg;

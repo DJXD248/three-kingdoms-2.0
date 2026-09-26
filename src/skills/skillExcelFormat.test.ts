@@ -14,7 +14,7 @@ import {
   runtimeEffectTypeLabels,
   runtimeTargetLabels,
 } from './skillExcelFormat';
-import type { SkillEffect } from '../data/generals';
+import type { SkillEffect, SkillTriggerConfig } from '../data/generals';
 import { compileSkill } from './skillCompiler';
 
 describe('skillExcelFormat: cell cleaning', () => {
@@ -57,12 +57,21 @@ describe('skillExcelFormat: trigger round-trip', () => {
       expect(strToTrigger(o)?.type).toBeTruthy();
     }
   });
-  it('round-trips the 2.5.3 card-loss/gain triggers', () => {
+  it('round-trips the 2.5.3 card-loss/gain triggers（v2.6.2 起带 card 子选项）', () => {
     expect(triggerToStr({ type: 'onCardLost' })).toBe('失去手牌时');
     expect(strToTrigger('失去手牌时')).toEqual({ type: 'onCardLost' });
     expect(triggerToStr({ type: 'onCardGained' })).toBe('获得手牌时');
     expect(strToTrigger('获得手牌时')).toEqual({ type: 'onCardGained' });
-    expect(buildTriggerOptionStrings()).toContain('失去手牌时');
+    // v2.6.2：card 子谓词全链往返（连营/枭姬施工图口径）
+    const lianying: SkillTriggerConfig = { type: 'onCardLost', cardSubType: 'lastHandLost' };
+    expect(triggerToStr(lianying)).toBe('失去手牌时→失去最后一张手牌');
+    expect(strToTrigger('失去手牌时→失去最后一张手牌')).toEqual(lianying);
+    const xiaoji: SkillTriggerConfig = { type: 'onCardLost', cardSubType: 'equipmentLost' };
+    expect(triggerToStr(xiaoji)).toBe('失去手牌时→失去装备牌');
+    expect(strToTrigger('失去手牌时→失去装备牌')).toEqual(xiaoji);
+    const opts = buildTriggerOptionStrings();
+    expect(opts).toContain('失去手牌时→失去装备牌');
+    expect(opts).toContain('获得手牌时→获得任意牌');
   });
 });
 

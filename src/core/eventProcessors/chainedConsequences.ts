@@ -63,10 +63,7 @@ export function enqueueDerivedConsequences(
     // onCardLost/onCardGained triggers listen to. Counts come from the actual
     // state change (same "derive from what settled" discipline as the skill-
     // kill DEATH above), so honest no-ops (empty giver, dead receiver, same-
-    // player) derive nothing — no phantom triggers. Other hand-loss paths
-    // (DISCARD, deploy/move/supply consumption) deliberately do NOT derive
-    // CARD_* yet; emission-source expansion is a registered follow-up in
-    // PROJECT_ARCH_MAP §F (first batch stays a closed GIVE loop).
+    // player) derive nothing — no phantom triggers.
     const data = event.data as any;
     const fromId = typeof data?.fromPlayerId === 'number' ? data.fromPlayerId : null;
     const toId = typeof data?.toPlayerId === 'number' ? data.toPlayerId : null;
@@ -74,11 +71,64 @@ export function enqueueDerivedConsequences(
       (state.players.find(player => player.id === playerId)?.hand as unknown[] | undefined)?.length ?? 0;
     if (fromId !== null) {
       const lost = handOf(before, fromId) - handOf(next, fromId);
-      if (lost > 0) queue.push({ type: 'CARD_LOST', data: { playerId: fromId, count: lost, via: 'GIVE' } });
+      if (lost > 0) {
+        queue.push({
+          type: 'CARD_LOST',
+          data: { playerId: fromId, count: lost, via: 'GIVE', remainingHand: handOf(next, fromId) },
+        });
+      }
     }
     if (toId !== null) {
       const gained = handOf(next, toId) - handOf(before, toId);
       if (gained > 0) queue.push({ type: 'CARD_GAINED', data: { playerId: toId, count: gained, via: 'GIVE' } });
+    }
+  }
+
+  // v2.6.2 CARD_* emission-source expansion (PROJECT_ARCH_MAP §F event-source
+  // table): the DISCARD path now derives like GIVE — hand losses carry
+  // `remainingHand` (post-settlement, so "lost your LAST hand card"
+  // predicates read a recorded fact, not a re-derivation). Paths NOT
+  // derived (deliberate closure, see §F): DECK_PLACE/装备穿入 hand moves,
+  // deploy/move/supply/attack consumption, player-death hand dump
+  // (none has a content driver this cut — 连营's original semantic is
+  // losing hand cards to OTHER players: 顺走/弃置), DRAW / armor-equip /
+  // general-card-in-hand gains (资援-class onCardGained needs the
+  // gained-side first).
+  if (event.type === 'DISCARD') {
+    const data = event.data as any;
+    const playerId = typeof data?.playerId === 'number' ? data.playerId : null;
+    if (playerId !== null) {
+      const handOf = (state: EngineState) =>
+        (state.players.find(player => player.id === playerId)?.hand as unknown[] | undefined)?.length ?? 0;
+      const lost = handOf(before) - handOf(next);
+      if (lost > 0) {
+        queue.push({
+          type: 'CARD_LOST',
+          data: { playerId, count: lost, via: 'DISCARD', remainingHand: handOf(next) },
+        });
+      }
+    }
+  }
+
+  if (event.type === 'EQUIP_STRIP') {
+    // Equipment losses ride the same CARD_LOST notification with via='EQUIP'
+    // (枭姬's driver). Count = armor cards actually detached at the matching
+    // field general (honest no-ops — off-field general, empty armor — derive
+    // nothing). remainingHand is intentionally absent: an equipment loss
+    // says nothing about the owner's hand.
+    const data = event.data as any;
+    const playerId = typeof data?.targetPlayerId === 'number' ? data.targetPlayerId : null;
+    const targetId = data?.targetId;
+    if (playerId !== null && targetId !== undefined) {
+      const armorCount = (state: EngineState) => {
+        const field = state.players.find(player => player.id === playerId)?.fieldGenerals as any[] | undefined ?? [];
+        const general = field.find(fg => getRuntimeCardId(fg?.general as never) === String(targetId));
+        return Array.isArray(general?.armorCards) ? general.armorCards.length : 0;
+      };
+      const stripped = armorCount(before) - armorCount(next);
+      if (stripped > 0) {
+        queue.push({ type: 'CARD_LOST', data: { playerId, count: stripped, via: 'EQUIP' } });
+      }
     }
   }
 

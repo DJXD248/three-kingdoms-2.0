@@ -128,7 +128,19 @@ function buildCondition(
         // Hands live on players, not general instances (same keying lesson
         // as DISCARD, 2.5.0): CARD_* keys the losing/gaining PLAYER only.
         // sourceGeneralId never narrows these triggers.
-        return idEq(ownerId, data.playerId);
+        if (!idEq(ownerId, data.playerId)) return false;
+        if (trigger === 'onCardLost' && skill.cardFilter && skill.cardFilter !== 'any') {
+          // v2.6.2 emission-source predicates. The via/remainingHand facts
+          // are recorded by the derivation itself (chainedConsequences), so
+          // the condition reads settled truth rather than re-deriving it.
+          const via = typeof data.via === 'string' ? data.via : '';
+          if (skill.cardFilter === 'equipment') return via === 'EQUIP';
+          if (!via || via === 'EQUIP') return false;
+          if (skill.cardFilter === 'lastHand') {
+            return typeof data.remainingHand === 'number' && data.remainingHand === 0;
+          }
+        }
+        return true;
       }
       default:
         return false;
@@ -147,12 +159,14 @@ function buildCondition(
  *   HEAL        → HEAL         { targetPlayerId, targetId, value } (hp capped at maxHp)
  *   GAIN_ARMOR  → GAIN_ARMOR   { targetPlayerId, targetId, value } (armor points, no cards)
  *   DISCARD     → DISCARD      { playerId, count }        (2.5.0, hand move in EventProcessor;
- *                               count 0 = whole-hand sentinel)
+ *                               count 0 = whole-hand sentinel; since 2.6.2 its settlement
+ *                               derives CARD_LOST via='DISCARD' with remainingHand)
  *   GIVE        → GIVE         { fromPlayerId, toPlayerId, count } (2.5.3, hand-to-hand
  *                               transfer in EventProcessor; settlement derives the
  *                               CARD_LOST/CARD_GAINED notifications)
  *   EQUIP_STRIP → EQUIP_STRIP  { targetPlayerId, targetId, count } (2.6.0, general-keyed
- *                               armor-card strip in EventProcessor)
+ *                               armor-card strip in EventProcessor; since 2.6.2 its
+ *                               settlement derives CARD_LOST via='EQUIP')
  *   REVEAL      → REVEAL       { viewerPlayerId, count } (2.6.1, pure observation —
  *                               settlement returns state unchanged, zero rngState)
  *   DECK_PLACE  → DECK_PLACE   { playerId, dest, count } (2.6.1, hand→deck mirror of GIVE;

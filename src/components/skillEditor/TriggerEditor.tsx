@@ -6,6 +6,7 @@ import {
   TurnSubType, turnSubLabels,
   DamageSubType, damageSubLabels,
   KillSubType, killSubLabels,
+  CardSubType, cardSubLabels,
   ExpireCondition, expireLabels,
 } from '../../data/generals';
 
@@ -79,6 +80,16 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
         </div>
       )}
 
+      {subKind === 'card' && (
+        <div className="flex items-center gap-2 pl-4">
+          <label className="text-[10px] text-cyan-400/50 whitespace-nowrap">└ 卡牌时机</label>
+          <select value={trigger?.cardSubType || ''} onChange={e => handleSubChange('cardSubType', e.target.value)} className={selectCls}>
+            <option value="">请选择</option>
+            {(Object.entries(cardSubLabels) as [CardSubType, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+      )}
+
       {subKind === 'expire' && (
         <div className="flex items-center gap-2 pl-4">
           <label className="text-[10px] text-cyan-400/50 whitespace-nowrap">└ 失效条件</label>
@@ -98,6 +109,7 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
           {subKind === 'turn' && trigger?.turnSubType && <span className="text-[10px] text-cyan-400/70">→ {turnSubLabels[trigger.turnSubType]}</span>}
           {subKind === 'damage' && trigger?.damageSubType && <span className="text-[10px] text-cyan-400/70">→ {damageSubLabels[trigger.damageSubType]}</span>}
           {subKind === 'kill' && trigger?.killSubType && <span className="text-[10px] text-cyan-400/70">→ {killSubLabels[trigger.killSubType]}</span>}
+          {subKind === 'card' && trigger?.cardSubType && <span className="text-[10px] text-cyan-400/70">→ {cardSubLabels[trigger.cardSubType]}</span>}
           {subKind === 'expire' && trigger?.expireCondition && <span className="text-[10px] text-cyan-400/70">→ {expireLabels[trigger.expireCondition]}</span>}
         </div>
       )}

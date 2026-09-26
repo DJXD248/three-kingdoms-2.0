@@ -171,6 +171,29 @@ export function compileSkill(
       if (triggerConfig.damageSubType === 'attackDamage') damageTypeFilter = 'attack';
       else if (triggerConfig.damageSubType === 'skillDamage') damageTypeFilter = 'skill';
     }
+    // v2.6.2 card-trigger predicates (连营/枭姬 keys): 'anyLost' and an
+    // absent sub-type stay the pre-expansion any-source behavior (undefined
+    // filter). A sub-type that contradicts its trigger direction, or a
+    // gained-side predicate with no emission source yet (only GIVE derives
+    // CARD_GAINED), skips honestly rather than silently never-firing.
+    let cardFilter: DataSkillDefinition['cardFilter'];
+    if (mapped === 'onCardLost' || mapped === 'onCardGained') {
+      const cardSub = triggerConfig.cardSubType;
+      const lostOnly = cardSub === 'equipmentLost' || cardSub === 'lastHandLost' || cardSub === 'handLost';
+      if (cardSub === 'anyGained' && mapped === 'onCardLost') {
+        skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
+        return;
+      }
+      if (lostOnly && mapped === 'onCardGained') {
+        skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
+        return;
+      }
+      if (mapped === 'onCardLost') {
+        if (cardSub === 'equipmentLost') cardFilter = 'equipment';
+        else if (cardSub === 'lastHandLost') cardFilter = 'lastHand';
+        else if (cardSub === 'handLost') cardFilter = 'hand';
+      }
+    }
 
     const converted = toEffectData(effect);
     if (!converted) {
@@ -191,6 +214,7 @@ export function compileSkill(
       effects: [converted],
       sourceGeneralId: runtimeGeneralId,
       damageTypeFilter,
+      cardFilter,
       // ACTIVATE_SKILL addressing (2.3.1): id doubles as `<general>:<skill>:<effect>`,
       // these two fields let resolvers/UI read the parts without parsing.
       effectId: effect.id,

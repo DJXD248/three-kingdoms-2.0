@@ -48,6 +48,10 @@ export type DeploySubType = 'selfDeploy' | 'allyDeploy' | 'enemyDeploy';
 export type TurnSubType = 'selfTurn' | 'otherTurn';
 export type DamageSubType = 'attackDamage' | 'skillDamage' | 'allDamage';
 export type KillSubType = 'killAlly' | 'killEnemy';
+/** v2.6.2 onCardLost/onCardGained 细分（事件源扩面刀）：把"失去牌"的
+ *  位置（手牌/装备）与时点（是否最后一张手牌）谓词化——连营/枭姬的
+ *  原文语义钥匙。anyLost/anyGained 为宽松默认（与扩面前行为一致）。 */
+export type CardSubType = 'anyLost' | 'equipmentLost' | 'lastHandLost' | 'handLost' | 'anyGained';
 export type ExpireCondition =
   | 'untilSelfTurnStart' | 'untilSelfTurnEnd'
   | 'untilOtherTurnStart' | 'untilOtherTurnEnd'
@@ -59,6 +63,7 @@ export interface SkillTriggerConfig {
   turnSubType?: TurnSubType;             // onTurnStart/onTurnEnd 细分
   damageSubType?: DamageSubType;         // onDamageTaken/onDamageDealt/onBaseDamaged 细分
   killSubType?: KillSubType;             // onKill 细分
+  cardSubType?: CardSubType;             // onCardLost/onCardGained 细分（v2.6.2）
   expireCondition?: ExpireCondition;     // untilExpire 细分
 }
 
@@ -103,6 +108,10 @@ export const damageSubLabels: Record<DamageSubType, string> = {
 export const killSubLabels: Record<KillSubType, string> = {
   killAlly: '击杀己方将领', killEnemy: '击杀其他玩家将领',
 };
+export const cardSubLabels: Record<CardSubType, string> = {
+  anyLost: '失去任意牌', equipmentLost: '失去装备牌', lastHandLost: '失去最后一张手牌',
+  handLost: '失去手牌', anyGained: '获得任意牌',
+};
 export const expireLabels: Record<ExpireCondition, string> = {
   untilSelfTurnStart: '到下个己方回合开始前', untilSelfTurnEnd: '到下个己方回合结束前',
   untilOtherTurnStart: '到下个其他玩家回合开始前', untilOtherTurnEnd: '到下个其他玩家回合结束前',
@@ -110,12 +119,13 @@ export const expireLabels: Record<ExpireCondition, string> = {
 };
 
 // 哪些触发类型需要哪些细分选项
-export function getTriggerSubOptions(type: SkillTriggerType): 'deploy' | 'turn' | 'damage' | 'kill' | 'expire' | null {
+export function getTriggerSubOptions(type: SkillTriggerType): 'deploy' | 'turn' | 'damage' | 'kill' | 'card' | 'expire' | null {
   switch (type) {
     case 'onOtherDeploy': return 'deploy';
     case 'onTurnStart': case 'onTurnEnd': return 'turn';
     case 'onDamageTaken': case 'onDamageDealt': case 'onBaseDamaged': return 'damage';
     case 'onKill': return 'kill';
+    case 'onCardLost': case 'onCardGained': return 'card';
     case 'untilExpire': return 'expire';
     default: return null;
   }
@@ -242,6 +252,24 @@ const SK_QIANGXI: Skill = {
     id: 'e1',
     trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
     runtime: { type: 'EQUIP_STRIP', value: 1, target: 'TARGET' },
+  }],
+};
+const SK_LIANYING: Skill = {
+  name: '连营',
+  description: '失去最后一张手牌后，摸一张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onCardLost', cardSubType: 'lastHandLost' },
+    runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+  }],
+};
+const SK_XIAOJI: Skill = {
+  name: '枭姬',
+  description: '失去一张装备牌后，摸两张牌。',
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'onCardLost', cardSubType: 'equipmentLost' },
+    runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' },
   }],
 };
 const SK_KUANGGU: Skill = {
@@ -635,8 +663,8 @@ const wuGenerals: General[] = [
   createGeneral('wu_004', '黄盖', '吴', 4, [SK_KUROU, '诈降'], '轻身为国'),
   createGeneral('wu_005', '周瑜', '吴', 3, [SK_YINGZI, '反间'], '大都督'),
   createGeneral('wu_006', '大乔', '吴', 3, ['国色', '流离'], '矜持之花'),
-  createGeneral('wu_007', '陆逊', '吴', 3, ['谦逊', '连营'], '儒生雄才'),
-  createGeneral('wu_008', '孙尚香', '吴', 3, ['结姻', '枭姬'], '弓腰姬'),
+  createGeneral('wu_007', '陆逊', '吴', 3, ['谦逊', SK_LIANYING], '儒生雄才'),
+  createGeneral('wu_008', '孙尚香', '吴', 3, ['结姻', SK_XIAOJI], '弓腰姬'),
   createGeneral('wu_009', '小乔', '吴', 3, ['天香', '红颜'], '矫情之花'),
   createGeneral('wu_010', '太史慈', '吴', 4, ['天义'], '笃烈之士'),
   createGeneral('wu_011', '周泰', '吴', 4, ['不屈', '奋激'], '历战之躯'),

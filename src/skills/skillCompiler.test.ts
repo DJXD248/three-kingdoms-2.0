@@ -197,6 +197,45 @@ describe('skillCompiler · compileSkill', () => {
     expect(gained.definitions[0].trigger).toBe('onCardGained');
   });
 
+  it('compiles card predicates to cardFilter and skips contradictory combos — v2.6.2 事件源扩面', () => {
+    const lost3 = (sub: string) => compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onCardLost', cardSubType: sub } as never, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }] }),
+      'g1',
+    );
+    expect(lost3('equipmentLost').definitions[0].cardFilter).toBe('equipment');
+    expect(lost3('lastHandLost').definitions[0].cardFilter).toBe('lastHand');
+    expect(lost3('handLost').definitions[0].cardFilter).toBe('hand');
+    expect(lost3('anyLost').definitions[0].cardFilter).toBeUndefined();
+    // 未设定细分 = 扩面前宽松口径
+    expect(lost3('').definitions[0].cardFilter).toBeUndefined();
+
+    // 方向矛盾诚实跳过：获得触发配失去谓词 / 失去触发配获得谓词
+    const crossed = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onCardGained', cardSubType: 'lastHandLost' } as never, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }] }),
+      'g1',
+    );
+    expect(crossed.definitions).toHaveLength(0);
+    expect(crossed.skipped[0]?.reason).toBe('TRIGGER_SUBTYPE_UNSUPPORTED');
+    const crossed2 = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onCardLost', cardSubType: 'anyGained' } as never, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }] }),
+      'g1',
+    );
+    expect(crossed2.definitions).toHaveLength(0);
+    expect(crossed2.skipped[0]?.reason).toBe('TRIGGER_SUBTYPE_UNSUPPORTED');
+
+    // 获得侧谓词无事件源（本刀仅 anyGained 宽松口径可用）
+    const gainedLoose = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onCardGained', cardSubType: 'anyGained' } as never, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }] }),
+      'g1',
+    );
+    expect(gainedLoose.definitions).toHaveLength(1);
+    expect(gainedLoose.definitions[0].cardFilter).toBeUndefined();
+  });
+
   it('compiles REVEAL/DECK_PLACE effects and forwards dest — 2.6.1 牌堆顶能力层（非内容刀）', () => {
     const reveal = compileSkill(
       general(),

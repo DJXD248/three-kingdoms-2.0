@@ -68,6 +68,9 @@ const ALL_IDS = [
   'jin_008:英慧:e1', 'jin_009:拓略:e1', 'jin_012:奋勇:e1',
   // batch four (v2.6.0) — the first EQUIP_STRIP-primitive skills (§G 装备区交互行)
   'wei_012:强袭:e1', 'qun_004:崩坏:e1',
+  // batch five (v2.6.2) — the first onCardLost-filtered skills（事件源扩面：
+  // DISCARD/EQUIP_STRIP 派生 CARD_LOST 后转正的 连营/枭姬）
+  'wu_007:连营:e1', 'wu_008:枭姬:e1',
 ];
 
 function compileAllGenerals() {
@@ -84,10 +87,10 @@ function compileAllGenerals() {
 describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () => {
   const { definitions, skipped } = compileAllGenerals();
 
-  it('24 条编译入局：全库共 38 条 runtime 定义（含批量三 DISCARD 两条、v2.5.2 转正 onDeploy 三条与批量四 EQUIP_STRIP 两条）', () => {
-    expect(definitions).toHaveLength(38);
+  it('24 条编译入局：全库共 40 条 runtime 定义（含 v2.6.0 EQUIP_STRIP 两条与 v2.6.2 onCardLost 两条）', () => {
+    expect(definitions).toHaveLength(40);
     expect(definitions.map(d => d.id).sort()).toEqual([...ALL_IDS].sort());
-    expect(skipped).toHaveLength(131);
+    expect(skipped).toHaveLength(129);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 
@@ -218,6 +221,16 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
       trigger: 'onDeploy', effectId: 'e1',
       effects: [{ type: 'DRAW_CARD', value: 1, target: 'SELF' }],
     });
+    // v2.6.2 批量五：onCardLost 谓词滤条（连营=最后一张手牌 / 枭姬=装备牌，
+    // 编译产物口径 cardFilter: 'lastHand'/'equipment'）
+    expect(byId.get('wu_007:连营:e1')).toMatchObject({
+      trigger: 'onCardLost', cardFilter: 'lastHand',
+      effects: [{ type: 'DRAW_CARD', value: 1, target: 'SELF' }],
+    });
+    expect(byId.get('wu_008:枭姬:e1')).toMatchObject({
+      trigger: 'onCardLost', cardFilter: 'equipment',
+      effects: [{ type: 'DRAW_CARD', value: 2, target: 'SELF' }],
+    });
   });
 
   it('同名"屯田"双实例（魏邓艾/晋邓艾）在同一个将集合里 id 无碰撞', () => {
@@ -228,7 +241,7 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
         ids.add(d.id);
       }
     }
-    expect(ids.size).toBe(38); // v2.6.0 批量四 EQUIP_STRIP 两条后全库定义数（无碰撞）
+    expect(ids.size).toBe(40); // v2.6.2 连营/枭姬转正后全库定义数（无碰撞）
   });
 });
 
