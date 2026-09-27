@@ -3,11 +3,11 @@
  *
  * 录入面唯一语法（v2.8.3，刀 B）：一条门槛=「对象? 度量 运算符 (度量|数字)」，
  * 多条之间用顿号/逗号/分号/换行分隔，语义为「全部成立才发动」。
- *   手牌≤2，牌堆≥5 / 自身体力=1 / 被作用者手牌>自身手牌 / 无
+ *   手牌≤2，牌堆≥5 / 自身体力=1 / 目标手牌>自身手牌 / 无
  *
  * 只认这 6 个度量（都是对局里已经记录下来的事实，见 skillConditions.ts）：
  *   手牌 / 体力 / 护甲 / 场上将领 / 牌堆 / 本次伤害
- * 对象只有 3 个：自身（缺省）/ 被作用者 / 伤害来源。
+ * 对象只有 3 个：自身（缺省）/ 目标 / 伤害来源。
  *
  * 失败即闭（fail-closed）：读不懂的片段一律进 unknown 交回录入面报告，
  * 绝不猜成别的条件，也绝不"当作没写"——技能宁可不发，不能乱发。
@@ -31,7 +31,7 @@ export const GATE_METRIC_LABELS: Record<SkillConditionMetric, string> = {
 
 export const GATE_SUBJECT_LABELS: Record<SkillConditionSubject, string> = {
   SELF: '自身',
-  TARGET: '被作用者',
+  TARGET: '目标',
   ATTACKER: '伤害来源',
 };
 
@@ -58,6 +58,7 @@ const METRIC_ALIASES: [string, SkillConditionMetric][] = [
 
 const SUBJECT_ALIASES: [string, SkillConditionSubject][] = [
   ['己方玩家', 'SELF'], ['我方玩家', 'SELF'], ['自己', 'SELF'], ['自身', 'SELF'],
+  // 「被作用者」「受击者」是 v2.8.3 及更早的行话写法：只接受、不再写出（旧文件与旧手填必须照样读懂）。
   ['被作用者', 'TARGET'], ['受击者', 'TARGET'], ['目标', 'TARGET'],
   ['伤害来源', 'ATTACKER'], ['攻击方', 'ATTACKER'], ['进攻角色', 'ATTACKER'], ['来源', 'ATTACKER'],
 ];
@@ -192,4 +193,4 @@ export function gateConditionsToText(conditions?: SkillCondition[]): string {
 
 /** 一句门槛提示语（编辑器/导入报告共用措辞）。 */
 export const GATE_SYNTAX_HINT =
-  '写法：手牌≤2，牌堆≥5（多条件用顿号或逗号＝都要满足）；可填的量只有 手牌/体力/护甲/场上将领/牌堆/本次伤害，对象只有 自身/被作用者/伤害来源';
+  '写法：手牌≤2，牌堆≥5（多条件用顿号或逗号＝都要满足）；可填的量只有 手牌/体力/护甲/场上将领/牌堆/本次伤害，对象只有 自身/目标/伤害来源';

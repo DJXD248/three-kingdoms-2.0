@@ -293,7 +293,7 @@ const SK_TUNTIAN_WEI: Skill = {
 };
 const SK_QIANGXI: Skill = {
   name: '强袭',
-  description: '造成攻击伤害后，剥离伤害目标的一张装备卡（入弃牌堆，其护甲值相应减少）。',
+  description: '造成攻击伤害后，拆掉目标的一张装备卡（放进弃牌堆，他的护甲值相应减少）。',
   effects: [{
     id: 'e1',
     trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },

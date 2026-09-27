@@ -92,13 +92,13 @@ describe('SkillEditor: structured runtime entry', () => {
     const findDestSelect = () => Array.from(document.querySelectorAll('select'))
       .find(s => s.options[0]?.text?.startsWith('牌堆底')) as HTMLSelectElement | undefined;
 
-    // 观顶/置牌同为上表新枚；REVEAL 无位置面→不应出现放置位置下拉
+    // 看牌堆顶/放回牌堆同为上表新枚；REVEAL 无位置面→不应出现放置位置下拉
     fireEvent.change(findRuntimeSelect(), { target: { value: 'REVEAL' } });
     expect(screen.getByText(/观看牌堆顶/)).toBeTruthy();
     expect(findDestSelect()).toBeUndefined();
 
     fireEvent.change(findRuntimeSelect(), { target: { value: 'DECK_PLACE' } });
-    expect(screen.getByText(/张手牌移入牌堆/)).toBeTruthy();
+    expect(screen.getByText(/张手牌放回牌堆/)).toBeTruthy();
     const dest = findDestSelect();
     expect(dest).toBeTruthy();
     expect(dest!.value).toBe('BOTTOM'); // 缺省=牌堆底

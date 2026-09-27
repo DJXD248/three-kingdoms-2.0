@@ -14,6 +14,9 @@ import {
   serializeEffectGroup,
   runtimeEffectTypeLabels,
   runtimeTargetLabels,
+  RUNTIME_TYPE_LIST,
+  RUNTIME_TARGET_LIST,
+  SETTLEABLE_RUNTIME_TYPE_LIST,
 } from './skillExcelFormat';
 import type { SkillEffect, SkillTriggerConfig } from '../data/generals';
 import { compileSkill } from './skillCompiler';
@@ -101,10 +104,13 @@ describe('skillExcelFormat: runtime field parsers', () => {
     expect(parseRuntimeType('回复体力')).toBe('HEAL');
     expect(parseRuntimeType('弃牌')).toBe('DISCARD');
     expect(parseRuntimeType('discard')).toBe('DISCARD');
+    expect(parseRuntimeType('拆掉装备')).toBe('EQUIP_STRIP');
     expect(parseRuntimeType('剥离装备')).toBe('EQUIP_STRIP');
     expect(parseRuntimeType('equip_strip')).toBe('EQUIP_STRIP');
+    expect(parseRuntimeType('看牌堆顶')).toBe('REVEAL');
     expect(parseRuntimeType('观顶')).toBe('REVEAL');
     expect(parseRuntimeType('reveal')).toBe('REVEAL');
+    expect(parseRuntimeType('放回牌堆')).toBe('DECK_PLACE');
     expect(parseRuntimeType('置牌入堆')).toBe('DECK_PLACE');
     expect(parseRuntimeType('deck_place')).toBe('DECK_PLACE');
     expect(parseRuntimeType('无')).toBeUndefined();
@@ -114,8 +120,23 @@ describe('skillExcelFormat: runtime field parsers', () => {
   it('parses targets by label and raw enum', () => {
     expect(parseRuntimeTarget('自身')).toBe('SELF');
     expect(parseRuntimeTarget('ATTACKER')).toBe('ATTACKER');
+    expect(parseRuntimeTarget('目标')).toBe('TARGET');
     expect(parseRuntimeTarget('被作用者')).toBe('TARGET');
     expect(parseRuntimeTarget('无')).toBeUndefined();
+  });
+
+  it('v2.8.4 词汇替换：旧行话只进不出——写出的永远是大白话', () => {
+    const written = [...Object.values(runtimeEffectTypeLabels), ...Object.values(runtimeTargetLabels)];
+    expect(written).toEqual(expect.arrayContaining(['拆掉装备', '看牌堆顶', '放回牌堆', '目标']));
+    for (const legacy of ['剥离装备', '观顶', '置牌入堆', '被作用者']) {
+      expect(written).not.toContain(legacy);
+      expect(SETTLEABLE_RUNTIME_TYPE_LIST).not.toContain(legacy);
+      expect(RUNTIME_TARGET_LIST).not.toContain(legacy);
+    }
+    // 下拉里每一个选项都必须被自家解析器认得（与触发栏严格读法同款纪律）
+    for (const label of RUNTIME_TYPE_LIST.split(',')) expect(parseRuntimeType(label)).toBeDefined();
+    for (const label of SETTLEABLE_RUNTIME_TYPE_LIST.split(',')) expect(parseRuntimeType(label)).toBeDefined();
+    for (const label of RUNTIME_TARGET_LIST.split(',')) expect(parseRuntimeTarget(label)).toBeDefined();
   });
 
   it('parses values: positive integers only', () => {

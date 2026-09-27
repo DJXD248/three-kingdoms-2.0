@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseGateText, gateConditionsToText, GATE_SYNTAX_HINT,
+  GATE_METRIC_LABELS, GATE_SUBJECT_LABELS,
 } from './skillGateText';
 
 describe('skillGateText · 门槛文本 -> 结构化条件', () => {
@@ -95,7 +96,7 @@ describe('skillGateText · 结构化条件 -> 表格文本', () => {
     expect(gateConditionsToText([{ metric: 'GENERAL_HP', op: 'EQ', value: 1, subject: 'ATTACKER' }])).toBe('伤害来源体力=1');
     expect(gateConditionsToText([
       { metric: 'HAND_COUNT', op: 'GT', compareTo: { metric: 'HAND_COUNT', subject: 'TARGET' } },
-    ])).toBe('手牌>被作用者手牌');
+    ])).toBe('手牌>目标手牌');
   });
 
   it('写法 -> 结构 -> 写法 再解析一次结果不变（导出/导入往返）', () => {
@@ -108,10 +109,25 @@ describe('skillGateText · 结构化条件 -> 表格文本', () => {
     expect(second.conditions).toEqual(first.conditions);
   });
 
-  it('提示语存在且与实际能认的词一致', () => {
+  it('提示语存在且与实际能认的词一致（词表＝提示语的唯一来源）', () => {
     expect(GATE_SYNTAX_HINT).toContain('手牌≤2');
-    for (const metric of ['手牌', '体力', '护甲', '场上将领', '牌堆', '本次伤害']) {
+    for (const metric of Object.values(GATE_METRIC_LABELS)) {
       expect(parseGateText(`${metric}=1`).conditions).toHaveLength(1);
+      expect(GATE_SYNTAX_HINT).toContain(metric);
     }
+    for (const [enumKey, label] of Object.entries(GATE_SUBJECT_LABELS)) {
+      const got = parseGateText(`${label}体力=1`).conditions;
+      expect(got).toHaveLength(1);
+      expect(got[0].subject).toBe(enumKey === 'SELF' ? undefined : enumKey);
+      expect(GATE_SYNTAX_HINT).toContain(label);
+      expect(gateConditionsToText(got)).toBe(`${enumKey === 'SELF' ? '' : label}体力=1`);
+    }
+  });
+
+  it('旧行话「被作用者」照样读得懂，但写出来一律是「目标」（只接受、不写出）', () => {
+    expect(parseGateText('被作用者体力=1').conditions)
+      .toEqual(parseGateText('目标体力=1').conditions);
+    expect(gateConditionsToText(parseGateText('被作用者体力=1').conditions)).toBe('目标体力=1');
+    expect(gateConditionsToText(parseGateText('受击者手牌>自身手牌').conditions)).toBe('目标手牌>手牌');
   });
 });

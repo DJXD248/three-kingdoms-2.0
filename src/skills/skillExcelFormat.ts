@@ -130,9 +130,22 @@ export const runtimeEffectTypeLabels: Record<SkillRuntimeEffect['type'], string>
   GAIN_ARMOR: '获得护甲',
   DISCARD: '弃牌',
   GIVE: '发放',
-  EQUIP_STRIP: '剥离装备',
-  REVEAL: '观顶',
-  DECK_PLACE: '置牌入堆',
+  EQUIP_STRIP: '拆掉装备',
+  REVEAL: '看牌堆顶',
+  DECK_PLACE: '放回牌堆',
+};
+
+/**
+ * 旧行话（v2.8.3 及更早版本导出、以及用户手写在这些词上的文件）。
+ * **只接受、绝不写出**——写出的永远用上面那套大白话，否则用户手上的旧 .xlsx 一改词就导入即失效。
+ */
+const LEGACY_TYPE_LABELS: Record<string, SkillRuntimeEffect['type']> = {
+  剥离装备: 'EQUIP_STRIP',
+  观顶: 'REVEAL',
+  置牌入堆: 'DECK_PLACE',
+};
+const LEGACY_TARGET_LABELS: Record<string, NonNullable<SkillRuntimeEffect['target']>> = {
+  被作用者: 'TARGET',
 };
 
 /** Types the compiler can settle today (see skillCompiler SUPPORTED_EFFECT_TYPES). */
@@ -141,7 +154,7 @@ export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = [
 export const runtimeTargetLabels: Record<NonNullable<SkillRuntimeEffect['target']>, string> = {
   SELF: '自身',
   ATTACKER: '伤害来源',
-  TARGET: '被作用者',
+  TARGET: '目标',
 };
 
 export const RUNTIME_TYPE_LIST = Object.values(runtimeEffectTypeLabels).join(',');
@@ -156,8 +169,9 @@ export function parseRuntimeType(s: string): SkillRuntimeEffect['type'] | undefi
   const byEnum = (Object.keys(runtimeEffectTypeLabels) as SkillRuntimeEffect['type'][])
     .find(t => t === upper);
   if (byEnum) return byEnum;
-  return (Object.entries(runtimeEffectTypeLabels) as [SkillRuntimeEffect['type'], string][])
+  const byLabel = (Object.entries(runtimeEffectTypeLabels) as [SkillRuntimeEffect['type'], string][])
     .find(([, label]) => label === v)?.[0];
+  return byLabel ?? LEGACY_TYPE_LABELS[v];
 }
 
 /** Parse "自身"/"SELF" -> target; anything else -> undefined. */
@@ -168,8 +182,9 @@ export function parseRuntimeTarget(s: string): SkillRuntimeEffect['target'] | un
   const byEnum = (Object.keys(runtimeTargetLabels) as SkillRuntimeEffect['target'][])
     .find(t => t === upper);
   if (byEnum) return byEnum;
-  return (Object.entries(runtimeTargetLabels) as [NonNullable<SkillRuntimeEffect['target']>, string][])
+  const byLabel = (Object.entries(runtimeTargetLabels) as [NonNullable<SkillRuntimeEffect['target']>, string][])
     .find(([, label]) => label === v)?.[0];
+  return byLabel ?? LEGACY_TARGET_LABELS[v];
 }
 
 /** Parse a positive integer value; invalid/missing -> undefined. */
