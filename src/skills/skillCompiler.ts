@@ -29,9 +29,17 @@
  *     through the canonical CHOOSE_OPTION action. A choice skill whose
  *     runtime effects sit on different triggers degenerates honestly into
  *     independent definitions (nothing to choose between at one moment).
+ *   - 门槛 (2.8.3, 刀 B): per-effect `conditions` are passed straight through
+ *     onto the compiled definition — the evaluator (skills/skillConditions.ts)
+ *     and both consumers (SkillTriggerBridge / turnEndSkills) already existed
+ *     since 2.7.3, so this cut adds input surface, not gameplay. A choice
+ *     group carrying any condition refuses to compile
+ *     (CONDITION_CHOICE_UNSUPPORTED): one choice definition has one
+ *     conditions slot, and silently un-gating the "looks unconditional"
+ *     options would invent gameplay.
  */
 
-import type { General, Skill, SkillEffect, SkillTriggerType } from '../data/generals';
+import type { General, Skill, SkillCondition, SkillEffect, SkillTriggerType } from '../data/generals';
 import type {
   DataSkillDefinition,
   DataSkillEffectType,
@@ -87,7 +95,11 @@ export interface SkillSkip {
     | 'TRIGGER_UNSUPPORTED'
     | 'TRIGGER_SUBTYPE_UNSUPPORTED'
     | 'NO_RUNTIME_PAYLOAD'
-    | 'EFFECT_TYPE_UNSUPPORTED';
+    | 'EFFECT_TYPE_UNSUPPORTED'
+    /** v2.8.3：门槛挂在单条效果上，而"选择其一"把同触发的多条效果并成一张
+     *  定义（只有一个 conditions 槽）。带门槛的选择组整组不编译——宁可不发，
+     *  绝不把"有条件的选择"偷偷当成"没条件"来发。 */
+    | 'CONDITION_CHOICE_UNSUPPORTED';
 }
 
 export interface CompileResult {
@@ -131,6 +143,8 @@ interface CompiledEffect {
   damageTypeFilter?: DataSkillDefinition['damageTypeFilter'];
   cardFilter?: DataSkillDefinition['cardFilter'];
   turnSubType?: DataSkillDefinition['turnSubType'];
+  /** v2.8.3 门槛：录在**这条效果**上，编译后成为该定义的 conditions。 */
+  conditions?: SkillCondition[];
   /** Trigger identity used by the choice grouping (2.6.3): effects compiled
    * under one signature fire together, so they are choosable together. */
   signature: string;
@@ -232,6 +246,7 @@ export function compileSkill(
       damageTypeFilter,
       cardFilter,
       turnSubType,
+      conditions: effect.conditions && effect.conditions.length > 0 ? effect.conditions : undefined,
       signature: `${mapped}|${damageTypeFilter ?? ''}|${cardFilter ?? ''}|${turnSubType ?? ''}`,
     };
   };
@@ -249,6 +264,7 @@ export function compileSkill(
     // these two fields let resolvers/UI read the parts without parsing.
     effectId: c.effect.id,
     turnSubType: c.turnSubType,
+    conditions: c.conditions,
   });
 
   const candidates: CompiledEffect[] = [];
@@ -274,6 +290,15 @@ export function compileSkill(
     for (const group of groups.values()) {
       if (group.length === 1) {
         definitions.push(singleDefinition(group[0]));
+        continue;
+      }
+      if (group.some(c => c.conditions)) {
+        // 选择其一 × 门槛：一张选择定义只有一个 conditions 槽，逐效果门槛
+        // 表达不了。整组拒编译并如实报告（用户 2026-09-27 口径：本轮不接
+        // "选择其一"的门槛），绝不解禁其中"看起来无条件"的那几条。
+        for (const c of group) {
+          skipped.push({ skillName: skill.name, effectId: c.effect.id, reason: 'CONDITION_CHOICE_UNSUPPORTED' });
+        }
         continue;
       }
       definitions.push({

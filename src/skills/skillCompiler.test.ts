@@ -507,3 +507,72 @@ describe('skillCompiler · compile-skip diagnostics (2.3.0, D-9 class C)', () =>
     }
   });
 });
+
+// ── v2.8.3 刀 B：门槛（per-effect conditions）只透传，不在编译期求值 ──
+describe('skillCompiler · 发动门槛透传', () => {
+  it('passes an effect-level gate through onto the compiled definition', () => {
+    const { definitions, skipped } = compileSkill(
+      general(),
+      skill({
+        effects: [{
+          id: 'e1',
+          trigger: { type: 'onTurnEnd' },
+          runtime: { type: 'HEAL', value: 1, target: 'SELF' },
+          conditions: [{ metric: 'HAND_COUNT', op: 'EQ', value: 1 }],
+        }],
+      }),
+      'g1',
+    );
+    expect(skipped).toHaveLength(0);
+    expect(definitions[0].conditions).toEqual([{ metric: 'HAND_COUNT', op: 'EQ', value: 1 }]);
+  });
+
+  it('an effect without a gate compiles with no conditions key set', () => {
+    const { definitions } = compileSkill(general(), skill(), 'g1');
+    expect(definitions[0].conditions).toBeUndefined();
+  });
+
+  it('an empty conditions array is treated as "no gate"', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' }, conditions: [] }] }),
+      'g1',
+    );
+    expect(definitions[0].conditions).toBeUndefined();
+  });
+
+  it('refuses to compile a 选择其一 group where any option carries a gate', () => {
+    const rt = { type: 'HEAL', value: 1, target: 'SELF' } as const;
+    const { definitions, skipped } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'choice',
+        effects: [
+          { id: 'a', trigger: { type: 'onTurnEnd' }, runtime: rt },
+          { id: 'b', trigger: { type: 'onTurnEnd' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' }, conditions: [{ metric: 'HAND_COUNT', op: 'LTE', value: 2 }] },
+        ],
+      }),
+      'g1',
+    );
+    expect(definitions).toHaveLength(0);
+    expect(skipped.map(s => s.reason)).toEqual(['CONDITION_CHOICE_UNSUPPORTED', 'CONDITION_CHOICE_UNSUPPORTED']);
+    expect(skipped.map(s => s.effectId).sort()).toEqual(['a', 'b']);
+  });
+
+  it('a gated option that stands alone still compiles (no choice group formed)', () => {
+    const { definitions, skipped } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'choice',
+        effects: [
+          { id: 'a', trigger: { type: 'onTurnEnd' }, runtime: { type: 'HEAL', value: 1, target: 'SELF' }, conditions: [{ metric: 'HAND_COUNT', op: 'LTE', value: 2 }] },
+          { id: 'b', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } },
+        ],
+      }),
+      'g1',
+    );
+    expect(skipped).toHaveLength(0);
+    expect(definitions).toHaveLength(2);
+    expect(definitions.find(d => d.id.endsWith(':a'))!.conditions).toHaveLength(1);
+  });
+});

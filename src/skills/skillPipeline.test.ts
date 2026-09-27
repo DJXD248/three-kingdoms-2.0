@@ -12,6 +12,7 @@ import { createAction } from '../action/ActionTypes';
 import type { EngineState, EnginePlayer } from '../core/GameState';
 import type { General, Skill } from '../data/generals';
 import { syncPlayerSkills } from './skillCompiler';
+import { parseGateText } from './skillGateText';
 
 function makeGeneral(id: string, skills: Skill[]): General {
   return {
@@ -520,5 +521,52 @@ describe('skill pipeline · Stage C coverage (HEAL / GAIN_ARMOR / skill-kill DEA
     expect(deaths).toHaveLength(1);
     expect((deaths[0].data as any).skillKill).toBeUndefined();
     expect(engine.state.drawState).toMatchObject({ reason: 'compensation', playerId: 2 });
+  });
+
+  // v2.8.3 刀 B：门槛从表格里那句大白话一路走到引擎，中间不掺任何 mock。
+  // 这一条同时防两种空转：门槛被录入面吃掉（conditions 为空）、门槛被引擎忽略（照样发动）。
+  it('gate text recorded on a skill really holds the skill back in the engine', () => {
+    const gateText = '手牌≤1';
+    const parsed = parseGateText(gateText);
+    expect(parsed.unknown).toEqual([]);
+    expect(parsed.conditions).toEqual([{ metric: 'HAND_COUNT', op: 'LTE', value: 1 }]);
+
+    const gated = (): Skill => ({
+      name: '奸雄·看手牌',
+      description: '受到伤害后，若手牌不超过一张则摸一张牌',
+      effects: [{
+        id: 'e1',
+        trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' },
+        runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+        conditions: parsed.conditions,
+      }],
+    });
+
+    const attackInto = (handCards: number) => {
+      const victim = makeGeneral('g2', [gated()]);
+      const engine = buildEngine([
+        makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g1', []), 1)], hand: [ATTACK_COST] }),
+        makePlayer(2, {
+          fieldGenerals: [makeFieldGeneral(victim, 2)],
+          hand: Array.from({ length: handCards }, (_, i) => ({ id: `hand_${i}`, name: '粮草', type: '粮草' })),
+        }),
+      ]);
+      const events = engine.dispatch(
+        createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
+      );
+      const p2 = engine.state.players.find(p => p.id === 2)!;
+      return {
+        skillDraws: events.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD'),
+        handSize: (p2.hand as unknown[]).length,
+      };
+    };
+
+    const open = attackInto(0);
+    expect(open.skillDraws).toHaveLength(1);
+    expect(open.handSize).toBe(1);
+
+    const blocked = attackInto(2);
+    expect(blocked.skillDraws).toHaveLength(0);
+    expect(blocked.handSize).toBe(2);
   });
 });

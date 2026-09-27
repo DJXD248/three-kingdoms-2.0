@@ -1,4 +1,5 @@
 // 触发时机编辑器子组件 —— 2.2.14 从 SkillEditor.tsx 纯移动拆出（D-6 阶段 F）。
+import { useState } from 'react';
 import {
   SkillTriggerConfig, SkillTriggerType, allTriggerTypes, triggerTypeLabels,
   getTriggerSubOptions,
@@ -9,24 +10,40 @@ import {
   CardSubType, cardSubLabels,
   ExpireCondition, expireLabels,
 } from '../../data/generals';
+import { readTriggerCell, buildTriggerOptionStrings } from '../../skills/skillExcelFormat';
 
 // ── Trigger editor sub-component ──
 const selectCls = "w-full px-2 py-1 rounded bg-black/50 border border-cyan-800/30 text-cyan-100 text-[11px] focus:outline-none focus:border-cyan-500";
 
+/** 可认识的触发说法（与 Excel 下拉同源，避免两处各写一份）。 */
+const knownTriggerStrings = buildTriggerOptionStrings().filter(s => s !== '无');
+
 export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerConfig; onChange: (t: SkillTriggerConfig | undefined) => void }) {
   const currentType = trigger?.type || '';
   const subKind = currentType ? getTriggerSubOptions(currentType as SkillTriggerType) : null;
+  const [quick, setQuick] = useState('');
+  const [quickMiss, setQuickMiss] = useState(false);
+
+  // 打字快填：认得就填进下拉，认不得就地说明，绝不猜。
+  // 只认与下拉逐字相同的写法：「受到伤害后→攻击」这类半截细分会被宽松读法悄悄当成
+  // "未选细分＝所有伤害"，等于替用户放宽了他自己写下的限制——宁可报没看懂。
+  const applyQuick = () => {
+    const { trigger, unreadable } = readTriggerCell(quick);
+    if (trigger) { onChange(trigger); setQuickMiss(false); }
+    else if (!unreadable) { resetQuick(undefined); } // 「无」＝没有触发时机
+    else { setQuickMiss(true); }
+  };
+  const resetQuick = (t?: SkillTriggerConfig) => { setQuick(''); setQuickMiss(false); onChange(t); };
 
   const handleTypeChange = (val: string) => {
-    if (!val) { onChange(undefined); return; }
-    const t = val as SkillTriggerType;
-    onChange({ type: t });
+    if (!val) { resetQuick(undefined); return; }
+    resetQuick({ type: val as SkillTriggerType });
   };
 
   const handleSubChange = (field: string, val: string) => {
     if (!trigger) return;
-    if (!val) { onChange({ type: trigger.type }); return; }
-    onChange({ ...trigger, [field]: val });
+    if (!val) { resetQuick({ type: trigger.type }); return; }
+    resetQuick({ ...trigger, [field]: val });
   };
 
   return (
@@ -37,6 +54,25 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
           <option value="">未设定</option>
           {allTriggerTypes.map(t => <option key={t} value={t}>{triggerTypeLabels[t]}</option>)}
         </select>
+      </div>
+
+      {/* 打字快填（与 Excel「触发时机」栏同一套说法） */}
+      <div className="pl-4 space-y-1">
+        <div className="flex items-center gap-1.5">
+          <input type="text" value={quick} onChange={e => { setQuick(e.target.value); setQuickMiss(false); }}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); applyQuick(); } }}
+            placeholder="或打字：受到伤害后→所有伤害类型"
+            className="flex-1 px-2 py-1 rounded bg-black/50 border border-cyan-800/30 text-cyan-100 text-[11px] focus:outline-none focus:border-cyan-500" />
+          <button onClick={applyQuick} disabled={!quick.trim()}
+            className={`text-[10px] px-2 py-1 rounded border flex-shrink-0 ${quick.trim() ? 'border-cyan-700/40 text-cyan-200 hover:bg-cyan-900/30' : 'border-gray-800 text-gray-600 cursor-not-allowed'}`}>
+            照这个填
+          </button>
+        </div>
+        {quickMiss && (
+          <p className="text-[9px] text-red-300/90 leading-tight">
+            这个写法没看懂，没有填进去（细分要写全，例如「→攻击伤害」而不是「→攻击」）。认得的写法（也可以照抄）：{knownTriggerStrings.join('、')}
+          </p>
+        )}
       </div>
 
       {/* Sub-options that appear conditionally */}

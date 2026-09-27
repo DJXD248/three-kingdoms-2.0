@@ -132,11 +132,53 @@ export function getTriggerSubOptions(type: SkillTriggerType): 'deploy' | 'turn' 
 }
 
 /** 技能内的单个效果 */
+/**
+ * 发动门槛（条件谓词）——v2.8.3 起是**数据层词汇**（编辑器与 Excel 都能录入），
+ * 编译模型层 re-export 同一份（skills/dataTypes.ts），求值单点在
+ * skills/skillConditions.ts。条件不是事件也不是状态：它只回答"这一刻该不该响"，
+ * 产零事件、写零状态、不吃随机。
+ */
+export type SkillConditionMetric =
+  /** 主体座的手牌张数（本作只有玩家持有手牌，将领不持牌） */
+  | 'HAND_COUNT'
+  /** 主体在场将领的当前血量 */
+  | 'GENERAL_HP'
+  /** 主体在场将领的护甲点数 */
+  | 'ARMOR_POINTS'
+  /** 主体座在场将领数 */
+  | 'FIELD_GENERAL_COUNT'
+  /** 全局牌堆剩余张数（无主体） */
+  | 'DECK_COUNT'
+  /** 触发事件已记录的数值 data.value ?? data.count（无主体） */
+  | 'EVENT_VALUE';
+
+export type SkillConditionOperator = 'LT' | 'LTE' | 'EQ' | 'GTE' | 'GT';
+
+/** 主体轴：SELF=技能拥有者（缺省）；TARGET/ATTACKER 从触发事件解析，解析不出=失败即闭。 */
+export type SkillConditionSubject = 'SELF' | 'TARGET' | 'ATTACKER';
+
+export interface SkillCondition {
+  metric: SkillConditionMetric;
+  /** 缺省 SELF；DECK_COUNT/EVENT_VALUE 忽略主体。 */
+  subject?: SkillConditionSubject;
+  op: SkillConditionOperator;
+  /** 与常量比较。 */
+  value?: number;
+  /** 与另一枚已记录事实比较（"比多少"语义）；与 value 同时给时以此为准。 */
+  compareTo?: { metric: SkillConditionMetric; subject?: SkillConditionSubject };
+}
+
 export interface SkillEffect {
   id: string;                    // 效果唯一ID (如 "e1", "e2")
   label?: string;                // 效果简短标注 (如 "效果一", "伤害触发")
   description?: string;          // 效果描述
   trigger?: SkillTriggerConfig;  // 该效果的触发时机
+  /**
+   * 发动门槛（v2.8.3 录入面）：挂在**单条效果**上，全部成立才发动（AND）。
+   * 缺省=没有门槛。求值唯一实现=skills/skillConditions.ts（失败即闭：判不出
+   * 来当作不满足）。文本录入/回显=skills/skillGateText.ts。
+   */
+  conditions?: SkillCondition[];
   /**
    * 结构化运行时载荷（可选）。只有带此载荷的效果才会被技能编译器
    * 接入唯一运行时（skills/skillCompiler → SkillTriggerBridge → GameEngine）。

@@ -3,6 +3,7 @@ import {
   cleanCell,
   triggerToStr,
   strToTrigger,
+  readTriggerCell,
   buildTriggerOptionStrings,
   parseRuntimeType,
   parseRuntimeTarget,
@@ -55,6 +56,21 @@ describe('skillExcelFormat: trigger round-trip', () => {
     // every generated option must parse back to a trigger
     for (const o of opts.slice(1)) {
       expect(strToTrigger(o)?.type).toBeTruthy();
+    }
+  });
+
+  it('严格读法只认与下拉逐字相同的写法：半截细分交回"没看懂"，绝不放宽成所有伤害', () => {
+    expect(readTriggerCell('受到伤害后→攻击伤害')).toEqual({ trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' } });
+    // 宽松读法会把这句读成"未选细分＝所有伤害"——那是替用户放宽了他自己写的限制
+    expect(strToTrigger('受到伤害后→攻击')).toEqual({ type: 'onDamageTaken' });
+    expect(readTriggerCell('受到伤害后→攻击')).toEqual({ unreadable: '受到伤害后→攻击' });
+    expect(readTriggerCell('不存在的触发')).toEqual({ unreadable: '不存在的触发' });
+    expect(readTriggerCell('无')).toEqual({});
+    expect(readTriggerCell('')).toEqual({});
+    expect(readTriggerCell(undefined)).toEqual({});
+    // 下拉里每一个选项都必须能过严格读法（否则录入面自相矛盾）
+    for (const o of buildTriggerOptionStrings().slice(1)) {
+      expect(readTriggerCell(o).trigger).toBeTruthy();
     }
   });
   it('round-trips the 2.5.3 card-loss/gain triggers（v2.6.2 起带 card 子选项）', () => {
@@ -118,36 +134,40 @@ describe('skillExcelFormat: effect column groups', () => {
     '效果1标注', '效果1触发', '效果1描述', '设定备注'];
   const v2Header = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述',
     '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '设定备注'];
+  const v3Header = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述',
+    '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛', '设定备注'];
 
   it('detects group width from the header row', () => {
     expect(detectEffectGroupWidth(v1Header)).toBe(3);
     expect(detectEffectGroupWidth(v2Header)).toBe(6);
+    expect(detectEffectGroupWidth(v3Header)).toBe(7);
   });
 
-  it('builds v2 header cells for group n', () => {
+  it('builds v3 header cells for group n', () => {
     expect(effectGroupHeaders(2)).toEqual([
-      '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述',
+      '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述', '效果2门槛',
     ]);
   });
 
   it('parses a blank group as null', () => {
+    expect(parseEffectGroup(['无', '无', '无', '无', '无', '无', '无'], 0, 7)).toBeNull();
     expect(parseEffectGroup(['无', '无', '无', '无', '无', '无'], 0, 6)).toBeNull();
     expect(parseEffectGroup(['', '', ''], 0, 3)).toBeNull();
   });
 
   it('parses a legacy v1 group without runtime', () => {
-    const fields = parseEffectGroup(['受伤摸牌', '受到伤害后→攻击伤害', '摸一张牌'], 0, 3);
+    const { fields } = parseEffectGroup(['受伤摸牌', '受到伤害后→攻击伤害', '摸一张牌'], 0, 3)!;
     expect(fields).toEqual({
       label: '受伤摸牌',
       trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' },
       description: '摸一张牌',
     });
-    expect(fields?.runtime).toBeUndefined();
+    expect(fields.runtime).toBeUndefined();
   });
 
   it('parses a v2 group with full runtime payload', () => {
     const row = ['反击', '造成伤害后', '伤害', '2', '被作用者', '对目标造成2点伤害'];
-    const fields = parseEffectGroup(row, 0, 6);
+    const { fields } = parseEffectGroup(row, 0, 6)!;
     expect(fields).toEqual({
       label: '反击',
       trigger: { type: 'onDamageDealt' },
@@ -158,12 +178,35 @@ describe('skillExcelFormat: effect column groups', () => {
 
   it('drops an unrecognized runtime type but keeps the description', () => {
     const row = ['玄学', '回合开始时', '召唤', '1', '自身', '描述文本'];
-    const fields = parseEffectGroup(row, 0, 6);
-    expect(fields?.runtime).toBeUndefined();
-    expect(fields?.description).toBe('描述文本');
+    const { fields } = parseEffectGroup(row, 0, 6)!;
+    expect(fields.runtime).toBeUndefined();
+    expect(fields.description).toBe('描述文本');
+  });
+
+  it('parses the v3 门槛 column into structured conditions', () => {
+    const row = ['罪论一', '回合结束时', '回复体力', '1', '自身', '手牌为1时回复1点体力', '手牌=1'];
+    const parsed = parseEffectGroup(row, 0, 7)!;
+    expect(parsed.fields.conditions).toEqual([{ metric: 'HAND_COUNT', op: 'EQ', value: 1 }]);
+    expect(parsed.gateUnknown).toEqual([]);
+  });
+
+  it('只写门槛、没写是哪个效果的组：不凭空造效果，原文交回导入面；无＝没有门槛', () => {
+    const row = ['无', '无', '无', '无', '无', '无', '手牌≤2'];
+    const parsed = parseEffectGroup(row, 0, 7)!;
+    expect(parsed.fields).toEqual({});          // 一个效果都不成立
+    expect(parsed.orphanGate).toBe('手牌≤2');    // 原文仍在，报告要说清楚
+    expect(parseEffectGroup(['无', '无', '无', '无', '无', '无', '无'], 0, 7)).toBeNull();
+  });
+
+  it('reports unreadable gate fragments instead of silently dropping them', () => {
+    const row = ['玄学', '无', '摸牌', '1', '自身', '描述', '牌不够多时先看有没有马'];
+    const parsed = parseEffectGroup(row, 0, 7)!;
+    expect(parsed.fields.conditions).toBeUndefined();
+    expect(parsed.gateUnknown).toEqual(['牌不够多时先看有没有马']);
   });
 
   it('serializes missing effects as all-无 rows', () => {
+    expect(serializeEffectGroup(undefined, 7)).toEqual(['无', '无', '无', '无', '无', '无', '无']);
     expect(serializeEffectGroup(undefined, 6)).toEqual(['无', '无', '无', '无', '无', '无']);
     expect(serializeEffectGroup(undefined, 3)).toEqual(['无', '无', '无']);
   });
@@ -179,25 +222,47 @@ describe('skillExcelFormat: effect column groups', () => {
     const cells = serializeEffectGroup(original, 6);
     const parsed = parseEffectGroup(cells, 0, 6);
     expect(parsed).toEqual({
-      label: '奸雄',
-      trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' },
-      description: '受到伤害后摸一张牌',
-      runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+      fields: {
+        label: '奸雄',
+        trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' },
+        description: '受到伤害后摸一张牌',
+        runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+      },
+      gateUnknown: [],
     });
+  });
+
+  it('round-trips an effect through serialize(v3) -> parse(v3) incl. gates', () => {
+    const original: SkillEffect = {
+      id: 'e3',
+      label: '父荫',
+      trigger: { type: 'onDamageTaken' },
+      description: '己方有手牌则本次伤害-1',
+      runtime: { type: 'DAMAGE', value: 1, target: 'SELF' },
+      conditions: [
+        { metric: 'HAND_COUNT', op: 'GTE', value: 1 },
+        { metric: 'HAND_COUNT', op: 'GT', compareTo: { metric: 'HAND_COUNT', subject: 'ATTACKER' } },
+      ],
+    };
+    const cells = serializeEffectGroup(original, 7);
+    expect(cells[6]).toBe('手牌≥1，手牌>伤害来源手牌');
+    const parsed = parseEffectGroup(cells, 0, 7)!;
+    expect(parsed.fields.conditions).toEqual(original.conditions);
+    expect(parsed.gateUnknown).toEqual([]);
   });
 
   it('round-trips an effect without runtime (descriptive)', () => {
     const original: SkillEffect = { id: 'e2', label: '描述技', trigger: { type: 'onKill' }, description: '击杀时...' };
-    const parsed = parseEffectGroup(serializeEffectGroup(original, 6), 0, 6);
-    expect(parsed?.runtime).toBeUndefined();
-    expect(parsed?.description).toBe('击杀时...');
+    const { fields } = parseEffectGroup(serializeEffectGroup(original, 6), 0, 6)!;
+    expect(fields.runtime).toBeUndefined();
+    expect(fields.description).toBe('击杀时...');
   });
 });
 
 describe('skillExcelFormat: Excel-parsed payloads reach the runtime compiler', () => {
   it('a v2-parsed effect compiles into a live DataSkillDefinition', () => {
     const cells = ['武圣', '造成伤害后', '伤害', '1', '被作用者', '造成伤害后追加1点技能伤害'];
-    const fields = parseEffectGroup(cells, 0, 6)!;
+    const { fields } = parseEffectGroup(cells, 0, 6)!;
     const skill = {
       name: '测试技能',
       effects: [{ id: 'e1', ...fields }],
@@ -215,8 +280,17 @@ describe('skillExcelFormat: Excel-parsed payloads reach the runtime compiler', (
     expect(runtimeTargetLabels.SELF).toBe('自身');
   });
 
+  it('a v3-parsed effect carries its gate onto the definition', () => {
+    const cells = ['罪论', '回合结束时', '回复体力', '1', '自身', '手牌为1时回复1点体力', '手牌=1'];
+    const { fields } = parseEffectGroup(cells, 0, 7)!;
+    const skill = { name: '罪论', effects: [{ id: 'e1', ...fields }], effectMode: 'all' as const };
+    const { definitions, skipped } = compileSkill({ id: 'g1', name: '诸葛瞻' }, skill);
+    expect(skipped).toHaveLength(0);
+    expect(definitions[0].conditions).toEqual([{ metric: 'HAND_COUNT', op: 'EQ', value: 1 }]);
+  });
+
   it('a legacy v1-parsed effect skips with NO_RUNTIME_PAYLOAD (no invented gameplay)', () => {
-    const fields = parseEffectGroup(['旧效果', '回合开始时', '纯描述'], 0, 6)!;
+    const { fields } = parseEffectGroup(['旧效果', '回合开始时', '纯描述'], 0, 6)!;
     const skill = { name: '旧技能', effects: [{ id: 'e1', ...fields }], effectMode: 'all' as const };
     const { definitions, skipped } = compileSkill({ id: 'g1', name: '测试' }, skill);
     expect(definitions).toHaveLength(0);

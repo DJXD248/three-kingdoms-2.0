@@ -5,7 +5,7 @@ import {
   SkillTriggerConfig, SkillEffect, SkillEffectMode,
 } from '../../data/generals';
 import {
-  strToTrigger, detectEffectGroupWidth, parseEffectGroup,
+  readTriggerCell, detectEffectGroupWidth, parseEffectGroup,
 } from '../../skills/skillExcelFormat';
 
 /** 编辑器与导入共用的技能条目类型（原为组件内 `typeof editingSkills`，仅类型层面替换）。 */
@@ -106,15 +106,19 @@ export const resolveGeneralByNameFaction = (name: string, factionText?: string):
 };
 
 // ── Parse new row-per-skill format for an entire sheet ──
+// parseWarnings: 录入面读不懂的原文（门槛栏、触发栏各自逐条列出）。
+// 导入报告必须如实显示，绝不能假装成功——"没看懂"和"没有"是两件事。
 export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][]): {
   entries: { general: General; gEdit: Record<string,unknown>; skills: SkillEditEntry[] }[];
+  parseWarnings: string[];
 } => {
   const header = rows[0] || [];
   const noteColIndex = header.findIndex(h => String(h || '').trim() === '设定备注');
   const effectEndExclusive = noteColIndex === -1 ? header.length : noteColIndex; // don't parse 备注列
-  const groupWidth = detectEffectGroupWidth(header); // 3 (legacy) or 6 (structured runtime)
+  const groupWidth = detectEffectGroupWidth(header); // 3 (legacy) | 6 (runtime) | 7 (runtime + 门槛)
   const dataRows = rows.slice(1); // skip header
   const entries: { general: General; gEdit: Record<string,unknown>; skills: SkillEditEntry[] }[] = [];
+  const parseWarnings: string[] = [];
   const facList = ['魏','蜀','吴','群','晋'] as Faction[];
 
   let currentGeneral: General | undefined;
@@ -162,17 +166,36 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][]): {
 
     const tag = (allSkillTags as readonly string[]).includes(sTag) ? sTag as SkillTag : undefined;
     const forced = sForced === '是' || undefined;
-    const trigger = strToTrigger(sTrigger);
+    const skillTriggerRead = readTriggerCell(sTrigger);
+    if (skillTriggerRead.unreadable) {
+      parseWarnings.push(`${currentGeneral.name}·${sName} 技能触发：这句没看懂 → ${skillTriggerRead.unreadable}`);
+    }
+    const trigger = skillTriggerRead.trigger;
     const effectMode = (sMode === '选择其一' || sMode === 'choice') ? 'choice' as SkillEffectMode
       : (sMode === '全部生效' || sMode === 'all') ? 'all' as SkillEffectMode : undefined;
 
     // Parse sub-effects from col 11 onwards (groups of 3 for legacy files,
-    // groups of 6 — 标注/触发/效果类型/数值/目标/描述 — for the current format)
+    // 6 — 标注/触发/效果类型/数值/目标/描述 — or 7 — v2 + 门槛 — for current exports)
     const effects: SkillEffect[] = [];
     let col = 11;
     while (col + groupWidth - 1 < effectEndExclusive) {
-      const fields = parseEffectGroup(row, col, groupWidth);
-      if (fields) effects.push({ id: `e${Date.now()}_${effects.length}`, ...fields });
+      const parsed = parseEffectGroup(row, col, groupWidth);
+      if (parsed) {
+        const seq = `效果${Math.floor((col - 11) / groupWidth) + 1}`;
+        // 整组只有门槛/只有看不懂的触发：这不是一個效果，绝不凭空造一个空效果，只如实回显。
+        if (parsed.orphanGate) {
+          parseWarnings.push(`${currentGeneral.name}·${sName} ${seq}：只写了门槛「${parsed.orphanGate}」，没写这是哪个效果，这条没被记下`);
+        }
+        if (parsed.triggerUnreadable) {
+          parseWarnings.push(`${currentGeneral.name}·${sName} ${seq} 触发：这句没看懂 → ${parsed.triggerUnreadable}`);
+        }
+        if (Object.keys(parsed.fields).length > 0) {
+          effects.push({ id: `e${Date.now()}_${effects.length}`, ...parsed.fields });
+          for (const u of parsed.gateUnknown) {
+            parseWarnings.push(`${currentGeneral.name}·${sName} 效果${effects.length}：门槛里这句没看懂 → ${u}`);
+          }
+        }
+      }
       col += groupWidth;
     }
 
@@ -184,7 +207,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][]): {
     });
   }
   flushCurrent();
-  return { entries };
+  return { entries, parseWarnings };
 };
 
 // ── Legacy flat format parser (5 cols per skill) ──

@@ -4,10 +4,12 @@
  * Responsibilities (all side-effect free, unit-testable):
  *   - trigger config <-> readable string ("部署时→上阵", round-trip safe);
  *   - structured runtime effect fields (类型/数值/目标) <-> strings;
- *   - effect column-group serialization & parsing for BOTH widths:
+ *   - effect column-group serialization & parsing for ALL widths:
  *       v1 (legacy, 3 cols): 标注 | 触发 | 描述
- *       v2 (current, 6 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述
+ *       v2 (6 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述
+ *       v3 (current, 7 cols): v2 + 门槛
  *     Width is detected from the header row, so old exported files still import.
+ *   - 门槛（发动条件）cell <-> structured conditions, via skillGateText.ts.
  *
  * These helpers only translate between spreadsheet cells and the data model in
  * data/generals.ts. Whether an effect actually executes in-game is decided
@@ -37,6 +39,7 @@ import {
   cardSubLabels,
   expireLabels,
 } from '../data/generals';
+import { parseGateText, gateConditionsToText } from './skillGateText';
 
 const EMPTY = '无';
 
@@ -105,6 +108,19 @@ export function strToTrigger(s: string): SkillTriggerConfig | undefined {
   return cfg;
 }
 
+/**
+ * 严格版触发读法（录入面唯一入口）。宽松 `strToTrigger` 会把「受到伤害后→攻击」
+ * 这类半截写法读成"没有细分＝所有伤害"——**把用户的限制放宽**比不填更危险，
+ * 所以对外只认"反写回来与原文逐字相同"的写法，其余一律交回未看懂。
+ */
+export function readTriggerCell(s: unknown): { trigger?: SkillTriggerConfig; unreadable?: string } {
+  const trimmed = String(s ?? '').trim();
+  if (!trimmed || trimmed === EMPTY) return {};
+  const parsed = strToTrigger(trimmed);
+  if (parsed && triggerToStr(parsed) === trimmed) return { trigger: parsed };
+  return { unreadable: trimmed };
+}
+
 // ── Runtime effect fields ───────────────────────────────────────────
 
 export const runtimeEffectTypeLabels: Record<SkillRuntimeEffect['type'], string> = {
@@ -167,23 +183,39 @@ export function parseRuntimeValue(s: unknown): number | undefined {
 
 // ── Effect column groups (Excel) ────────────────────────────────────
 
-export type EffectGroupWidth = 3 | 6;
+export type EffectGroupWidth = 3 | 6 | 7;
 
 export const EFFECT_GROUP_COLS_V1 = ['标注', '触发', '描述'] as const;
 export const EFFECT_GROUP_COLS_V2 = ['标注', '触发', '效果类型', '数值', '目标', '描述'] as const;
+/** v2.8.3（刀 B）：第 7 列「门槛」——大白话文本，多条件用顿号/逗号/换行分隔。 */
+export const EFFECT_GROUP_COLS_V3 = [...EFFECT_GROUP_COLS_V2, '门槛'] as const;
 
-/** Header cells for effect group n (1-based), v2 format. */
+/** Header cells for effect group n (1-based), current (7-col) format. */
 export function effectGroupHeaders(n: number): string[] {
-  return EFFECT_GROUP_COLS_V2.map(c => `效果${n}${c}`);
+  return EFFECT_GROUP_COLS_V3.map(c => `效果${n}${c}`);
 }
 
 /** Detect the effect-group width of a sheet from its header row. */
 export function detectEffectGroupWidth(header: unknown[]): EffectGroupWidth {
-  return header.some(h => /^效果\d+效果类型$/.test(String(h ?? '').trim())) ? 6 : 3;
+  const cells = header.map(h => String(h ?? '').trim());
+  if (cells.some(h => /^效果\d+门槛/.test(h))) return 7;
+  return cells.some(h => /^效果\d+效果类型$/.test(h)) ? 6 : 3;
 }
 
 /** Fields parsed out of one effect column group (id assigned by caller). */
 export type ParsedEffectFields = Omit<SkillEffect, 'id'>;
+
+/** One effect group's parse result: the editable fields + 门槛栏里读不懂的碎片。 */
+export interface ParsedEffectGroup {
+  fields: ParsedEffectFields;
+  /** 门槛单元格中无法翻译成条件的原文片段（逐条回显给导入报告，绝不静默丢弃）。 */
+  gateUnknown: string[];
+  /** 整组只写了门槛、没写"这是哪个效果"（无标注/触发/类型/描述）。门槛必须挂在
+   *  某个具体效果上，此处**不凭空造一个效果**，把原文交回导入面报告。 */
+  orphanGate?: string;
+  /** 「触发」栏没看懂的原文（含只写了一半的细分写法）：不填、不猜，交回导入面。 */
+  triggerUnreadable?: string;
+}
 
 /**
  * Parse one effect group starting at `col` (0-based) with the given width.
@@ -193,19 +225,30 @@ export function parseEffectGroup(
   row: (string | number | undefined)[],
   col: number,
   width: EffectGroupWidth,
-): ParsedEffectFields | null {
+): ParsedEffectGroup | null {
   const get = (k: number) => cleanCell(row[col + k]);
   const label = get(0);
   const triggerStr = get(1);
   let runtimeStr = { type: '', value: '', target: '' };
   let desc: string;
-  if (width === 6) {
+  let gateStr = '';
+  if (width === 3) {
+    desc = get(2);
+  } else {
     runtimeStr = { type: get(2), value: get(3), target: get(4) };
     desc = get(5);
-  } else {
-    desc = get(2);
+    if (width === 7) gateStr = get(6);
   }
-  if (!label && !triggerStr && !desc && !runtimeStr.type) return null;
+  const hasEffectBody = !!(label || desc || runtimeStr.type);
+  const triggerRead = readTriggerCell(triggerStr);
+  const canFormEffect = hasEffectBody || !!triggerRead.trigger;
+  if (!canFormEffect && !gateStr && !triggerRead.unreadable) return null;
+  if (!canFormEffect) {
+    // 这一组里没有一个"站得住的效果"（只写了门槛，或触发写法没看懂）：
+    // 不凭空造一个空效果占位（那会挤占效果编号并显示成"纯描述"），
+    // 把原文交回导入面如实报告。
+    return { fields: {}, gateUnknown: [], orphanGate: gateStr, triggerUnreadable: triggerRead.unreadable };
+  }
 
   const type = parseRuntimeType(runtimeStr.type);
   const target = parseRuntimeTarget(runtimeStr.target);
@@ -213,15 +256,16 @@ export function parseEffectGroup(
 
   const fields: ParsedEffectFields = {};
   if (label) fields.label = label;
-  const trigger = strToTrigger(triggerStr);
-  if (trigger) fields.trigger = trigger;
+  if (triggerRead.trigger) fields.trigger = triggerRead.trigger;
   if (desc) fields.description = desc;
   if (type) {
     fields.runtime = { type };
     if (value != null) fields.runtime.value = value;
     if (target) fields.runtime.target = target;
   }
-  return fields;
+  const gate = parseGateText(gateStr);
+  if (gate.conditions.length > 0) fields.conditions = gate.conditions;
+  return { fields, gateUnknown: gate.unknown, triggerUnreadable: triggerRead.unreadable };
 }
 
 /** Serialize one effect into cells for the given width (export path). */
@@ -230,6 +274,7 @@ export function serializeEffectGroup(
   width: EffectGroupWidth,
 ): (string | number)[] {
   if (!eff) {
+    if (width === 7) return [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY];
     return width === 6
       ? [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]
       : [EMPTY, EMPTY, EMPTY];
@@ -240,7 +285,7 @@ export function serializeEffectGroup(
     return [label, trigger, eff.description || EMPTY];
   }
   const rt = eff.runtime;
-  return [
+  const cells: (string | number)[] = [
     label,
     trigger,
     rt ? runtimeEffectTypeLabels[rt.type] : EMPTY,
@@ -248,4 +293,6 @@ export function serializeEffectGroup(
     rt && rt.target ? runtimeTargetLabels[rt.target] : EMPTY,
     eff.description || EMPTY,
   ];
+  if (width === 7) cells.push(gateConditionsToText(eff.conditions));
+  return cells;
 }

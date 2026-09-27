@@ -110,3 +110,88 @@ describe('SkillEditor: structured runtime entry', () => {
       .toEqual({ type: 'DECK_PLACE', value: 1, target: 'TARGET', dest: 'TOP' });
   });
 });
+
+// v2.8.3 刀 B：发动门槛的录入面接线——打字即翻译成结构化条件，看不懂就地说明。
+describe('SkillEditor: 发动门槛录入（🚪 门槛框）', () => {
+  beforeEach(() => {
+    cleanup();
+    useGameStore.setState({ skillEdits: {}, generalEdits: {} });
+  });
+
+  const openFirstEffect = () => {
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
+    render(<SkillEditor onClose={() => {}} />);
+    const listBtn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name));
+    fireEvent.click(listBtn!);
+    fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
+    const gateInput = document.querySelector('input[placeholder^="留空＝没门槛"]') as HTMLInputElement;
+    expect(gateInput).toBeTruthy();
+    return { target, gateInput };
+  };
+
+  const save = (id: string) => {
+    // 保存后按钮两秒内显示"✅ 已保存"，同一元素，两种文字都要认。
+    fireEvent.click(screen.getByText(/保存修改|已保存/));
+    return useGameStore.getState().skillEdits[id]!;
+  };
+
+  it('门槛打字→回显→存进 store→编译器带着条件走引擎侧', () => {
+    const { target, gateInput } = openFirstEffect();
+
+    // 一条能进编译模型的效果要三件齐全：触发时机 + 结构化效果 + 门槛。
+    const quickInput = document.querySelector('input[placeholder^="或打字"]') as HTMLInputElement;
+    fireEvent.change(quickInput, { target: { value: '回合结束时' } });
+    fireEvent.click(screen.getAllByText('照这个填')[0]);
+    fireEvent.change(gateInput, { target: { value: '手牌≤2，牌堆≥5' } });
+    expect(screen.getByText('手牌≤2')).toBeTruthy();
+    expect(screen.getByText('牌堆≥5')).toBeTruthy();
+    const runtimeSelect = Array.from(document.querySelectorAll('select'))
+      .find(s => s.options[0]?.text?.startsWith('纯描述')) as HTMLSelectElement;
+    fireEvent.change(runtimeSelect, { target: { value: 'DRAW_CARD' } });
+
+    const saved = save(target.id);
+    expect(saved[0].effects?.[0].conditions).toEqual([
+      { metric: 'HAND_COUNT', op: 'LTE', value: 2 },
+      { metric: 'DECK_COUNT', op: 'GTE', value: 5 },
+    ]);
+    const general = allGenerals.find(g => g.id === target.id)!;
+    const compiled = compileGeneralSkills({ ...general, skills: saved });
+    const gated = compiled.definitions.find(d => (d.conditions?.length ?? 0) === 2);
+    expect(gated).toBeTruthy();
+    expect(gated!.conditions).toEqual(saved[0].effects![0].conditions);
+  });
+
+  it('看不懂的门槛就地标红，保存后不落成条件（宁缺勿猜）', () => {
+    const { target, gateInput } = openFirstEffect();
+    fireEvent.change(gateInput, { target: { value: '攻击范围内没有马' } });
+    expect(screen.getByText(/没看懂（这些条件不会生效）/)).toBeTruthy();
+    expect(screen.getByText('「攻击范围内没有马」')).toBeTruthy();
+    expect(save(target.id)[0].effects?.[0].conditions).toBeUndefined();
+  });
+
+  it('「选择其一」×门槛＝编译期整条拒录，当场给红字说明', () => {
+    const { gateInput } = openFirstEffect();
+    fireEvent.change(gateInput, { target: { value: '手牌≤2' } });
+    expect(screen.queryByText(/「选择其一」暂时不能配门槛/)).toBeNull();
+
+    const modeSelect = Array.from(document.querySelectorAll('select'))
+      .find(s => Array.from(s.options).some(o => o.value === 'choice')) as HTMLSelectElement;
+    fireEvent.change(modeSelect, { target: { value: 'choice' } });
+    expect(screen.getByText(/「选择其一」暂时不能配门槛/)).toBeTruthy();
+  });
+
+  it('打字快填触发时机：半截细分不猜，报没看懂', () => {
+    const { target } = openFirstEffect();
+    const quickInput = document.querySelector('input[placeholder^="或打字"]') as HTMLInputElement;
+    expect(quickInput).toBeTruthy();
+    fireEvent.change(quickInput, { target: { value: '受到伤害后→攻击' } });
+    fireEvent.click(screen.getAllByText('照这个填')[0]);
+    expect(screen.getByText(/这个写法没看懂/)).toBeTruthy();
+
+    fireEvent.change(quickInput, { target: { value: '受到伤害后→攻击伤害' } });
+    fireEvent.click(screen.getAllByText('照这个填')[0]);
+    expect(screen.queryByText(/这个写法没看懂/)).toBeNull();
+    expect(save(target.id)[0].effects?.[0].trigger).toEqual({ type: 'onDamageTaken', damageSubType: 'attackDamage' });
+  });
+});

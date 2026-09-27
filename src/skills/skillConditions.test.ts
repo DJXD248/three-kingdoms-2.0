@@ -10,11 +10,11 @@
  *   ② 决策路 turnEndSkills.listTurnEndSkillCandidates 过滤候选 + TurnEndSkillResolver
  *      独立再求值并给诚实拒因 SKILL_CONDITION_UNMET。
  *
- * 诚实声明：conditions 只活在编译模型层（数据层 Skill / SkillEditor / Excel 零录入面，
- * 第五次"接线≠可配"预防针）。触发路探针=唯一入口 engine.registerPlayerSkills（同
- * v2.7.2）；决策路候选由 EngineState 重编译派生、编译器今天产不出 conditions，故其
- * 接线只能在编译 seam 上证明（vi.mock 包住 compileGeneralSkills），真机自动开闸不可达
- * ——同 §12-40① 的结构性结论，不以单测冒充真机。
+ * 本文件的探针方式仍是编译 seam（vi.mock 包住 compileGeneralSkills），理由是它要
+ * 逐条验证两路求值的语义，与录入面无关。v2.8.3 起门槛已有录入面：数据层
+ * SkillEffect.conditions + SkillEditor 门槛栏 + Excel 效果组「门槛」列（第七列），
+ * 文本↔结构互译在 skills/skillGateText.ts，编译器逐效果透传（见 skillCompiler
+ * 门槛透传测试）。"接线≠可配"的旧预防针只对 2.7.3 当时的树成立，不再适用于当前版本。
  */
 import { describe, it, expect, vi } from 'vitest';
 import { GameEngine } from '../core/GameEngine';
@@ -29,7 +29,8 @@ import type { SkillConditionFacts } from './skillConditions';
 import { listAllTurnEndDefinitions, listTurnEndSkillCandidates } from './turnEndSkills';
 import { compileGeneralSkills } from './skillCompiler';
 
-/** 编译 seam：给 sc_actor 的编译产物挂上门槛（数据层无此录入面）。 */
+/** 编译 seam：给 sc_actor 的编译产物挂上门槛——本文件用它逐条钉两路求值语义，
+ *  不依赖录入面（v2.8.3 起数据层/编辑器/Excel 已可写门槛，透传由 skillCompiler 测试守）。 */
 const probe = vi.hoisted(() => ({ conditions: undefined as SkillCondition[] | undefined }));
 
 vi.mock('./skillCompiler', async (importOriginal) => {
@@ -535,7 +536,7 @@ describe('v2.7.3 决策路接线：候选过滤 + 诚实拒因（编译 seam 探
     probe.conditions = undefined;
   });
 
-  it('编译器本体产不出 conditions：数据层同款技能编译出来仍无条件字段（第五次接线≠可配预防针）', () => {
+  it('数据层没写门槛 → 编译产物不带 conditions（缺省行为逐字不变，未被点名的将领走真实编译路径）', () => {
     probe.conditions = [{ metric: 'HAND_COUNT', op: 'GTE', value: 1 }];
     // sc_plain_actor 与 sc_actor 技能逐字同构、只差 id：探针按 id 精准命中，
     // 未被点名的将领走的仍是真实编译路径。
