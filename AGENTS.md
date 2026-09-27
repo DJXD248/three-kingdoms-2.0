@@ -35,14 +35,13 @@ src/
 +-- action/          Action system: ActionTypes, ActionDispatcher, ResolverRegistry
 |   +-- resolvers/   Attack, Deploy, Move, Supply, Surrender, Turn, Armor, Draw...
 +-- store/           Zustand store: gameStore (+ gameStoreTypes/gameStoreEditorActions/gameStoreRecovery split in 2.2.12), gameStateAdapter, engineAwareSetter, engineExecutionBridge, testArenaActions, editorPersistence, localGameSnapshot
-+-- data/            Card/general/skill data definitions + registries
++-- data/            Card/general static data: generals.ts (one line per general), cards.ts -- single central ledger, read-time overlays in localStorage
 +-- domain/          Game rules: combat, cost, regions, constants
 +-- rules/           Rule engine: ActionValidator, RuleEngine, legalActions (candidate enumerator)
 +-- skills/          Skill system: skillCompiler, SkillTriggerBridge, SkillDataRegistry, Excel format
 +-- components/      React UI: GameBoard, Settings, Rules, MainMenu, UnifiedDraw, SkillEditor...
 +-- controllers/     Game controllers: Hotseat, Human, AI, Local
 +-- setup/           Match setup: draft, pool builder, runtime setup
-+-- importer/        Excel data import: GeneralImporter, PackageImporter, SkillImporter
 +-- network/         Multiplayer (dormant): WebSocket, StateSerializer, SyncManager
 +-- replay/          Game replay: GameHistory, ReplayManager, SnapshotManager, liveReplayRecorder, replayStorage, gameplayLog
 +-- timeline/        Turn timeline: PrioritySystem
@@ -85,24 +84,26 @@ User Input
 
 ## Data Import Flow
 
-Excel files (.xlsx) are imported via the `importer/` module:
+**There is no per-card data store.** Every official general is one line in `src/data/generals.ts` (the central ledger); the 52 non-general cards live in `src/data/cards.ts`. Player-facing edits are **read-time overlays persisted in localStorage** (`store/editorPersistence.ts` keys: skill edits, general edits, disabled generals, identity registry) -- the source file is never rewritten, so old saves need no migration and official content is always versioned with the code.
+
+Excel is a **bulk-edit surface for skills**, not an import path into a registry:
 
 ```
 .xlsx file
     |
     v
-+-----------------+     +------------------+     +-----------------+
-| GeneralImporter |---->| GeneralRegistry  |---->| gameStore       |
-| PackageImporter |     | (data/registries)|     | (runtime data)  |
-| SkillImporter   |     +------------------+     +-----------------+
-+-----------------+
++------------------------------+     +---------------------------+
+| components/SkillEditor.tsx   |---->| skills/skillExcelFormat.ts|
+| (read: XLSX.read + sheet_to_ |     | (3-col v1 / 6-col v2 rows |
+|  json; write: exceljs)       |     |  <-> Skill effects)       |
++------------------------------+     +---------------------------+
+            |
+            v
+   localStorage overlay -> merged into the pool at read time
 ```
 
-- **GeneralImporter**: Imports general data from Excel
-- **PackageImporter**: Imports card package data
-- **SkillImporter**: Imports skill data
-- All importers use `exceljs` to parse .xlsx files
-- Data flows into registries (`data/registries/`) which are consumed by the game engine
+- **Adding an official general = editing `generals.ts`** (plus a structured `SK_*` payload when the skill must actually resolve), which is why content cuts run the five gates and re-baseline the anchor.
+- The old "one file / one record + importer writes into a registry" scaffolding (`importer/`, `data/registries/`, `data/examples/caoCao.json`, `skills/dataSkillExamples.ts`, `data/types.ts`) was **deleted at v2.8.2** after being verified consumer-free; a content-package format for sharing player-made content is a future cut (see PROJECT_ARCH_MAP §G).
 
 ## Key Files
 
@@ -142,6 +143,6 @@ menu --> codex/settings/createRoom/rules
 - **Gameplay cuts run through three gates, and the third one is never skipped (standardised by the user 2026-09-27; full procedure in `PROJECT_RELEASE_PIPELINE.md`).** ① *Restate-the-requirement gate*: for any change to match outcomes, distribution rules, skill semantics or baseline readings, first restate the rules in layperson Chinese — who is affected, when it takes effect, how edge cases resolve — explicitly marking (a) clauses that currently have **no triggerable instance** (a preventive rule that no shipped card violates must be written as such, never as "fixed"), (b) which existing readings it voids, and (c) any clash with the three red lines (no second state-transition path / never invent gameplay / never piggy-back batch promotions). Touch `src/` only after the user confirms. ② the build-and-register gate (five gates, baseline anchor, five docs, feat→docs→tag→push→CI→backfill). ③ *Independent recompute gate*: a second session re-runs the five gates on the tree itself, runs the ai-battle anchor twice and compares win seats **and the per-faction ledger**, spot-checks at least three code-fact claims by path+line, and specifically hunts two cosmetic failure modes — "rule implemented" written as "rule verified", and bypass/debug switches that really are unreachable from the formal chain (grep the construction sites, do not trust the prose).
 - **State sync is critical.** Always update both engine state and Zustand store via the established adapter pattern.
 - **Card identity.** Use `getRuntimeCardId()` from `utils/runtimeIdentity` for all card ID lookups.
-- **Excel import.** The `importer/` module requires `exceljs` -- verify .xlsx parsing after dependency changes. Note: package.json forces transitive `uuid` to ^11.1.1 via npm `overrides` (security fix, audit-clean baseline); revisit the override whenever exceljs is bumped.
+- **Excel round-trip.** `components/SkillEditor.tsx` reads .xlsx with SheetJS (`XLSX.read` + `sheet_to_json(header:1)`, the two read-only APIs pinned by `components/xlsxSecureReader.test.ts`) and writes with `exceljs` -- verify .xlsx parsing after dependency changes. Note: package.json forces transitive `uuid` to ^11.1.1 via npm `overrides` (security fix, audit-clean baseline); revisit the override whenever exceljs is bumped.
 - **Build output.** Single-file HTML via `vite-plugin-singlefile` -- everything inlines to `dist/index.html`.
 - **Lint is advisory for legacy code.** ESLint flat config (eslint.config.js) is a real gate: 0 errors required to pass. 30 remaining warnings (as of 2.2.10) are all react-hooks in legacy UI (GameBoard, TestArena, SkillEditor, Codex, DiceRoll, UnifiedDraw): rules-of-hooks, static-components, exhaustive-deps, set-state-in-effect. These need careful UI refactors -- treat as tracked tech debt, do not blanket-suppress.
