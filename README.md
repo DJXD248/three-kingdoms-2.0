@@ -8,11 +8,11 @@ React + TypeScript 单页卡牌游戏。本仓库为主线开发仓库，与 `Qo
 npm install --include=optional --ignore-scripts   # 安装依赖
 npm run dev                                       # 本地开发服务器
 npm run check                                     # TypeScript 类型检查
-npm run test                                      # Vitest 单元测试（696 例 / 71 文件，2.8.8 时点；2.8.4 加词汇兼容钉 +2 例、2.8.5 加自建将领编号与来源契约 +25 例、2.8.6 加官方将三层禁改执法 +20 例、2.8.7 加 Excel 导入三态判别与候选保留 +7 例、2.8.8 加两把锁（写闸门＋录入面） +25 例）
+npm run test                                      # Vitest 单元测试（708 例 / 72 文件，2.8.9 时点；2.8.6 加官方将三层禁改执法 +20 例、2.8.7 加 Excel 导入三态判别与候选保留 +7 例、2.8.8 加两把锁（写闸门＋录入面） +25 例、2.8.9 加仓库固定 DIY 样本与 poolSource 进料口 +12 例）
 npm run test:coverage                             # 测试 + 覆盖率（含棘轮阈值门禁）
 npm run lint                                      # ESLint 检查
 npm run build                                     # 生产构建 -> dist/index.html（2.3.3 起不再内嵌 npm install；依赖缺失时显式报错指路）
-npm run ai-battle                                 # AI 随机对局跑器（命令行，见 2.2.4+）
+npm run ai-battle                                 # AI 随机对局跑器（命令行，见 2.2.4+；2.8.9 起可加 `--diy-fixture` 换用仓库固定 DIY 样本池＝锚 B11，默认仍是官方池＝锚 B10）
 npm run ai-arena                                  # 三档策略互胜率擂台（见 2.2.7）
 ```
 
