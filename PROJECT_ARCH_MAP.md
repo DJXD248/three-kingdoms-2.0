@@ -881,7 +881,7 @@
 
 来源=用户四批裁决 + 同日逐项解释（原文在 PROJECT_HANDOFF §12-48）；外部评审两轮归档在仓库外 `G:\THREE_KINGDOMS\GPT_DISCUSSION_2_8_PREREQ_REPLY.md` 与 `GPT_DISCUSSION_2_8_ID_SCHEME_REPLY.md`（含 Q5 补发段，逐段哈希已对账）。**本节每一条在落地前都不得表述为"已具备"**；落地那一刀若增加 canonical 事实（次数、修正器、代价账）即为**内容刀须换锚**，不得宣称对 B10 逐字。
 >
-> **落地状态（自 v2.8.5 起逐节为准，别照上面那句旧帽子推断）**：**H1 与 H2 已落地为代码**（`src/domain/generalProvenance.ts` 发号与冻结判据 + store 的 `authoredGenerals`/`poolGenerals` + 编辑器「➕ 新建将领」面板；15+10 例测试钉住；非内容刀 ⇒ 对 B10 逐字已实证三次），**H3–H8 仍是纸面契约、零实现**（H3 的 store 守卫＝地基刀2；H8 的导入双入口＝地基刀3、编辑器保护锁＝N2）。H1 内那条「现状事实（grep 取证）」写于落地前、保留作历史取证，其中「`source` 不存在」「新建将领的能力也不存在」两句自 v2.8.5 起已不成立。
+> **落地状态（自 v2.8.6 起逐节为准，别照上面那句旧帽子推断）**：**H1、H2、H3 已落地为代码**（H1/2＝`src/domain/generalProvenance.ts` 发号与冻结判据 + store 的 `authoredGenerals`/`poolGenerals` + 编辑器「➕ 新建将领」面板；H3＝`src/domain/generalPolicy.ts` 唯一判定根 + 三层接线，详见下面 H3 小节的落地状态注；非内容刀 ⇒ 对 B10 逐字已实证四次），**H4–H8 仍是纸面契约、零实现**（H8 的导入双入口＝地基刀3、编辑器保护锁＝N2）。H1 内那条「现状事实（grep 取证）」写于落地前、保留作历史取证，其中「`source` 不存在」「新建将领的能力也不存在」两句自 v2.8.5 起已不成立。
 
 ### H1 将领三字段不变量（编号问题的答案）
 
@@ -913,6 +913,8 @@
 - 三层共用**同一份**「是否允许修改」判定（General schema + GeneralPolicy），不许三处漂移：**① 录入面拒录 → ② store mutation 守卫 → ③ 装配期整批 throw**。
 - 取证现状：`developerMode` 唯一门在 `src/components/Codex.tsx:115`（UI 条件渲染），`store/gameStoreEditorActions.ts` 的改将/改技能动作**无任何 dev-mode 校验**，`matchesDeveloperModeDigest` 只服务"进入开发者模式"这一件事 ⇒ **绕过界面直接调 store 就能改官方将**。判据必须落在第②层。
 - **历史官方 overlay 处置**：非开发者时期已存在的官方改动**不删除、不回滚原数据**，只停止应用并显式标记冲突（`blocked`）。三个状态要同时成立：原数据仍保留 / 该修改已被禁止应用 / 冲突已标明。验证者只拒、不改、不发明玩法。
+
+> **落地状态（v2.8.6，地基刀2）**：三层已接线，且**三层共用同一个根**＝新文件 `src/domain/generalPolicy.ts`（全项目不许出现第二份「能不能改」判定）：`mayModifyGeneral(id,{developerMode})` 只认号段——legacy 仓库账本号（`wei_001` 式）＝官方，只在开发者模式可改；`G-`／`D-` 本地号＝任何会话可改（本地内容进账本靠人审，不靠权限位）；号段认不出的一律走更严的一边。**①录入面**＝`SkillEditor`：官方将选中时保存按钮 disabled＋行内 `🔒`＋顶部常驻提示，批量删除／批量禁用／文本导入／Excel 导入四条写路各自回显 `applied/rejected`。**②store mutation 守卫**＝`updateSkillEdit`/`updateGeneralEdit`/`toggleDisabledGeneral` 返回 `EditDecision`，**被拒时零写入、零落盘**；批量与两条导入路同走守卫（Excel 导入原有的 `setState`＋手写 localStorage 直写口本刀封掉，改为逐行走单条 mutation）；`renameIdentity` 的改名级联跳过官方将的历史差异，官方差异保持逐字不变。**③装配期兜底**＝`getGeneralWithEdits` 在非开发者模式下不读官方将的两张差异表、`effectiveDisabledGenerals()` 过滤停用表、`blockedEdits()` 报名单，**不 throw**——这是对上面契约原文「整批 throw」的实装偏离（理由与待裁口径见 HANDOFF §12-54④）。「原数据仍保留／已禁止应用／冲突已标明」三状态同时成立已由测试逐条钉死（`gameStoreEditorActions.policy.test.ts`：停用后牌池回账本值、raw map 一字未动、重进开发者模式逐字恢复；另 `SkillEditor.readOnly.test.tsx` 钉住录入面三格）。**本刀没收的旧旁路**：`Codex.tsx` 的私有合并副本、`GameBoard`/`TestArena` 的 `skillEdits[g.id] ?? g.skills` 展示旁路，全部收敛到 `getGeneralWithEdits` 唯一路。**尚未落地的半边**：编辑器仍只对开发者可见——把录入面开放给普通玩家是 N2 保护锁那一刀的前提，不在本刀范围。
 
 ### H4 导入契约（现网缺陷登记，与 H1 同刀修）
 
