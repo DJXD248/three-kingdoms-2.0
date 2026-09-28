@@ -10,8 +10,15 @@
  * tests call it bare and can deep-equal two assemblies of the same config.
  */
 import { describe, expect, it } from 'vitest';
-import { buildMatchState, defaultMatchConfig, type SeatConfig } from './matchSetup';
+import {
+  buildMatchState,
+  defaultMatchConfig,
+  factionsForPoolSource,
+  generalsForPoolSource,
+  type SeatConfig,
+} from './matchSetup';
 import { allFactions, allGenerals, getGeneralsByFaction, type General } from '../data/generals';
+import { DIY_FIXTURE_GENERALS } from './fixtures/diyGeneralFixture';
 
 const build = (seed: number, overrides: Parameters<typeof defaultMatchConfig>[1]) =>
   buildMatchState(defaultMatchConfig(seed, overrides));
@@ -154,5 +161,62 @@ describe('matchSetup seat configs', () => {
     const pool = state.players[0].generalPool as General[];
     expect(pool).toHaveLength(supply + 3);
     expect(new Set(pool.map(g => g.id)).size).toBe(supply);
+  });
+});
+
+/**
+ * v2.8.9 地基刀4（§H 方案A）：`poolSource` 只换一个进料口——不加该字段时官方
+ * 账本路径必须逐字不变（B10 的含义），加上之后池子里只能出现仓库固定 DIY 样本。
+ */
+describe('matchSetup poolSource（仓库固定 DIY 样本进料口）', () => {
+  it('缺省＝官方账本本身，势力候选表与 allFactions 逐字相同（B10 不受影响）', () => {
+    expect(generalsForPoolSource(undefined)).toBe(allGenerals);
+    expect(generalsForPoolSource('official')).toBe(allGenerals);
+    expect(factionsForPoolSource(undefined)).toEqual([...allFactions]);
+  });
+
+  it('diy-fixture：每座位的将全部来自固定样本，且只会落在样本真有的势力上', () => {
+    const state = build(31, {
+      playerCount: 2,
+      poolPerPlayer: 4,
+      skillInjection: 0,
+      poolSource: 'diy-fixture',
+    });
+    for (const p of state.players) {
+      const pool = p.generalPool as General[];
+      expect(pool).toHaveLength(4);
+      for (const g of pool) {
+        expect(g.id.startsWith('D-fix-')).toBe(true);
+        expect(DIY_FIXTURE_GENERALS.map(f => f.id)).toContain(g.id.slice(0, g.id.lastIndexOf('_p')));
+      }
+      expect(['魏', '蜀', '吴']).toContain(p.faction);
+    }
+  });
+
+  it('同种子两次装配逐字相同（固定样本＋确定号 ⇒ 锚可复现）', () => {
+    const overrides = { playerCount: 2, poolPerPlayer: 4, skillInjection: 0, poolSource: 'diy-fixture' as const };
+    expect(build(41, overrides)).toEqual(build(41, overrides));
+  });
+
+  it('固定样本池里点选官方号＝查无此将（命名空间隔离，不串池），点样本号则照收', () => {
+    const mixed = build(33, {
+      playerCount: 2,
+      poolPerPlayer: 3,
+      skillInjection: 0,
+      poolSource: 'diy-fixture',
+      seatConfigs: [{ generals: [allGenerals[0].id] }, { generals: [DIY_FIXTURE_GENERALS[0].id] }],
+    });
+    // 座0 的官方号在样本池里找不到 ⇒ explicit 为空 ⇒ 走随机抽样，仍然全是样本将
+    for (const p of mixed.players) {
+      for (const g of p.generalPool as General[]) expect(g.id.startsWith('D-fix-')).toBe(true);
+    }
+    const picked = (mixed.players[1].generalPool as General[]).map(g => g.id);
+    expect(picked.some(id => id.startsWith(`${DIY_FIXTURE_GENERALS[0].id}_p`))).toBe(true);
+  });
+
+  it('缺省路径仍按官方账本解析自选号（换口没把老路改坏）', () => {
+    const state = build(35, { playerCount: 1, poolPerPlayer: 2, seatConfigs: [{ generals: [allGenerals[0].id] }] });
+    const pool = state.players[0].generalPool as General[];
+    expect(pool.map(g => g.id)).toContain(`${allGenerals[0].id}_p1`);
   });
 });

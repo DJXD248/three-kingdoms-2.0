@@ -14,6 +14,35 @@ import { createCardDeck, type CardType } from '../data/cards';
 import { cloneWithRuntimeInstance } from '../utils/runtimeIdentity';
 import { createRngState, rngNext } from '../core/rng';
 import { describeLockKey, DIY_IDENTITY, identityOf, lockKeyOf } from '../domain/identity';
+import { DIY_FIXTURE_GENERALS } from './fixtures/diyGeneralFixture';
+
+/**
+ * v2.8.9 地基刀4（方案A，§H）：which repository-fixed file fills the AI pool.
+ * - `'official'` (absent = default) — `src/data/generals.ts` ledger only, i.e.
+ *   what the B10 anchor means. Nothing else may read into it.
+ * - `'diy-fixture'` — `ai/fixtures/diyGeneralFixture.ts`, a committed file
+ *   (CI-rebuildable), used ONLY behind the CLI's explicit `--diy-fixture`.
+ * Player-side state (store `poolGenerals()`, localStorage drafts) is not a
+ * choice here and never will be: automation input must come from files.
+ */
+export type GeneralPoolSource = 'official' | 'diy-fixture';
+
+/** The one place that resolves a pool source into general records. */
+export function generalsForPoolSource(source: GeneralPoolSource | undefined): General[] {
+  return source === 'diy-fixture' ? DIY_FIXTURE_GENERALS : allGenerals;
+}
+
+/**
+ * Factions a pool can actually serve, in ledger order. For the official pool
+ * this is provably `allFactions` itself (all five are populated), so the seeded
+ * draw order — and B10 — is untouched; a smaller fixture pool simply can't be
+ * asked to serve a faction it has no card for.
+ */
+export function factionsForPoolSource(source: GeneralPoolSource | undefined): Faction[] {
+  const pool = generalsForPoolSource(source);
+  return allFactions.filter(faction => pool.some(g => g.faction === faction));
+}
+
 
 /**
  * Per-seat setup for the "自选势力/将领" mode (2.2.8). With the v2.8.0
@@ -59,6 +88,8 @@ export interface MatchConfig {
   seatConfigs?: SeatConfig[];
   /** v2.8.0: practice-window bypass switches; CLI/standard path never sets this. */
   identityLock?: IdentityLockBypass;
+  /** v2.8.9: which repository-fixed file supplies the generals; absent = official ledger. */
+  poolSource?: GeneralPoolSource;
 }
 
 export function defaultMatchConfig(seed: number, overrides: Partial<MatchConfig> = {}): MatchConfig {
@@ -127,6 +158,8 @@ function sampleFrom<T>(items: T[], count: number, random: () => number): T[] {
 export function buildMatchState(config: MatchConfig): EngineState {
   const setupRng = createRngState((config.seed ^ SETUP_STREAM_SALT) >>> 0);
   const random = () => rngNext(setupRng);
+  const pool = generalsForPoolSource(config.poolSource);
+  const factionChoices = factionsForPoolSource(config.poolSource);
   const players: EnginePlayer[] = [];
   // Deterministic instance ids: every minted card AND injected skill gets a
   // seed-derived stamp, so two patchless builds of the same config are
@@ -177,7 +210,7 @@ export function buildMatchState(config: MatchConfig): EngineState {
     // Explicit general ids win; a collision they cause is an assembly error
     // (拒整批 + 明确原因), never a silent filter — unless a bypass says so.
     const explicit = (seat.generals ?? [])
-      .map(gid => allGenerals.find(g => g.id === gid))
+      .map(gid => pool.find(g => g.id === gid))
       .filter((g): g is General => Boolean(g));
     if (lockOn && !bypass.allowExplicitGeneralsIgnoreLock && explicit.length > 0) {
       const seenKeys = new Set<string>();
@@ -196,15 +229,15 @@ export function buildMatchState(config: MatchConfig): EngineState {
         throw new Error(`身份锁拒绝整批装配：${problems.join('；')}。演练窗旁路开关可放行。`);
       }
     }
-    const picked = seat.faction && (allFactions as string[]).includes(seat.faction)
+    const picked = seat.faction && (factionChoices as string[]).includes(seat.faction)
       ? (seat.faction as Faction)
       : undefined;
-    const faction: Faction = picked ?? explicit[0]?.faction ?? takeRandom(allFactions, random);
+    const faction: Faction = picked ?? explicit[0]?.faction ?? takeRandom(factionChoices, random);
     let sources: General[];
     if (explicit.length > 0) {
       sources = explicit;
     } else {
-      const unlocked = allGenerals.filter(g => g.faction === faction && seatConflict(g) === null);
+      const unlocked = pool.filter(g => g.faction === faction && seatConflict(g) === null);
       const sampled = sampleFrom(unlocked, config.poolPerPlayer, random);
       if (!lockOn || bypass.allowSameIdentitySameFactionMultiCopy) {
         sources = sampled;

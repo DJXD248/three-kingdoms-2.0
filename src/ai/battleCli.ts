@@ -39,6 +39,7 @@ interface CliArgs {
   out: string | null;
   skillStats: boolean;
   policy: string | null;
+  diyFixture: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -54,6 +55,7 @@ function parseArgs(argv: string[]): CliArgs {
     out: null,
     skillStats: false,
     policy: null,
+    diyFixture: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
@@ -62,6 +64,11 @@ function parseArgs(argv: string[]): CliArgs {
     const name = key.slice(2);
     if (name === 'skill-stats') {
       args.skillStats = true;
+      continue;
+    }
+    if (name === 'diy-fixture') {
+      // v2.8.9 地基刀4：改用仓库固定的 DIY 样本填池（独立锚，见 HANDOFF §12-58）
+      args.diyFixture = true;
       continue;
     }
     if (name === 'policy') {
@@ -172,13 +179,15 @@ function main(): void {
       poolPerPlayer: args.pool,
       deckSize: args.deck,
       skillInjection: args.skill,
+      ...(args.diyFixture ? { poolSource: 'diy-fixture' as const } : {}),
     },
   });
 
   console.log(
     `[ai-battle] ${summary.games} games · seed ${args.seed}..${args.seed + summary.games - 1} · ` +
       `${args.players}p · pool ${args.pool} · deck ${args.deck} · skill ${args.skill}` +
-      (args.policy ? ` · policy ${args.policy}` : ''),
+      (args.policy ? ` · policy ${args.policy}` : '') +
+      (args.diyFixture ? ' · 将领来源=仓库固定 DIY 样本（不是官方池，B10 不适用）' : ''),
   );
   console.log(
     `  won=${summary.won}  exhausted=${summary.exhausted}  VIOLATIONS=${summary.violated}  ` +
