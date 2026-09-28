@@ -13,6 +13,7 @@ import {
   loadPersistedGeneralEdits,
   loadDisabledGenerals,
   loadIdentityRegistry,
+  loadAuthoredGenerals,
 } from './editorPersistence';
 import { buildTestArenaActions, buildTestArenaState } from './testArenaActions';
 import { buildEditorActions } from './gameStoreEditorActions';
@@ -179,6 +180,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   generalEdits:loadPersistedGeneralEdits(),
   disabledGenerals:loadDisabledGenerals(),
   identityRegistry:loadIdentityRegistry(),
+  authoredGenerals:loadAuthoredGenerals(),
   isTestMode:false,
   testActionCounts:{},
 
@@ -204,13 +206,19 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     setTimeout(()=>get().distributeDraftGenerals(),1500);
   },
 
+  // v2.8.5: the LOCAL play surface = repository ledger + this machine's
+  // authored records, both read through the editor merge (an edited identity or
+  // faction must steer the lock — 契约表 格11). ai/matchSetup deliberately keeps
+  // reading `allGenerals`, which is what makes B10 CI-rebuildable (§H2).
+  poolGenerals:()=>[...allGenerals,...get().authoredGenerals].map(g=>get().getGeneralWithEdits(g)),
+
   distributeDraftGenerals:()=>{
     const{disabledGenerals:dis}=get();
     const fp=get().players[0];if(!fp?.faction)return;
     const rng=setupCursor();
     // v2.8.0: distribution reads editor-merged reality, so an edited
     // identity/faction steers the lock (契约表 格11 录入面).
-    const pool=allGenerals.map(g=>get().getGeneralWithEdits(g));
+    const pool = get().poolGenerals();
     const candidates = buildDraftCandidates(fp.faction, dis, [], ()=>rngNext(rng), pool);
     commitSetup({phase:'generalDraft',draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[],draftPlayerIndex:0,draftDistributed:[...candidates.main,...candidates.qun]},rng);
   },
@@ -264,7 +272,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     // v2.8.0 identity lock: the exclusion set is everything DEALT to earlier
     // seats (选过 or 沉没), not just confirmed picks — 分发即锁.
     const distributed=get().draftDistributed;
-    const pool=allGenerals.map(g=>get().getGeneralWithEdits(g));
+    const pool = get().poolGenerals();
     const rng=setupCursor();
     const candidates = buildDraftCandidates(np.faction, dis, distributed, ()=>rngNext(rng), pool);
     commitSetup({players:u,draftPlayerIndex:ni,draftGenerals:candidates.main,draftQunGenerals:candidates.qun,selectedDraftGenerals:[],draftDistributed:[...distributed,...candidates.main,...candidates.qun]},rng);
@@ -850,6 +858,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       generalEdits:state.generalEdits,
       disabledGenerals:state.disabledGenerals,
       identityRegistry:state.identityRegistry,
+      authoredGenerals:state.authoredGenerals,
     });
   },
 

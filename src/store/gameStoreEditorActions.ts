@@ -8,7 +8,14 @@ import {
   persistGeneralEdits,
   persistDisabledGenerals,
   persistIdentityRegistry,
+  persistAuthoredGenerals,
 } from './editorPersistence';
+import {
+  createAuthoredGeneral,
+  isAuthoredId,
+  type AuthoredGeneralInput,
+} from '../domain/generalProvenance';
+import type { GeneralSource } from '../data/generals';
 import { identityOf } from '../domain/identity';
 import { matchesDeveloperModeDigest } from '../domain/devGate';
 import type { GameState } from './gameStoreTypes';
@@ -28,6 +35,8 @@ export function buildEditorActions(
   | 'disableDeveloperMode'
   | 'updateSkillEdit'
   | 'updateGeneralEdit'
+  | 'addAuthoredGeneral'
+  | 'removeAuthoredGeneral'
   | 'batchDeleteEdits'
   | 'toggleDisabledGeneral'
   | 'batchToggleDisabled'
@@ -57,6 +66,43 @@ export function buildEditorActions(
       const next = { ...get().generalEdits, [generalId]: edits };
       persistGeneralEdits(next);
       set({ generalEdits: next });
+    },
+
+    // v2.8.5 authoring (§H2): the source a new record is stamped with is not
+    // caller-choice — an authenticated developer creates an official LOCAL
+    // DRAFT, anyone else creates DIY content. Neither path can mint a record
+    // into the repository ledger, and no path lets the caller pick an id.
+    addAuthoredGeneral: (input: AuthoredGeneralInput, requestedSource: GeneralSource) => {
+      const source: GeneralSource =
+        get().developerMode && requestedSource === 'official' ? 'official' : 'DIY';
+      const result = createAuthoredGeneral(input, source);
+      if (!result.ok) return { ok: false, reason: result.reason };
+      const authoredGenerals = [...get().authoredGenerals, result.general];
+      persistAuthoredGenerals(authoredGenerals);
+      set({ authoredGenerals });
+      return { ok: true, general: result.general };
+    },
+
+    // Only authored records are removable. A ledger card is unremovable here
+    // by construction (the id namespace check), independent of any UI gate.
+    removeAuthoredGeneral: (id: string) => {
+      if (!isAuthoredId(id)) return false;
+      const authoredGenerals = get().authoredGenerals.filter(g => g.id !== id);
+      if (authoredGenerals.length === get().authoredGenerals.length) return false;
+      // The record is gone, so its differential patches have no subject left:
+      // deleting must not leave an orphan overlay keyed by a dead id.
+      const skillEdits = { ...get().skillEdits };
+      const generalEdits = { ...get().generalEdits };
+      delete skillEdits[id];
+      delete generalEdits[id];
+      const disabledGenerals = new Set(get().disabledGenerals);
+      disabledGenerals.delete(id);
+      persistSkillEdits(skillEdits);
+      persistGeneralEdits(generalEdits);
+      persistDisabledGenerals(disabledGenerals);
+      persistAuthoredGenerals(authoredGenerals);
+      set({ authoredGenerals, skillEdits, generalEdits, disabledGenerals });
+      return true;
     },
 
     batchDeleteEdits: generalIds => {
@@ -177,10 +223,12 @@ export function buildEditorActions(
     },
 
     deleteIdentity: name => {
-      const { identityRegistry, generalEdits } = get();
+      const { identityRegistry, generalEdits, authoredGenerals } = get();
       if (!identityRegistry.includes(name)) return { ok: false, referrers: [] };
       const referrers: string[] = [];
-      for (const g of allGenerals) {
+      // Authored cards carry their identity on the record itself (never derived
+      // from a rename), so scanning them is required for the same guarantee.
+      for (const g of [...allGenerals, ...authoredGenerals]) {
         const explicit = generalEdits[g.id]?.identity;
         const resolved = identityOf(explicit !== undefined ? { name: g.name, identity: explicit } : g);
         if (resolved === name) referrers.push(g.name);

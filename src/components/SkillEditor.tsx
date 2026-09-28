@@ -2,8 +2,9 @@ import { useState, useMemo, useCallback } from 'react';
 import { useGameStore } from '../store/gameStore';
 import {
   allGenerals, General, Faction, factionColors, SkillTag, allSkillTags, skillTagColors,
-  SkillEffect, SkillEffectMode, effectModeLabels,
+  SkillEffect, SkillEffectMode, effectModeLabels, sourceLabels, type GeneralSource,
 } from '../data/generals';
+import { isRepositoryOfficial, sourceOf } from '../domain/generalProvenance';
 import {
   triggerToStr,
   buildTriggerOptionStrings,
@@ -44,6 +45,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const addIdentity = useGameStore(s => s.addIdentity);
   const renameIdentity = useGameStore(s => s.renameIdentity);
   const deleteIdentity = useGameStore(s => s.deleteIdentity);
+  const developerMode = useGameStore(s => s.developerMode);
+  const authoredGenerals = useGameStore(s => s.authoredGenerals);
+  const addAuthoredGeneral = useGameStore(s => s.addAuthoredGeneral);
+  const removeAuthoredGeneral = useGameStore(s => s.removeAuthoredGeneral);
 
   const [search, setSearch] = useState('');
   const [factionFilter, setFactionFilter] = useState<Faction | '全部'>('全部');
@@ -60,6 +65,14 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // anything else = registry entry (选身份，不是自由文本).
   const [editIdentity, setEditIdentity] = useState('__default__');
   const [showIdentities, setShowIdentities] = useState(false);
+  // v2.8.5 authoring surface (§H1/§H2)
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [createFaction, setCreateFaction] = useState<Faction>('蜀');
+  const [createHp, setCreateHp] = useState(4);
+  const [createIdentity, setCreateIdentity] = useState('__default__');
+  const [createSource, setCreateSource] = useState<GeneralSource>('DIY');
+  const [createResult, setCreateResult] = useState('');
   const [newIdentityName, setNewIdentityName] = useState('');
   const [identityNotice, setIdentityNotice] = useState('');
   const [showImport, setShowImport] = useState(false);
@@ -109,7 +122,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   }, []);
 
   const filtered = useMemo(() => {
-    let list = allGenerals.map(g => ({ original: g, edited: getEditedGeneral(g) })).filter(({ edited }) => {
+    let list = [...allGenerals, ...authoredGenerals].map(g => ({ original: g, edited: getEditedGeneral(g) })).filter(({ edited }) => {
       if (factionFilter !== '全部' && edited.faction !== factionFilter) return false;
       if (incompleteOnly && !isSkillIncomplete(edited)) return false;
       if (search) {
@@ -131,7 +144,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     }
 
     return list;
-  }, [search, factionFilter, sortBy, skillEdits, generalEdits, getEditedGeneral]);
+  }, [search, factionFilter, sortBy, skillEdits, generalEdits, getEditedGeneral, authoredGenerals]);
 
   // Count how many in the filtered list have edits
   const editedInList = useMemo(() =>
@@ -501,18 +514,48 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // v2.8.0: 撞键显式提示 — old saves may already host same-key generals;
   // we surface them, never silently rewrite (契约表 格12).
   const identityConflicts = useMemo(
-    () => findIdentityConflicts(allGenerals.map(g => getEditedGeneral(g))),
-    [getEditedGeneral],
+    () => findIdentityConflicts([...allGenerals, ...authoredGenerals].map(g => getEditedGeneral(g))),
+    [getEditedGeneral, authoredGenerals],
   );
   const identityReferrers = useMemo(() => {
     const map = new Map<string, string[]>();
-    for (const g of allGenerals) {
+    for (const g of [...allGenerals, ...authoredGenerals]) {
       const ed = getEditedGeneral(g);
       const name = ed.identity !== undefined ? ed.identity : undefined;
       if (name !== undefined && name.trim() !== '') map.set(name.trim(), [...(map.get(name.trim()) ?? []), ed.name]);
     }
     return map;
-  }, [getEditedGeneral]);
+  }, [getEditedGeneral, authoredGenerals]);
+
+  const AUTHORING_REFUSAL_TEXT: Record<string, string> = {
+    NAME_REQUIRED: '名字不能为空',
+    HP_INVALID: '体力必须是大于 0 的数字',
+    ID_SOURCE_UNAVAILABLE: '本机无法生成编号（浏览器未提供随机编号源）',
+  };
+
+  const handleCreateGeneral = () => {
+    const identity = createIdentity === '__default__'
+      ? undefined
+      : createIdentity === '__none__' ? '' : createIdentity;
+    const result = addAuthoredGeneral(
+      { name: createName, faction: createFaction, hp: createHp, identity },
+      createSource,
+    );
+    if (!result.ok) {
+      setCreateResult(`❌ 未创建：${AUTHORING_REFUSAL_TEXT[result.reason] ?? result.reason}`);
+      return;
+    }
+    const g = result.general;
+    const layer = isRepositoryOfficial(g) ? '仓库官方' : sourceOf(g) === 'official' ? '官方本地草稿' : '玩家自制';
+    setCreateResult(`✅ 已新建「${g.name}·${g.faction}」（${layer}，编号 ${g.id}，身份 ${g.identity ?? '未填'}）`);
+    setCreateName('');
+  };
+
+  const handleRemoveAuthored = (g: General) => {
+    setCreateResult(removeAuthoredGeneral(g.id)
+      ? `🗑 已删除自建将领「${g.name}」`
+      : `❌ 未删除：${g.name} 不是本机自建的将领`);
+  };
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm text-white">
@@ -524,6 +567,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             <button onClick={() => setShowIdentities(v => !v)}
               className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all ${showIdentities ? 'bg-cyan-700/60 border-cyan-500/40 text-cyan-100' : 'bg-purple-800/40 border-purple-700/30 text-purple-200 hover:bg-purple-700/40'}`}>
               🪪 身份管理
+            </button>
+            <button onClick={() => setShowCreate(v => !v)}
+              className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all ${showCreate ? 'bg-emerald-700/60 border-emerald-500/40 text-emerald-100' : 'bg-purple-800/40 border-purple-700/30 text-purple-200 hover:bg-purple-700/40'}`}>
+              ➕ 新建将领
             </button>
             <button onClick={() => setShowImport(!showImport)}
               className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all ${showImport ? 'bg-purple-700/60 border-purple-500/40 text-purple-100' : 'bg-purple-800/40 border-purple-700/30 text-purple-200 hover:bg-purple-700/40'}`}>
@@ -544,6 +591,43 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </div>
+
+        {/* Authoring panel (v2.8.5 新建将领, §H1/§H2) */}
+        {showCreate && (
+          <div className="px-6 py-3 border-b border-emerald-800/30 bg-emerald-900/10 space-y-2 flex-shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <input type="text" value={createName} onChange={e => setCreateName(e.target.value)}
+                placeholder="名字（允许与已有将领同名）"
+                className="w-44 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm" />
+              <select value={createFaction} onChange={e => setCreateFaction(e.target.value as Faction)}
+                className="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm">
+                {factionOptions.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+              <input type="number" min={1} value={createHp} onChange={e => setCreateHp(Number(e.target.value))}
+                className="w-16 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm" title="体力" />
+              <select value={createIdentity} onChange={e => setCreateIdentity(e.target.value)}
+                className="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm" title="身份">
+                <option value="__default__">身份：默认同名字</option>
+                <option value="__none__">身份：无（不参与身份锁）</option>
+                {identityRegistry.map(name => <option key={name} value={name}>身份：{name}</option>)}
+              </select>
+              <select value={createSource} onChange={e => setCreateSource(e.target.value as GeneralSource)}
+                className="px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm" title="归属">
+                <option value="DIY">{sourceLabels.DIY}</option>
+                {developerMode && <option value="official">{sourceLabels.official}（本地草稿）</option>}
+              </select>
+              <button onClick={handleCreateGeneral}
+                className="px-3 py-1 rounded bg-emerald-700 text-white text-sm font-bold hover:bg-emerald-600">
+                创建
+              </button>
+            </div>
+            <p className="text-[11px] text-emerald-200/70">
+              创建即定死：编号与归属之后不可改（改名/改血量/导出再导入都不重新发号）。身份可以之后在编辑面板里改。
+              新建的将进入本地征召池；AI 标准自动对局仍只用仓库官方池，要成为仓库官方须人工合进 generals.ts。
+            </p>
+            {createResult && <p className="text-xs font-bold text-emerald-200">{createResult}</p>}
+          </div>
+        )}
 
         {/* Identity registry panel (v2.8.0 身份管理) */}
         {showIdentities && (
@@ -738,7 +822,14 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                       )}
                       <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: factionColors[edited.faction] }} />
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-bold truncate ${isDisabled ? 'text-gray-500 line-through' : 'text-amber-100'}`}>{edited.name}</p>
+                        <p className={`text-sm font-bold truncate ${isDisabled ? 'text-gray-500 line-through' : 'text-amber-100'}`}>
+                          {edited.name}
+                          {!isRepositoryOfficial(original) && (
+                            <span className="ml-1 text-[9px] px-1 rounded bg-emerald-800/60 text-emerald-200" title={`本机自建，编号 ${original.id} 创建后不可改`}>
+                              {sourceOf(original) === 'official' ? '官方草稿' : '自建'}
+                            </span>
+                          )}
+                        </p>
                         <p className="text-[10px] text-purple-400/60 truncate">
                           {edited.skills.map(s => s.tag ? `${s.name}<${s.tag}>` : s.name).join('、')}
                         </p>
@@ -751,6 +842,13 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                         title={isDisabled ? '启用该将领' : '禁用该将领'}
                         className={`flex-shrink-0 w-7 h-4 rounded-full relative transition-all mr-1 ${isDisabled ? 'bg-gray-700' : 'bg-green-600'}`}>
                         <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${isDisabled ? 'left-0.5' : 'left-3.5'}`} />
+                      </button>
+                    )}
+                    {!multiSelectMode && !isRepositoryOfficial(original) && (
+                      <button onClick={(e) => { e.stopPropagation(); handleRemoveAuthored(original); }}
+                        title="删除这张本机自建的将领（仓库内的将领不可删除）"
+                        className="flex-shrink-0 px-1.5 py-0.5 rounded bg-red-900/40 border border-red-800/40 text-red-200 text-[10px] font-bold hover:bg-red-800/50 mr-1">
+                        🗑
                       </button>
                     )}
                   </div>

@@ -5,6 +5,18 @@
 
 export type Faction = '魏' | '蜀' | '吴' | '群' | '晋';
 
+/**
+ * v2.8.5 content provenance (§H1/§H2): who authored a general.
+ * Frozen at creation — resolve ONLY via sourceOf() in domain/generalProvenance.ts
+ * (ledger cards carry no field; absence means 'official').
+ */
+export type GeneralSource = 'official' | 'DIY';
+
+export const sourceLabels: Record<GeneralSource, string> = {
+  official: '官方',
+  DIY: '玩家自制',
+};
+
 export type SkillTag = '锁定技' | '限定技' | '登场技' | '遗计技' | '觉醒技';
 
 export const allSkillTags: SkillTag[] = ['锁定技', '限定技', '登场技', '遗计技', '觉醒技'];
@@ -231,8 +243,14 @@ export interface General {
   title?: string;
   /** v2.8.0 identity-lock: registry key of this general's 身份.
    *  undefined ⇒ falls back to own name; '' (explicit blank) ⇒ no identity.
-   *  Resolve ONLY via identityOf() in domain/identity.ts. */
+   *  Resolve ONLY via identityOf() in domain/identity.ts.
+   *  EDITABLE content field (§H1, user ruling 2026-09-28): a mis-picked or
+   *  missing identity must stay fixable. Renaming a general that carries no
+   *  explicit identity silently moves its lock key — authored records are
+   *  therefore created with the identity written down (generalProvenance). */
   identity?: string;
+  /** v2.8.5 provenance (§H1): frozen at creation together with `id`. */
+  source?: GeneralSource;
 }
 
 function createGeneral(

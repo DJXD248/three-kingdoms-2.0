@@ -1,6 +1,7 @@
 // Store-level types extracted from gameStore.ts (stabilization stage B, D-6
 // first split). Pure type moves — shapes and semantics are unchanged.
-import type { General, Faction, SkillTag, SkillTriggerConfig, SkillEffect, SkillEffectMode } from '../data/generals';
+import type { General, Faction, GeneralSource, SkillTag, SkillTriggerConfig, SkillEffect, SkillEffectMode } from '../data/generals';
+import type { AuthoredGeneralInput } from '../domain/generalProvenance';
 import type { GameCard } from '../data/cards';
 import type { AiSeatMode, AiSeatTier } from '../setup/runtimeSetup';
 import type { EngineState } from '../core/GameState';
@@ -117,6 +118,11 @@ export interface GameState {
   disabledGenerals:Set<string>;
   // v2.8.0 identity lock: maintained registry of identity names (身份管理).
   identityRegistry:string[];
+  // v2.8.5 authored content (§H1/§H2): locally created general records, each
+  // carrying its frozen `id` + `source` from creation. They join the LOCAL
+  // draft pool (poolGenerals) but never the AI standard pool, which reads the
+  // repository ledger only — that boundary is what keeps B10 rebuildable.
+  authoredGenerals:General[];
 
   setPhase:(p:GamePhase)=>void; setPlayerCount:(c:number)=>void; setRoomName:(n:string)=>void;
   createRoom:()=>void; startGame:()=>void; rollDice:()=>void; assignFactions:()=>void;
@@ -150,6 +156,14 @@ export interface GameState {
   disableDeveloperMode:()=>void;
   updateSkillEdit:(generalId:string, skills:{name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[])=>void;
   updateGeneralEdit:(generalId:string, edits:{name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number;identity?:string})=>void;
+  // v2.8.5 authoring (§H1): the ONLY way a new general enters the store. `id`
+  // and `source` are stamped by generalProvenance at creation and never
+  // rewritten; 身份 is written explicitly so a later rename cannot move its
+  // lock key. Removal accepts authored ids only — a ledger card is unremovable.
+  addAuthoredGeneral:(input:AuthoredGeneralInput, source:GeneralSource)=>{ok:true;general:General}|{ok:false;reason:string};
+  removeAuthoredGeneral:(id:string)=>boolean;
+  // Local play surface: repository ledger + this machine's authored records.
+  poolGenerals:()=>General[];
   // v2.8.0 identity registry CRUD (身份管理). deleteIdentity refuses while
   // generals still reference the name (保守方案: 拒删 + 列出引用者).
   addIdentity:(name:string)=>boolean;
