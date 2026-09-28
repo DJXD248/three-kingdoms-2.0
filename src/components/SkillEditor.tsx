@@ -5,7 +5,7 @@ import {
   SkillEffect, SkillEffectMode, effectModeLabels, sourceLabels, type GeneralSource,
 } from '../data/generals';
 import { isRepositoryOfficial, sourceOf } from '../domain/generalProvenance';
-import { denialMessage } from '../domain/generalPolicy';
+import { denialMessage, mayModifyGeneral, type EditDenial } from '../domain/generalPolicy';
 import {
   triggerToStr,
   buildTriggerOptionStrings,
@@ -52,6 +52,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const authoredGenerals = useGameStore(s => s.authoredGenerals);
   const addAuthoredGeneral = useGameStore(s => s.addAuthoredGeneral);
   const removeAuthoredGeneral = useGameStore(s => s.removeAuthoredGeneral);
+  // v2.8.8 N2 (§H8): the manual (white) lock surface — a local id set, shown
+  // on rows and toggled per-row or in batch. The gold lock is never stored;
+  // it is §H3 rendered (derived per row below through the same policy root).
+  const lockedGenerals = useGameStore(s => s.lockedGeneralIds);
+  const toggleGeneralLock = useGameStore(s => s.toggleGeneralLock);
+  const batchToggleLocked = useGameStore(s => s.batchToggleLocked);
   // §H3: the editor asks the same policy root the store guards with, so a
   // read-only general is greyed out before it can be written, not after.
   const mayEditGeneral = useGameStore(s => s.mayEditGeneral);
@@ -254,13 +260,21 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const handleSkillTagChange = (index: number, tag: SkillTag | '') =>
     setEditingSkills(prev => prev.map((s, i) => i === index ? { ...s, tag: tag === '' ? undefined : tag as SkillTag } : s));
 
+  /** v2.8.8: 两类拒绝各说各话——系统禁改 vs 用户自己的白锁，绝不并栏（§12-55）。 */
+  const denialNotice = (official: string[], locked: string[]) =>
+    [
+      official.length > 0 ? `${denialMessage('OFFICIAL_READ_ONLY')}｜${official.join('、')}` : '',
+      locked.length > 0 ? `${denialMessage('USER_LOCKED')}｜${locked.join('、')}` : '',
+    ].filter(Boolean).join('\n');
+
   const handleImportText = () => {
-    const { count, rejected } = importSkillEditsFromText(importText);
+    const { count, rejected, deniedLock } = importSkillEditsFromText(importText);
     setImportResult(
       `成功导入 ${count} 名将领的技能数据` +
-      (rejected.length > 0 ? `；${rejected.length} 名被拒：${rejected.join('、')}` : ''),
+      (rejected.length > 0 ? `；${rejected.length} 名被系统禁改：${rejected.join('、')}` : '') +
+      (deniedLock.length > 0 ? `；${deniedLock.length} 名被白锁挡住：${deniedLock.join('、')}` : ''),
     );
-    setReadOnlyNotice(rejected.length > 0 ? denialMessage('OFFICIAL_READ_ONLY') : '');
+    setReadOnlyNotice(denialNotice(rejected, deniedLock));
     setImportText('');
     setTimeout(() => setImportResult(''), 3000);
   };
@@ -281,7 +295,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           let skipped = 0;
           let sheetCount = 0;
           const unreadableCells: string[] = [];
-          const rejectedNames: string[] = [];
+          // v2.8.8: each refused row keeps its OWN denial (system vs white
+          // lock) — the report must name the two kinds apart, never merge.
+          const rejectedRows: { name: string; denial: EditDenial }[] = [];
           // §H3 layer ①+②: a row lands through the guarded store actions — the
           // old direct `useGameStore.setState` was a second write path that
           // skipped the policy gate entirely.
@@ -296,7 +312,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             if (gEdit) decisions.push(updateGeneralEdit(general.id, gEdit));
             const denied = decisions.find(d => !d.allowed);
             if (denied && !denied.allowed) {
-              rejectedNames.push(general.name);
+              rejectedRows.push({ name: general.name, denial: denied.denial });
               return false;
             }
             return true;
@@ -380,14 +396,16 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           }
 
           setParseWarnings(unreadableCells);
-          const rejected = [...new Set(rejectedNames)];
           // Refused rows are named and stay on screen: a silently skipped row
           // is the worst failure shape (§12-46①), and here it would be a
           // permission refusal dressed up as a successful import.
-          setReadOnlyNotice(rejected.length > 0
-            ? `${denialMessage('OFFICIAL_READ_ONLY')}｜本次未录入 ${rejected.length} 名：${rejected.join('、')}`
+          const deniedOfficial = [...new Set(rejectedRows.filter(r => r.denial === 'OFFICIAL_READ_ONLY').map(r => r.name))];
+          const deniedLocked = [...new Set(rejectedRows.filter(r => r.denial === 'USER_LOCKED').map(r => r.name))];
+          const refusedTotal = deniedOfficial.length + deniedLocked.length;
+          setReadOnlyNotice(refusedTotal > 0
+            ? denialNotice(deniedOfficial, deniedLocked) + `｜本次未录入 ${refusedTotal} 名`
             : '');
-          setImportResult(`✅ 从 ${sheetCount} 个工作表导入 ${count} 名将领${skipped > 0 ? `，跳过 ${skipped} 名无变化` : ''}${rejected.length > 0 ? `，拒录 ${rejected.length} 名` : ''}${unreadableCells.length > 0 ? `；⚠ ${unreadableCells.length} 处没看懂，见下方清单` : ''}`);
+          setImportResult(`✅ 从 ${sheetCount} 个工作表导入 ${count} 名将领${skipped > 0 ? `，跳过 ${skipped} 名无变化` : ''}${refusedTotal > 0 ? `，拒录 ${refusedTotal} 名` : ''}${unreadableCells.length > 0 ? `；⚠ ${unreadableCells.length} 处没看懂，见下方清单` : ''}`);
           setTimeout(() => setImportResult(''), 5000);
         } catch {
           setImportResult('❌ Excel文件解析失败，请检查格式');
@@ -457,7 +475,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       }
       const denied = decisions.find(d => !d.allowed);
       if (denied && !denied.allowed) {
-        setReadOnlyNotice(`${denialMessage('OFFICIAL_READ_ONLY')}｜无法修改「${block.name}」`);
+        setReadOnlyNotice(`${denialMessage(denied.denial)}｜无法修改「${block.name}」`);
         return;
       }
       setImportResult(`✅ 已更新将领「${block.name}」`);
@@ -664,19 +682,32 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     [...allGenerals, ...authoredGenerals].find(g => g.id === id)?.name ?? id);
 
   const handleBatchDelete = () => {
-    const { applied, rejected } = batchDeleteEdits(Array.from(selectedIds));
+    const { applied, rejected, deniedLock } = batchDeleteEdits(Array.from(selectedIds));
     setSelectedIds(new Set());
     setShowDeleteConfirm(false);
-    setReadOnlyNotice(rejected.length > 0 ? `${denialMessage('OFFICIAL_READ_ONLY')}｜${nameByIds(rejected).join('、')}` : '');
-    setImportResult(`✅ 已清除 ${applied.length} 名将领的编辑数据${rejected.length > 0 ? `；${rejected.length} 名无权清除，数据原样保留` : ''}`);
+    setReadOnlyNotice(denialNotice(nameByIds(rejected), nameByIds(deniedLock)));
+    setImportResult(`✅ 已清除 ${applied.length} 名将领的编辑数据${rejected.length + deniedLock.length > 0 ? `；${rejected.length + deniedLock.length} 名无权清除，数据原样保留` : ''}`);
     setTimeout(() => setImportResult(''), 3000);
   };
 
   const handleBatchDisable = (disabled: boolean) => {
-    const { applied, rejected } = batchToggleDisabled(Array.from(selectedIds), disabled);
+    const { applied, rejected, deniedLock } = batchToggleDisabled(Array.from(selectedIds), disabled);
     setSelectedIds(new Set());
-    setReadOnlyNotice(rejected.length > 0 ? `${denialMessage('OFFICIAL_READ_ONLY')}｜${nameByIds(rejected).join('、')}` : '');
-    setImportResult(`${disabled ? '🚫 已禁用' : '✅ 已启用'} ${applied.length} 名${rejected.length > 0 ? `；${rejected.length} 名无权改动，保持原样` : ''}`);
+    setReadOnlyNotice(denialNotice(nameByIds(rejected), nameByIds(deniedLock)));
+    setImportResult(`${disabled ? '🚫 已禁用' : '✅ 已启用'} ${applied.length} 名${rejected.length + deniedLock.length > 0 ? `；${rejected.length + deniedLock.length} 名无权改动，保持原样` : ''}`);
+    setTimeout(() => setImportResult(''), 3000);
+  };
+
+  // v2.8.8 N2 (§H8): batch 自选锁定/解锁 — the toggle itself is gated by the
+  // system layer only, so a non-developer's selection of repository officials
+  // is refused and named (the gold lock is §H3's, not a switch to flip).
+  const handleBatchLock = (locked: boolean) => {
+    const { applied, rejected } = batchToggleLocked(Array.from(selectedIds), locked);
+    setSelectedIds(new Set());
+    setReadOnlyNotice(rejected.length > 0
+      ? `官方将领的金色锁由系统判定（开发者模式外必锁），不能手动加/解白锁｜${nameByIds(rejected).join('、')}`
+      : '');
+    setImportResult(`${locked ? '🔒 已锁定' : '🔓 已解锁'} ${applied.length} 名${rejected.length > 0 ? `；${rejected.length} 名不可${locked ? '加锁' : '解锁'}` : ''}`);
     setTimeout(() => setImportResult(''), 3000);
   };
 
@@ -720,10 +751,20 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     setCreateName('');
   };
 
+  // v2.8.8: removeAuthoredGeneral no longer returns a boolean — branch on
+  // `.ok` explicitly (a truthy `{ok:false}` object once fooled this handler
+  // into reporting success on a refused delete).
   const handleRemoveAuthored = (g: General) => {
-    setCreateResult(removeAuthoredGeneral(g.id)
-      ? `🗑 已删除自建将领「${g.name}」`
-      : `❌ 未删除：${g.name} 不是本机自建的将领`);
+    const result = removeAuthoredGeneral(g.id);
+    if (result.ok) {
+      setCreateResult(`🗑 已删除自建将领「${g.name}」`);
+      return;
+    }
+    if (result.denial) {
+      setCreateResult(`❌ 未删除：${denialMessage(result.denial)}`);
+      return;
+    }
+    setCreateResult(`❌ 未删除：${g.name} 不是本机自建的将领`);
   };
 
   return (
@@ -760,6 +801,15 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </div>
+
+        {/* v2.8.8 N2 (§H8): 两把锁一眼可分——金锁是系统禁改的可视化（关不掉），
+            白锁是玩家自己点的保护（随时可解）。非开发者第一次进来要知道自己
+            能碰什么。 */}
+        {!developerMode && (
+          <div className="px-6 py-2 border-b border-purple-800/30 bg-purple-900/20 text-[11px] leading-relaxed text-purple-200/80 flex-shrink-0">
+            🔑 金色锁＝官方将领，不开开发者模式改不了（系统判定，点不开）；白色锁＝你自己锁的卡，锁住期间编辑/删除/导入都不落档，随时能解。自己新建的将领随便改。
+          </div>
+        )}
 
         {/* Authoring panel (v2.8.5 新建将领, §H1/§H2) */}
         {showCreate && (
@@ -989,10 +1039,32 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${selectedIds.size > 0 ? 'bg-green-800 text-green-200 hover:bg-green-700' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}>
               ✅ 启用 ({selectedIds.size})
             </button>
+            <button onClick={() => handleBatchLock(true)}
+              disabled={selectedIds.size === 0}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${selectedIds.size > 0 ? 'bg-sky-800 text-sky-100 hover:bg-sky-700' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}>
+              🔒 锁定 ({selectedIds.size})
+            </button>
+            <button onClick={() => handleBatchLock(false)}
+              disabled={selectedIds.size === 0}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${selectedIds.size > 0 ? 'bg-gray-700 text-gray-200 hover:bg-gray-600' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}>
+              🔓 解锁 ({selectedIds.size})
+            </button>
             <button onClick={() => setShowDeleteConfirm(true)} disabled={selectedIds.size === 0}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${selectedIds.size > 0 ? 'bg-red-700 text-white hover:bg-red-600' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}>
               🗑️ 删除编辑 ({selectedIds.size})
             </button>
+          </div>
+        )}
+
+        {/* v2.8.8: 批量/单行的拒绝发生在多选或未选中状态时，右侧面板没有
+            落脚点——常驻提示条兜住，绝不静默吞（§12-46①）。 */}
+        {readOnlyNotice && (multiSelectMode || !selectedGeneral) && (
+          <div className="px-6 py-2 border-b border-red-800/30 bg-red-950/30 flex-shrink-0">
+            <div className="flex items-start gap-2">
+              <p className="flex-1 text-xs font-bold text-red-300 whitespace-pre-wrap">{readOnlyNotice}</p>
+              <button onClick={() => setReadOnlyNotice('')}
+                className="text-[10px] px-1.5 py-0.5 rounded text-red-400/70 hover:text-red-200 hover:bg-red-900/30">知道了</button>
+            </div>
           </div>
         )}
 
@@ -1034,8 +1106,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 const hasEdits = !!skillEdits[original.id] || !!generalEdits[original.id];
                 // §H3 layer ③: an overlay can exist in the save file and still
                 // be blocked from applying — the row must say which of the two.
-                const readOnly = !mayEditGeneral(original.id);
-                const blockedHere = readOnly && blocked.some(b => b.id === original.id);
+                // v2.8.8 N2 (§H8): the two locks are TWO independent readings —
+                // gold = §H3 derived per row (never stored), white = the local
+                // lock set. 一眼可分: different colour, different title.
+                const goldLocked = !mayModifyGeneral(original.id, { developerMode }).allowed;
+                const whiteLocked = lockedGenerals.has(original.id);
+                const blockedHere = goldLocked && blocked.some(b => b.id === original.id);
                 const isDisabled = liveDisabled.has(original.id);
                 const incomplete = isSkillIncomplete(edited);
                 return (
@@ -1069,11 +1145,26 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                         </p>
                       </div>
                       {incomplete && !multiSelectMode && <span className="text-[10px] text-amber-400 flex-shrink-0" title="技能设定未完成">⚠</span>}
-                    {readOnly && !multiSelectMode && <span className="text-[10px] text-gray-400 flex-shrink-0" title="官方将领在开发者模式外只读">🔒</span>}
+                    {goldLocked && !multiSelectMode && <span className="text-[10px] text-yellow-400 flex-shrink-0" title="金锁（系统判定）：官方将领在开发者模式外禁改，不可手动解除">🔒</span>}
+                    {!goldLocked && whiteLocked && !multiSelectMode && <span className="text-[10px] text-sky-200 flex-shrink-0" title="白锁（你手动锁定）：编辑/删除/覆盖都不会被记录，解锁后恢复">🔒</span>}
                     {hasEdits && !multiSelectMode && (blockedHere
                       ? <span className="text-[10px] text-red-400 flex-shrink-0" title="改动仍在存档里，但对局已停止应用（开发者模式外不改官方将）">🚫</span>
                       : <span className="text-[10px] text-green-400 flex-shrink-0">✏️</span>)}
                     </button>
+                    {/* v2.8.8 N2: the white-lock switch — only offered where the
+                        SYSTEM layer allows a toggle (金锁卡不出现此按钮；白锁永远
+                        可解，锁不会把自己锁死). */}
+                    {!multiSelectMode && !goldLocked && (
+                      <button onClick={(e) => {
+                        e.stopPropagation();
+                        const decision = toggleGeneralLock(original.id);
+                        if (!decision.allowed) setReadOnlyNotice(denialMessage(decision.denial));
+                      }}
+                        title={whiteLocked ? '解锁（白锁）：恢复允许编辑/删除/覆盖' : '锁定（白锁）：编辑/删除/覆盖将不会被记录'}
+                        className={`flex-shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-bold transition-all mr-1 ${whiteLocked ? 'bg-sky-800/50 border-sky-500/40 text-sky-100 hover:bg-sky-700/50' : 'bg-gray-800/60 border-gray-600/40 text-gray-300 hover:bg-gray-700/60'}`}>
+                        {whiteLocked ? '🔓' : '🔒'}
+                      </button>
+                    )}
                     {!multiSelectMode && (
                       <button onClick={(e) => {
                         e.stopPropagation();
@@ -1305,10 +1396,19 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 </div>
 
                 {/* §H3 layer ①: a general this session may not touch offers no
-                    write path at all, and says why in one line. */}
+                    write path at all, and says which of the two locks says no
+                    (金锁=系统禁改 / 白锁=你自己锁的). */}
                 {!mayEditGeneral(selectedGeneral.id) && (
-                  <div className="px-4 pt-3 text-xs font-bold text-red-300 flex-shrink-0">
-                    🔒 {denialMessage('OFFICIAL_READ_ONLY')}
+                  <div className="px-4 pt-3 text-xs font-bold text-red-300 flex-shrink-0 flex items-center gap-2">
+                    <span>🔒 {mayModifyGeneral(selectedGeneral.id, { developerMode }).allowed
+                      ? denialMessage('USER_LOCKED')
+                      : denialMessage('OFFICIAL_READ_ONLY')}</span>
+                    {mayModifyGeneral(selectedGeneral.id, { developerMode }).allowed && lockedGenerals.has(selectedGeneral.id) && (
+                      <button onClick={() => toggleGeneralLock(selectedGeneral.id)}
+                        className="px-2 py-0.5 rounded bg-sky-800/60 border border-sky-500/40 text-sky-100 text-[10px] font-bold hover:bg-sky-700/60">
+                        🔓 在此解锁
+                      </button>
+                    )}
                   </div>
                 )}
                 {readOnlyNotice && (
@@ -1339,7 +1439,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                   </p>
                   <p className="text-sm mt-2 text-purple-500/30">
                     {multiSelectMode
-                      ? '选中后可批量禁用/启用或删除编辑数据'
+                      ? '选中后可批量禁用/启用、批量锁定/解锁或删除编辑数据'
                       : '支持编辑名称、势力、体力、攻击力、技能及标签'}
                   </p>
                   <p className="text-sm mt-3 text-purple-500/30">

@@ -9,6 +9,7 @@ import {
   persistDisabledGenerals,
   persistIdentityRegistry,
   persistAuthoredGenerals,
+  persistLockedGenerals,
 } from './editorPersistence';
 import {
   createAuthoredGeneral,
@@ -20,11 +21,14 @@ import { identityOf } from '../domain/identity';
 import { matchesDeveloperModeDigest } from '../domain/devGate';
 import {
   mayModifyGeneral,
+  mayWriteGeneral,
+  mayToggleGeneralLock,
   partitionEditMap,
   partitionIdSet,
   type BlockedOverlay,
   type EditDecision,
   type GeneralPolicyContext,
+  type GeneralWriteContext,
 } from '../domain/generalPolicy';
 import type { GameState } from './gameStoreTypes';
 
@@ -33,7 +37,9 @@ type GetState = () => GameState;
 
 type SkillEditList = GameState['skillEdits'][string];
 type GeneralEdit = GameState['generalEdits'][string];
-type BatchResult = { applied: string[]; rejected: string[] };
+// v2.8.8 N2: rejected splits into two named lists — 「系统禁改」和「你自己的
+// 白锁」是两个不同的句子（§12-55：拒绝原因逐条点名，绝不并栏）。
+type BatchResult = { applied: string[]; rejected: string[]; deniedLock: string[] };
 
 export function buildEditorActions(
   get: GetState,
@@ -46,6 +52,9 @@ export function buildEditorActions(
   | 'updateGeneralEdit'
   | 'addAuthoredGeneral'
   | 'removeAuthoredGeneral'
+  | 'toggleGeneralLock'
+  | 'batchToggleLocked'
+  | 'isGeneralLocked'
   | 'batchDeleteEdits'
   | 'toggleDisabledGeneral'
   | 'batchToggleDisabled'
@@ -62,13 +71,25 @@ export function buildEditorActions(
   // The gate is the store's, not the component's — a caller that skips the UI
   // still cannot write, and a denial comes back with a reason instead of
   // silently landing in localStorage.
+  // v2.8.8 N2: the WRITE ctx carries the user's white locks on top of §H3
+  // (independent computations, stricter wins). The ASSEMBLY ctx (`policy()`)
+  // deliberately does not: locking a card stops future writes, never the
+  // application of what it already holds (§H8 住所与归属).
   const policy = (): GeneralPolicyContext => ({ developerMode: get().developerMode });
-  const guard = (generalId: string): EditDecision => mayModifyGeneral(generalId, policy());
+  const writeCtx = (): GeneralWriteContext => ({ ...policy(), lockedIds: get().lockedGeneralIds });
+  const guard = (generalId: string): EditDecision => mayWriteGeneral(generalId, writeCtx());
   const batchWrite = (ids: string[], apply: (permitted: string[]) => void): BatchResult => {
-    const permitted = ids.filter(id => mayModifyGeneral(id, policy()).allowed);
-    const rejected = ids.filter(id => !permitted.includes(id));
+    const permitted: string[] = [];
+    const rejected: string[] = [];
+    const deniedLock: string[] = [];
+    for (const id of ids) {
+      const decision = mayWriteGeneral(id, writeCtx());
+      if (decision.allowed) permitted.push(id);
+      else if (decision.denial === 'USER_LOCKED') deniedLock.push(id);
+      else rejected.push(id);
+    }
     if (permitted.length > 0) apply(permitted);
-    return { applied: permitted, rejected };
+    return { applied: permitted, rejected, deniedLock };
   };
 
   return {
@@ -116,10 +137,14 @@ export function buildEditorActions(
 
     // Only authored records are removable. A ledger card is unremovable here
     // by construction (the id namespace check), independent of any UI gate.
+    // v2.8.8 N2: 「删除」is a write too — a locked card refuses, and the denial
+    // is named so the UI can say which lock stopped it (a dead id says nothing).
     removeAuthoredGeneral: (id: string) => {
-      if (!isAuthoredId(id)) return false;
+      const decision = guard(id);
+      if (!decision.allowed) return { ok: false, denial: decision.denial };
+      if (!isAuthoredId(id)) return { ok: false, denial: null };
       const authoredGenerals = get().authoredGenerals.filter(g => g.id !== id);
-      if (authoredGenerals.length === get().authoredGenerals.length) return false;
+      if (authoredGenerals.length === get().authoredGenerals.length) return { ok: false, denial: null };
       // The record is gone, so its differential patches have no subject left:
       // deleting must not leave an orphan overlay keyed by a dead id.
       const skillEdits = { ...get().skillEdits };
@@ -128,13 +153,48 @@ export function buildEditorActions(
       delete generalEdits[id];
       const disabledGenerals = new Set(get().disabledGenerals);
       disabledGenerals.delete(id);
+      // v2.8.8: same orphan rule for the lock list — a dead id must not keep
+      // squatting a lock slot (and its old id can never be re-minted anyway).
+      const lockedGeneralIds = new Set(get().lockedGeneralIds);
+      lockedGeneralIds.delete(id);
       persistSkillEdits(skillEdits);
       persistGeneralEdits(generalEdits);
       persistDisabledGenerals(disabledGenerals);
       persistAuthoredGenerals(authoredGenerals);
-      set({ authoredGenerals, skillEdits, generalEdits, disabledGenerals });
-      return true;
+      persistLockedGenerals(lockedGeneralIds);
+      set({ authoredGenerals, skillEdits, generalEdits, disabledGenerals, lockedGeneralIds });
+      return { ok: true, denial: null };
     },
+
+    // §H8 N2: the white-lock switch itself. Guarded by the SYSTEM layer only
+    // (mayToggleGeneralLock) — a manual lock must never block its own removal,
+    // or the protection would become a one-way trap.
+    toggleGeneralLock: id => {
+      const decision = mayToggleGeneralLock(id, policy());
+      if (!decision.allowed) return decision;
+      const next = new Set(get().lockedGeneralIds);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      persistLockedGenerals(next);
+      set({ lockedGeneralIds: next });
+      return decision;
+    },
+
+    batchToggleLocked: (ids, locked) => {
+      const ctx = policy();
+      const permitted = ids.filter(id => mayToggleGeneralLock(id, ctx).allowed);
+      const rejected = ids.filter(id => !permitted.includes(id));
+      if (permitted.length > 0) {
+        const next = new Set(get().lockedGeneralIds);
+        for (const id of permitted) {
+          if (locked) next.add(id); else next.delete(id);
+        }
+        persistLockedGenerals(next);
+        set({ lockedGeneralIds: next });
+      }
+      return { applied: permitted, rejected };
+    },
+
+    isGeneralLocked: id => get().lockedGeneralIds.has(id),
 
     // §H3: a non-developer may not DELETE an official card's overlay either —
     // 「原数据仍保留、不删除、不回滚」 is half of the blocked-state contract, so
@@ -177,16 +237,21 @@ export function buildEditorActions(
       const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
       let count = 0;
       const rejected: string[] = [];
+      // v2.8.8: two independent reasons get two named lists — 「被系统禁改」和
+      // 「被你自己的白锁挡住」are different sentences to the user, never merged.
+      const deniedLock: string[] = [];
       const edits = { ...get().skillEdits };
-      const ctx = policy();
+      const wctx = writeCtx();
       for (const line of lines) {
         const parts = line.split('|').map(part => part.trim());
         if (parts.length < 2) continue;
         const general = allGenerals.find(g => g.name === parts[0]);
         if (!general) continue;
         // A denied row is named in the result, never quietly dropped (§12-46①).
-        if (!mayModifyGeneral(general.id, ctx).allowed) {
-          rejected.push(general.name);
+        const decision = mayWriteGeneral(general.id, wctx);
+        if (!decision.allowed) {
+          if (decision.denial === 'USER_LOCKED') deniedLock.push(general.name);
+          else rejected.push(general.name);
           continue;
         }
         const skillNames = parts[1].split(',').map(v => v.trim()).filter(Boolean);
@@ -201,7 +266,7 @@ export function buildEditorActions(
       }
       persistSkillEdits(edits);
       set({ skillEdits: edits });
-      return { count, rejected };
+      return { count, rejected, deniedLock };
     },
 
     getGeneralWithEdits: general => {
@@ -240,7 +305,7 @@ export function buildEditorActions(
       return result;
     },
 
-    mayEditGeneral: generalId => mayModifyGeneral(generalId, policy()).allowed,
+    mayEditGeneral: generalId => mayWriteGeneral(generalId, writeCtx()).allowed,
 
     // Assembly consumers read the disable list through this, never the raw
     // save-file: an official general left disabled by an earlier developer
@@ -278,17 +343,19 @@ export function buildEditorActions(
       const newName = rawNewName.trim();
       const registry = get().identityRegistry;
       if (newName === '' || !registry.includes(oldName) || registry.includes(newName)) return false;
-      const ctx = policy();
       persistIdentityRegistry(registry.map(n => (n === oldName ? newName : n)));
       set({ identityRegistry: registry.map(n => (n === oldName ? newName : n)) });
       // Cascade: every general edit referencing the old name follows it
       // (身份改名级联, D1 保守方案的写侧). §H3: the cascade is still a write,
       // so it only follows overlays this session may own — official overlays it
       // cannot touch are left byte-identical (blocked, not rewritten).
+      // v2.8.8 N2: 「覆盖」counts as a write too — a white-locked card's edit
+      // is also left byte-identical rather than silently followed.
+      const wctx = writeCtx();
       const nextEdits = { ...get().generalEdits };
       let touched = false;
       for (const [gid, edit] of Object.entries(nextEdits)) {
-        if (edit.identity === oldName && mayModifyGeneral(gid, ctx).allowed) {
+        if (edit.identity === oldName && mayWriteGeneral(gid, wctx).allowed) {
           nextEdits[gid] = { ...edit, identity: newName };
           touched = true;
         }

@@ -18,14 +18,44 @@ import { isAuthoredId } from './generalProvenance';
 
 export type GeneralPolicyContext = { developerMode: boolean };
 
-export type EditDenial = 'OFFICIAL_READ_ONLY';
+/**
+ * v2.8.8 N2 (§H8): the WRITE side carries one more computation on top of §H3 —
+ * the user's own manual lock (白锁). The two systems are computed INDEPENDENTLY
+ * and only the write gate combines them, stricter-wins. The assembly view
+ * (`GeneralPolicyContext`, used by layer ③) deliberately does NOT read locks:
+ * a locked card's existing content keeps applying; the lock only stops future
+ * writes (编辑/删除/覆盖). A lock that deactivated content would be inventing
+ * gameplay, which §H8 forbids.
+ */
+export type GeneralWriteContext = GeneralPolicyContext & { lockedIds: ReadonlySet<string> };
+
+export type EditDenial = 'OFFICIAL_READ_ONLY' | 'USER_LOCKED';
 
 export type EditDecision = { allowed: true } | { allowed: false; denial: EditDenial };
 
-/** The single root predicate. Unknown/legacy id shapes fall to the STRICTER side. */
+/** The single root predicate (§H3, system layer only). Unknown/legacy id shapes fall to the STRICTER side. */
 export function mayModifyGeneral(id: string, ctx: GeneralPolicyContext): EditDecision {
   if (isAuthoredId(id)) return { allowed: true };
   return ctx.developerMode ? { allowed: true } : { allowed: false, denial: 'OFFICIAL_READ_ONLY' };
+}
+
+/** §H3 + §N2 combined — THE write gate. Check order is stricter-agnostic: either denial blocks. */
+export function mayWriteGeneral(id: string, ctx: GeneralWriteContext): EditDecision {
+  const system = mayModifyGeneral(id, ctx);
+  if (!system.allowed) return system;
+  if (ctx.lockedIds.has(id)) return { allowed: false, denial: 'USER_LOCKED' };
+  return { allowed: true };
+}
+
+/**
+ * §H8 N2: can this session toggle the manual (white) lock on this card?
+ * Non-developers face repository officials with an unlockable-by-nobody gold
+ * lock — the visualization of §H3, never a second transition path, so they
+ * cannot even add a white lock there. Everything else (own DIY, or any card
+ * while in developer mode) toggles freely.
+ */
+export function mayToggleGeneralLock(id: string, ctx: GeneralPolicyContext): EditDecision {
+  return mayModifyGeneral(id, ctx);
 }
 
 export function isReadOnlyGeneral(id: string, ctx: GeneralPolicyContext): boolean {
@@ -34,6 +64,7 @@ export function isReadOnlyGeneral(id: string, ctx: GeneralPolicyContext): boolea
 
 const DENIAL_TEXT: Record<EditDenial, string> = {
   OFFICIAL_READ_ONLY: '官方将领在开发者模式外只读：改动不会被记录，也不会生效',
+  USER_LOCKED: '这张卡已被你手动锁定（白锁）：编辑/删除/覆盖都不会被记录，直到你解锁',
 };
 
 /** Plain-language reason for a denial — every layer reports, none swallows. */

@@ -29,6 +29,7 @@ function arm(options: { developerMode: boolean }) {
     skillEdits: {},
     generalEdits: {},
     disabledGenerals: new Set<string>(),
+    lockedGeneralIds: new Set<string>(),
     authoredGenerals: [diy.general],
     identityRegistry: [],
   } as Partial<ReturnType<typeof useGameStore.getState>>);
@@ -73,17 +74,17 @@ describe('第②层：store 写动作按权限拒', () => {
     useGameStore.setState({ developerMode: false });
 
     const del = useGameStore.getState().batchDeleteEdits([ledger.id, diy.general.id]);
-    expect(del).toEqual({ applied: [diy.general.id], rejected: [ledger.id] });
+    expect(del).toEqual({ applied: [diy.general.id], rejected: [ledger.id], deniedLock: [] });
     expect(useGameStore.getState().generalEdits[ledger.id]).toEqual(GENERAL_PATCH);
     expect(useGameStore.getState().generalEdits[diy.general.id]).toBeUndefined();
 
     const toggle = useGameStore.getState().batchToggleDisabled([ledger.id, diy.general.id], true);
-    expect(toggle).toEqual({ applied: [diy.general.id], rejected: [ledger.id] });
+    expect(toggle).toEqual({ applied: [diy.general.id], rejected: [ledger.id], deniedLock: [] });
   });
 
   it('文本导入逐行判：越权行报名字，不静默吞', () => {
     const result = useGameStore.getState().importSkillEditsFromText(`${ledger.name}|测试技能`);
-    expect(result).toEqual({ count: 0, rejected: [ledger.name] });
+    expect(result).toEqual({ count: 0, rejected: [ledger.name], deniedLock: [] });
     expect(useGameStore.getState().skillEdits).toEqual({});
   });
 

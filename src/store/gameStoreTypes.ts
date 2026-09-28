@@ -2,7 +2,7 @@
 // first split). Pure type moves — shapes and semantics are unchanged.
 import type { General, Faction, GeneralSource, SkillTag, SkillTriggerConfig, SkillEffect, SkillEffectMode } from '../data/generals';
 import type { AuthoredGeneralInput } from '../domain/generalProvenance';
-import type { BlockedOverlay, EditDecision } from '../domain/generalPolicy';
+import type { BlockedOverlay, EditDecision, EditDenial } from '../domain/generalPolicy';
 import type { GameCard } from '../data/cards';
 import type { AiSeatMode, AiSeatTier } from '../setup/runtimeSetup';
 import type { EngineState } from '../core/GameState';
@@ -124,6 +124,11 @@ export interface GameState {
   // draft pool (poolGenerals) but never the AI standard pool, which reads the
   // repository ledger only — that boundary is what keeps B10 rebuildable.
   authoredGenerals:General[];
+  // v2.8.8 N2 (§H8): the user's manual (white) locks — ids THIS player chose
+  // to protect. Local-only protection: it blocks future writes (§H3 keeps
+  // governing application), never crosses players, never enters EngineState,
+  // replays, or CI inputs. The gold lock is not stored here; it is derived.
+  lockedGeneralIds:Set<string>;
 
   setPhase:(p:GamePhase)=>void; setPlayerCount:(c:number)=>void; setRoomName:(n:string)=>void;
   createRoom:()=>void; startGame:()=>void; rollDice:()=>void; assignFactions:()=>void;
@@ -164,7 +169,15 @@ export interface GameState {
   // rewritten; 身份 is written explicitly so a later rename cannot move its
   // lock key. Removal accepts authored ids only — a ledger card is unremovable.
   addAuthoredGeneral:(input:AuthoredGeneralInput, source:GeneralSource)=>{ok:true;general:General}|{ok:false;reason:string};
-  removeAuthoredGeneral:(id:string)=>boolean;
+  // v2.8.8 N2: deleting a LOCKED authored card is a refused write — the
+  // denial is named, "not found" stays silent like before.
+  removeAuthoredGeneral:(id:string)=>{ok:boolean;denial:EditDenial|null};
+  // v2.8.8 N2 (§H8): manual (white) lock surface. Non-developers cannot
+  // toggle anything on repository officials (the gold lock is §H3's
+  // visualization, not a switch); everywhere else the toggle is free.
+  toggleGeneralLock:(id:string)=>EditDecision;
+  batchToggleLocked:(ids:string[],locked:boolean)=>{applied:string[];rejected:string[]};
+  isGeneralLocked:(id:string)=>boolean;
   // Local play surface: repository ledger + this machine's authored records.
   poolGenerals:()=>General[];
   // v2.8.0 identity registry CRUD (身份管理). deleteIdentity refuses while
@@ -172,10 +185,10 @@ export interface GameState {
   addIdentity:(name:string)=>boolean;
   renameIdentity:(oldName:string,newName:string)=>boolean;
   deleteIdentity:(name:string)=>{ok:boolean;referrers:string[]};
-  batchDeleteEdits:(generalIds:string[])=>{applied:string[];rejected:string[]};
+  batchDeleteEdits:(generalIds:string[])=>{applied:string[];rejected:string[];deniedLock:string[]};
   toggleDisabledGeneral:(id:string)=>EditDecision;
-  batchToggleDisabled:(ids:string[],disabled:boolean)=>{applied:string[];rejected:string[]};
-  importSkillEditsFromText:(text:string)=>{count:number;rejected:string[]};
+  batchToggleDisabled:(ids:string[],disabled:boolean)=>{applied:string[];rejected:string[];deniedLock:string[]};
+  importSkillEditsFromText:(text:string)=>{count:number;rejected:string[];deniedLock:string[]};
   getGeneralWithEdits:(general:General)=>General;
   // v2.8.6 地基刀2 (§H3 layer ③): assembly reads the policy-filtered view and
   // the report, never the raw save-file. Blocked overlays stay on disk.

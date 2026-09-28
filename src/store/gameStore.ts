@@ -14,6 +14,7 @@ import {
   loadDisabledGenerals,
   loadIdentityRegistry,
   loadAuthoredGenerals,
+  loadLockedGenerals,
 } from './editorPersistence';
 import { buildTestArenaActions, buildTestArenaState } from './testArenaActions';
 import { buildEditorActions } from './gameStoreEditorActions';
@@ -181,6 +182,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   disabledGenerals:loadDisabledGenerals(),
   identityRegistry:loadIdentityRegistry(),
   authoredGenerals:loadAuthoredGenerals(),
+  lockedGeneralIds:loadLockedGenerals(),
   isTestMode:false,
   testActionCounts:{},
 
@@ -859,6 +861,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       disabledGenerals:state.disabledGenerals,
       identityRegistry:state.identityRegistry,
       authoredGenerals:state.authoredGenerals,
+      // v2.8.8 N2: locks are player assets on this machine (§H8), not match
+      // state — same rule as authoredGenerals (玩家资产≠对局状态).
+      lockedGeneralIds:state.lockedGeneralIds,
     });
   },
 

@@ -136,3 +136,29 @@ export function persistAuthoredGenerals(generals: General[]): void {
     // Persistence is best effort.
   }
 }
+
+// v2.8.8 N2 (§H8): the user's manual (white) locks. Local to this machine and
+// this player — never in source files, EngineState, replays, or CI inputs, and
+// never applied across players. It records only which ids the user chose to
+// lock; the gold lock is derived (§H3), never stored.
+export const LOCKED_GENERALS_KEY = 'three_kingdoms_locked_generals';
+
+export function loadLockedGenerals(): Set<string> {
+  try {
+    const raw = localStorage.getItem(LOCKED_GENERALS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? new Set(parsed.filter((v): v is string => typeof v === 'string'))
+      : new Set<string>();
+  } catch {
+    return new Set<string>();
+  }
+}
+
+export function persistLockedGenerals(locked: Set<string>): void {
+  try {
+    localStorage.setItem(LOCKED_GENERALS_KEY, JSON.stringify([...locked]));
+  } catch {
+    // Persistence is best effort.
+  }
+}

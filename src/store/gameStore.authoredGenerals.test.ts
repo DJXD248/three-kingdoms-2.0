@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { allGenerals } from '../data/generals';
-import { AUTHORED_GENERALS_KEY, GENERAL_EDITS_KEY, loadAuthoredGenerals, loadPersistedGeneralEdits } from './editorPersistence';
+import { AUTHORED_GENERALS_KEY, GENERAL_EDITS_KEY, LOCKED_GENERALS_KEY, loadAuthoredGenerals, loadPersistedGeneralEdits } from './editorPersistence';
 import { useGameStore } from './gameStore';
 
 const input = { name: '新试验将', faction: '蜀' as const, hp: 4, identity: '试验身份' };
@@ -13,7 +13,8 @@ describe('authored generals (store surface)', () => {
   beforeEach(() => {
     localStorage.removeItem(AUTHORED_GENERALS_KEY);
     localStorage.removeItem(GENERAL_EDITS_KEY);
-    useGameStore.setState({ authoredGenerals: [], developerMode: false, generalEdits: {} } as never);
+    localStorage.removeItem(LOCKED_GENERALS_KEY);
+    useGameStore.setState({ authoredGenerals: [], developerMode: false, generalEdits: {}, lockedGeneralIds: new Set<string>() } as never);
   });
 
   afterEach(() => {
@@ -42,9 +43,9 @@ describe('authored generals (store surface)', () => {
     const created = useGameStore.getState().addAuthoredGeneral(input, 'DIY');
     if (!created.ok) throw new Error('setup failed');
     const before = useGameStore.getState().authoredGenerals.length;
-    expect(useGameStore.getState().removeAuthoredGeneral(allGenerals[0].id)).toBe(false);
+    expect(useGameStore.getState().removeAuthoredGeneral(allGenerals[0].id)).toEqual({ ok: false, denial: 'OFFICIAL_READ_ONLY' });
     expect(useGameStore.getState().authoredGenerals).toHaveLength(before);
-    expect(useGameStore.getState().removeAuthoredGeneral(created.general.id)).toBe(true);
+    expect(useGameStore.getState().removeAuthoredGeneral(created.general.id)).toEqual({ ok: true, denial: null });
     expect(useGameStore.getState().authoredGenerals).toHaveLength(0);
     expect(loadAuthoredGenerals()).toHaveLength(0);
   });
@@ -57,7 +58,7 @@ describe('authored generals (store surface)', () => {
     useGameStore.getState().updateGeneralEdit(id, { hp: 5 });
     useGameStore.getState().updateSkillEdit(id, [{ name: '临时技能' }]);
     useGameStore.getState().toggleDisabledGeneral(id);
-    expect(useGameStore.getState().removeAuthoredGeneral(id)).toBe(true);
+    expect(useGameStore.getState().removeAuthoredGeneral(id)).toEqual({ ok: true, denial: null });
     expect(loadPersistedGeneralEdits()[id]).toBeUndefined();
     expect(loadAuthoredGenerals()).toHaveLength(0);
     expect(useGameStore.getState().generalEdits[id]).toBeUndefined();

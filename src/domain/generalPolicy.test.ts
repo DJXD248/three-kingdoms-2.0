@@ -9,6 +9,8 @@ import {
   denialMessage,
   isReadOnlyGeneral,
   mayModifyGeneral,
+  mayToggleGeneralLock,
+  mayWriteGeneral,
   partitionEditMap,
   partitionIdSet,
 } from './generalPolicy';
@@ -62,5 +64,40 @@ describe('generalPolicy: 分区（装配层用）', () => {
     const { permitted, blocked } = partitionIdSet([ledgerId, diyId], 'disabled', PLAYER);
     expect([...permitted]).toEqual([diyId]);
     expect(blocked).toEqual([{ id: ledgerId, kind: 'disabled' }]);
+  });
+});
+
+/**
+ * v2.8.8 N2 (§H8)：写侧的两把锁。金锁（§H3 系统禁改）与白锁（用户手动锁定）
+ * 是两套独立计算，只有写闸门把二者合起来判、取更严的一边。装配视图（分区）
+ * 从不读白锁——锁只挡住未来的写，绝不叫已生效的内容停下。
+ */
+describe('generalPolicy: 写侧两把锁（N2）', () => {
+  const LOCK = (id: string) => ({ developerMode: false, lockedIds: new Set<string>([id]) });
+
+  it('mayWriteGeneral：白锁命中=USER_LOCKED，未锁=放行', () => {
+    expect(mayWriteGeneral(diyId, LOCK(diyId))).toEqual({ allowed: false, denial: 'USER_LOCKED' });
+    expect(mayWriteGeneral(diyId, { developerMode: false, lockedIds: new Set() })).toEqual({ allowed: true });
+  });
+
+  it('两把锁各自独立：金锁先判（非开发者改官方将=OFFICIAL），开发者改自己锁定的官方将=USER_LOCKED', () => {
+    // 金锁优先：非开发者连白锁都不必给，系统已经禁改
+    expect(mayWriteGeneral(ledgerId, LOCK(ledgerId))).toEqual({ allowed: false, denial: 'OFFICIAL_READ_ONLY' });
+    // 开发者绕过了金锁，但白锁仍在 ⇒ 由白锁拒绝
+    expect(mayWriteGeneral(ledgerId, { developerMode: true, lockedIds: new Set([ledgerId]) }))
+      .toEqual({ allowed: false, denial: 'USER_LOCKED' });
+  });
+
+  it('白锁开关只吃系统层：白锁绝不挡住自己的解锁（否则保护变成单向陷阱）', () => {
+    expect(mayToggleGeneralLock(diyId, PLAYER)).toEqual({ allowed: true });
+    // 非开发者对官方金锁卡：不能手动加/解白锁（金锁不是开关）
+    expect(mayToggleGeneralLock(ledgerId, PLAYER)).toEqual({ allowed: false, denial: 'OFFICIAL_READ_ONLY' });
+    // 开发者对任意卡都能开锁开关
+    expect(mayToggleGeneralLock(ledgerId, DEV)).toEqual({ allowed: true });
+  });
+
+  it('USER_LOCKED 的大白话原因点名"白锁"与"不会被记录"', () => {
+    expect(denialMessage('USER_LOCKED')).toContain('白锁');
+    expect(denialMessage('USER_LOCKED')).toContain('不会被记录');
   });
 });

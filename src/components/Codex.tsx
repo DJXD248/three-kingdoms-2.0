@@ -107,14 +107,16 @@ export default function Codex() {
         </button>
         <h1 className="text-2xl font-bold text-amber-200 tracking-wider">📖 卡牌图鉴</h1>
         <div className="w-36 flex justify-end">
-          {developerMode && (
-            <button
-              onClick={() => setShowSkillEditor(true)}
-              className="px-3 py-1.5 rounded-lg bg-purple-700/60 border border-purple-600/40 text-purple-200 text-sm font-bold hover:bg-purple-600/60 transition-all"
-            >
-              🛠️ 将领编辑器
-            </button>
-          )}
+          {/* v2.8.8 N2 (§H8): the editor is reachable without developer mode —
+              §H3 (地基刀2) is what keeps official cards read-only there, and
+              the gold/white lock distinction only becomes observable on this
+              surface. The store, not this button, is the enforcement point. */}
+          <button
+            onClick={() => setShowSkillEditor(true)}
+            className="px-3 py-1.5 rounded-lg bg-purple-700/60 border border-purple-600/40 text-purple-200 text-sm font-bold hover:bg-purple-600/60 transition-all"
+          >
+            🛠️ 将领编辑器
+          </button>
         </div>
       </div>
 
