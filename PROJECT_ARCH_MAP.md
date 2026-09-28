@@ -880,6 +880,8 @@
 ## H. 内容层与技能语义契约（2026-09-28 用户裁决，**纸面契约、零实现**）
 
 来源=用户四批裁决 + 同日逐项解释（原文在 PROJECT_HANDOFF §12-48）；外部评审两轮归档在仓库外 `G:\THREE_KINGDOMS\GPT_DISCUSSION_2_8_PREREQ_REPLY.md` 与 `GPT_DISCUSSION_2_8_ID_SCHEME_REPLY.md`（含 Q5 补发段，逐段哈希已对账）。**本节每一条在落地前都不得表述为"已具备"**；落地那一刀若增加 canonical 事实（次数、修正器、代价账）即为**内容刀须换锚**，不得宣称对 B10 逐字。
+>
+> **落地状态（自 v2.8.5 起逐节为准，别照上面那句旧帽子推断）**：**H1 与 H2 已落地为代码**（`src/domain/generalProvenance.ts` 发号与冻结判据 + store 的 `authoredGenerals`/`poolGenerals` + 编辑器「➕ 新建将领」面板；15+10 例测试钉住；非内容刀 ⇒ 对 B10 逐字已实证三次），**H3–H8 仍是纸面契约、零实现**（H3 的 store 守卫＝地基刀2；H8 的导入双入口＝地基刀3、编辑器保护锁＝N2）。H1 内那条「现状事实（grep 取证）」写于落地前、保留作历史取证，其中「`source` 不存在」「新建将领的能力也不存在」两句自 v2.8.5 起已不成立。
 
 ### H1 将领三字段不变量（编号问题的答案）
 
@@ -893,6 +895,8 @@
 - **`name ≠ identity ≠ id`**：与任何已有将（含官方）同名完全允许，两张"关羽"靠 identity 区分。
 - 现状事实（grep 取证）：`General.id` 与 `General.identity?` **已存在**（`src/data/generals.ts:221-236`，identity 只经 `src/domain/identity.ts` 解析）；**`source` 不存在**；全库唯一 DIY 痕迹是 `DIY_IDENTITY='DIY'` 这个弱代理。新建将领的能力也不存在（`createGeneral` 是模块私有、只被 95 名官方将使用）。
 - **禁令**：以后任何代码**不得再用 `name + faction` 作 General 的唯一身份判断**。现网已有一处违例即导入路（见 H4）。
+- **保留前缀禁令（v2.8.5 落地时由独立复算会话查出、用户侧升为常设判据）**：`src/data/generals.ts` 今后新增的仓库档案号**永不得取 `G-` 或 `D-` 开头**。"玩家的本地内容不可能遮蔽或冒充仓库官方卡"这条不变量**全靠仓库号保持 `wei_001` 式 legacy 形态**（现网 95 将如此，测试逐条钉死）；一旦有人往仓库写 `G-xxx`，本地清单的准入判据（只看命名空间）就会放行冒充，而且**测试不会红**。要往仓库正式池加卡，走"人审后写进 `generals.ts`"那条路（H2），号仍用 legacy 形态。
+- **落地状态（v2.8.5·地基刀1）**：本节全部判据已进代码——发号唯一入口 `createAuthoredGeneral`（三条录入面校验：名字非空／`hp>0` 且有限／无随机编号源整单拒；`hp≥4→武将` 沿用 `generals.ts` 既有建卡口径，零玩法新增）、`FROZEN_GENERAL_FIELDS=['id','source']`、`stripFrozenFields`/`isAcceptableAuthoredRecord` 在**读回时**剥掉并 `console.warn`（编辑器、Excel 行、localStorage 三条通路共用同一对判据）、`identity` 创建时**显式落值**（未填=名字／`__none__`=空串=永不锁）⇒ 改名不再牵动锁键；`resetGame` **不清**自建清单（玩家资产≠对局状态）。护栏⑴（改身份跑冲突检查）沿用 v2.8.0 既有链路，本刀未新增第二条路。
 
 
 ### H2 「官方」分两层（用户已裁：官方草稿制）
@@ -901,6 +905,7 @@
 - 因此：**本地/编辑器里的 official 内容一律不进 B10**；真合入官方池那一刀才重算 B10，且旧锚读数继续保留成历史。
 - **常设规矩（用户 2026-09-28 定为永久规则）**：**凡要进自动化验证的内容，必须能由仓库里的固定文件完整重建**。localStorage 是玩家可变环境，永远不是 CI 输入；DIY 内容要自动化验证只能走**仓库固定 fixture + 独立锚**，B10 继续只代表官方池。
 - 后置立项（用户明确不做）：内容包、联机同步、DIY 将进 AI 自动对局（自由模式未做，一并后置）。标准模式**不允许**使用 DIY 将领。
+- **落地状态（v2.8.5·地基刀1）**：两层归属已成代码——非开发者新建一律 `DIY`+`D-*`（store 的 `addAuthoredGeneral` 先把请求归属过一道 `developerMode` 门，拿不到就是 DIY），开发者模式新建得 `official`+`G-*`＝**本地官方草稿**，`isRepositoryOfficial()` 仍判 false（判据＝是否住在 `generals.ts` 账本，与 `source` 字段无关）。**常设规矩的落地形状=两条读数分开**：新 `poolGenerals()`（仓库＋自建）只喂浏览器本地征召两席（`distributeDraftGenerals`/`confirmDraft`），`src/ai/**` 与 `matchSetup` 照常只读 `allGenerals`、CLI 链不经 store 也不读 localStorage ⇒ 本机清单在自动化验证侧**没有入口**，B10 仍由仓库固定文件完整重建（本轮实证：E2E 里同一时刻 matchSetup 池仍 95，而玩家池 96；锚三次逐字复现）。Excel 导出**刻意仍是仓库账本口径**（不含自建将）⇒ 导出再导入不可能重造号、也不可能把本地内容洗进正式面。
 
 ### H3 三层禁改执法（现状真实漏洞=只有 UI 门）
 
