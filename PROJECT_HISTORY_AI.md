@@ -1623,5 +1623,25 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **远端 CI 核验（回填于同轮）**：GitHub Actions **CI #147**（run `36400599591`）**Success**、总耗时 **4m 24s**，跑在登记提交 `b756369`（父＝feat `c7a44d7`）上，四个 job 全绿（`test (22)`／`test (24)`／`lint` 1m 26s／`build` 56s）。本次推送**直连即通**（没有借道代理），附注标签 `v2.8.6` 一并推上。回填提交 `eac8900` 自身的 CI 按约定另核＝**CI #148**（run `36401484207`，**Success**，3m 26s，四 job 全绿：`test (22)`／`test (24)`／`lint` 2m 30s／`build` 45s）。补一条环境事实：**feat+docs 那一次推送直连即通，回填这一次直连断流**（`send-pack: unexpected disconnect`＋`Failed to connect to github.com:443`），按降级链一次性 `git -c http.proxy=http://127.0.0.1:10808 push` 成功、没有写任何持久 git 配置——同一轮里两种方式都要试，别把"上一次直连能通"当成常设条件。收口记录提交 `3802472` 自身的 CI 也复核过＝**CI #149**（run `36402147246`，**Success**，4m 25s，四 job 全绿）；按 v2.8.5 的先例**到此为止，不再追记"CI 的 CI"**。
 
+## Qoder 2.8.7：内容时代地基刀3（N1）·Excel 导入从"单一改卡"变为"改＋建双入口、歧义行不猜"（§H8 落地，动 `src/`，**非内容刀 ⇒ 对 B10 逐字**）——一行表格进来时，系统要么确定它改的是谁、要么老实承认"我分不清"并把选择权交回用户，绝不替用户猜一张卡（2026-09-29）
+
+**这刀的靶子是一枚实测证实的死分支 bug，不是假想**：旧 `resolveGeneralByNameFaction(name, factionText)` 拿"名字＋势力"去池里找，命中零张势力匹配项时不报错，而是回落到 `return sameName[0]`——**静默把改动落到另一势力的同名卡上**。官方池有四对跨势力同名（司马懿／邓艾／钟会／张春华，魏↔晋），本刀开工前用真实数据直接跑过这条路、证实它确实会改错卡。§H8 的读码事实还纠正了上一轮的一处误判：正因为这四对同名**势力不同**，"名字＋势力"对官方池其实**全部唯一 ⇒ 自动命中路走满、候选路空转**；候选路真正被触发的场景是"**同势力、同名、但身份不同**"的两张（身份锁键 `(identity, faction)` 挡不住名字＋势力的歧义），所以下面的测试**自己造 fixture**，不拿官方池断言候选路可达。
+
+**判别根＝新导出 `resolveGeneralForImport(name, factionText, pool)` 的三态结果**：`unique`（唯一命中）／`ambiguous`（多张同名 ⇒ 带出候选、绝不自动挑第一张）／`missing`（池里没有 ⇒ 可新建）。势力填了却没命中任何同名＝**ambiguous 而非 missing**——不替用户猜"他其实想要另一势力"，把全部同名作为候选交出。
+
+**一趟两阶段（中间绝不逐行弹窗，§H8 判据①）**：`parseRowPerSkillSheet` 接受可选 `pool`、返回 `{entries, parseWarnings, unresolved}` 三元组——唯一解析的行**立即**沿 v2.8.6 打好的单条 mutation 路写入；分叉项**先跳过**、收集成 `UnresolvedImportBlock`（携带原始 name/faction/hp/atk、技能集合、**行号范围**、异常原因、候选列表），导完再集中进待点选面板（判据②"留住内容与原因、不静默丢弃、不自动挑第一张"）。删掉了原先解析到将领名就 `continue` 的那句，使**单行可同时承载将领属性与其第一个技能**（这正是测试用例与真实表格的形状）。向后兼容＝`resolveGeneralByNameFaction` 保留为薄包装供简单格式使用、`parseLegacyDetailedRow` 适配三态并在未解析时回吐 raw 字段。
+
+**组件层（两阶段 UI）**：`SkillEditor` 新增 `pendingImports` 状态＋蓝色待处理清单，每行显示名称/势力/体力/行号/原因/技能数，**顶部「✅ 全部按新建」总按钮**＋每行三选一（新建为 DIY 将领／挂到现有将领修改／跳过不导入，判据③"三选一闭合、允许最终不录入"）。
+
+**回填轮的第二处自查（本轮补，同版本线）——又是一条"入口对、出口错"的分叉**：登记推送后独立复算式自查抓到 `flushCurrent` 虽然在**入口**吃了正确的三态 `resolution`，却在**出口**把 `resolution`/`candidates` 从空白重新推断、硬编码成 `'missing'`／`[]`——三态信息走不出解析层：歧义会在蓝色面板里显示成"库里没有此人"、"挂到现有将领"下拉为空，正撞 §H8 判据②。这与 §12-55"显示与生效分叉"同族、只是方向不同。**修法**＝让 `currentUnresolved` 一路携带 `resolution`/`candidates` 到 `flushCurrent`，出口不再二次推断。补 **7 例回归钉**（势力不匹配⇒ambiguous＋候选＝全部同名、同势力同名不同身份⇒候选只含该势力同名、无势力多名⇒ambiguous、库内无名⇒missing、唯一命中⇒进 entries、判别根三态直测含空白名）——全部用**自造 fixture** 走候选路。**常设判据入库（§12-56①）**：判别根一旦产出结构化结果，其后每一段把它搬运到用户面的管道都必须**逐字携带**，任何出口层"重新推断"＝分叉。另补 `package.json` 2.8.6→2.8.7 bump（feat 轮漏 bump，登记纪律要求版本号随刀走）。
+
+**五闸（终稿树复跑）**：`check` 0 错误／`npm test` **671 通过 69 文件**（`skillExcelParsers.test.ts` 8→15 例）／coverage 过地板 42/34/34/47（实测 55.32·46.94·45.24·60.53）／`lint` 0 错误 29 遗留警告零新增／`build` 单文件 2,008.48 kB·gzip 587.99 kB。**硬锚逐字复现**：`npm run ai-battle -- --games 300 --seed 1` → `won=300 exhausted=0 VIOLATIONS=0`、胜席 `{"1":112,"2":188}` 对 B10 一字不差。**结构性理由**：AI/CLI 链读 `generals.ts` 导出的 `allGenerals`，永不碰 store 与 localStorage，解析器改动到不了锚。
+
+**诚实边界（PENDING）**：待点选面板三选一交互的**真机浏览器 E2E 未做**——编辑器入口需开发者口令、本会话不持有口令（口令不落任何载体是 v2.8.1 起的铁律）；解析层行为已由 7 例钉死，UI 层待用户真机回归。登记纪律缺口本轮一并补：feat `dca302b`＋docs `d475425` 只动了 HANDOFF 一个面，双历史/CHANGELOG/README/AGENTS 的 v2.8.7 条与 `package.json` 版本号全部在回填轮补齐（§12-56②"登记＝五面同步＋版本号，缺一不算收线"）。
+
+**远端 CI 核验（billing 事件＋重跑回填）**：feat+docs 推送后，GitHub Actions CI **#153**（run `36442939229`）与 #154/#152 一度显示未起——根因不是代码而是**私有仓库 Actions 额度耗尽**（每个 job 被跳过、报"recent account payments have failed or your spending limit needs to be increased"）。用户把 2.0 仓库**转公开**解除限制并**手动重跑**三个 run。逐条点开详情页核验：**CI #153（`d475425`）Success 2m17s**（`lint` 1m0s／`build` 42s／两矩阵各 664 例／69 文件，跑在 feat 终稿树上）、**CI #154（billing 说明提交 `0759bb7`）Success 2m14s**、此前被我口头上误报为 failed 的 **CI #152（`63eb1d3`）点开详情页确认一直是 Success（2m38s）**。**两轮核验失误入常设口径（§12-56③）**：(a) 只看 Actions 列表页图标、不点详情页 ⇒ 把实际成功的 #152 误报为失败；(b) 只查最新一条 run、不向前翻 ⇒ 漏报历史记录。判据＝**查 CI 必须点开每条 claimed-failed 的详情页确认 Status 与各 job，并系统覆盖本轮推送涉及的全部 run；列表页图标与记忆都不是证据**。`v2.8.7` 标签**不移动**（惯例＝指向登记提交 `d475425`，回填与修刀作为后续提交挂同一版本线，先例＝v2.8.6）。
+
+**下一刀**：待用户口令——N2 编辑器「锁定将领修改」保护锁（#36，§H8 规则已齐）或地基刀4 开发者模式 DIY 自动化验证路（#37，待口令）。地基四刀至此**三刀落地**（H1/H2/H3 已码、H8 的 N1 半边已码），本刀同样逐字复现 `{"1":112,"2":188}`。
+
 
 
