@@ -18,7 +18,7 @@ Content-era foundation cut 2 — **nobody edits an official general from outside
 - **Non-content hard anchor held, verbatim**: ai-battle 300 games seed 1 → won=300, exhausted=0, VIOLATIONS=0, winners **{"1":112,"2":188}**, and all five faction ledger lines identical to §12-43① — the AI/CLI chain reads `generals.ts` and never the store or localStorage, which is exactly why this cut cannot move the baseline; a test pins that the ledger is untouched by the diff layer.
 - **Real-browser E2E, four scenarios (dev server :5173)**: developer edits official 关羽 → hp 7 reaches `poolGenerals()`; developer mode exits → hp returns to the ledger 4, `generalEdits` still holds `{shu_002:{hp:7}}`, `blockedEdits()` names 关羽 twice, the save button is disabled, the row shows `🔒🚫`, the codex banner counts 2; re-entry → 7 returns verbatim, blocked empty; a `D-*` card created through the one door is editable **with developer mode off** while the official edit stays blocked. Test residue cleared from the three localStorage keys and re-verified after reload.
 - **What this cut deliberately did not do**: no new gameplay, no new primitive, no content; the Excel import *dual entry* (modify + create, §H8 / N1) is the next cut, and so is the N2 lock that needs a player-visible editor.
-- **Remote CI**: PENDING (verified in the backfill commit).
+- **Remote CI verified**: GitHub Actions **CI #147** (run `36400599591`) **Success** on the registration commit `b756369` (parent = feat `c7a44d7`), total **4m 24s** — all four jobs green (`test (22)`, `test (24)`, `lint` 1m 26s, `build` 56s). Pushed **directly** (no proxy needed this time); annotated tag `v2.8.6` pushed alongside.
 
 ## [2.8.5] - 2026-09-28
 
