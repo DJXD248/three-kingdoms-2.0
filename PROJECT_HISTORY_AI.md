@@ -1619,7 +1619,7 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **本刀没做的半边**：没有新玩法、没有新原语、没有内容；Excel 导入的**双入口**（修改＋新建、异常行三选一＝§H8/N1）是下一刀（#35），N2 保护锁（#36）与开发者模式 DIY 自动化验证（#37）仍在其后。地基四刀至此**三刀落地**，本刀同样逐字复现了 `{"1":112,"2":188}`。
 
-**远端 CI 核验（回填于同轮）**：GitHub Actions **CI #147**（run `36400599591`）**Success**、总耗时 **4m 24s**，跑在登记提交 `b756369`（父＝feat `c7a44d7`）上，四个 job 全绿（`test (22)`／`test (24)`／`lint` 1m 26s／`build` 56s）。本次推送**直连即通**（没有借道代理），附注标签 `v2.8.6` 一并推上。回填提交 `eac8900` 自身的 CI 按约定另核＝**CI #148**（run `36401484207`，**Success**，3m 26s，四 job 全绿：`test (22)`／`test (24)`／`lint` 2m 30s／`build` 45s）。补一条环境事实：**feat+docs 那一次推送直连即通，回填这一次直连断流**（`send-pack: unexpected disconnect`＋`Failed to connect to github.com:443`），按降级链一次性 `git -c http.proxy=http://127.0.0.1:10808 push` 成功、没有写任何持久 git 配置——同一轮里两种方式都要试，别把"上一次直连能通"当成常设条件。
+**远端 CI 核验（回填于同轮）**：GitHub Actions **CI #147**（run `36400599591`）**Success**、总耗时 **4m 24s**，跑在登记提交 `b756369`（父＝feat `c7a44d7`）上，四个 job 全绿（`test (22)`／`test (24)`／`lint` 1m 26s／`build` 56s）。本次推送**直连即通**（没有借道代理），附注标签 `v2.8.6` 一并推上。回填提交 `eac8900` 自身的 CI 按约定另核＝**CI #148**（run `36401484207`，**Success**，3m 26s，四 job 全绿：`test (22)`／`test (24)`／`lint` 2m 30s／`build` 45s）。补一条环境事实：**feat+docs 那一次推送直连即通，回填这一次直连断流**（`send-pack: unexpected disconnect`＋`Failed to connect to github.com:443`），按降级链一次性 `git -c http.proxy=http://127.0.0.1:10808 push` 成功、没有写任何持久 git 配置——同一轮里两种方式都要试，别把"上一次直连能通"当成常设条件。收口记录提交 `3802472` 自身的 CI 也复核过＝**CI #149**（run `36402147246`，**Success**，4m 25s，四 job 全绿）；按 v2.8.5 的先例**到此为止，不再追记"CI 的 CI"**。
 
 
 
