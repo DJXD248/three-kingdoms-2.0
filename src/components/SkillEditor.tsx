@@ -35,7 +35,9 @@ type SortBy = 'faction' | 'name' | 'type';
 export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const skillEdits = useGameStore(s => s.skillEdits);
   const generalEdits = useGameStore(s => s.generalEdits);
-  const disabledGenerals = useGameStore(s => s.disabledGenerals);
+  // Subscription anchor: any disable write changes this set's reference, which
+  // is what forces the rows below to re-read the policy-filtered one.
+  useGameStore(s => s.disabledGenerals);
   const updateSkillEdit = useGameStore(s => s.updateSkillEdit);
   const updateGeneralEdit = useGameStore(s => s.updateGeneralEdit);
   const batchDeleteEdits = useGameStore(s => s.batchDeleteEdits);
@@ -56,6 +58,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const effectiveDisabledGenerals = useGameStore(s => s.effectiveDisabledGenerals);
   const readBlockedEdits = useGameStore(s => s.blockedEdits);
   const blocked = readBlockedEdits();
+  // What the game will actually treat as disabled this session — a blocked
+  // official disable must not strike the row through.
+  const liveDisabled = effectiveDisabledGenerals();
 
   const [search, setSearch] = useState('');
   const [factionFilter, setFactionFilter] = useState<Faction | '全部'>('全部');
@@ -866,7 +871,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 // be blocked from applying — the row must say which of the two.
                 const readOnly = !mayEditGeneral(original.id);
                 const blockedHere = readOnly && blocked.some(b => b.id === original.id);
-                const isDisabled = disabledGenerals.has(original.id);
+                const isDisabled = liveDisabled.has(original.id);
                 const incomplete = isSkillIncomplete(edited);
                 return (
                   <div key={original.id} className={`flex items-center gap-1 rounded-lg transition-all ${
@@ -1173,7 +1178,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                       : '支持编辑名称、势力、体力、攻击力、技能及标签'}
                   </p>
                   <p className="text-sm mt-3 text-purple-500/30">
-                    当前已禁用 <span className="text-red-400">{effectiveDisabledGenerals().size}</span> 名将领（禁用的将领不会出现在游戏选将中）
+                    当前已禁用 <span className="text-red-400">{liveDisabled.size}</span> 名将领（禁用的将领不会出现在游戏选将中）
                   </p>
                   {blocked.length > 0 && (
                     <div className="mt-4 max-w-md rounded-xl border border-red-800/40 bg-red-900/20 p-3 text-left text-xs text-red-200">

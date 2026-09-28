@@ -144,11 +144,17 @@ describe('第③层：装配停用并报出（不删不回滚）', () => {
 
   it('仓库账本本身不被差异层改写：AI 标准池读到的永远是原值', () => {
     arm({ developerMode: true });
+    // 原值必须按「值」在改写前取走：拿同一个对象的两个引用互比是恒真断言，
+    // 装配层若真就地改了账本，两侧会一起变、测试照样绿。
+    const hpBefore = ledger.hp;
+    const nameBefore = ledger.name;
     useGameStore.getState().updateGeneralEdit(ledger.id, GENERAL_PATCH);
     useGameStore.setState({ developerMode: false });
     // src/ai/** 与 matchSetup 读的是这份模块级账本，不经 store，也不读存档。
     const fromLedger = allGenerals.find(g => g.id === ledger.id) as General;
-    expect(fromLedger.hp).toBe(ledger.hp);
+    expect(hpBefore).not.toBe(GENERAL_PATCH.hp);
+    expect(fromLedger.hp).toBe(hpBefore);
+    expect(fromLedger.name).toBe(nameBefore);
     expect(useGameStore.getState().generalEdits[ledger.id]).toEqual(GENERAL_PATCH);
   });
 });

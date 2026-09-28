@@ -61,4 +61,26 @@ describe('SkillEditor: 官方将只读（开发者模式外）', () => {
     fireEvent.click(saveButton()!);
     expect(useGameStore.getState().skillEdits[created.general.id]).toBeDefined();
   });
+
+  it('被停用的官方禁用记录不把行划成「已禁用」：显示口径跟着装配口径走', () => {
+    // 独立复算查出的口径分叉：行上原先读的是**原始** disabledGenerals，而场上
+    // 读的是策略过滤后的那一份——开发者时期禁用过的官方将，刷新后界面上还画着
+    // 划线，对局里却早已能用（比拒录更坏的失效形态：对用户说谎）。
+    useGameStore.setState({ disabledGenerals: new Set([target.id]) } as never);
+    const playerView = render(<SkillEditor onClose={() => {}} />);
+    const row = Array.from(playerView.container.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name));
+    expect(row).toBeTruthy();
+    expect(row!.parentElement?.className).not.toContain('opacity-40');
+    expect(playerView.container.textContent).toContain('当前已禁用 0 名');
+    cleanup();
+
+    // 反向对照：同一条记录在开发者模式里确实该显示成已禁用（证明上面那条断言可失败）。
+    useGameStore.setState({ developerMode: true } as never);
+    const devView = render(<SkillEditor onClose={() => {}} />);
+    const devRow = Array.from(devView.container.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name));
+    expect(devRow!.parentElement?.className).toContain('opacity-40');
+    expect(devView.container.textContent).toContain('当前已禁用 1 名');
+  });
 });
