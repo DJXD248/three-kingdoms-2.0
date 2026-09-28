@@ -1697,6 +1697,8 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **四处我代决、用户可一票否决（逐条附后果）**：(i) **`--diy-fixture` 入口不设开发者门**——它是"仓库里一份固定文件"的开关，不是本机内容的开关，按 §H2 常设规矩不构成权限逃逸；(ii) **`--skill 0` 作为 B11 参数**——改这个参数就是一次重新立锚，B10 不受牵动；(iii) **样本 `identity` 一律写空**——避开小池被锁滤成空池，代价是这 12 张卡**不参与**身份锁的任何验证（要验锁得另立样本，那是下一刀的事）；(iv) **`poolSource` 只由 CLI 选**、`battleHash.ts` 与 UI 一律不带——好处是本机永远开不了 DIY 池，代价是开发者想在浏览器里看样本跑图只能走 CLI。
 
+**Git/CI（已回填）**：feat `fd56cb6`（`src/ai/**` 全部改动＋两份新增测试）→ docs 登记提交 `e3ec50b`（七面同步＋`package.json` 2.8.8→2.8.9）→ 附注标签 `v2.8.9` 挂在该登记提交上。推送走了降级链：直连 `git push origin master` **超时失败**（尽管 `curl -sI https://github.com` 返回 200），按规矩一次性 `git -c http.proxy=http://127.0.0.1:10808 push` 推 master＋标签成功，**没有写任何持久代理配置**，推完核对过 `git config --get-regexp proxy` 为空。**远端 CI＝仅一条**：CI **#161**（run `36465853849`，sha `e3ec50b`，**Success**、3m20s）。逐条点开详情页＋同源 API 核 per-job/per-step：**0 个失败步骤**，四 job 全绿——`lint` 1m0s／`test (22)` 2m34s（Test Files 72/72、Test Results **708/708**）／`test (24)` 55s（"Run tests with coverage"=success）／`build` 41s。**这轮顺手纠正了我自己上一条登记的事实错误**：v2.8.8 我写的是"一次 push 触发两条 run（分支一条＋标签一条）"，同源 API 查出 #157/#158 两条的 `head_branch` 都是 `master`、`event` 都是 `push`、创建时间只差 2 秒，而 `ci.yml` 的触发面只有 `push: branches:[master]` 与 `pull_request`、**没有 `tags`** ⇒ 真相是同一次 master push 被重复入队，**推标签从来不触发 CI**。判据入库（HANDOFF §12-59）：本轮"应该有几条 run"由工作流触发条件决定，不能照上一轮记录套；旧记录不回改，另立更正条。`PROJECT_RELEASE_PIPELINE.md` 与 Qoder 侧技能手册已同步更正。回填提交自身的 CI 按 v2.8.5–v2.8.8 先例**另核一轮**（＝另起一条收线记录提交登记其 run 三元组，登记到这一层收线，不再追记"CI 的 CI"）。
+
 **下一步**：本刀是四刀连做里的第二刀。第三刀＝技能刀 **#23「选择其一」的门槛**（§F/§H 里登记的结构性表达不了项：一格一槽），第四刀＝用户 Excel／开发者侧**真机反馈修复**（等真机试用）。#38（方案B：编辑器导出→仓库文件验证路）继续后置、未到口令不开工；#39（观察层两处计数口径）等口令。
 
 

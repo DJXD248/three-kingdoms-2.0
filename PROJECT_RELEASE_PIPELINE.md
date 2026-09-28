@@ -34,7 +34,7 @@ README 停留在"131 例"、AGENTS 引用了已不存在的 status/ 模块、CHA
 
 ## Step 2 — 推送（固定降级链，顺序不可变）
 
-1. 先直推：`git push origin master`，随后 `git push origin vX.Y.Z` 推标签。
+1. 先直推：`git push origin master`，随后 `git push origin vX.Y.Z` 推标签（标签只作锚点，**不触发 CI**，见 Step 3 触发面）。
 2. 连接超时 → 一次性借道本地代理：`git -c http.proxy=http://127.0.0.1:10808 push origin master`。
    **绝不**把代理写进仓库级/全局持久 git 配置（曾因此代理一关推送全挂）。
 3. 代理也不通（用户可能没开 v2rayN）→ 停止，保留全部本地提交与标签，如实向用户报告"待补推"，
@@ -48,8 +48,14 @@ README 停留在"131 例"、AGENTS 引用了已不存在的 status/ 模块、CHA
 - 路径：browser-use `navigate_page` 到 `https://github.com/DJXD248/<repo>/actions`，
   `evaluate_script` 枚举 `a[href*="/actions/runs/"]` 的 aria-label——形如 `Run N of CI ... completed successfully` 为绿，
   取本 sha 对应 run 的 run id 与 CI #。
+- **触发面（v2.8.9 实证更正）**：`ci.yml` 只监听 `on: push: branches: [master]` 与 `pull_request: branches: [master]`，
+  **没有 `tags` 触发** ⇒ 推附注标签**不会**起 run。一次 master push 正常只对应**一条** run；若同一 sha 出现两条，
+  那是重复入队（`head_branch`/`event` 相同、创建时间相差数秒），**不是**"分支一条＋标签一条"。
+  判据：**本轮应有几条 run 由工作流触发条件决定**，别照旧记录套。旧文档里"标签也触发一条"的说法已作废（HANDOFF §12-59）。
 - pending 则轮询（间隔 ≥60s，上限约 15 分钟；超时如实报告并保留 PENDING，**不谎报全绿**）。
 - 禁止读取本机 git 凭据或代理配置换取 API token（曾被安全策略拦截，勿重试）；登录永远由用户在浏览器手动完成。
+- **列表页的绿图标与记忆都不是证据**：必须逐条点开 run 详情页看四 job 结论与失败步数（可用同源 `fetch` 打
+  `api.github.com/repos/<owner>/<repo>/actions/runs/<runId>/jobs` 拿 per-job/per-step 结论；`/actions/runs/<id>/jobs` 页面本身只渲染 SPA 壳）。
 
 ## Step 4 — 回填 CI 证据
 
