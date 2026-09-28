@@ -17,7 +17,7 @@ import {
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
 import {
   parseSkillCell, isDetailedFormat, isRowPerSkillFormat, resolveGeneralByNameFaction,
-  parseRowPerSkillSheet, parseLegacyDetailedRow, SkillEditEntry,
+  parseRowPerSkillSheet, parseLegacyDetailedRow, SkillEditEntry, UnresolvedImportBlock,
 } from './skillEditor/skillExcelParsers';
 import { describeLockKey, findIdentityConflicts } from '../domain/identity';
 import { TriggerEditor } from './skillEditor/TriggerEditor';
@@ -92,6 +92,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const [importResult, setImportResult] = useState('');
   /** 导入时 Excel 里没看懂的原文（门槛栏/触发栏），逐条常驻显示（不自动消失，必须人工处理）。 */
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
+  /** §H8: unresolved import blocks deferred for user resolution (create new / modify existing / skip). */
+  const [pendingImports, setPendingImports] = useState<UnresolvedImportBlock[]>([]);
   const [saved, setSaved] = useState(false);
   /** §H3: why a save/import/delete was refused. Persistent until the next try. */
   const [readOnlyNotice, setReadOnlyNotice] = useState('');
@@ -309,9 +311,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             const detailed = isDetailedFormat(rows);
 
             if (detailed && isRowPerSkillFormat(rows[0])) {
-              // New row-per-skill format
-              const { entries, parseWarnings } = parseRowPerSkillSheet(rows);
+              // New row-per-skill format — two-phase: auto-apply unique + defer ambiguous/missing
+              const fullPool = [...allGenerals, ...authoredGenerals];
+              const { entries, parseWarnings, unresolved } = parseRowPerSkillSheet(rows, fullPool);
               unreadableCells.push(...parseWarnings);
+              
+              // Auto-apply uniquely resolved rows immediately
               for (const entry of entries) {
                 const ge = entry.gEdit;
                 const wrote = writeRow(
@@ -322,6 +327,11 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 if (!wrote) continue;
                 count++;
                 sheetHasData = true;
+              }
+              
+              // Defer unresolved blocks to pending list
+              if (unresolved.length > 0) {
+                setPendingImports(prev => [...prev, ...unresolved]);
               }
             } else if (detailed) {
               // Legacy 5-col-per-skill format
@@ -391,6 +401,100 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       reader.readAsText(file);
     }
     e.target.value = '';
+  };
+
+  // §H8: resolve a pending import block (create new / modify existing / skip)
+  const handleResolvePending = (idx: number, action: 'create' | 'modify' | 'skip', targetGeneralId?: string) => {
+    const block = pendingImports[idx];
+    if (!block) return;
+
+    if (action === 'skip') {
+      setPendingImports(prev => prev.filter((_, i) => i !== idx));
+      return;
+    }
+
+    if (action === 'create') {
+      // Create as new authored general (DIY by default, official only in dev mode)
+      const result = addAuthoredGeneral({
+        name: block.name,
+        faction: block.factionText as Faction || '群',
+        hp: block.hp || 4,
+        skills: block.skills.map(s => ({
+          name: s.name,
+          description: s.description || '',
+          tag: s.tag,
+          trigger: s.trigger,
+          effects: s.effects,
+          effectMode: s.effectMode,
+          forced: s.forced,
+        })),
+      }, developerMode ? 'official' : 'DIY');
+      
+      if (result.ok) {
+        setImportResult(`✅ 已新建将领「${block.name}」`);
+        setPendingImports(prev => prev.filter((_, i) => i !== idx));
+      } else {
+        setImportResult(`❌ 新建失败：${result.reason}`);
+      }
+      setTimeout(() => setImportResult(''), 5000);
+      return;
+    }
+
+    if (action === 'modify' && targetGeneralId) {
+      // Modify existing general
+      type GeneralEditInput = Parameters<typeof updateGeneralEdit>[1];
+      const facList: Faction[] = ['魏','蜀','吴','群','晋'];
+      const ge: GeneralEditInput = {
+        faction: (block.factionText && facList.includes(block.factionText as Faction)) ? block.factionText as Faction : undefined,
+        hp: block.hp,
+        meleeAtk: block.meleeAtk,
+        rangedAtk: block.rangedAtk,
+      };
+      const decisions: ReturnType<typeof updateSkillEdit>[] = [];
+      if (block.skills.length > 0) decisions.push(updateSkillEdit(targetGeneralId, block.skills));
+      if (ge.faction || ge.hp || ge.meleeAtk != null || ge.rangedAtk != null) {
+        decisions.push(updateGeneralEdit(targetGeneralId, ge));
+      }
+      const denied = decisions.find(d => !d.allowed);
+      if (denied && !denied.allowed) {
+        setReadOnlyNotice(`${denialMessage('OFFICIAL_READ_ONLY')}｜无法修改「${block.name}」`);
+        return;
+      }
+      setImportResult(`✅ 已更新将领「${block.name}」`);
+      setPendingImports(prev => prev.filter((_, i) => i !== idx));
+      setTimeout(() => setImportResult(''), 5000);
+    }
+  };
+
+  // Master button: create all pending as new
+  const handleCreateAllPending = () => {
+    let successCount = 0;
+    let failCount = 0;
+    for (const block of pendingImports) {
+      const result = addAuthoredGeneral({
+        name: block.name,
+        faction: block.factionText as Faction || '群',
+        hp: block.hp || 4,
+        skills: block.skills.map(s => ({
+          name: s.name,
+          description: s.description || '',
+          tag: s.tag,
+          trigger: s.trigger,
+          effects: s.effects,
+          effectMode: s.effectMode,
+          forced: s.forced,
+        })),
+      }, developerMode ? 'official' : 'DIY');
+      if (result.ok) successCount++;
+      else failCount++;
+    }
+    if (successCount > 0) {
+      setImportResult(`✅ 批量新建 ${successCount} 名将领${failCount > 0 ? `，${failCount} 名失败` : ''}`);
+      setPendingImports([]);
+    } else {
+      setImportResult(`❌ 全部新建失败`);
+    }
+    setTimeout(() => setImportResult(''), 5000);
   };
 
   // ── Trigger <-> string and Excel effect-group helpers live in the pure
@@ -791,6 +895,67 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             <ul className="mt-1 space-y-0.5 max-h-28 overflow-y-auto">
               {parseWarnings.map((w, i) => <li key={i} className="text-[10px] text-amber-200">· {w}</li>)}
             </ul>
+          </div>
+        )}
+
+        {/* §H8: Pending import blocks — unresolved generals awaiting user choice */}
+        {pendingImports.length > 0 && (
+          <div className="px-6 py-3 border-b border-blue-700/40 bg-blue-950/25 flex-shrink-0">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-bold text-blue-300">📋 待处理导入（{pendingImports.length} 名将领无法自动识别）</span>
+              <div className="flex-1" />
+              <button onClick={handleCreateAllPending}
+                className="px-3 py-1 rounded-lg bg-green-700/40 text-green-200 text-[10px] font-bold hover:bg-green-600/40 transition-all">
+                ✅ 全部按新建
+              </button>
+              <button onClick={() => setPendingImports([])}
+                className="text-[10px] px-1.5 py-0.5 rounded text-blue-400/70 hover:text-blue-200 hover:bg-blue-900/30">清空</button>
+            </div>
+            <p className="text-[10px] text-blue-200/60 mb-2">每行可选择：① 新建为 DIY 将领 ② 挂到现有将领上修改 ③ 跳过不导入</p>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {pendingImports.map((block, idx) => (
+                <div key={idx} className="bg-black/30 border border-blue-700/30 rounded p-2 text-[10px]">
+                  <div className="flex items-start gap-2 mb-1">
+                    <div className="flex-1">
+                      <span className="font-bold text-blue-100">{block.name}</span>
+                      {block.factionText && <span className="text-blue-300/70 ml-2">势力：{block.factionText}</span>}
+                      {block.hp && <span className="text-blue-300/70 ml-2">体力：{block.hp}</span>}
+                      <span className="text-blue-400/50 ml-2">行 {block.rowNumbers}</span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => handleResolvePending(idx, 'create')}
+                        className="px-2 py-0.5 rounded bg-green-700/40 text-green-200 hover:bg-green-600/40 text-[9px]">
+                        新建
+                      </button>
+                      {block.candidates.length > 0 && (
+                        <select
+                          onChange={e => handleResolvePending(idx, 'modify', e.target.value)}
+                          defaultValue=""
+                          className="px-1 py-0.5 rounded bg-purple-700/40 text-purple-200 text-[9px] cursor-pointer">
+                          <option value="">挂到…</option>
+                          {block.candidates.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}（{c.faction}）</option>
+                          ))}
+                        </select>
+                      )}
+                      <button onClick={() => handleResolvePending(idx, 'skip')}
+                        className="px-2 py-0.5 rounded bg-gray-700/40 text-gray-300 hover:bg-gray-600/40 text-[9px]">
+                        跳过
+                      </button>
+                    </div>
+                  </div>
+                  {block.resolution === 'missing' && (
+                    <p className="text-amber-300/70">原因：找不到名为「{block.name}」的将领</p>
+                  )}
+                  {block.resolution === 'ambiguous' && block.candidates.length === 0 && (
+                    <p className="text-amber-300/70">原因：同名将领太多，无法确定是哪一个</p>
+                  )}
+                  {block.skills.length > 0 && (
+                    <p className="text-blue-200/50 mt-1">包含 {block.skills.length} 个技能：{block.skills.map(s => s.name).join('、')}</p>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
