@@ -1,6 +1,7 @@
 // Excel 逐技能行的导入：门槛栏要变成结构化条件，读不懂的要如实报出来。
 import { describe, it, expect } from 'vitest';
-import { parseRowPerSkillSheet } from './skillExcelParsers';
+import { parseRowPerSkillSheet, resolveGeneralForImport } from './skillExcelParsers';
+import type { General } from '../../data/generals';
 
 const FIXED = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述'];
 
@@ -93,5 +94,76 @@ describe('parseRowPerSkillSheet · 触发栏严格读法', () => {
     expect(parseWarnings[0]).toContain('技能触发');
     expect(parseWarnings[0]).toContain('受到伤害后→攻击');
     expect(unresolved).toEqual([]);
+  });
+});
+
+// v2.8.7 地基刀3（§H8 N1）：两阶段导入的"待点选阶段"必须留住**原因**与**候选**，
+// 绝不静默丢弃、也绝不自动挑第一张（ARCH_MAP §H8 判据②）。
+describe('parseRowPerSkillSheet · 未解析块三态（ambiguous 保候选 / missing 可新建）', () => {
+  const mk = (id: string, name: string, faction: General['faction']): General => ({
+    id, name, faction, hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [],
+  });
+  // 官方池里司马懿跨魏/晋同名——但**势力不同**，故"名字+势力"对官方池唯一。
+  // 候选路真正被触发的场景是同势力同名，测试须自己造 fixture（§H8 读码事实）。
+  const pool = [mk('wei_001', '司马懿', '魏'), mk('jin_001', '司马懿', '晋'), mk('shu_900', '自建司马', '蜀')];
+
+  it('势力填了但没命中任何同名⇒ambiguous，候选=全部同名，且不进 entries', () => {
+    const row = ['司马懿', '蜀', 4, 2, 1, '测试技', '无', '否', '无', '无', '描述'];
+    const { entries, unresolved } = parseRowPerSkillSheet([v2Header, row], pool);
+    expect(entries).toHaveLength(0);
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0].resolution).toBe('ambiguous');
+    expect(unresolved[0].candidates.map(c => c.id)).toEqual(['wei_001', 'jin_001']);
+  });
+
+  it('同势力同名不同身份⇒ambiguous，候选只含该势力同名几张', () => {
+    const dupPool = [...pool, { ...mk('shu_901', '司马懿', '蜀'), identity: '监国' }, { ...mk('shu_902', '司马懿', '蜀'), identity: '太傅' }];
+    const row = ['司马懿', '蜀', 4, 2, 1, '测试技', '无', '否', '无', '无', '描述'];
+    const { entries, unresolved } = parseRowPerSkillSheet([v2Header, row], dupPool);
+    expect(entries).toHaveLength(0);
+    expect(unresolved[0].resolution).toBe('ambiguous');
+    expect(unresolved[0].candidates.map(c => c.id).sort()).toEqual(['shu_901', 'shu_902']);
+  });
+
+  it('名字没势力且同名多张⇒ambiguous；名字库里没有⇒missing（可新建）', () => {
+    const amb = parseRowPerSkillSheet([v2Header, ['司马懿', '', 4, 2, 1, '测试技', '无', '否', '无', '无', '描述']], pool);
+    expect(amb.unresolved[0].resolution).toBe('ambiguous');
+    const mis = parseRowPerSkillSheet([v2Header, ['孙策', '吴', 4, 2, 1, '测试技', '无', '否', '无', '无', '描述']], pool);
+    expect(mis.entries).toHaveLength(0);
+    expect(mis.unresolved).toHaveLength(1);
+    expect(mis.unresolved[0].resolution).toBe('missing');
+    expect(mis.unresolved[0].candidates).toEqual([]);
+  });
+
+  it('名字+势力唯一⇒自动命中进 entries，不留进待点选', () => {
+    const row = ['司马懿', '晋', 4, 2, 1, '测试技', '无', '否', '无', '无', '描述'];
+    const { entries, unresolved } = parseRowPerSkillSheet([v2Header, row], pool);
+    expect(unresolved).toHaveLength(0);
+    expect(entries[0].general.id).toBe('jin_001');
+  });
+});
+
+// 判别根本身（导入面之外，UI/后续刀复用同一根）
+describe('resolveGeneralForImport · 三态判别根', () => {
+  const mk = (id: string, name: string, faction: General['faction']): General => ({
+    id, name, faction, hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [],
+  });
+  const pool = [mk('wei_001', '司马懿', '魏'), mk('jin_001', '司马懿', '晋')];
+
+  it('势力消除歧义后唯一⇒unique；势力不匹配⇒ambiguous（不替用户猜）', () => {
+    expect(resolveGeneralForImport('司马懿', '魏', pool)).toEqual({ kind: 'unique', general: pool[0] });
+    const r = resolveGeneralForImport('司马懿', '蜀', pool);
+    expect(r.kind).toBe('ambiguous');
+    if (r.kind === 'ambiguous') expect(r.candidates).toHaveLength(2);
+  });
+
+  it('势力为空且多张同名⇒ambiguous（旧实现的死分支正是这里静默取第一张）', () => {
+    const r = resolveGeneralForImport('司马懿', '', pool);
+    expect(r.kind).toBe('ambiguous');
+  });
+
+  it('空白名/查无此名⇒missing', () => {
+    expect(resolveGeneralForImport('  ', '魏', pool).kind).toBe('missing');
+    expect(resolveGeneralForImport('孙策', '吴', pool).kind).toBe('missing');
   });
 });

@@ -174,6 +174,8 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
     meleeAtk?: number;
     rangedAtk?: number;
     skills: SkillEditEntry[];
+    resolution: 'missing' | 'ambiguous';
+    candidates: General[];
     rowStart: number;
     rowEnd: number;
   } | null = null;
@@ -190,8 +192,8 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
         meleeAtk: currentUnresolved.meleeAtk,
         rangedAtk: currentUnresolved.rangedAtk,
         skills: [...currentUnresolved.skills],
-        resolution: 'missing',
-        candidates: [],
+        resolution: currentUnresolved.resolution,
+        candidates: [...currentUnresolved.candidates],
         rowNumbers: `${currentUnresolved.rowStart}-${currentUnresolved.rowEnd}`,
       });
     }
@@ -236,6 +238,8 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
           meleeAtk: Number.isFinite(mAtk) ? mAtk : undefined,
           rangedAtk: Number.isFinite(rAtk) ? rAtk : undefined,
           skills: [],
+          resolution: resolution.kind === 'ambiguous' ? 'ambiguous' : 'missing',
+          candidates: resolution.kind === 'ambiguous' ? resolution.candidates : [],
           rowStart: rowIndex + 1, // 1-based
           rowEnd: rowIndex + 1,
         };
