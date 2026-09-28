@@ -18,6 +18,14 @@ import {
 import type { GeneralSource } from '../data/generals';
 import { identityOf } from '../domain/identity';
 import { matchesDeveloperModeDigest } from '../domain/devGate';
+import {
+  mayModifyGeneral,
+  partitionEditMap,
+  partitionIdSet,
+  type BlockedOverlay,
+  type EditDecision,
+  type GeneralPolicyContext,
+} from '../domain/generalPolicy';
 import type { GameState } from './gameStoreTypes';
 
 type SetState = (patch: Partial<GameState>) => void;
@@ -25,6 +33,7 @@ type GetState = () => GameState;
 
 type SkillEditList = GameState['skillEdits'][string];
 type GeneralEdit = GameState['generalEdits'][string];
+type BatchResult = { applied: string[]; rejected: string[] };
 
 export function buildEditorActions(
   get: GetState,
@@ -42,10 +51,26 @@ export function buildEditorActions(
   | 'batchToggleDisabled'
   | 'importSkillEditsFromText'
   | 'getGeneralWithEdits'
+  | 'mayEditGeneral'
+  | 'effectiveDisabledGenerals'
+  | 'blockedEdits'
   | 'addIdentity'
   | 'renameIdentity'
   | 'deleteIdentity'
 > {
+  // §H3 layer ②: every mutation in this slice passes through this one gate.
+  // The gate is the store's, not the component's — a caller that skips the UI
+  // still cannot write, and a denial comes back with a reason instead of
+  // silently landing in localStorage.
+  const policy = (): GeneralPolicyContext => ({ developerMode: get().developerMode });
+  const guard = (generalId: string): EditDecision => mayModifyGeneral(generalId, policy());
+  const batchWrite = (ids: string[], apply: (permitted: string[]) => void): BatchResult => {
+    const permitted = ids.filter(id => mayModifyGeneral(id, policy()).allowed);
+    const rejected = ids.filter(id => !permitted.includes(id));
+    if (permitted.length > 0) apply(permitted);
+    return { applied: permitted, rejected };
+  };
+
   return {
     enableDeveloperMode: digest => {
       if (!matchesDeveloperModeDigest(digest)) return false;
@@ -57,15 +82,21 @@ export function buildEditorActions(
     disableDeveloperMode: () => set({ developerMode: false }),
 
     updateSkillEdit: (generalId, skills) => {
+      const decision = guard(generalId);
+      if (!decision.allowed) return decision;
       const next = { ...get().skillEdits, [generalId]: skills };
       persistSkillEdits(next);
       set({ skillEdits: next });
+      return decision;
     },
 
     updateGeneralEdit: (generalId, edits) => {
+      const decision = guard(generalId);
+      if (!decision.allowed) return decision;
       const next = { ...get().generalEdits, [generalId]: edits };
       persistGeneralEdits(next);
       set({ generalEdits: next });
+      return decision;
     },
 
     // v2.8.5 authoring (§H2): the source a new record is stamped with is not
@@ -105,44 +136,59 @@ export function buildEditorActions(
       return true;
     },
 
-    batchDeleteEdits: generalIds => {
-      const skillEdits = { ...get().skillEdits };
-      const generalEdits = { ...get().generalEdits };
-      for (const id of generalIds) {
-        delete skillEdits[id];
-        delete generalEdits[id];
-      }
-      persistSkillEdits(skillEdits);
-      persistGeneralEdits(generalEdits);
-      set({ skillEdits, generalEdits });
-    },
+    // §H3: a non-developer may not DELETE an official card's overlay either —
+    // 「原数据仍保留、不删除、不回滚」 is half of the blocked-state contract, so
+    // bulk delete is limited to what this session is allowed to touch.
+    batchDeleteEdits: generalIds =>
+      batchWrite(generalIds, permitted => {
+        const skillEdits = { ...get().skillEdits };
+        const generalEdits = { ...get().generalEdits };
+        for (const id of permitted) {
+          delete skillEdits[id];
+          delete generalEdits[id];
+        }
+        persistSkillEdits(skillEdits);
+        persistGeneralEdits(generalEdits);
+        set({ skillEdits, generalEdits });
+      }),
 
     toggleDisabledGeneral: id => {
+      const decision = guard(id);
+      if (!decision.allowed) return decision;
       const next = new Set(get().disabledGenerals);
       if (next.has(id)) next.delete(id); else next.add(id);
       persistDisabledGenerals(next);
       set({ disabledGenerals: next });
+      return decision;
     },
 
-    batchToggleDisabled: (ids, disabled) => {
-      const next = new Set(get().disabledGenerals);
-      for (const id of ids) {
-        if (disabled) next.add(id); else next.delete(id);
-      }
-      persistDisabledGenerals(next);
-      set({ disabledGenerals: next });
-    },
+    batchToggleDisabled: (ids, disabled) =>
+      batchWrite(ids, permitted => {
+        const next = new Set(get().disabledGenerals);
+        for (const id of permitted) {
+          if (disabled) next.add(id); else next.delete(id);
+        }
+        persistDisabledGenerals(next);
+        set({ disabledGenerals: next });
+      }),
 
     importSkillEditsFromText: text => {
       const validTags = ['锁定技', '限定技', '登场技', '遗计技', '觉醒技'];
       const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
       let count = 0;
+      const rejected: string[] = [];
       const edits = { ...get().skillEdits };
+      const ctx = policy();
       for (const line of lines) {
         const parts = line.split('|').map(part => part.trim());
         if (parts.length < 2) continue;
         const general = allGenerals.find(g => g.name === parts[0]);
         if (!general) continue;
+        // A denied row is named in the result, never quietly dropped (§12-46①).
+        if (!mayModifyGeneral(general.id, ctx).allowed) {
+          rejected.push(general.name);
+          continue;
+        }
         const skillNames = parts[1].split(',').map(v => v.trim()).filter(Boolean);
         const descriptions = parts.length >= 3 ? parts[2].split(',').map(v => v.trim()) : [];
         const tags = parts.length >= 4 ? parts[3].split(',').map(v => v.trim()) : [];
@@ -155,13 +201,17 @@ export function buildEditorActions(
       }
       persistSkillEdits(edits);
       set({ skillEdits: edits });
-      return count;
+      return { count, rejected };
     },
 
     getGeneralWithEdits: general => {
       const { skillEdits, generalEdits } = get();
       const result = { ...general } as General;
-      const gEdits: GeneralEdit | undefined = generalEdits[general.id];
+      // §H3 layer ③: an overlay this session may not hold is neither deleted
+      // nor rolled back — it simply stops steering the assembly, and
+      // `blockedEdits()` reports that it is there.
+      const mayEdit = mayModifyGeneral(general.id, policy()).allowed;
+      const gEdits: GeneralEdit | undefined = mayEdit ? generalEdits[general.id] : undefined;
       if (gEdits) {
         if (gEdits.name) result.name = gEdits.name;
         if (gEdits.faction) result.faction = gEdits.faction;
@@ -175,7 +225,7 @@ export function buildEditorActions(
         if (gEdits.meleeAtk != null) result.meleeAtk = gEdits.meleeAtk;
         if (gEdits.rangedAtk != null) result.rangedAtk = gEdits.rangedAtk;
       }
-      const sEdits: SkillEditList | undefined = skillEdits[general.id];
+      const sEdits: SkillEditList | undefined = mayEdit ? skillEdits[general.id] : undefined;
       if (sEdits) {
         result.skills = sEdits.map(skill => ({
           name: skill.name,
@@ -188,6 +238,29 @@ export function buildEditorActions(
         }));
       }
       return result;
+    },
+
+    mayEditGeneral: generalId => mayModifyGeneral(generalId, policy()).allowed,
+
+    // Assembly consumers read the disable list through this, never the raw
+    // save-file: an official general left disabled by an earlier developer
+    // session must not keep vanishing from the draft pool (§H3 layer ③).
+    effectiveDisabledGenerals: () =>
+      partitionIdSet(get().disabledGenerals, 'disabled', policy()).permitted,
+
+    // The third state §H3 requires: 原数据仍保留 / 已禁止应用 / 冲突已标明.
+    blockedEdits: () => {
+      const ctx = policy();
+      const nameOf = (id: string) =>
+        [...allGenerals, ...get().authoredGenerals].find(g => g.id === id)?.name ?? id;
+      const blocked: { id: string; name: string; kind: BlockedOverlay['kind'] }[] = [];
+      const push = (entries: BlockedOverlay[]) => {
+        for (const entry of entries) blocked.push({ ...entry, name: nameOf(entry.id) });
+      };
+      push(partitionEditMap(get().skillEdits, 'skillEdits', ctx).blocked);
+      push(partitionEditMap(get().generalEdits, 'generalEdits', ctx).blocked);
+      push(partitionIdSet(get().disabledGenerals, 'disabled', ctx).blocked);
+      return blocked;
     },
 
     addIdentity: rawName => {
@@ -205,14 +278,17 @@ export function buildEditorActions(
       const newName = rawNewName.trim();
       const registry = get().identityRegistry;
       if (newName === '' || !registry.includes(oldName) || registry.includes(newName)) return false;
+      const ctx = policy();
       persistIdentityRegistry(registry.map(n => (n === oldName ? newName : n)));
       set({ identityRegistry: registry.map(n => (n === oldName ? newName : n)) });
       // Cascade: every general edit referencing the old name follows it
-      // (身份改名级联, D1 保守方案的写侧).
+      // (身份改名级联, D1 保守方案的写侧). §H3: the cascade is still a write,
+      // so it only follows overlays this session may own — official overlays it
+      // cannot touch are left byte-identical (blocked, not rewritten).
       const nextEdits = { ...get().generalEdits };
       let touched = false;
       for (const [gid, edit] of Object.entries(nextEdits)) {
-        if (edit.identity === oldName) {
+        if (edit.identity === oldName && mayModifyGeneral(gid, ctx).allowed) {
           nextEdits[gid] = { ...edit, identity: newName };
           touched = true;
         }

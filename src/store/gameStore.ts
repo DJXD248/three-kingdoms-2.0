@@ -213,7 +213,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   poolGenerals:()=>[...allGenerals,...get().authoredGenerals].map(g=>get().getGeneralWithEdits(g)),
 
   distributeDraftGenerals:()=>{
-    const{disabledGenerals:dis}=get();
+    const dis=get().effectiveDisabledGenerals();
     const fp=get().players[0];if(!fp?.faction)return;
     const rng=setupCursor();
     // v2.8.0: distribution reads editor-merged reality, so an edited
@@ -268,7 +268,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       return;
     }
     const np=u[ni];if(!np.faction)return;
-    const{disabledGenerals:dis}=get();
+    const dis=get().effectiveDisabledGenerals();
     // v2.8.0 identity lock: the exclusion set is everything DEALT to earlier
     // seats (选过 or 沉没), not just confirmed picks — 分发即锁.
     const distributed=get().draftDistributed;

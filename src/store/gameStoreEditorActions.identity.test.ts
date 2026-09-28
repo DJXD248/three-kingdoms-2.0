@@ -14,6 +14,8 @@ const other = allGenerals.find(g => g.faction === '魏')!;
 describe('identity registry CRUD', () => {
   beforeEach(() => {
     useGameStore.setState({
+      // §H3: 本文件全部案例都在动官方将的差异层，须在开发者模式会话内。
+      developerMode: true,
       identityRegistry: [],
       generalEdits: {},
       skillEdits: {},

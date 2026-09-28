@@ -21,7 +21,9 @@ function findRuntimeSelect(): HTMLSelectElement {
 describe('SkillEditor: structured runtime entry', () => {
   beforeEach(() => {
     cleanup();
-    useGameStore.setState({ skillEdits: {}, generalEdits: {} });
+    // §H3: 编辑器对官方将的写入需要开发者模式——本文件的意图（改动落到
+    // store 并被编译器接受）在权限打开后逐字保持。
+    useGameStore.setState({ skillEdits: {}, generalEdits: {}, developerMode: true });
   });
 
   it('selecting 摸牌 in the effect card saves a runtime payload the compiler accepts', () => {
@@ -115,7 +117,9 @@ describe('SkillEditor: structured runtime entry', () => {
 describe('SkillEditor: 发动门槛录入（🚪 门槛框）', () => {
   beforeEach(() => {
     cleanup();
-    useGameStore.setState({ skillEdits: {}, generalEdits: {} });
+    // §H3: 编辑器对官方将的写入需要开发者模式——本文件的意图（改动落到
+    // store 并被编译器接受）在权限打开后逐字保持。
+    useGameStore.setState({ skillEdits: {}, generalEdits: {}, developerMode: true });
   });
 
   const openFirstEffect = () => {

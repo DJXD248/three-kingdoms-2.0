@@ -3,12 +3,18 @@ import { useGameStore } from '../store/gameStore';
 import { allGenerals, General, Faction, factionColors, SkillTag, allSkillTags, skillTagColors } from '../data/generals';
 import { allCards, GameCard } from '../data/cards';
 import SkillEditor from './SkillEditor';
+import { denialMessage } from '../domain/generalPolicy';
 
 type TabType = '将领' | '卡牌';
 
 export default function Codex() {
   const setPhase = useGameStore(s => s.setPhase);
   const developerMode = useGameStore(s => s.developerMode);
+  const getEdited = useGameStore(s => s.getGeneralWithEdits);
+  const readBlockedEdits = useGameStore(s => s.blockedEdits);
+  const blocked = readBlockedEdits();
+  // Subscribed only so the memo recomputes when the save file or the
+  // permission level changes; the merge itself is getEdited's single path.
   const skillEdits = useGameStore(s => s.skillEdits);
   const generalEdits = useGameStore(s => s.generalEdits);
   const [showSkillEditor, setShowSkillEditor] = useState(false);
@@ -21,22 +27,8 @@ export default function Codex() {
   const [selectedGeneral, setSelectedGeneral] = useState<General | null>(null);
   const [selectedCard, setSelectedCard] = useState<GameCard | null>(null);
 
-  // Get edited version of a general
-  const getEdited = (g: General): General => {
-    const result = { ...g };
-    const gEdit = generalEdits[g.id];
-    if (gEdit) {
-      if (gEdit.name) result.name = gEdit.name;
-      if (gEdit.faction) result.faction = gEdit.faction;
-      if (gEdit.hp != null) { result.hp = gEdit.hp; result.type = gEdit.hp >= 4 ? '武将' : '文将'; }
-      if (gEdit.meleeAtk != null) result.meleeAtk = gEdit.meleeAtk;
-      if (gEdit.rangedAtk != null) result.rangedAtk = gEdit.rangedAtk;
-    }
-    const sEdit = skillEdits[g.id];
-    if (sEdit) result.skills = sEdit.map(s => ({ name: s.name, description: s.description, tag: s.tag, trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, forced: s.forced }));
-    return result;
-  };
-
+  // §H3: the viewer shows what the game actually assembles — the store's one
+  // policy-filtered merge, not a fourth copy of the merge rules.
   const filteredGenerals = useMemo(() => {
     return allGenerals.map(g => getEdited(g)).filter(g => {
       if (factionFilter !== '全部' && g.faction !== factionFilter) return false;
@@ -59,7 +51,10 @@ export default function Codex() {
       }
       return true;
     });
-  }, [searchText, factionFilter, typeFilter, skillTagFilter, skillEdits, generalEdits]);
+    // 编辑器在覆盖层里写存档、切权限，而 getEdited 的函数引用永不变——
+    // 这三项是"这一页必须跟着刷新"的真实依赖，不是多余依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchText, factionFilter, typeFilter, skillTagFilter, skillEdits, generalEdits, developerMode, getEdited]);
 
   const filteredCards = useMemo(() => {
     return allCards.filter(c => {
@@ -122,6 +117,14 @@ export default function Codex() {
           )}
         </div>
       </div>
+
+      {/* §H3: stopped-but-not-deleted official overlays are announced here,
+          because this page is reachable without developer mode. */}
+      {blocked.length > 0 && (
+        <div className="flex-shrink-0 mx-6 mt-3 rounded-lg border border-red-800/40 bg-red-900/20 px-4 py-2 text-xs text-red-200">
+          🚫 {denialMessage('OFFICIAL_READ_ONLY')}——{blocked.length} 处改动已停用、对局中不会生效（{[...new Set(blocked.map(b => b.name))].join('、')}）；原数据仍保留，进入开发者模式即可继续编辑。
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex-shrink-0 flex gap-4 justify-center mt-4">

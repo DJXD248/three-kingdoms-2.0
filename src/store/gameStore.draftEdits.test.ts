@@ -53,7 +53,8 @@ function twoPlayerDraftState() {
 
 describe('gameStore.confirmDraft: drafted cards absorb editor edits', () => {
   beforeEach(() => {
-    useGameStore.setState({ skillEdits: {}, generalEdits: {} });
+    // §H3: 官方将的 overlay 只在开发者模式会话里被装配消费。
+    useGameStore.setState({ skillEdits: {}, generalEdits: {}, developerMode: true });
   });
 
   it('applies skillEdits to the drafted runtime card so the compiler emits a DRAW_CARD definition', () => {

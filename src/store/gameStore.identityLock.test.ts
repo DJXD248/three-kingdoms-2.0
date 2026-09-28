@@ -37,6 +37,8 @@ function armDraftState() {
 describe('gameStore 征召链身份锁', () => {
   beforeEach(() => {
     useGameStore.setState({
+      // §H3: 官方将的编辑与禁用需要开发者模式会话（本文件全程在改官方池）。
+      developerMode: true,
       skillEdits: {},
       generalEdits: {},
       disabledGenerals: new Set<string>(),

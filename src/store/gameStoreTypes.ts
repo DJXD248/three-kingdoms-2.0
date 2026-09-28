@@ -2,6 +2,7 @@
 // first split). Pure type moves — shapes and semantics are unchanged.
 import type { General, Faction, GeneralSource, SkillTag, SkillTriggerConfig, SkillEffect, SkillEffectMode } from '../data/generals';
 import type { AuthoredGeneralInput } from '../domain/generalProvenance';
+import type { BlockedOverlay, EditDecision } from '../domain/generalPolicy';
 import type { GameCard } from '../data/cards';
 import type { AiSeatMode, AiSeatTier } from '../setup/runtimeSetup';
 import type { EngineState } from '../core/GameState';
@@ -154,8 +155,10 @@ export interface GameState {
   clearSkillActivation:(id:string)=>void;
   enableDeveloperMode:(digest:string|null)=>boolean;
   disableDeveloperMode:()=>void;
-  updateSkillEdit:(generalId:string, skills:{name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[])=>void;
-  updateGeneralEdit:(generalId:string, edits:{name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number;identity?:string})=>void;
+  // v2.8.6 地基刀2 (§H3 layer ②): these are guarded writes — a denied one
+  // returns the reason and writes nothing.
+  updateSkillEdit:(generalId:string, skills:{name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;forced?:boolean}[])=>EditDecision;
+  updateGeneralEdit:(generalId:string, edits:{name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number;identity?:string})=>EditDecision;
   // v2.8.5 authoring (§H1): the ONLY way a new general enters the store. `id`
   // and `source` are stamped by generalProvenance at creation and never
   // rewritten; 身份 is written explicitly so a later rename cannot move its
@@ -169,11 +172,16 @@ export interface GameState {
   addIdentity:(name:string)=>boolean;
   renameIdentity:(oldName:string,newName:string)=>boolean;
   deleteIdentity:(name:string)=>{ok:boolean;referrers:string[]};
-  batchDeleteEdits:(generalIds:string[])=>void;
-  toggleDisabledGeneral:(id:string)=>void;
-  batchToggleDisabled:(ids:string[],disabled:boolean)=>void;
-  importSkillEditsFromText:(text:string)=>number;
+  batchDeleteEdits:(generalIds:string[])=>{applied:string[];rejected:string[]};
+  toggleDisabledGeneral:(id:string)=>EditDecision;
+  batchToggleDisabled:(ids:string[],disabled:boolean)=>{applied:string[];rejected:string[]};
+  importSkillEditsFromText:(text:string)=>{count:number;rejected:string[]};
   getGeneralWithEdits:(general:General)=>General;
+  // v2.8.6 地基刀2 (§H3 layer ③): assembly reads the policy-filtered view and
+  // the report, never the raw save-file. Blocked overlays stay on disk.
+  mayEditGeneral:(id:string)=>boolean;
+  effectiveDisabledGenerals:()=>Set<string>;
+  blockedEdits:()=>{id:string;name:string;kind:BlockedOverlay['kind']}[];
   createSerializedSnapshot:(roomId:string)=>string;
   restoreEngineState:(snapshot:unknown)=>boolean;
   restoreSerializedSnapshot:(data:string,expectedRoomId?:string)=>boolean;

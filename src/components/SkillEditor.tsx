@@ -5,6 +5,7 @@ import {
   SkillEffect, SkillEffectMode, effectModeLabels, sourceLabels, type GeneralSource,
 } from '../data/generals';
 import { isRepositoryOfficial, sourceOf } from '../domain/generalProvenance';
+import { denialMessage } from '../domain/generalPolicy';
 import {
   triggerToStr,
   buildTriggerOptionStrings,
@@ -49,6 +50,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const authoredGenerals = useGameStore(s => s.authoredGenerals);
   const addAuthoredGeneral = useGameStore(s => s.addAuthoredGeneral);
   const removeAuthoredGeneral = useGameStore(s => s.removeAuthoredGeneral);
+  // §H3: the editor asks the same policy root the store guards with, so a
+  // read-only general is greyed out before it can be written, not after.
+  const mayEditGeneral = useGameStore(s => s.mayEditGeneral);
+  const effectiveDisabledGenerals = useGameStore(s => s.effectiveDisabledGenerals);
+  const readBlockedEdits = useGameStore(s => s.blockedEdits);
+  const blocked = readBlockedEdits();
 
   const [search, setSearch] = useState('');
   const [factionFilter, setFactionFilter] = useState<Faction | '全部'>('全部');
@@ -81,6 +88,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   /** 导入时 Excel 里没看懂的原文（门槛栏/触发栏），逐条常驻显示（不自动消失，必须人工处理）。 */
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
+  /** §H3: why a save/import/delete was refused. Persistent until the next try. */
+  const [readOnlyNotice, setReadOnlyNotice] = useState('');
 
   // Multi-select state
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -176,9 +185,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
 
   const handleSave = () => {
     if (!selectedGeneral) return;
-    updateSkillEdit(selectedGeneral.id, editingSkills);
     const identityChoice = editIdentity === '__default__' ? undefined : editIdentity === '__none__' ? '' : editIdentity;
-    updateGeneralEdit(selectedGeneral.id, {
+    const skillDecision = updateSkillEdit(selectedGeneral.id, editingSkills);
+    const generalDecision = updateGeneralEdit(selectedGeneral.id, {
       name: editName !== selectedGeneral.name ? editName : undefined,
       faction: editFaction !== selectedGeneral.faction ? editFaction : undefined,
       hp: editHp !== selectedGeneral.hp ? editHp : undefined,
@@ -186,6 +195,15 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       rangedAtk: editRangedAtk !== selectedGeneral.rangedAtk ? editRangedAtk : undefined,
       identity: identityChoice !== selectedGeneral.identity ? identityChoice : undefined,
     });
+    // §H3 layer ①: the store already refused the write; report why, in the
+    // user's words, instead of showing a green "已保存" over an empty change.
+    const denied = [skillDecision, generalDecision].find(d => !d.allowed);
+    if (denied && !denied.allowed) {
+      setReadOnlyNotice(denialMessage(denied.denial));
+      setSaved(false);
+      return;
+    }
+    setReadOnlyNotice('');
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -230,8 +248,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     setEditingSkills(prev => prev.map((s, i) => i === index ? { ...s, tag: tag === '' ? undefined : tag as SkillTag } : s));
 
   const handleImportText = () => {
-    const count = importSkillEditsFromText(importText);
-    setImportResult(`成功导入 ${count} 名将领的技能数据`);
+    const { count, rejected } = importSkillEditsFromText(importText);
+    setImportResult(
+      `成功导入 ${count} 名将领的技能数据` +
+      (rejected.length > 0 ? `；${rejected.length} 名被拒：${rejected.join('、')}` : ''),
+    );
+    setReadOnlyNotice(rejected.length > 0 ? denialMessage('OFFICIAL_READ_ONLY') : '');
     setImportText('');
     setTimeout(() => setImportResult(''), 3000);
   };
@@ -252,8 +274,26 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           let skipped = 0;
           let sheetCount = 0;
           const unreadableCells: string[] = [];
-          const sEdits = { ...useGameStore.getState().skillEdits };
-          const gEdits = { ...useGameStore.getState().generalEdits };
+          const rejectedNames: string[] = [];
+          // §H3 layer ①+②: a row lands through the guarded store actions — the
+          // old direct `useGameStore.setState` was a second write path that
+          // skipped the policy gate entirely.
+          type GeneralEditInput = Parameters<typeof updateGeneralEdit>[1];
+          const writeRow = (
+            general: General,
+            skills: Parameters<typeof updateSkillEdit>[1] | null,
+            gEdit: GeneralEditInput | null,
+          ): boolean => {
+            const decisions: ReturnType<typeof updateSkillEdit>[] = [];
+            if (skills && skills.length > 0) decisions.push(updateSkillEdit(general.id, skills));
+            if (gEdit) decisions.push(updateGeneralEdit(general.id, gEdit));
+            const denied = decisions.find(d => !d.allowed);
+            if (denied && !denied.allowed) {
+              rejectedNames.push(general.name);
+              return false;
+            }
+            return true;
+          };
 
           for (const sheetName of workbook.SheetNames) {
             const sheet = workbook.Sheets[sheetName];
@@ -268,11 +308,13 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               const { entries, parseWarnings } = parseRowPerSkillSheet(rows);
               unreadableCells.push(...parseWarnings);
               for (const entry of entries) {
-                if (entry.skills.length > 0) sEdits[entry.general.id] = entry.skills;
                 const ge = entry.gEdit;
-                if (ge.faction || ge.hp || ge.meleeAtk != null || ge.rangedAtk != null) {
-                  gEdits[entry.general.id] = ge as typeof gEdits[string];
-                }
+                const wrote = writeRow(
+                  entry.general,
+                  entry.skills.length > 0 ? entry.skills : null,
+                  ge.faction || ge.hp || ge.meleeAtk != null || ge.rangedAtk != null ? ge as GeneralEditInput : null,
+                );
+                if (!wrote) continue;
                 count++;
                 sheetHasData = true;
               }
@@ -282,11 +324,13 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 if (!row || row.length < 6) continue;
                 const parsed = parseLegacyDetailedRow(row);
                 if (!parsed || !parsed.general) continue;
-                if (parsed.skills.length > 0) sEdits[parsed.general.id] = parsed.skills;
                 const ge = parsed.gEdit;
-                if (ge.faction || ge.hp || ge.meleeAtk != null || ge.rangedAtk != null) {
-                  gEdits[parsed.general.id] = ge as typeof gEdits[string];
-                }
+                const wrote = writeRow(
+                  parsed.general,
+                  parsed.skills.length > 0 ? parsed.skills : null,
+                  ge.faction || ge.hp || ge.meleeAtk != null || ge.rangedAtk != null ? ge as GeneralEditInput : null,
+                );
+                if (!wrote) continue;
                 count++;
                 sheetHasData = true;
               }
@@ -312,19 +356,23 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                     return s.name === o.name && (s.description || '') === (o.description || '') && (s.tag || '') === (o.tag || '');
                   });
                   if (same) { skipped++; continue; }
-                  sEdits[general.id] = skills; count++; sheetHasData = true;
+                  if (!writeRow(general, skills, null)) continue;
+                  count++; sheetHasData = true;
                 }
               }
             }
             if (sheetHasData) sheetCount++;
           }
 
-          try { localStorage.setItem('three_kingdoms_skill_edits', JSON.stringify(sEdits)); } catch { /* storage unavailable; in-memory edits still applied */ }
-          try { localStorage.setItem('three_kingdoms_general_edits', JSON.stringify(gEdits)); } catch { /* storage unavailable; in-memory edits still applied */ }
-          useGameStore.setState({ skillEdits: sEdits, generalEdits: gEdits });
-
           setParseWarnings(unreadableCells);
-          setImportResult(`✅ 从 ${sheetCount} 个工作表导入 ${count} 名将领${skipped > 0 ? `，跳过 ${skipped} 名无变化` : ''}${unreadableCells.length > 0 ? `；⚠ ${unreadableCells.length} 处没看懂，见下方清单` : ''}`);
+          const rejected = [...new Set(rejectedNames)];
+          // Refused rows are named and stay on screen: a silently skipped row
+          // is the worst failure shape (§12-46①), and here it would be a
+          // permission refusal dressed up as a successful import.
+          setReadOnlyNotice(rejected.length > 0
+            ? `${denialMessage('OFFICIAL_READ_ONLY')}｜本次未录入 ${rejected.length} 名：${rejected.join('、')}`
+            : '');
+          setImportResult(`✅ 从 ${sheetCount} 个工作表导入 ${count} 名将领${skipped > 0 ? `，跳过 ${skipped} 名无变化` : ''}${rejected.length > 0 ? `，拒录 ${rejected.length} 名` : ''}${unreadableCells.length > 0 ? `；⚠ ${unreadableCells.length} 处没看懂，见下方清单` : ''}`);
           setTimeout(() => setImportResult(''), 5000);
         } catch {
           setImportResult('❌ Excel文件解析失败，请检查格式');
@@ -503,11 +551,23 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     setSelectedIds(ids);
   };
 
+  const nameByIds = (ids: string[]) => ids.map(id =>
+    [...allGenerals, ...authoredGenerals].find(g => g.id === id)?.name ?? id);
+
   const handleBatchDelete = () => {
-    batchDeleteEdits(Array.from(selectedIds));
+    const { applied, rejected } = batchDeleteEdits(Array.from(selectedIds));
     setSelectedIds(new Set());
     setShowDeleteConfirm(false);
-    setImportResult(`✅ 已清除 ${selectedIds.size} 名将领的编辑数据`);
+    setReadOnlyNotice(rejected.length > 0 ? `${denialMessage('OFFICIAL_READ_ONLY')}｜${nameByIds(rejected).join('、')}` : '');
+    setImportResult(`✅ 已清除 ${applied.length} 名将领的编辑数据${rejected.length > 0 ? `；${rejected.length} 名无权清除，数据原样保留` : ''}`);
+    setTimeout(() => setImportResult(''), 3000);
+  };
+
+  const handleBatchDisable = (disabled: boolean) => {
+    const { applied, rejected } = batchToggleDisabled(Array.from(selectedIds), disabled);
+    setSelectedIds(new Set());
+    setReadOnlyNotice(rejected.length > 0 ? `${denialMessage('OFFICIAL_READ_ONLY')}｜${nameByIds(rejected).join('、')}` : '');
+    setImportResult(`${disabled ? '🚫 已禁用' : '✅ 已启用'} ${applied.length} 名${rejected.length > 0 ? `；${rejected.length} 名无权改动，保持原样` : ''}`);
     setTimeout(() => setImportResult(''), 3000);
   };
 
@@ -749,12 +809,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               清空
             </button>
             <div className="w-px h-5 bg-gray-700/40" />
-            <button onClick={() => { batchToggleDisabled(Array.from(selectedIds), true); setSelectedIds(new Set()); }}
+            <button onClick={() => handleBatchDisable(true)}
               disabled={selectedIds.size === 0}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${selectedIds.size > 0 ? 'bg-gray-700 text-gray-200 hover:bg-gray-600' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}>
               🚫 禁用 ({selectedIds.size})
             </button>
-            <button onClick={() => { batchToggleDisabled(Array.from(selectedIds), false); setSelectedIds(new Set()); }}
+            <button onClick={() => handleBatchDisable(false)}
               disabled={selectedIds.size === 0}
               className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${selectedIds.size > 0 ? 'bg-green-800 text-green-200 hover:bg-green-700' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}>
               ✅ 启用 ({selectedIds.size})
@@ -802,6 +862,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 const isSelected = !multiSelectMode && selectedGeneral?.id === original.id;
                 const isChecked = multiSelectMode && selectedIds.has(original.id);
                 const hasEdits = !!skillEdits[original.id] || !!generalEdits[original.id];
+                // §H3 layer ③: an overlay can exist in the save file and still
+                // be blocked from applying — the row must say which of the two.
+                const readOnly = !mayEditGeneral(original.id);
+                const blockedHere = readOnly && blocked.some(b => b.id === original.id);
                 const isDisabled = disabledGenerals.has(original.id);
                 const incomplete = isSkillIncomplete(edited);
                 return (
@@ -835,10 +899,18 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                         </p>
                       </div>
                       {incomplete && !multiSelectMode && <span className="text-[10px] text-amber-400 flex-shrink-0" title="技能设定未完成">⚠</span>}
-                    {hasEdits && !multiSelectMode && <span className="text-[10px] text-green-400 flex-shrink-0">✏️</span>}
+                    {readOnly && !multiSelectMode && <span className="text-[10px] text-gray-400 flex-shrink-0" title="官方将领在开发者模式外只读">🔒</span>}
+                    {hasEdits && !multiSelectMode && (blockedHere
+                      ? <span className="text-[10px] text-red-400 flex-shrink-0" title="改动仍在存档里，但对局已停止应用（开发者模式外不改官方将）">🚫</span>
+                      : <span className="text-[10px] text-green-400 flex-shrink-0">✏️</span>)}
                     </button>
                     {!multiSelectMode && (
-                      <button onClick={(e) => { e.stopPropagation(); toggleDisabledGeneral(original.id); }}
+                      <button onClick={(e) => {
+                        e.stopPropagation();
+                        const decision = toggleDisabledGeneral(original.id);
+                        if (!decision.allowed) setReadOnlyNotice(denialMessage(decision.denial));
+                        else setReadOnlyNotice('');
+                      }}
                         title={isDisabled ? '启用该将领' : '禁用该将领'}
                         className={`flex-shrink-0 w-7 h-4 rounded-full relative transition-all mr-1 ${isDisabled ? 'bg-gray-700' : 'bg-green-600'}`}>
                         <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${isDisabled ? 'left-0.5' : 'left-3.5'}`} />
@@ -1062,9 +1134,22 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                   </button>
                 </div>
 
+                {/* §H3 layer ①: a general this session may not touch offers no
+                    write path at all, and says why in one line. */}
+                {!mayEditGeneral(selectedGeneral.id) && (
+                  <div className="px-4 pt-3 text-xs font-bold text-red-300 flex-shrink-0">
+                    🔒 {denialMessage('OFFICIAL_READ_ONLY')}
+                  </div>
+                )}
+                {readOnlyNotice && (
+                  <div className="px-4 pt-2 text-xs font-bold text-red-300 flex-shrink-0 whitespace-pre-wrap">
+                    {readOnlyNotice}
+                  </div>
+                )}
                 <div className="p-4 border-t border-purple-800/20 flex items-center gap-3 flex-shrink-0">
                   <button onClick={handleSave}
-                    className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all ${saved ? 'bg-green-600 text-white' : 'bg-purple-700 text-white hover:bg-purple-600'}`}>
+                    disabled={!mayEditGeneral(selectedGeneral.id)}
+                    className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all ${!mayEditGeneral(selectedGeneral.id) ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : saved ? 'bg-green-600 text-white' : 'bg-purple-700 text-white hover:bg-purple-600'}`}>
                     {saved ? '✅ 已保存' : '💾 保存修改'}
                   </button>
                   <button onClick={() => setSelectedGeneral(null)}
@@ -1088,8 +1173,15 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                       : '支持编辑名称、势力、体力、攻击力、技能及标签'}
                   </p>
                   <p className="text-sm mt-3 text-purple-500/30">
-                    当前已禁用 <span className="text-red-400">{disabledGenerals.size}</span> 名将领（禁用的将领不会出现在游戏选将中）
+                    当前已禁用 <span className="text-red-400">{effectiveDisabledGenerals().size}</span> 名将领（禁用的将领不会出现在游戏选将中）
                   </p>
+                  {blocked.length > 0 && (
+                    <div className="mt-4 max-w-md rounded-xl border border-red-800/40 bg-red-900/20 p-3 text-left text-xs text-red-200">
+                      <p className="font-bold mb-1">🚫 {denialMessage('OFFICIAL_READ_ONLY')}（{blocked.length} 处已停用，数据原样保留）</p>
+                      <p className="whitespace-pre-wrap">{[...new Set(blocked.map(b => b.name))].join('、')}</p>
+                      {!developerMode && <p className="mt-1 text-red-300/70">进入开发者模式即可继续编辑这些官方将领；改动本身不会被删除或回滚。</p>}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
