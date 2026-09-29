@@ -1973,7 +1973,13 @@ HANDOFF §3（版本行＋本轮调整九点）／§9（2.8.15 验证条）／§
 
 ### 九、边界与下一步
 
-**我没做的**：真机浏览器 E2E（无界面行为可验，理由见⑥）；**用真 Excel 打开确认**（本机无 Excel，我的证人只有 SheetJS 跨库读回与 zip 完整性，打开体验由用户那一次点击定）；`词汇表.xlsx` 未做多语言／未加数据校验下拉（用户没要，且加了就得同步守卫与生成器）。既有待办一律未动：#30 决斗（玩法刀⇒三道闸）、#42 提示两档（需那枚「都不发动」canonical 出口）、#41 只裁未做（默认关闭＝**换锚**）、#38 择机、#43 `tag`/`forced` 零消费者、#47 至今未裁、`PLAYER_GLOSSARY.md` §八余九条照旧只报不修。CI 状态见 HANDOFF §9 本轮条与下方回填。
+**我没做的**：真机浏览器 E2E（无界面行为可验，理由见⑥）；**用真 Excel 打开确认**（本机无 Excel，我的证人只有 SheetJS 跨库读回与 zip 完整性，打开体验由用户那一次点击定）；`词汇表.xlsx` 未做多语言／未加数据校验下拉（用户没要，且加了就得同步守卫与生成器）。既有待办一律未动：#30 决斗（玩法刀⇒三道闸）、#42 提示两档（需那枚「都不发动」canonical 出口）、#41 只裁未做（默认关闭＝**换锚**）、#38 择机、#43 `tag`/`forced` 零消费者、#47 至今未裁、`PLAYER_GLOSSARY.md` §八余九条照旧只报不修。
+
+### 十、远端 CI 回填（本节末补，随回填提交走）
+
+**提交链与标签**：feat `9a36f6b` → docs 登记 `6faa1b8` → docs 登记自纠 `b503c71`；标签 `v2.8.15` 当时**只在本地**、还没推过任何人 ⇒ 用 `git tag -f -a` 把它从 `6faa1b8` 重挂到 `b503c71`（含校验和自纠），`git rev-parse v2.8.15^{}` 对账＝`b503c71`。**这里记一条手法**：重挂标签只在"尚未推送"时安全；一旦推出去就成了共享状态，只能补新标签、不许 `-f`。
+**推送**：直推 `git push origin master` 报 `Failed to connect to github.com:443 after 21059 ms`，同一时刻 `127.0.0.1:10808` 探测在听 ⇒ master（`1898b3e..b503c71`）与标签（`* [new tag] v2.8.15`）各用一次性 `git -c http.proxy=…` 推成；事后 `--local`/`--global` 的 `http.*` 键为空、`--system` 只有 `http.sslbackend=schannel` 与一条 Azure credential 键（均非代理）、环境变量干净。
+**CI #180**（run `36571087589`、sha `b503c71`、`event=push`）＝**Success**，四 job 全绿、**0 失败步骤**：`lint` 98s／`test (22)` 133s（Type check＋带覆盖率测试＋覆盖上传全过）／`test (24)` 63s（唯一非 success＝去重跳过的覆盖上传）／`build` 47s。**注解逐 job 量出来的**：`lint` 11 条＝10 条 react-hooks（4 conditional `useEffect`＋5 conditional `useMemo`＋1 missing dependency `cardTypeOrder`）＋1 条 runner「Node.js 20 is deprecated」；另外三个 job 各 1 条同一条弃用通知 ⇒ **合计 14 条全 warning、0 error**。**两处口径更正**（实测推翻记忆）：v2.8.14 那轮把这 11 条整份记成 react-hooks，实况含 1 条 runner 通知；CI 侧 react-hooks 注解 10 条 ≠ 本地 eslint 的 29 条遗留警告（GitHub 每个 check run 只回传部分），以后引用"警告数"必须指明是哪一侧。**新守卫确实在远端跑过**：远端 `scripts/` 列出 `make-glossary-xlsx.mjs` 5,522 字节与 `make-glossary-xlsx.test.mjs` 3,506 字节，`vitest.config.ts` 的 `include` 含 `scripts/**/*.test.mjs` ⇒ 两条矩阵腿都执行且没红。**产物尺寸对账**：远端 API 报 `词汇表.xlsx` **27,611 字节**＝本地同尺寸 ⇒ 「不加 `.gitattributes`」那次判断拿到一次真机验证（二进制没被换行改写）。**推标签仍只产生一条 run**＝"推标签触发 CI"的**第七次反证**（§12-59）；同批三条提交只触发 head sha 那条 run。**边界**：每文件用例数住在 job 日志，匿名 API 返回 404，从本机凭据铸 token 被常设规则禁止 ⇒ 远端证据形态＝同树同命令双腿地板全过＋零失败步骤，不是页面抄来的数字。
 
 
 
