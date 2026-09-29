@@ -43,8 +43,8 @@ README 停留在"131 例"、AGENTS 引用了已不存在的 status/ 模块、CHA
 
 ## Step 3 — CI 核验（browser-use，本机无 gh CLI）
 
-- 仓库 DJXD248/three-kingdoms-2.0（2.x 线）与 three-kingdoms-1.29（1.29 线）均 GitHub 私有；
-  未登录时 GitHub 返回 404 而非登录墙。
+- 仓库 `three-kingdoms-2.0`（2.x 线）**自 v2.8.7 起已由用户转为公开**（转公开前因私有仓库 Actions 额度耗尽而 job 全部跳过，见 HANDOFF §12-56②）；
+  `three-kingdoms-1.29`（1.29 线）仍为 GitHub 私有——未登录时 GitHub 对私有仓库返回 404 而非登录墙。
 - 路径：browser-use `navigate_page` 到 `https://github.com/DJXD248/<repo>/actions`，
   `evaluate_script` 枚举 `a[href*="/actions/runs/"]` 的 aria-label——形如 `Run N of CI ... completed successfully` 为绿，
   取本 sha 对应 run 的 run id 与 CI #。
