@@ -200,9 +200,9 @@ function main(): void {
   }
   if (args.skillStats) {
     // The expected roster must come from the pool the batch actually played
-    // with (v2.8.14 #39): it used to be hardcoded to the official ledger, so a
-    // --diy-fixture run listed 262 official rows and reported every sample
-    // skill as off-list/zero. Counts were right, the name list was wrong.
+    // with (v2.8.14 #39): it used to be hardcoded to the official ledger (39
+    // rows), so a --diy-fixture run printed those 39 as zeros and reported
+    // every sample skill as off-list. Counts were right, the name list was wrong.
     const roster = generalsForPoolSource(args.diyFixture ? 'diy-fixture' : undefined);
     console.log('  逐技能触发频次（计数=带技能标记的效果事件，键=将领模板id:技能名，双效果技能分计两次）:');
     for (const line of formatSkillTriggerStats(summary.skillTriggerCounts ?? {}, configuredSkillRows(roster))) {
