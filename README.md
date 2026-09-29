@@ -8,7 +8,7 @@ React + TypeScript 单页卡牌游戏。本仓库为主线开发仓库，与 `Qo
 npm install --include=optional --ignore-scripts   # 安装依赖
 npm run dev                                       # 本地开发服务器
 npm run check                                     # TypeScript 类型检查
-npm run test                                      # Vitest 单元测试（730 例 / 73 文件，2.8.11 时点；2.8.7 加 Excel 导入三态判别与候选保留 +7 例、2.8.8 加两把锁（写闸门＋录入面） +25 例、2.8.9 加仓库固定 DIY 样本与 poolSource 进料口 +12 例、2.8.10 加「留空身份可后续编辑」回归钉 +1 例、2.8.11 加「选择其一」两级门槛与置灰闭环 +19 例、复算后补整组门槛导出侧 +4 例，并撤销 2 例旧「整组拒录」断言）
+npm run test                                      # Vitest 单元测试（749 例 / 74 文件，2.8.12 时点；2.8.7 加 Excel 导入三态判别与候选保留 +7 例、2.8.8 加两把锁（写闸门＋录入面） +25 例、2.8.9 加仓库固定 DIY 样本与 poolSource 进料口 +12 例、2.8.10 加「留空身份可后续编辑」回归钉 +1 例、2.8.11 加「选择其一」两级门槛与置灰闭环 +19 例、复算后补整组门槛导出侧 +4 例，并撤销 2 例旧「整组拒录」断言、2.8.12 加导入「无变化跳过」与数值 0 往返保真 +19 例，其中含"权限优先于跳过"那条由第③闸查出的补钉）
 npm run test:coverage                             # 测试 + 覆盖率（含棘轮阈值门禁）
 npm run lint                                      # ESLint 检查
 npm run build                                     # 生产构建 -> dist/index.html（2.3.3 起不再内嵌 npm install；依赖缺失时显式报错指路）
