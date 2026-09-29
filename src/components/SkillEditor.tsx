@@ -11,6 +11,7 @@ import {
   buildTriggerOptionStrings,
   effectGroupHeaders,
   serializeEffectGroup,
+  serializeSkillGate,
   RUNTIME_TYPE_LIST,
   RUNTIME_TARGET_LIST,
 } from '../skills/skillExcelFormat';
@@ -124,7 +125,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       if (gEdit.meleeAtk != null) result.meleeAtk = gEdit.meleeAtk;
       if (gEdit.rangedAtk != null) result.rangedAtk = gEdit.rangedAtk;
     }
-    if (sEdit) result.skills = sEdit.map(s => ({ name: s.name, description: s.description, tag: s.tag, trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, forced: s.forced }));
+    if (sEdit) result.skills = sEdit.map(s => ({ name: s.name, description: s.description, tag: s.tag, trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced }));
     return result;
   }, [generalEdits, skillEdits]);
 
@@ -185,7 +186,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     }
     setSelectedGeneral(g);
     const edited = getEditedGeneral(g);
-    setEditingSkills(edited.skills.map(s => ({ name: s.name, description: s.description, tag: s.tag, trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, forced: s.forced })));
+    setEditingSkills(edited.skills.map(s => ({ name: s.name, description: s.description, tag: s.tag, trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced })));
     setEditName(edited.name);
     setEditFaction(edited.faction);
     setEditHp(edited.hp);
@@ -444,6 +445,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           trigger: s.trigger,
           effects: s.effects,
           effectMode: s.effectMode,
+          conditions: s.conditions,
           forced: s.forced,
         })),
       }, developerMode ? 'official' : 'DIY');
@@ -500,6 +502,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           trigger: s.trigger,
           effects: s.effects,
           effectMode: s.effectMode,
+          conditions: s.conditions,
           forced: s.forced,
         })),
       }, developerMode ? 'official' : 'DIY');
@@ -540,7 +543,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // Multi-effect skills: sub-effects occupy additional columns within the skill row.
   // Effect group (7 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 | 门槛 — 只有填了效果类型(+数值)的效果
   // 才会被技能编译器接入对局结算（见 skills/skillCompiler.ts）；门槛=该效果的发动条件（可空）。
-  // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 效果1标注 | 效果1触发 | 效果1效果类型 | 效果1数值 | 效果1目标 | 效果1描述 | ... | 设定备注
+  // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 技能门槛 | 效果1标注 | 效果1触发 | 效果1效果类型 | 效果1数值 | 效果1目标 | 效果1描述 | 效果1门槛 | ... | 设定备注
+  // v2.8.11 刀2：新增固定列「技能门槛」＝整组门槛（技能级）；效果组第 7 列
+  // 「效果N门槛」＝逐项门槛，两者是两级（先整组、再逐项）。
   const handleExport = useCallback(async () => {
     try {
       const factionOrder: Faction[] = ['魏', '蜀', '吴', '群', '晋'];
@@ -568,7 +573,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         const ws = wb.addWorksheet(faction);
 
         // Build header
-        const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述'];
+        const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述', '技能门槛'];
         for (let e = 0; e < maxEffects; e++) header.push(...effectGroupHeaders(e + 1));
         header.push('设定备注');
 
@@ -577,10 +582,11 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2D1B0E' } };
           c.font = { bold: true, color: { argb: 'FFFFD700' } };
         });
-        const gateColIdx = header.findIndex(h => h.endsWith('门槛'));
-        if (gateColIdx >= 0) {
-          hdr.getCell(gateColIdx + 1).note = { texts: [{ text: GATE_SYNTAX_HINT }] };
-        }
+        // 两个门槛列（整组「技能门槛」＋逐效果「效果N门槛」）读的是同一个解析器，
+        // 写法提示就同一句——只挑第一列贴会把逐效果那列的批注挤掉（v2.8.11 复算查出）。
+        header.forEach((h, i) => {
+          if (h.endsWith('门槛')) hdr.getCell(i + 1).note = { texts: [{ text: GATE_SYNTAX_HINT }] };
+        });
 
         // Data rows — one row per skill
         let dataRowIdx = 1; // tracks row number (1-indexed, after header)
@@ -608,6 +614,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               triggerToStr(sk.trigger),
               sk.effectMode === 'choice' ? '选择其一' : sk.effectMode === 'all' ? '全部生效' : '无',
               sk.description || '无',
+              serializeSkillGate(sk.conditions),
             );
 
             // Sub-effects (7-col groups: runtime fields + 发动门槛)
@@ -640,16 +647,17 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             ws.getCell(r, 9).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
             ws.getCell(r, 10).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${modeList}"`] };
             for (let ei = 0; ei < maxEffects; ei++) {
-              // v3 group layout (1-based): 标注=12+7n | 触发=13+7n | 类型=14+7n | 数值=15+7n | 目标=16+7n | 描述=17+7n | 门槛=18+7n
-              ws.getCell(r, 13 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
-              ws.getCell(r, 14 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
-              ws.getCell(r, 16 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
+              // v3 group layout (1-based, 12 个固定列后): 标注=13+7n | 触发=14+7n |
+              // 类型=15+7n | 数值=16+7n | 目标=17+7n | 描述=18+7n | 门槛=19+7n
+              ws.getCell(r, 14 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
+              ws.getCell(r, 15 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
+              ws.getCell(r, 17 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
             }
           }
         }
 
         // Column widths
-        const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40];
+        const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40, 26];
         for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40, 26);
         widths.push(30);
         widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
@@ -899,8 +907,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           <div className="px-6 py-3 border-b border-purple-800/20 bg-purple-900/5 flex-shrink-0">
             <div className="mb-2 rounded-lg bg-black/30 border border-purple-800/20 p-3 text-xs text-purple-300/70 space-y-1">
               <p className="font-bold text-green-300">📤 导出格式（每行一个技能，可直接再导入）：</p>
-              <p>将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 效果1标注 | 效果1触发 | 效果1类型 | 效果1数值 | 效果1目标 | 效果1描述 | 效果1门槛 | ...</p>
-              <p>同一将领的多个技能占多行，将领属性仅第一行填写。<span className="text-green-400">含下拉菜单和设定备注。</span>旧版3列/6列效果组的文件仍兼容导入（旧文件没有门槛栏，导入后该效果按「无门槛」处理）。</p>
+              <p>将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | <span className="text-emerald-300">技能门槛</span> | 效果1标注 | 效果1触发 | 效果1类型 | 效果1数值 | 效果1目标 | 效果1描述 | 效果1门槛 | ...</p>
+              <p>同一将领的多个技能占多行，将领属性仅第一行填写。<span className="text-green-400">含下拉菜单和设定备注。</span>旧版3列/6列效果组的文件仍兼容导入（旧文件没有门槛栏，导入后按「无门槛」处理；也没有「技能门槛」列时整组门槛＝无）。</p>
+              <p><span className="text-emerald-300">🚪 两级门槛：</span>「技能门槛」＝整组门槛（先判，不满足整条技能这一刻不响）；「效果N门槛」＝逐项门槛（后判，「选择其一」里不满足的选项会置灰并写明原因）。</p>
               <p><span className="text-emerald-300">⚡ 结构化效果：</span>效果组中填写<span className="text-emerald-300">效果类型（摸牌/伤害）+ 数值</span>后，该效果才会在对局中被引擎真实结算；不填＝纯描述。</p>
               <p className="text-amber-300">🚪 门槛栏（每个效果一栏，可留空）：{GATE_SYNTAX_HINT}</p>
               <p className="font-bold text-purple-200 mt-1.5">📋 简单格式（也支持导入）：</p>
@@ -1335,13 +1344,15 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                                 {(Object.entries(effectModeLabels) as [SkillEffectMode, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                               </select>
                             </div>
-                            {/* 选择其一 × 门槛：编译期整组拒录（CONDITION_CHOICE_UNSUPPORTED），必须让录入者当场看见 */}
-                            {skill.effectMode === 'choice' && skill.effects!.some(e => (e.conditions?.length ?? 0) > 0) && (
-                              <p className="text-[10px] text-red-300 leading-tight">
-                                ⚠ 「选择其一」暂时不能配门槛：只要任一选项写了门槛，这条技能整条不会发动（编译时诚实跳过，不会假装生效）。
-                                要么把模式改成「全部生效」，要么先把门槛清空。
-                              </p>
-                            )}
+                            {/* v2.8.11 刀2：整组门槛（技能级）。两级判定顺序=先整组、
+                                再逐项；「选择其一」不过门槛的选项照样列出、置灰、写明原因。 */}
+                            <GateEditor conditions={skill.conditions} onChange={c => updateSkill({ conditions: c })}
+                              label="🚪 整组门槛" />
+                            <p className="text-[10px] text-sky-300/70 leading-tight">
+                              先判「整组门槛」（不满足则这一刻整条技能不响），再判每个{skill.effectMode === 'choice' ? '选项' : '效果'}自己的门槛。
+                              {skill.effectMode === 'choice' && ' 选项门槛不满足时，该选项照样列出但置灰，并写明不满足什么。'}
+                              若所有选项都不过门槛，这一刻不会弹选择窗（没得可选的窗会把牌桌冻住）。
+                            </p>
                             {skill.effects!.map((eff, ei) => (
                               <div key={eff.id} className="rounded-lg border border-orange-800/25 bg-orange-950/10 p-3 space-y-1.5 ml-2">
                                 <div className="flex items-center justify-between">
@@ -1379,9 +1390,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                           </button>
                         )}
                         {hasEffects && (
-                          <button onClick={() => updateSkill({ effects: undefined, effectMode: undefined })}
-                            className="w-full py-1 rounded text-[10px] text-gray-500/50 hover:text-gray-300 hover:bg-gray-900/20 transition-all">
-                            切换为单效果模式（将清除所有子效果）
+                          <button onClick={() => updateSkill({ effects: undefined, effectMode: undefined, conditions: undefined })}
+                            className="w-full py-1 rounded text-[10px] text-gray-500/50 hover:text-gray-300 hover:bg-gray-900/20 transition-all"
+                            title="单效果模式下没有整组门槛的录入面，切过去会连门槛一起清掉，不留看不见的门槛">
+                            切换为单效果模式（将清除所有子效果与整组门槛）
                           </button>
                         )}
                       </div>

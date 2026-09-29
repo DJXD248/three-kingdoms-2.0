@@ -299,6 +299,7 @@ export function buildEditorActions(
           trigger: skill.trigger,
           effects: skill.effects,
           effectMode: skill.effectMode,
+          conditions: skill.conditions,
           forced: skill.forced,
         }));
       }

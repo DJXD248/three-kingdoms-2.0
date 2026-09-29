@@ -88,6 +88,16 @@ export interface EngineState {
 export interface PendingChoiceOption {
   label: string;
   events: GameEvent[];
+  /**
+   * v2.8.11 刀2「选择其一」的门槛：false=这一刻这一项不过**逐项门槛**，
+   * 置灰可见并注明 `gateText` 原因（用户口径①：技能信息完全公开，不藏）。
+   * 缺省（undefined）=可用——包括没有门槛的选择组，v2.8.10 之前一字未变。
+   * 求值只在开窗那一刻做一次并冻结进录像态：决策时点=结算时点，之后世界
+   * 怎么变都不重算（与 events 同一套延后结算契约）。
+   */
+  enabled?: boolean;
+  /** 门槛的大白话原文（如「手牌≤2」），只在 enabled=false 时写入。 */
+  gateText?: string;
 }
 
 export interface PendingChoice {

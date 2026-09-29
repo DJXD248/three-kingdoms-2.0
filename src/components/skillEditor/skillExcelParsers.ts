@@ -2,10 +2,11 @@
 // 全部为无状态纯函数：输入行数据，输出编辑条目；不触碰组件状态或 store。
 import {
   allGenerals, General, Faction, SkillTag, allSkillTags,
-  SkillTriggerConfig, SkillEffect, SkillEffectMode,
+  SkillTriggerConfig, SkillEffect, SkillEffectMode, SkillCondition,
 } from '../../data/generals';
 import {
   readTriggerCell, detectEffectGroupWidth, parseEffectGroup,
+  SKILL_GATE_HEADER, detectEffectGroupStart, parseSkillGate,
 } from '../../skills/skillExcelFormat';
 
 /** 编辑器与导入共用的技能条目类型（原为组件内 `typeof editingSkills`，仅类型层面替换）。 */
@@ -16,6 +17,8 @@ export interface SkillEditEntry {
   trigger?: SkillTriggerConfig;
   effects?: SkillEffect[];
   effectMode?: SkillEffectMode;
+  /** v2.8.11 刀2：整组门槛（Excel 固定列「技能门槛」）。逐项门槛挂在各效果上。 */
+  conditions?: SkillCondition[];
   forced?: boolean;
 }
 
@@ -158,6 +161,10 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
   const noteColIndex = header.findIndex(h => String(h || '').trim() === '设定备注');
   const effectEndExclusive = noteColIndex === -1 ? header.length : noteColIndex; // don't parse 备注列
   const groupWidth = detectEffectGroupWidth(header); // 3 (legacy) | 6 (runtime) | 7 (runtime + 门槛)
+  // v2.8.11 刀2：效果组起点从表头认（旧导出=11，含「技能门槛」列的新导出=12），
+  // 「技能门槛」列按表头定位；旧文件没有这一列⇒整组门槛=无（逐字旧行为）。
+  const groupStart = detectEffectGroupStart(header);
+  const skillGateCol = header.findIndex(h => String(h || '').trim() === SKILL_GATE_HEADER);
   const dataRows = rows.slice(1); // skip header
   const entries: { general: General; gEdit: Record<string,unknown>; skills: SkillEditEntry[] }[] = [];
   const parseWarnings: string[] = [];
@@ -269,14 +276,25 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
     const effectMode = (sMode === '选择其一' || sMode === 'choice') ? 'choice' as SkillEffectMode
       : (sMode === '全部生效' || sMode === 'all') ? 'all' as SkillEffectMode : undefined;
 
+    // v2.8.11 刀2：整组门槛（「技能门槛」列）。这一列不存在=旧文件=没有整组门槛。
+    const groupGate = skillGateCol >= 0
+      ? parseSkillGate(clean(String(row[skillGateCol] || '')))
+      : { conditions: undefined as SkillCondition[] | undefined, unknown: [] as string[] };
+    if (groupGate.unknown.length > 0) {
+      const name = currentGeneral?.name || currentUnresolved?.name || '未知';
+      for (const u of groupGate.unknown) {
+        parseWarnings.push(`${name}·${sName} 技能门槛：这句没看懂 → ${u}`);
+      }
+    }
+
     // Parse sub-effects from col 11 onwards (groups of 3 for legacy files,
     // 6 — 标注/触发/效果类型/数值/目标/描述 — or 7 — v2 + 门槛 — for current exports)
     const effects: SkillEffect[] = [];
-    let col = 11;
+    let col = groupStart;
     while (col + groupWidth - 1 < effectEndExclusive) {
       const parsed = parseEffectGroup(row, col, groupWidth);
       if (parsed) {
-        const seq = `效果${Math.floor((col - 11) / groupWidth) + 1}`;
+        const seq = `效果${Math.floor((col - groupStart) / groupWidth) + 1}`;
         // 整组只有门槛/只有看不懂的触发：这不是一個效果，绝不凭空造一个空效果，只如实回显。
         if (parsed.orphanGate) {
           const name = currentGeneral?.name || currentUnresolved?.name || '未知';
@@ -303,6 +321,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
         effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
         effects: effects.length > 0 ? effects : undefined,
         description: sDesc || undefined,
+        conditions: groupGate.conditions,
       });
     } else if (currentUnresolved) {
       currentUnresolved.skills.push({
@@ -310,6 +329,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
         effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
         effects: effects.length > 0 ? effects : undefined,
         description: sDesc || undefined,
+        conditions: groupGate.conditions,
       });
       currentUnresolved.rowEnd = rowIndex + 1; // 1-based
     }

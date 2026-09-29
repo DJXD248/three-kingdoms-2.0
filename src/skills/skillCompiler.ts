@@ -29,14 +29,15 @@
  *     through the canonical CHOOSE_OPTION action. A choice skill whose
  *     runtime effects sit on different triggers degenerates honestly into
  *     independent definitions (nothing to choose between at one moment).
- *   - 门槛 (2.8.3, 刀 B): per-effect `conditions` are passed straight through
- *     onto the compiled definition — the evaluator (skills/skillConditions.ts)
- *     and both consumers (SkillTriggerBridge / turnEndSkills) already existed
- *     since 2.7.3, so this cut adds input surface, not gameplay. A choice
- *     group carrying any condition refuses to compile
- *     (CONDITION_CHOICE_UNSUPPORTED): one choice definition has one
- *     conditions slot, and silently un-gating the "looks unconditional"
- *     options would invent gameplay.
+ *   - 门槛 (2.8.3, 刀 B; 2.8.11, 刀 2): per-effect `conditions` are passed
+ *     straight through onto the compiled definition — the evaluator
+ *     (skills/skillConditions.ts) and both consumers (SkillTriggerBridge /
+ *     turnEndSkills) already existed since 2.7.3, so that cut added input
+ *     surface, not gameplay. 刀 2 gives a choice group its two levels: the
+ *     skill-level 整组门槛 lands on the definition's single conditions slot
+ *     (evaluated before any option is built), and each effect carries its own
+ *     逐项门槛 so the offer can grey out — with the reason visible — the
+ *     branches that do not meet their gate (用户 2026-09-29 口径①/③).
  */
 
 import type { General, Skill, SkillCondition, SkillEffect, SkillTriggerType } from '../data/generals';
@@ -95,11 +96,7 @@ export interface SkillSkip {
     | 'TRIGGER_UNSUPPORTED'
     | 'TRIGGER_SUBTYPE_UNSUPPORTED'
     | 'NO_RUNTIME_PAYLOAD'
-    | 'EFFECT_TYPE_UNSUPPORTED'
-    /** v2.8.3：门槛挂在单条效果上，而"选择其一"把同触发的多条效果并成一张
-     *  定义（只有一个 conditions 槽）。带门槛的选择组整组不编译——宁可不发，
-     *  绝不把"有条件的选择"偷偷当成"没条件"来发。 */
-    | 'CONDITION_CHOICE_UNSUPPORTED';
+    | 'EFFECT_TYPE_UNSUPPORTED';
 }
 
 export interface CompileResult {
@@ -133,6 +130,16 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
     // choice option label source (2.6.3) — display-only, never matched on.
     description: effect.description,
   };
+}
+
+/** v2.8.11 刀2：两级门槛并成一槽。求值本来就是 AND（全部成立才响），整组
+ *  门槛排前面只影响可读顺序，不改变语义。两侧都空⇒undefined。 */
+function mergeGates(
+  groupGate: SkillCondition[] | undefined,
+  effectGate: SkillCondition[] | undefined,
+): SkillCondition[] | undefined {
+  const out = [...(groupGate ?? []), ...(effectGate ?? [])];
+  return out.length > 0 ? out : undefined;
 }
 
 /** One runtime effect that survived every gate, pre-grouping. */
@@ -264,7 +271,9 @@ export function compileSkill(
     // these two fields let resolvers/UI read the parts without parsing.
     effectId: c.effect.id,
     turnSubType: c.turnSubType,
-    conditions: c.conditions,
+    // v2.8.11 刀2：单效果定义把两级门槛并成一槽（AND 语义，整组在前）。
+    // 两侧都空⇒undefined，v2.8.10 之前的输出逐字不变。
+    conditions: mergeGates(skill.conditions, c.conditions),
   });
 
   const candidates: CompiledEffect[] = [];
@@ -292,26 +301,21 @@ export function compileSkill(
         definitions.push(singleDefinition(group[0]));
         continue;
       }
-      if (group.some(c => c.conditions)) {
-        // 选择其一 × 门槛：一张选择定义只有一个 conditions 槽，逐效果门槛
-        // 表达不了。整组拒编译并如实报告（用户 2026-09-27 口径：本轮不接
-        // "选择其一"的门槛），绝不解禁其中"看起来无条件"的那几条。
-        for (const c of group) {
-          skipped.push({ skillName: skill.name, effectId: c.effect.id, reason: 'CONDITION_CHOICE_UNSUPPORTED' });
-        }
-        continue;
-      }
       definitions.push({
         id: `${ownerKey}:${skill.name}:choice`,
         name: skill.name,
         trigger: group[0].mapped,
         description: skill.description ?? '',
-        effects: group.map(c => c.data),
+        // v2.8.11 刀2：逐项门槛随各自的效果数据走（抉择窗逐选项求值），
+        // 整组门槛走定义级 conditions 槽（桥接层身份判定之后、造事件之前）。
+        // 无门槛的选择组一字未变：conditions 两侧都是 undefined。
+        effects: group.map(c => (c.conditions ? { ...c.data, conditions: c.conditions } : c.data)),
         sourceGeneralId: runtimeGeneralId,
         damageTypeFilter: group[0].damageTypeFilter,
         cardFilter: group[0].cardFilter,
         turnSubType: group[0].turnSubType,
         choiceMode: true,
+        conditions: skill.conditions?.length ? skill.conditions : undefined,
       });
     }
   } else {

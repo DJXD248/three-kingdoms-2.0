@@ -227,6 +227,14 @@ export interface Skill {
   trigger?: SkillTriggerConfig;       // 单效果技能的触发时机（向后兼容）
   effects?: SkillEffect[];            // 多效果列表
   effectMode?: SkillEffectMode;       // 多效果模式
+  /**
+   * 整组门槛（v2.8.11 刀2）：挂在**技能**上，一条门槛判整组；与效果级
+   * `SkillEffect.conditions`（逐项门槛）是两级——**先判整组、再判逐项**
+   * （用户 2026-09-29 口径③）。整组不过⇒这一刻整技能不响；整组过而某些
+   * 逐项不过⇒那些逐项在抉择窗里置灰可见（口径①：技能信息完全公开）。
+   * 求值同 skills/skillConditions.ts 单点纯函数，缺省=没有整组门槛。
+   */
+  conditions?: SkillCondition[];
   forced?: boolean;                   // 强制发动：满足触发条件后自动发动，需满足代价才发动，否则不发动
 }
 

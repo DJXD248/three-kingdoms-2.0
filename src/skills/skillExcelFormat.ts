@@ -21,6 +21,7 @@ import type {
   SkillTriggerType,
   SkillEffect,
   SkillRuntimeEffect,
+  SkillCondition,
   DeploySubType,
   TurnSubType,
   DamageSubType,
@@ -215,6 +216,36 @@ export function detectEffectGroupWidth(header: unknown[]): EffectGroupWidth {
   const cells = header.map(h => String(h ?? '').trim());
   if (cells.some(h => /^效果\d+门槛/.test(h))) return 7;
   return cells.some(h => /^效果\d+效果类型$/.test(h)) ? 6 : 3;
+}
+
+/**
+ * v2.8.11 刀2：固定列「技能门槛」＝**整组门槛**（技能级，先判；不过则这一刻
+ * 整条技能不响）。效果组第 7 列「效果N门槛」是**逐项门槛**（后判）。
+ */
+export const SKILL_GATE_HEADER = '技能门槛';
+
+/**
+ * 效果组起始列（0-based），从表头认而不是写死：v2.8.10 及更早的导出里固定列
+ * 是 11 列（组从 11 开始），v2.8.11 起插入「技能门槛」⇒ 组从 12 开始。
+ * 认不出「效果1标注」时回退 11（=旧版逐字行为）。
+ */
+export function detectEffectGroupStart(header: unknown[]): number {
+  const idx = header.findIndex(h => /^效果1标注$/.test(String(h ?? '').trim()));
+  return idx >= 0 ? idx : 11;
+}
+
+/** Export cell for the 整组门槛 column. */
+export function serializeSkillGate(conditions?: SkillCondition[]): string {
+  return gateConditionsToText(conditions);
+}
+
+/** Import cell for the 整组门槛 column（读不懂的碎片由调用方回显，绝不静默丢）。 */
+export function parseSkillGate(text: string): { conditions?: SkillCondition[]; unknown: string[] } {
+  const gate = parseGateText(text);
+  return {
+    conditions: gate.conditions.length > 0 ? gate.conditions : undefined,
+    unknown: gate.unknown,
+  };
 }
 
 /** Fields parsed out of one effect column group (id assigned by caller). */

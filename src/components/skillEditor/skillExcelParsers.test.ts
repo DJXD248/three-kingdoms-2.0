@@ -65,6 +65,55 @@ describe('parseRowPerSkillSheet · 门槛栏导入', () => {
   });
 });
 
+// ── v2.8.11 刀2：新增固定列「技能门槛」＝整组门槛；效果组起点改为按表头认 ──
+describe('parseRowPerSkillSheet · 技能门槛（整组门槛）列', () => {
+  const v4Header = [...FIXED, '技能门槛',
+    '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛',
+    '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述', '效果2门槛',
+    '设定备注'];
+
+  it('整组门槛落在技能上，逐项门槛仍落在各自效果上（两级各归各位）', () => {
+    const row = [...SKILL_CELL, '体力≤1',
+      '选项A', '回合结束时', '摸牌', 1, '自身', '摸一张', '手牌=0',
+      '选项B', '回合结束时', '回复体力', 1, '自身', '回复1点', '手牌≥2', ''];
+    const { entries, parseWarnings, unresolved } = parseRowPerSkillSheet([v4Header, row]);
+    expect(parseWarnings).toEqual([]);
+    expect(unresolved).toEqual([]);
+    const sk = entries[0].skills[0];
+    expect(sk.conditions).toEqual([{ metric: 'GENERAL_HP', op: 'LTE', value: 1 }]);
+    expect(sk.effects![0].conditions).toEqual([{ metric: 'HAND_COUNT', op: 'EQ', value: 0 }]);
+    expect(sk.effects![1].conditions).toEqual([{ metric: 'HAND_COUNT', op: 'GTE', value: 2 }]);
+  });
+
+  it('技能门槛写「无」＝没有整组门槛', () => {
+    const row = [...SKILL_CELL, '无',
+      '选项A', '回合结束时', '摸牌', 1, '自身', '摸一张', '无',
+      '选项B', '回合结束时', '回复体力', 1, '自身', '回复1点', '无', ''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([v4Header, row]);
+    expect(parseWarnings).toEqual([]);
+    expect(entries[0].skills[0].conditions).toBeUndefined();
+    expect(entries[0].skills[0].effects).toHaveLength(2);
+  });
+
+  it('技能门槛读不懂：逐条原文报出来，绝不静默丢弃', () => {
+    const row = [...SKILL_CELL, '等对面先动手',
+      '选项A', '回合结束时', '摸牌', 1, '自身', '摸一张', '无', '','','','','','',''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([v4Header, row]);
+    expect(entries[0].skills[0].conditions).toBeUndefined();
+    expect(parseWarnings).toHaveLength(1);
+    expect(parseWarnings[0]).toContain('技能门槛');
+    expect(parseWarnings[0]).toContain('等对面先动手');
+  });
+
+  it('旧版 11 固定列（没有技能门槛列）照旧导入，整组门槛＝无', () => {
+    const row = [...SKILL_CELL, '效果A', '回合结束时', '回复体力', 1, '自身', '回复1点体力', '手牌=1', ''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([v3Header, row]);
+    expect(parseWarnings).toEqual([]);
+    expect(entries[0].skills[0].conditions).toBeUndefined();
+    expect(entries[0].skills[0].effects![0].conditions).toEqual([{ metric: 'HAND_COUNT', op: 'EQ', value: 1 }]);
+  });
+});
+
 describe('parseRowPerSkillSheet · 触发栏严格读法', () => {
   it('半截细分「受到伤害后→攻击」不猜：效果照留，触发不填，原文报出来', () => {
     const row = [...SKILL_CELL, '效果A', '受到伤害后→攻击', '伤害', 1, '被作用者', '造成1点伤害', '无', ''];

@@ -6,9 +6,12 @@ import { parseGateText, gateConditionsToText } from '../../skills/skillGateText'
 
 const gateInputCls = "flex-1 px-2 py-1 rounded bg-black/50 border border-sky-800/30 text-sky-100 text-[11px] focus:outline-none focus:border-sky-500";
 
-export function GateEditor({ conditions, onChange }: {
+export function GateEditor({ conditions, onChange, label = '🚪 发动门槛' }: {
   conditions?: SkillCondition[];
   onChange: (c: SkillCondition[] | undefined) => void;
+  /** v2.8.11 刀2：同一个组件既写「整组门槛」（技能级）也写「逐项门槛」（效果级），
+   *  措辞由调用方给；缺省=效果级那句原文，v2.8.10 之前逐字不变。 */
+  label?: string;
 }) {
   const canonical = gateConditionsToText(conditions);
   const [draft, setDraft] = useState(() => ({ text: canonical, synced: conditions }));
@@ -31,7 +34,7 @@ export function GateEditor({ conditions, onChange }: {
   return (
     <div className="rounded-lg border border-sky-900/40 bg-sky-950/15 p-2 space-y-1">
       <div className="flex items-center gap-2">
-        <label className="text-[10px] text-sky-400/70 font-bold whitespace-nowrap">🚪 发动门槛</label>
+        <label className="text-[10px] text-sky-400/70 font-bold whitespace-nowrap">{label}</label>
         <input type="text" value={draft.text} onChange={e => handleText(e.target.value)}
           placeholder="留空＝没门槛。例：手牌≤2，牌堆≥5" className={gateInputCls} />
         {hasText && (

@@ -47,6 +47,11 @@ export class ChooseOptionResolver implements ActionResolver {
     }
 
     const option = pending.options[optionIndex];
+    // 刀2 (v2.8.11)：置灰的分支看得见但点不动——门槛在开窗那一刻冻结进状态，
+    // 这里从状态里读同一份事实，绝不再判一次世界。
+    if (option.enabled === false) {
+      return [rejected(action, 'CHOICE_OPTION_LOCKED')];
+    }
     const resolvedData: ChoiceResolvedData = {
       choiceKey: pending.key,
       chooserPlayerId: pending.playerId,

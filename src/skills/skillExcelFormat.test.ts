@@ -9,6 +9,10 @@ import {
   parseRuntimeTarget,
   parseRuntimeValue,
   detectEffectGroupWidth,
+  detectEffectGroupStart,
+  SKILL_GATE_HEADER,
+  serializeSkillGate,
+  parseSkillGate,
   effectGroupHeaders,
   parseEffectGroup,
   serializeEffectGroup,
@@ -18,7 +22,7 @@ import {
   RUNTIME_TARGET_LIST,
   SETTLEABLE_RUNTIME_TYPE_LIST,
 } from './skillExcelFormat';
-import type { SkillEffect, SkillTriggerConfig } from '../data/generals';
+import type { SkillCondition, SkillEffect, SkillTriggerConfig } from '../data/generals';
 import { compileSkill } from './skillCompiler';
 
 describe('skillExcelFormat: cell cleaning', () => {
@@ -316,5 +320,45 @@ describe('skillExcelFormat: Excel-parsed payloads reach the runtime compiler', (
     const { definitions, skipped } = compileSkill({ id: 'g1', name: '测试' }, skill);
     expect(definitions).toHaveLength(0);
     expect(skipped[0].reason).toBe('NO_RUNTIME_PAYLOAD');
+  });
+});
+
+// v2.8.11 刀2 复算查出的账面缺口：整组门槛的**导出侧**此前只有导入侧的测试。
+describe('skillExcelFormat — 「技能门槛」列（v2.8.11 整组门槛，导出侧）', () => {
+  it('exports the group gate as one plain-language cell and reads it back identically', () => {
+    expect(SKILL_GATE_HEADER).toBe('技能门槛');
+    const gate: SkillCondition[] = [{ metric: 'HAND_COUNT', op: 'GTE', value: 9 }];
+    const cell = serializeSkillGate(gate);
+    expect(cell).toBe('手牌≥9');
+    const back = parseSkillGate(cell);
+    expect(back.conditions).toEqual(gate);
+    expect(back.unknown).toEqual([]);
+    // 「写法→结构→写法」往返：读回来的形状再导出必须逐字相同
+    expect(serializeSkillGate(back.conditions)).toBe(cell);
+  });
+
+  it('exports 无 for an empty gate and parses it as no gate at all', () => {
+    expect(serializeSkillGate(undefined)).toBe('无');
+    expect(serializeSkillGate([])).toBe('无');
+    for (const cell of ['无', '', '   ']) {
+      const parsed = parseSkillGate(cell);
+      expect(parsed.conditions).toBeUndefined();
+      expect(parsed.unknown).toEqual([]);
+    }
+  });
+
+  it('reports an unparseable clause instead of silently widening the gate', () => {
+    const parsed = parseSkillGate('手牌≥9，血气方刚');
+    expect(parsed.conditions).toEqual([{ metric: 'HAND_COUNT', op: 'GTE', value: 9 }]);
+    expect(parsed.unknown).toEqual(['血气方刚']);
+  });
+
+  it('detects the effect-group start from the header, falling back to the legacy 11 columns', () => {
+    const v4 = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述', SKILL_GATE_HEADER, '效果1标注'];
+    expect(detectEffectGroupStart(v4)).toBe(12);
+    const v3 = [...v4.slice(0, 11), '效果1标注'];
+    expect(detectEffectGroupStart(v3)).toBe(11);
+    // 认不出「效果1标注」＝回退 11（旧档逐字行为）
+    expect(detectEffectGroupStart(['将领名称', '势力'])).toBe(11);
   });
 });

@@ -541,22 +541,84 @@ describe('skillCompiler · 发动门槛透传', () => {
     expect(definitions[0].conditions).toBeUndefined();
   });
 
-  it('refuses to compile a 选择其一 group where any option carries a gate', () => {
-    const rt = { type: 'HEAL', value: 1, target: 'SELF' } as const;
+  it('v2.8.11 刀2：选择其一带逐项门槛照常编译，门槛骑在各自效果上', () => {
     const { definitions, skipped } = compileSkill(
       general(),
       skill({
         effectMode: 'choice',
         effects: [
-          { id: 'a', trigger: { type: 'onTurnEnd' }, runtime: rt },
+          { id: 'a', trigger: { type: 'onTurnEnd' }, runtime: { type: 'HEAL', value: 1, target: 'SELF' } },
           { id: 'b', trigger: { type: 'onTurnEnd' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' }, conditions: [{ metric: 'HAND_COUNT', op: 'LTE', value: 2 }] },
         ],
       }),
       'g1',
     );
-    expect(definitions).toHaveLength(0);
-    expect(skipped.map(s => s.reason)).toEqual(['CONDITION_CHOICE_UNSUPPORTED', 'CONDITION_CHOICE_UNSUPPORTED']);
-    expect(skipped.map(s => s.effectId).sort()).toEqual(['a', 'b']);
+    expect(skipped).toHaveLength(0);
+    expect(definitions).toHaveLength(1);
+    const [def] = definitions;
+    expect(def.choiceMode).toBe(true);
+    // 逐项门槛：只挂在那一条效果上，另一条一字未动（无 conditions 键）。
+    expect(def.effects[0]).toEqual({ type: 'HEAL', value: 1, target: 'SELF' });
+    expect(def.effects[1]!.conditions).toEqual([{ metric: 'HAND_COUNT', op: 'LTE', value: 2 }]);
+    // 没写整组门槛⇒定义级槽仍空（整组不拦）。
+    expect(def.conditions).toBeUndefined();
+  });
+
+  it('v2.8.11 刀2：整组门槛落在选择定义的 conditions 槽，与逐项门槛分两级', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'choice',
+        conditions: [{ metric: 'GENERAL_HP', op: 'LTE', value: 1 }],
+        effects: [
+          { id: 'a', trigger: { type: 'onTurnEnd' }, runtime: { type: 'HEAL', value: 1, target: 'SELF' } },
+          { id: 'b', trigger: { type: 'onTurnEnd' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' }, conditions: [{ metric: 'HAND_COUNT', op: 'EQ', value: 0 }] },
+        ],
+      }),
+      'g1',
+    );
+    expect(definitions[0].conditions).toEqual([{ metric: 'GENERAL_HP', op: 'LTE', value: 1 }]);
+    expect(definitions[0].effects[1]!.conditions).toEqual([{ metric: 'HAND_COUNT', op: 'EQ', value: 0 }]);
+    expect(definitions[0].effects[0]!.conditions).toBeUndefined();
+  });
+
+  it('v2.8.11 刀2：单效果定义把两级门槛并成一槽，整组在前（AND 语义）', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({
+        conditions: [{ metric: 'GENERAL_HP', op: 'LTE', value: 1 }],
+        effects: [{
+          id: 'e1',
+          trigger: { type: 'onDamageTaken' },
+          runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+          conditions: [{ metric: 'HAND_COUNT', op: 'EQ', value: 1 }],
+        }],
+      }),
+      'g1',
+    );
+    expect(definitions[0].conditions).toEqual([
+      { metric: 'GENERAL_HP', op: 'LTE', value: 1 },
+      { metric: 'HAND_COUNT', op: 'EQ', value: 1 },
+    ]);
+  });
+
+  it('无门槛的选择组形状与 v2.8.10 逐字一致（不多不少一个键）', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'choice',
+        effects: [
+          { id: 'a', trigger: { type: 'onTurnEnd' }, runtime: { type: 'HEAL', value: 1, target: 'SELF' } },
+          { id: 'b', trigger: { type: 'onTurnEnd' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } },
+        ],
+      }),
+      'g1',
+    );
+    expect(definitions[0].effects).toEqual([
+      { type: 'HEAL', value: 1, target: 'SELF' },
+      { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+    ]);
+    expect(definitions[0].conditions).toBeUndefined();
   });
 
   it('a gated option that stands alone still compiles (no choice group formed)', () => {

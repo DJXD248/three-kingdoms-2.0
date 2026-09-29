@@ -1,4 +1,4 @@
-import type { Faction, General, SkillEffect, SkillEffectMode, SkillTag, SkillTriggerConfig } from '../data/generals';
+import type { Faction, General, SkillCondition, SkillEffect, SkillEffectMode, SkillTag, SkillTriggerConfig } from '../data/generals';
 import { isAcceptableAuthoredRecord, stripFrozenFields } from '../domain/generalProvenance';
 
 export type SkillEdit = {
@@ -8,6 +8,8 @@ export type SkillEdit = {
   trigger?: SkillTriggerConfig;
   effects?: SkillEffect[];
   effectMode?: SkillEffectMode;
+  /** v2.8.11 刀2：整组门槛（技能级）。可选字段——旧存档没有它，读出来即"没门槛"。 */
+  conditions?: SkillCondition[];
   forced?: boolean;
 };
 

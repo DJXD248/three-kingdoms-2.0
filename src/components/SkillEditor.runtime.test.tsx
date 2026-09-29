@@ -129,9 +129,11 @@ describe('SkillEditor: 发动门槛录入（🚪 门槛框）', () => {
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
-    const gateInput = document.querySelector('input[placeholder^="留空＝没门槛"]') as HTMLInputElement;
-    expect(gateInput).toBeTruthy();
-    return { target, gateInput };
+    // v2.8.11 刀2：门槛框有两个了——第 1 个是「整组门槛」（技能级），最后一个
+    // 是这条效果的「逐项门槛」。既有断言说的都是逐项那一栏，取末位保持原意。
+    const gateInputs = Array.from(document.querySelectorAll('input[placeholder^="留空＝没门槛"]')) as HTMLInputElement[];
+    expect(gateInputs.length).toBeGreaterThanOrEqual(2);
+    return { target, gateInput: gateInputs[gateInputs.length - 1], groupGateInput: gateInputs[0] };
   };
 
   const save = (id: string) => {
@@ -174,15 +176,21 @@ describe('SkillEditor: 发动门槛录入（🚪 门槛框）', () => {
     expect(save(target.id)[0].effects?.[0].conditions).toBeUndefined();
   });
 
-  it('「选择其一」×门槛＝编译期整条拒录，当场给红字说明', () => {
-    const { gateInput } = openFirstEffect();
+  it('v2.8.11 刀2：「选择其一」×门槛照常录入，不再整条拒录（红字说明已撤）', () => {
+    const { gateInput, groupGateInput } = openFirstEffect();
     fireEvent.change(gateInput, { target: { value: '手牌≤2' } });
-    expect(screen.queryByText(/「选择其一」暂时不能配门槛/)).toBeNull();
+    expect(screen.queryByText(/暂时不能配门槛/)).toBeNull();
 
     const modeSelect = Array.from(document.querySelectorAll('select'))
       .find(s => Array.from(s.options).some(o => o.value === 'choice')) as HTMLSelectElement;
     fireEvent.change(modeSelect, { target: { value: 'choice' } });
-    expect(screen.getByText(/「选择其一」暂时不能配门槛/)).toBeTruthy();
+    // 不再有"配了门槛也不能用"的警告，只剩两级顺序的说明
+    expect(screen.queryByText(/暂时不能配门槛/)).toBeNull();
+    expect(screen.getByText(/先判「整组门槛」/)).toBeTruthy();
+
+    // 整组门槛独立成栏：写它⇒落在技能上，不污染逐项那栏
+    fireEvent.change(groupGateInput, { target: { value: '体力≤1' } });
+    expect(screen.getByText('体力≤1')).toBeTruthy();
   });
 
   it('打字快填触发时机：半截细分不猜，报没看懂', () => {

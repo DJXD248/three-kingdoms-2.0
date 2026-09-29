@@ -191,3 +191,41 @@ describe('runAiStep — human-vs-AI interleaving', () => {
     expect(useGameStore.getState().engineState).not.toBe(before);
   });
 });
+
+// v2.8.11 刀2：择一窗里可以被发动门槛置灰。司机若照旧硬点 0 号，灰项会被
+// 解析器拒（CHOICE_OPTION_LOCKED），那一步零进展就成了死循环——所以兜底改成
+// "记录顺序上的第一个可选项"，一个都没有则不动手（停滞守卫接手）。
+describe('runAiStep — 择一窗里的置灰项（v2.8.11 刀2）', () => {
+  beforeEach(freshStore);
+
+  /** 把现役账本摆成指定形状，chooseOption 换成记录仪：只验司机择席，不验结算。 */
+  const frozenWorldWith = (options: unknown[]): number[] => {
+    const picks: number[] = [];
+    const base = useGameStore.getState().engineState;
+    useGameStore.setState({
+      phase: 'playing',
+      players: [{ id: 7, name: 'AI·均衡', isAi: true, aiTier: 'balanced', faction: '魏' }] as unknown as Player[],
+      engineState: { ...base, pendingChoice: { key: 'ch:1:1:gate-driver', playerId: 7, options } },
+      chooseOption: (index: number) => { picks.push(index); return true; },
+    } as Partial<ReturnType<typeof useGameStore.getState>>);
+    return picks;
+  };
+
+  it('0 号被门槛置灰⇒取记录顺序上的第一个可选项', () => {
+    const picks = frozenWorldWith([
+      { label: '摸三张牌', events: [], enabled: false, gateText: '手牌≥9' },
+      { label: '摸一张牌', events: [] },
+    ]);
+    expect(runAiStep(useGameStore.getState())).toBe(true);
+    expect(picks).toEqual([1]);
+  });
+
+  it('整窗都灰（桥接层不该造出这种窗）⇒不动作，绝不用点击硬撞', () => {
+    const picks = frozenWorldWith([
+      { label: '摸三张牌', events: [], enabled: false, gateText: '手牌≥9' },
+      { label: '摸一张牌', events: [], enabled: false, gateText: '体力≥5' },
+    ]);
+    expect(runAiStep(useGameStore.getState())).toBe(false);
+    expect(picks).toEqual([]);
+  });
+});

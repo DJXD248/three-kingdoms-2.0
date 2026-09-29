@@ -168,7 +168,12 @@ export function runAiStep(state: GameState): boolean {
     const tier: AiSeatTier = seat.aiTier ?? 'balanced';
     const action = pickPolicyAction(state, pending.playerId, tier);
     if (action?.type === 'CHOOSE_OPTION' && applyPolicyAction(state, pending.playerId, action)) return true;
-    state.chooseOption(0); // in-range index is always legal while the offer is live
+    // 刀2 (v2.8.11)：兜底不再固定取 0——门槛可以把 0 号置灰，硬点灰项会被
+    // 解析器拒绝，这一步就成了死循环。取记录顺序上的第一个可选项；一个都
+    // 没有⇒不动作（桥接层根本不造这种全灰窗，出现即状态异常）。
+    const firstEnabled = pending.options.findIndex(option => option.enabled !== false);
+    if (firstEnabled < 0) return false;
+    state.chooseOption(firstEnabled);
     return true;
   }
   switch (state.phase) {

@@ -529,7 +529,17 @@ export default function GameBoard(){
             <p className="text-sm font-black text-violet-300">🔀 抉择 · {players.find(p=>p.id===pendingChoice.playerId)?.name ?? `玩家${pendingChoice.playerId}`}，请选择其一</p>
             <p className="mt-0.5 text-[10px] text-violet-200/60">{pendingChoice.key}</p>
             <div className="mt-2 flex flex-col gap-1.5">
-              {pendingChoice.options.map((o,i)=><button key={i} onClick={()=>chooseOption(i)} title={o.label} className="rounded-lg border border-violet-600/60 bg-violet-900/50 px-3 py-1.5 text-xs font-bold text-violet-100 hover:bg-violet-800/60">◈ 选项{i+1}：{o.label}</button>)}
+              {pendingChoice.options.map((o,i)=>{
+                // 刀2 (v2.8.11)：不过逐项门槛的分支照旧列出、置灰、写明原因
+                // （用户口径①：技能信息本来就应该对玩家完全公开，不藏）。
+                const locked=o.enabled===false;
+                const reason=locked&&o.gateText?`不满足发动门槛：${o.gateText}`:o.label;
+                return <button key={i} disabled={locked} onClick={()=>{if(!locked)chooseOption(i);}} title={reason}
+                  className={`rounded-lg border px-3 py-1.5 text-left text-xs font-bold ${locked?'cursor-not-allowed border-amber-800/40 bg-violet-950/40 text-violet-100/30 grayscale':'border-violet-600/60 bg-violet-900/50 text-violet-100 hover:bg-violet-800/60'}`}>
+                  {locked?'✕':'◈'} 选项{i+1}：{o.label}
+                  {locked&&o.gateText&&<span className="ml-1 text-[10px] font-normal text-amber-300/70">（不满足：{o.gateText}）</span>}
+                </button>;
+              })}
             </div>
           </div>
         </div>}

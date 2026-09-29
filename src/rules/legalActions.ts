@@ -97,7 +97,10 @@ export function getLegalActions(engine: GameEngine, playerId: number): GameActio
   const pending = state.pendingChoice;
   if (pending) {
     if (pending.playerId === playerId) {
-      pending.options.forEach((_option, index) => {
+      pending.options.forEach((option, index) => {
+        // 刀2 (v2.8.11)：不过逐项门槛的分支在 UI 上置灰可见，但**不是合法
+        // 动作**——合法性只从 EngineState 一处推导，probe/司机/校验器同视图。
+        if (option.enabled === false) return;
         tryPush('CHOOSE_OPTION', { choiceKey: pending.key, optionIndex: index });
       });
     }

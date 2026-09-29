@@ -6,6 +6,7 @@ import type { TriggerEngine } from '../triggers/TriggerEngine';
 import type { TriggerContext } from '../triggers/types';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { evaluateSkillConditions } from './skillConditions';
+import { gateConditionsToText } from './skillGateText';
 import {
   enumerateHandCardCandidates,
   enumerateTargetCandidates,
@@ -428,10 +429,13 @@ export class SkillTriggerBridge {
 
     if (binding.skill.choiceMode) {
       const options = SkillTriggerBridge.buildChoiceOptions(
-        binding, state, sourceId, translateEffect);
+        binding, state, sourceId, event, translateEffect);
       // An empty candidate set never opens an offer: the frozen-world gate
       // would lock the table with nothing legal to pick, so "the trigger
       // happened but there was nothing to choose" stays event-free by design.
+      // 刀2 (v2.8.11) 同一契约的另一半：所有分支都不过逐项门槛⇒同样不开窗
+      // （没有一项可选的开窗就是死桌）。[完整]提示模式要在这种时点也停下来
+      // 问一次，那是 #42 的口径，需要显式的「都不发动」出口。
       if (options.length === 0) return [];
       const choiceData = {
         choiceKey: `ch:${state.turn ?? 0}:${state.round ?? 0}:${binding.skill.id}`,
@@ -461,29 +465,56 @@ export class SkillTriggerBridge {
    *
    * Translation stays in one place: both shapes call the same translateEffect
    * closure handed in by createSkillEvents (no second translation path).
+   *
+   * v2.8.11 刀2 逐项门槛（用户口径①③）：**整组门槛已经在外面判过**
+   * （`buildCondition` ⇒ 定义级 conditions，不过则根本不造事件），这里只判
+   * 挂在每条效果/模板上的那一级。求值用同一个纯函数 skillConditions，
+   * 求不出⇒不响（失败即闭）。不过门槛的分支**不删**，而是留下并标
+   * `enabled:false` + `gateText`（置灰可见、写明原因）；全都不过⇒不开窗
+   * （可选项为零的冻结世界=死桌，与空候选集同一契约）。
    */
   private static buildChoiceOptions(
     binding: SkillOwnerBinding,
     state: EngineState,
     sourceId: string,
+    event: GameEvent,
     translate: (effect: SkillEffectData, candidate?: ChoiceCandidate) => GameEvent,
   ): PendingChoiceOption[] {
     const { effects, choiceSource } = binding.skill;
     const template = choiceSource && effects.length === 1 ? effects[0] : undefined;
-    if (!template) {
-      return effects.map(effect => ({
+    const options = !template
+      ? effects.map(effect => ({
         label: effect.description ?? binding.skill.description ?? binding.skill.name,
         events: [translate(effect)],
+        gate: effect.conditions,
+      }))
+      : (choiceSource === 'TARGET'
+        ? enumerateTargetCandidates(state, Number(sourceId), binding.skill.choiceTargetScope)
+        : enumerateHandCardCandidates(state, Number(sourceId))
+      ).map(candidate => ({
+        label: candidate.label,
+        events: [translate(template, candidate)],
+        gate: template.conditions,
       }));
-    }
-    const ownerId = Number(sourceId);
-    const candidates = choiceSource === 'TARGET'
-      ? enumerateTargetCandidates(state, ownerId, binding.skill.choiceTargetScope)
-      : enumerateHandCardCandidates(state, ownerId);
-    return candidates.map(candidate => ({
-      label: candidate.label,
-      events: [translate(template, candidate)],
-    }));
+
+    const marked = options.map(option => {
+      if (!option.gate || option.gate.length === 0) return { label: option.label, events: option.events };
+      if (evaluateSkillConditions(option.gate, {
+        state,
+        ownerId: Number(sourceId),
+        sourceGeneralId: binding.skill.sourceGeneralId,
+        event,
+      })) {
+        return { label: option.label, events: option.events };
+      }
+      return {
+        label: option.label,
+        events: option.events,
+        enabled: false as const,
+        gateText: gateConditionsToText(option.gate),
+      };
+    });
+    return marked.some(option => option.enabled !== false) ? marked : [];
   }
 
   /**

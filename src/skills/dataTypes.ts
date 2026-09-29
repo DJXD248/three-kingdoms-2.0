@@ -55,6 +55,14 @@ export interface SkillEffectData {
   /** v2.6.3 choice 通道：effect 行自带的展示文案（选项 label 的第一来源，
    * 缺省回退技能 description）。编译透传，不参与触发匹配。 */
   description?: string;
+  /**
+   * v2.8.11 刀2「选择其一」的门槛：**逐项门槛**（整组门槛挂在定义级
+   * `DataSkillDefinition.conditions`，两级顺序=先整组后逐项）。只在 choice
+   * 路线上被求值——抉择窗据此把不过门槛的分支置灰并注明原因。
+   * 非 choice 定义的门槛仍走定义级那一条路（v2.7.3/v2.8.3 行为逐字不变），
+   * 编译时单效果定义的 conditions 就是它自己的门槛。
+   */
+  conditions?: SkillCondition[];
 }
 
 export interface DataSkillDefinition {

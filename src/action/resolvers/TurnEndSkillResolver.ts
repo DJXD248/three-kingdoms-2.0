@@ -82,6 +82,12 @@ export class TurnEndSkillResolver implements ActionResolver {
       state,
       activationEvent,
     );
+    // v2.8.11 刀2：选择组的**逐项**门槛全不过⇒桥接层如实不开窗。此时绝不
+    // 记账这一次发动，否则玩家点一下就是"发动了却什么都没发生"的静默空转
+    // （与上面定义级门槛同一诚实口径：宁可不发，绝不空耗）。
+    if (definition.choiceMode && effectEvents.length === 0) {
+      return [rejected(action, 'SKILL_CONDITION_UNMET')];
+    }
     return [activationEvent, ...effectEvents];
   }
 }
