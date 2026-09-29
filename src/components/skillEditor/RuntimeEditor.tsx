@@ -17,7 +17,7 @@ const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number) => stri
   GAIN_ARMOR: v => `获得 ${v} 点护甲`,
   DISCARD: v => (v === 0 ? '弃全部手牌' : `弃 ${v} 张手牌`),
   GIVE: v => (v === 0 ? '发放全部手牌' : `发放 ${v} 张手牌`),
-  EQUIP_STRIP: v => `拆掉 ${v} 张装备卡`,
+  EQUIP_STRIP: v => `拆掉 ${v} 张军备卡`,
   REVEAL: v => `观看牌堆顶 ${v} 张`,
   DECK_PLACE: v => (v === 0 ? '把全部手牌放回牌堆' : `把 ${v} 张手牌放回牌堆`),
 };

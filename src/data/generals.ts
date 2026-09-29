@@ -121,7 +121,7 @@ export const killSubLabels: Record<KillSubType, string> = {
   killAlly: '击杀己方将领', killEnemy: '击杀其他玩家将领',
 };
 export const cardSubLabels: Record<CardSubType, string> = {
-  anyLost: '失去任意牌', equipmentLost: '失去装备牌', lastHandLost: '失去最后一张手牌',
+  anyLost: '失去任意牌', equipmentLost: '失去军备牌', lastHandLost: '失去最后一张手牌',
   handLost: '失去手牌', anyGained: '获得任意牌',
 };
 export const expireLabels: Record<ExpireCondition, string> = {
@@ -319,7 +319,7 @@ const SK_TUNTIAN_WEI: Skill = {
 };
 const SK_QIANGXI: Skill = {
   name: '强袭',
-  description: '造成攻击伤害后，拆掉目标的一张装备卡（放进弃牌堆，他的护甲值相应减少）。',
+  description: '造成攻击伤害后，拆掉目标的一张军备卡（放进弃牌堆，他的护甲值相应减少）。',
   effects: [{
     id: 'e1',
     trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
@@ -337,7 +337,7 @@ const SK_LIANYING: Skill = {
 };
 const SK_XIAOJI: Skill = {
   name: '枭姬',
-  description: '失去一张装备牌后，摸两张牌。',
+  description: '失去一张军备牌后，摸两张牌。',
   effects: [{
     id: 'e1',
     trigger: { type: 'onCardLost', cardSubType: 'equipmentLost' },
@@ -391,7 +391,7 @@ const SK_ROULIN: Skill = {
 };
 const SK_BENGHUAI: Skill = {
   name: '崩坏',
-  description: '成为攻击目标时惊惶失据：弃置自己的一张装备卡（伤害结算后落账，不减当次伤害）。',
+  description: '成为攻击目标时惊惶失据：弃置自己的一张军备卡（伤害结算后落账，不减当次伤害）。',
   effects: [{
     id: 'e1',
     trigger: { type: 'onBecomingTarget' },

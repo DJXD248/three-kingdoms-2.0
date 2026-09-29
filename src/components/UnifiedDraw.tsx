@@ -151,9 +151,9 @@ export default function UnifiedDraw() {
         <div className="w-full max-w-md px-6 animate-fadeIn animate-screenShake">
           <div className="bg-black/50 border border-red-700/40 rounded-xl p-8 text-center mb-6 animate-base-hit">
             <div className="text-6xl mb-4 animate-pulse-glow">🏯💥</div>
-            <h3 className="text-2xl font-black text-red-300 mb-3">营地受到伤害</h3>
-            <p className="text-amber-200 mb-2">将领池为空时，回合开始时营地失去1点体力</p>
-            <p className="text-amber-500/60 text-sm mb-6">先结算营地失去体力，若存活再进行抽卡</p>
+            <h3 className="text-2xl font-black text-red-300 mb-3">本营受到伤害</h3>
+            <p className="text-amber-200 mb-2">将领池为空时，回合开始时本营失去1点体力</p>
+            <p className="text-amber-500/60 text-sm mb-6">先结算本营失去体力，若存活再进行抽卡</p>
             <button
               onClick={resolvePendingDrawLoss}
               className="w-full py-3.5 rounded-xl font-black text-lg bg-gradient-to-r from-red-700 to-amber-700 text-white hover:from-red-600 hover:to-amber-600 shadow-lg shadow-red-900/30 transition-all active:scale-95"
@@ -193,7 +193,7 @@ export default function UnifiedDraw() {
               <div className="flex items-center text-2xl text-amber-700/40 px-4">+</div>
               <div className="text-center flex-1">
                 <div className="text-3xl mb-2">🃏</div>
-                <p className="text-amber-400 text-sm mb-1">卡牌池</p>
+                <p className="text-amber-400 text-sm mb-1">抽牌堆</p>
                 <p className="text-4xl font-black text-amber-200">{fromDeck}</p>
                 <p className="text-xs text-amber-500/40 mt-1">
                   {deckSize > 0 ? `剩余 ${deckSize} 张` : <span className="text-red-400">已空</span>}
@@ -210,14 +210,14 @@ export default function UnifiedDraw() {
               disabled={maxFromPool === 0}
             />
             <div className="flex justify-between text-[10px] text-amber-500/40 mt-1">
-              <span>← 全部卡牌池</span>
+              <span>← 全部抽牌堆</span>
               <span>全部将领池 →</span>
             </div>
             {maxFromPool === 0 && (
-              <p className="text-center text-red-400/60 text-xs mt-2">将领池已空，全部从卡牌池抽取</p>
+              <p className="text-center text-red-400/60 text-xs mt-2">将领池已空，全部从抽牌堆抽取</p>
             )}
             {poolSize > 0 && actualFromPool === poolSize && (
-              <p className="text-center text-yellow-400/70 text-xs mt-2">本次抽卡后将领池将被抽空；将领池为空时，回合开始时营地将失去1点体力</p>
+              <p className="text-center text-yellow-400/70 text-xs mt-2">本次抽卡后将领池将被抽空；将领池为空时，回合开始时本营将失去1点体力</p>
             )}
           </div>
 

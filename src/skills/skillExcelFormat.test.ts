@@ -95,11 +95,26 @@ describe('skillExcelFormat: trigger round-trip', () => {
     expect(triggerToStr(lianying)).toBe('失去手牌时→失去最后一张手牌');
     expect(strToTrigger('失去手牌时→失去最后一张手牌')).toEqual(lianying);
     const xiaoji: SkillTriggerConfig = { type: 'onCardLost', cardSubType: 'equipmentLost' };
-    expect(triggerToStr(xiaoji)).toBe('失去手牌时→失去装备牌');
-    expect(strToTrigger('失去手牌时→失去装备牌')).toEqual(xiaoji);
+    // v2.8.18 裁决第 4 句：界面与表格里这个词统一叫「军备」（牌种本来就只有 粮草/材料/军备）。
+    expect(triggerToStr(xiaoji)).toBe('失去手牌时→失去军备牌');
+    expect(strToTrigger('失去手牌时→失去军备牌')).toEqual(xiaoji);
     const opts = buildTriggerOptionStrings();
-    expect(opts).toContain('失去手牌时→失去装备牌');
+    expect(opts).toContain('失去手牌时→失去军备牌');
     expect(opts).toContain('获得手牌时→获得任意牌');
+    expect(opts.some(o => o.includes('装备'))).toBe(false);
+  });
+
+  it('旧词「失去装备牌」读入侧仍认，但绝不写出（v2.8.18 词汇收口）', () => {
+    // 不认它＝用户手上那份旧 xlsx 导入后 cardSubType 静默丢失，枭姬放宽成"失去任意牌"。
+    expect(readTriggerCell('失去手牌时→失去装备牌')).toEqual({
+      trigger: { type: 'onCardLost', cardSubType: 'equipmentLost' },
+    });
+    // 只进不出：写出侧永远用现行词。
+    expect(triggerToStr({ type: 'onCardLost', cardSubType: 'equipmentLost' })).not.toContain('装备');
+    // 严格性没有被放宽：半截写法照旧交回"看不懂"。
+    expect(readTriggerCell('失去手牌时→失去装备')).toEqual({ unreadable: '失去手牌时→失去装备' });
+    // 宽松入口 `strToTrigger` 不带这枚别名——它是内部函数，宽窄由 readTriggerCell 唯一收口。
+    expect(strToTrigger('失去手牌时→失去装备牌')).toEqual({ type: 'onCardLost' });
   });
 });
 

@@ -25,7 +25,7 @@ export const GATE_METRIC_LABELS: Record<SkillConditionMetric, string> = {
   GENERAL_HP: '体力',
   ARMOR_POINTS: '护甲',
   FIELD_GENERAL_COUNT: '场上将领',
-  DECK_COUNT: '牌堆',
+  DECK_COUNT: '抽牌堆',
   EVENT_VALUE: '本次伤害',
 };
 
@@ -47,6 +47,9 @@ export const GATE_OPERATOR_LABELS: Record<SkillConditionOperator, string> = {
 const METRIC_ALIASES: [string, SkillConditionMetric][] = [
   ['场上将领数', 'FIELD_GENERAL_COUNT'], ['场上将领', 'FIELD_GENERAL_COUNT'],
   ['在场将领数', 'FIELD_GENERAL_COUNT'], ['在场将领', 'FIELD_GENERAL_COUNT'],
+  ['抽牌堆剩余张数', 'DECK_COUNT'], ['抽牌堆剩余张', 'DECK_COUNT'], ['抽牌堆剩余', 'DECK_COUNT'],
+  ['抽牌堆张数', 'DECK_COUNT'], ['抽牌堆', 'DECK_COUNT'],
+  // 「牌堆」是 v2.8.17 及更早的唯一写法：只接受、不再写出（旧 xlsx 与旧手填必须照样读懂）。
   ['牌堆剩余张数', 'DECK_COUNT'], ['牌堆剩余张', 'DECK_COUNT'], ['牌堆剩余', 'DECK_COUNT'],
   ['牌堆张数', 'DECK_COUNT'], ['牌堆', 'DECK_COUNT'],
   ['本次伤害值', 'EVENT_VALUE'], ['这次伤害值', 'EVENT_VALUE'],
@@ -193,4 +196,4 @@ export function gateConditionsToText(conditions?: SkillCondition[]): string {
 
 /** 一句门槛提示语（编辑器/导入报告共用措辞）。 */
 export const GATE_SYNTAX_HINT =
-  '写法：手牌≤2，牌堆≥5（多条件用顿号或逗号＝都要满足）；可填的量只有 手牌/体力/护甲/场上将领/牌堆/本次伤害，对象只有 自身/目标/伤害来源';
+  '写法：手牌≤2，抽牌堆≥5（多条件用顿号或逗号＝都要满足）；可填的量只有 手牌/体力/护甲/场上将领/抽牌堆/本次伤害，对象只有 自身/目标/伤害来源';

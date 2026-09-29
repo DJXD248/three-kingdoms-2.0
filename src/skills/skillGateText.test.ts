@@ -57,7 +57,20 @@ describe('skillGateText · 门槛文本 -> 结构化条件', () => {
   it('牌堆与本次伤害是全局事实：写了对象也不落对象（评估器本就看不到它，留着是骗人）', () => {
     expect(parseGateText('被作用者牌堆≥5').conditions).toEqual([{ metric: 'DECK_COUNT', op: 'GTE', value: 5 }]);
     expect(parseGateText('伤害来源本次伤害>1').conditions).toEqual([{ metric: 'EVENT_VALUE', op: 'GT', value: 1 }]);
-    expect(gateConditionsToText(parseGateText('被作用者牌堆≥5').conditions)).toBe('牌堆≥5');
+    expect(gateConditionsToText(parseGateText('被作用者牌堆≥5').conditions)).toBe('抽牌堆≥5');
+  });
+
+  it('「抽牌堆」「牌堆」是同一个量的新旧写法：读入都认，写出只用新词 (v2.8.18 §八第 6 条)', () => {
+    expect(parseGateText('抽牌堆<5').conditions).toEqual([{ metric: 'DECK_COUNT', op: 'LT', value: 5 }]);
+    expect(parseGateText('抽牌堆剩余≥2').conditions).toEqual([{ metric: 'DECK_COUNT', op: 'GTE', value: 2 }]);
+    // 只进不出：新词写出来，旧词绝不再生成。
+    const text = gateConditionsToText([{ metric: 'DECK_COUNT', op: 'GTE', value: 5 }]);
+    expect(text).toBe('抽牌堆≥5');
+    expect(text).not.toMatch(/^牌堆/);
+    // 旧写法读进来⇒同一个量⇒再写出去是新词⇒第二次解析结果不变（旧 xlsx 往返不失真）。
+    const legacy = parseGateText('牌堆≥5');
+    expect(legacy.unknown).toEqual([]);
+    expect(parseGateText(gateConditionsToText(legacy.conditions)).conditions).toEqual(legacy.conditions);
   });
 
   it('多条用顿号/逗号/分号/换行分隔，语义是都要满足', () => {

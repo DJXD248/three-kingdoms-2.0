@@ -2,7 +2,7 @@
 // 这些组件只依赖 React 与自身 props，不捕获任何组件状态；全部为 GameBoard 专用（全库无其他引用，2026-09-24 grep 确认）。
 // Bar / Btn 仅用于对局内浮动操作条与确认覆盖层；Modal / StatPill / SC 用于牌库·弃牌·墓地·将池等查看弹窗与暂停菜单。
 
-function SC({l,v,c}:{l:string;v:string;c:string}){return(<div className="rounded-lg border border-slate-800/40 bg-black/50 p-2.5 text-center"><p className="mb-0.5 text-[10px] text-amber-400/60">{l}</p><p className={`text-xl font-black ${c}`}>{v}</p></div>);}
+function SC({l,v,c,tip}:{l:string;v:string;c:string;tip?:string}){return(<div title={tip} className="rounded-lg border border-slate-800/40 bg-black/50 p-2.5 text-center"><p className="mb-0.5 text-[10px] text-amber-400/60">{l}</p><p className={`text-xl font-black ${c}`}>{v}</p></div>);}
 function StatPill({label,value,tone}:{label:string;value:number;tone:'emerald'|'green'|'blue'|'red'|'yellow'|'purple'}){
   const toneMap={
     emerald:'border-emerald-700/30 bg-emerald-900/20 text-emerald-200',

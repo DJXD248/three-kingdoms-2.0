@@ -100,7 +100,7 @@ const FIXTURE_SPECS: FixtureSpec[] = [
   },
   {
     key: 'shu3', name: '试作·蜀丙', faction: '蜀', hp: 5,
-    skills: [skill('样·缴械', '造成攻击伤害后，拆掉目标的一张装备卡。', [
+    skills: [skill('样·缴械', '造成攻击伤害后，拆掉目标的一张军备卡。', [
       effect('e1', { type: 'onDamageDealt', damageSubType: 'attackDamage' }, { type: 'EQUIP_STRIP', value: 1, target: 'TARGET' }),
     ])],
   },

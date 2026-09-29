@@ -318,7 +318,7 @@ export default function Codex() {
               <StatBox label="体力" value={selectedGeneral.hp} icon="❤️" />
               <StatBox label="近战攻击" value={selectedGeneral.meleeAtk} icon="⚔️" />
               <StatBox label="远程攻击" value={selectedGeneral.rangedAtk} icon="🏹" />
-              <StatBox label="护甲" value={selectedGeneral.armor} icon="🛡️" />
+              <StatBox label="护甲" value={selectedGeneral.armor} icon="🛡️" tip="每 2 点护甲抵消 1 点伤害；单数护甲挡不下这一刀，会原样留在身上" />
             </div>
             
             <div className="mt-4">
@@ -466,9 +466,9 @@ function CardItem({ card, onClick }: { card: GameCard; onClick: () => void }) {
   );
 }
 
-function StatBox({ label, value, icon }: { label: string; value: number; icon: string }) {
+function StatBox({ label, value, icon, tip }: { label: string; value: number; icon: string; tip?: string }) {
   return (
-    <div className="bg-black/40 rounded-lg p-3 border border-amber-800/20">
+    <div title={tip} className="bg-black/40 rounded-lg p-3 border border-amber-800/20">
       <div className="flex items-center gap-1 text-amber-400/70 text-xs mb-1">
         <span>{icon}</span>
         <span>{label}</span>

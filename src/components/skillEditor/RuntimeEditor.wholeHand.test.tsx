@@ -20,7 +20,7 @@ const renderWith = (runtime: SkillRuntimeEffect) => {
     typeSelect: Array.from(view.container.querySelectorAll('select'))
       .find(s => Array.from(s.options).some(o => o.value === 'DAMAGE')) as HTMLSelectElement,
     preview: () => Array.from(view.container.querySelectorAll('span'))
-      .map(s => s.textContent ?? '').filter(t => t.includes('手牌') || t.includes('伤害') || t.includes('装备')).join(' '),
+      .map(s => s.textContent ?? '').filter(t => t.includes('手牌') || t.includes('伤害') || t.includes('军备')).join(' '),
   };
 };
 

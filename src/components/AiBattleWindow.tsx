@@ -77,7 +77,7 @@ export default function AiBattleWindow() {
         .join(' · ');
       append(
         `配置：${params.players} 个 AI 混战 · ${params.games} 局 · 起始种子 ${params.seed} · ` +
-          `将池 ${params.pool} · 牌堆 ${params.deck} · 技能注入 ${(params.skill * 100).toFixed(0)}% · 步数上限 ${params.maxSteps}`,
+          `将池 ${params.pool} · 抽牌堆 ${params.deck} · 技能注入 ${(params.skill * 100).toFixed(0)}% · 步数上限 ${params.maxSteps}`,
       );
       append(`策略：${policyLabel}`);
       const seatConfigs = seatConfigsFrom(params.seats);

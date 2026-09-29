@@ -125,6 +125,12 @@ describe('battleReport', () => {
     expect(formatActionLine(6, rejected)).toContain('营地槽0');
   });
 
+  it('armor line uses the player words 叠甲/军备, never 装备护甲', () => {
+    const line = formatActionLine(7, { type: 'EQUIP_ARMOR', playerId: 0, payload: { generalId: 'g1', armorCards: ['a', 'b'] } });
+    expect(line).toContain('叠甲 g1，军备2张');
+    expect(line).not.toContain('装备');
+  });
+
   it('replay bundle is CLI-shaped JSON; failure files only for error statuses', () => {
     const bundle = JSON.parse(buildReplayBundle([match({ actions: [rejected] })]));
     expect(bundle[0]).toMatchObject({ kind: 'ai-battle-record', status: 'won', steps: 2 });

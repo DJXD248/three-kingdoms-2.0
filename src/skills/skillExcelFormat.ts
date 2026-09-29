@@ -85,6 +85,24 @@ export function buildTriggerOptionStrings(): string[] {
   return opts;
 }
 
+/**
+ * v2.8.18 词汇收口（用户裁决第 4 句原文：「"装备"这个词：把技能描述改成"军备"」）留下的旧词。
+ * **只在读入侧认，绝不写出**（与下面的 `LEGACY_TYPE_LABELS` 同一族规矩）。
+ * 不认这一枚别名会静默放宽语义：`strToTrigger` 找不到 `cardSubType` 时返回的是
+ * 不带细分的 `{ type: 'onCardLost' }`，编译器把它读成"失去任意牌"——枭姬从
+ * "失去军备牌才摸两张"变成"丢任何牌都摸两张"。
+ */
+const LEGACY_CARD_SUB_LABELS: Record<string, CardSubType> = { 失去装备牌: 'equipmentLost' };
+
+/** 把 cell 里的旧细分词换成现行写法；不认识的一律原样交回。 */
+function normaliseLegacySubLabel(s: string): string {
+  const i = s.indexOf('→');
+  if (i < 0) return s;
+  const sub = s.slice(i + 1).trim();
+  const mapped = LEGACY_CARD_SUB_LABELS[sub];
+  return mapped ? `${s.slice(0, i)}→${cardSubLabels[mapped]}` : s;
+}
+
 /** Parse a trigger string back to config; "无"/unknown -> undefined. */
 export function strToTrigger(s: string): SkillTriggerConfig | undefined {
   if (!s) return undefined;
@@ -117,8 +135,9 @@ export function strToTrigger(s: string): SkillTriggerConfig | undefined {
 export function readTriggerCell(s: unknown): { trigger?: SkillTriggerConfig; unreadable?: string } {
   const trimmed = String(s ?? '').trim();
   if (!trimmed || trimmed === EMPTY) return {};
-  const parsed = strToTrigger(trimmed);
-  if (parsed && triggerToStr(parsed) === trimmed) return { trigger: parsed };
+  const canonical = normaliseLegacySubLabel(trimmed);
+  const parsed = strToTrigger(canonical);
+  if (parsed && triggerToStr(parsed) === canonical) return { trigger: parsed };
   return { unreadable: trimmed };
 }
 

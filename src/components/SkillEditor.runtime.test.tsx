@@ -151,7 +151,8 @@ describe('SkillEditor: 发动门槛录入（🚪 门槛框）', () => {
     fireEvent.click(screen.getAllByText('照这个填')[0]);
     fireEvent.change(gateInput, { target: { value: '手牌≤2，牌堆≥5' } });
     expect(screen.getByText('手牌≤2')).toBeTruthy();
-    expect(screen.getByText('牌堆≥5')).toBeTruthy();
+    // 旧词照旧读得懂，但回显与写出的永远是现行那一个名字（v2.8.18 §八第 6 条：一个牌摞只留一个名字）。
+    expect(screen.getByText('抽牌堆≥5')).toBeTruthy();
     const runtimeSelect = Array.from(document.querySelectorAll('select'))
       .find(s => s.options[0]?.text?.startsWith('纯描述')) as HTMLSelectElement;
     fireEvent.change(runtimeSelect, { target: { value: 'DRAW_CARD' } });

@@ -164,7 +164,7 @@ export function formatActionLine(step: number, action: RecordedAction): string {
       detail = `补给 ${p.generalId ?? '?'}，用卡${(p.consumeCards ?? []).length}张`;
       break;
     case 'EQUIP_ARMOR':
-      detail = `装备护甲 ${p.generalId ?? '?'}，${(p.armorCards ?? []).length}张`;
+      detail = `叠甲 ${p.generalId ?? '?'}，军备${(p.armorCards ?? []).length}张`;
       break;
     case 'DRAW':
       detail = `抽牌 将${p.fromGeneralPool ?? 0}/牌${p.fromCardPool ?? 0}`;

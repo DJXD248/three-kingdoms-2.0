@@ -569,7 +569,7 @@ export default function GameBoard(){
           <div className="relative flex flex-col items-center gap-4 animate-base-hit">
             <div className="text-7xl animate-pulse-glow">💥🏯💥</div>
             <div className="rounded-2xl border-2 px-10 py-5 text-center" style={{borderColor:defeatEvent.faction?factionColors[defeatEvent.faction]:'#ef4444',background:'rgba(0,0,0,0.85)',boxShadow:`0 0 40px ${defeatEvent.faction?factionColors[defeatEvent.faction]:'#ef4444'}`}}>
-              <p className="mb-1 text-sm tracking-[0.4em] text-red-300">BASE DESTROYED</p>
+              <p className="mb-1 text-sm tracking-[0.4em] text-red-300">本营击破</p>
               <p className="text-4xl font-black" style={{color:defeatEvent.faction?factionColors[defeatEvent.faction]:'#fca5a5'}}>{defeatEvent.faction?`${defeatEvent.faction}势力击破`:'势力击破'}</p>
               <p className="mt-2 text-sm text-amber-200/70">{defeatEvent.name}</p>
             </div>
@@ -676,14 +676,14 @@ export default function GameBoard(){
               {g.title&&<p className="mb-4 text-sm text-amber-500/60">{g.title}</p>}
               <div className="mb-4 grid grid-cols-5 gap-2">
                 <SC l="❤️体力" v={fg?`${fg.currentHp}/${fg.maxHp}`:`${g.hp}`} c="text-red-400"/>
-                <SC l="🛡️护甲" v={fg?`${fg.currentArmor}/${fg.maxHp}`:'0'} c="text-blue-300"/>
+                <SC l="🛡️护甲" v={fg?`${fg.currentArmor}/${fg.maxHp}`:'0'} c="text-blue-300" tip="每 2 点护甲抵消 1 点伤害；单数护甲挡不下这一刀，会原样留在身上"/>
                 <SC l="⚔️近战" v={`${fg?.meleeAtk??g.meleeAtk}`} c="text-orange-300"/>
                 <SC l="🏹远程" v={`${fg?.rangedAtk??g.rangedAtk}`} c="text-cyan-300"/>
                 <SC l="🛡️基础" v={`${fg?.armor??g.armor}`} c="text-gray-400"/>
               </div>
               {fg&&own&&fg.isArming&&<p className="mb-2 text-center text-xs text-blue-400/70">🛡️ 整备状态：本回合无法移动和攻击</p>}
               {fg&&own&&isSch&&fg.justDeployed&&!fg.isArming&&<p className="mb-2 text-center text-xs text-amber-500/60">📜文将登场回合只能移动或攻击其一</p>}
-              {fg&&own&&inEnemy&&<p className="mb-2 text-center text-xs text-yellow-500/60">⚠️ 敌方区域：补给额外消耗1张手牌</p>}
+              {fg&&own&&inEnemy&&<p className="mb-2 text-center text-xs text-yellow-500/60">⚠️ 敌方区域：补给多烧 1 张手牌，这张只算代价、不算回复（交 3 张只回 2 点）</p>}
               <div className="mb-4"><h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-400/80">技能</h3><div className="flex flex-wrap gap-1.5">{getGeneralWithEdits(g).skills.map((s,i)=><div key={i} className="rounded-lg border border-amber-700/20 bg-amber-900/30 px-2.5 py-1 text-xs font-medium text-amber-200"><span className="font-bold">{s.name}</span>{s.tag&&<span className="ml-1 text-[9px] px-1 py-0.5 rounded-full font-bold border" style={{color:skillTagColors[s.tag],borderColor:skillTagColors[s.tag]+'50',backgroundColor:skillTagColors[s.tag]+'15'}}>{s.tag}</span>}{s.description&&<span className="text-amber-300/50 text-[10px] ml-1">— {s.description}</span>}</div>)}</div></div>
               {fg&&own&&<div className="flex flex-wrap gap-2 border-t border-amber-800/20 pt-3">
                 <button onClick={()=>canMov&&startMove(fg)} disabled={!canMov} title={movReason} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canMov?'bg-blue-700/80 text-white hover:bg-blue-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🚶前进{isSch?' (-1牌)':''}</button>

@@ -36,7 +36,7 @@ export function GateEditor({ conditions, onChange, label = '🚪 发动门槛' }
       <div className="flex items-center gap-2">
         <label className="text-[10px] text-sky-400/70 font-bold whitespace-nowrap">{label}</label>
         <input type="text" value={draft.text} onChange={e => handleText(e.target.value)}
-          placeholder="留空＝没门槛。例：手牌≤2，牌堆≥5" className={gateInputCls} />
+          placeholder="留空＝没门槛。例：手牌≤2，抽牌堆≥5" className={gateInputCls} />
         {hasText && (
           <button onClick={() => handleText('无')}
             className="text-[10px] text-gray-400 hover:text-red-300 px-1.5 py-0.5 rounded hover:bg-red-900/20 flex-shrink-0">
@@ -71,8 +71,8 @@ export function GateEditor({ conditions, onChange, label = '🚪 发动门槛' }
       )}
 
       <p className="text-[9px] text-sky-400/45 leading-tight">
-        能填的量只有：手牌 / 体力 / 护甲 / 场上将领 / 牌堆 / 本次伤害；
-        对象只有：自身（不写就是自身）/ 目标 / 伤害来源（牌堆与本次伤害是全局事实，不分对象）；
+        能填的量只有：手牌 / 体力 / 护甲 / 场上将领 / 抽牌堆 / 本次伤害；
+        对象只有：自身（不写就是自身）/ 目标 / 伤害来源（抽牌堆与本次伤害是全局事实，不分对象）；
         多条条件用顿号或逗号分开＝ 全部满足才发动；两边都可以填数，也可以跟另一个量比（例：手牌&gt;自身手牌）
       </p>
     </div>

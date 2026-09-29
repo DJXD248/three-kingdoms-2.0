@@ -249,12 +249,12 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
           {numField('步数上限', maxSteps, setMaxSteps, '单局防僵持')}
         </div>
         <button className="text-xs text-amber-400/60 hover:text-amber-200 mb-3" onClick={() => setAdvanced(!advanced)}>
-          {advanced ? '▾' : '▸'} 高级设置（将池 / 牌堆 / 技能注入）
+          {advanced ? '▾' : '▸'} 高级设置（将池 / 抽牌堆 / 技能注入）
         </button>
         {advanced && (
           <div className="grid grid-cols-3 gap-3 mb-4">
             {numField('每人将池', pool, setPool, '1 - 30')}
-            {numField('公共牌堆', deck, setDeck, '10 - 400')}
+            {numField('公共抽牌堆', deck, setDeck, '10 - 400')}
             {numField('技能注入 %', skill, setSkill, '默认 0＝不给将池塞演练技能，想要才调高')}
           </div>
         )}
