@@ -19,7 +19,7 @@ npm run ai-arena                                  # 三档策略互胜率擂台�
 
 ## Git 远程与推送
 
-本仓库使用 GitHub **私有**远程（非公开，仅账号所有者可见）：
+本仓库的 GitHub 远程**自 v2.8.7 起为公开**（此前是私有；转公开是为了清掉私有仓库 Actions 的额度阻塞），`1.29` 那条线仍是私有：
 
 ```
 origin -> https://github.com/DJXD248/three-kingdoms-2.0
