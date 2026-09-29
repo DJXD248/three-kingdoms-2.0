@@ -5,8 +5,12 @@
  * seed reproduces the same outcome.
  */
 import { describe, expect, it } from 'vitest';
-import { runMatch, runBatch, skillTriggerKey } from './battleRunner';
-import { defaultMatchConfig } from './matchSetup';
+import { runMatch, runBatch, skillTriggerKey, isSkillEffectEvent } from './battleRunner';
+import { buildMatchState, defaultMatchConfig } from './matchSetup';
+import { DIY_FIXTURE_GENERALS } from './fixtures/diyGeneralFixture';
+import { configuredSkillRows } from './battleReport';
+import { SkillTriggerBridge } from '../skills/SkillTriggerBridge';
+import type { DataSkillEffectType } from '../skills/dataTypes';
 import { policyByName } from './policies/strategyPolicy';
 
 describe('ai battle runner (seeded smoke)', () => {
@@ -128,6 +132,75 @@ describe('skill trigger tracking (2.4.3 content audit)', () => {
     expect(untracked.winnerId).toBe(a.winnerId);
     expect(untracked.steps).toBe(a.steps);
     expect(untracked.actions).toEqual(a.actions);
+  });
+
+  it('#39: the counter keys off the bridge payload, not a hand-written type list', () => {
+    const state = buildMatchState(defaultMatchConfig(901, { poolPerPlayer: 3, deckSize: 30 }));
+    const playerId = state.players[0].id;
+    const types: DataSkillEffectType[] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE'];
+    const events = SkillTriggerBridge.createSkillEvents(
+      {
+        ownerId: playerId,
+        skill: {
+          id: 't:全类型',
+          name: '全类型',
+          trigger: 'onTurnStart',
+          description: '报表名单守卫',
+          effects: types.map(type => ({ type, value: 1, target: 'SELF' as const })),
+        },
+      },
+      state,
+      { type: 'TURN_START', data: { playerId } },
+    );
+    // One event per effect type and every one of them joins the report: a type
+    // added to the bridge is counted by construction, no roster to remember.
+    expect(events).toHaveLength(types.length);
+    expect(new Set(events.map(e => (e.data as { effectType: string }).effectType))).toEqual(new Set(types));
+    for (const ev of events) expect(isSkillEffectEvent(ev)).toBe(true);
+
+    // Events that merely mention a skill are not effect events — counting the
+    // activation itself would credit rows for skills that produced nothing.
+    expect(isSkillEffectEvent({ type: 'SKILL_ACTIVATED', data: { skillId: 't:全类型', stableId: `1:t:全类型` } })).toBe(false);
+    expect(isSkillEffectEvent({ type: 'DRAW_REQUIRED', data: { reason: 'compensation', playerId, totalCards: 1 } })).toBe(false);
+  });
+
+  it('#39: the roster is pool-derived, so a DIY batch reports the sample skills by name', () => {
+    const rows = configuredSkillRows(DIY_FIXTURE_GENERALS);
+    // Every sample carries exactly one compiled skill ⇒ the roster is the fixture, not the ledger.
+    expect(rows).toHaveLength(DIY_FIXTURE_GENERALS.length);
+    expect(rows.every(r => r.key.startsWith('D-fix-'))).toBe(true);
+    expect(rows.every(r => r.label.startsWith('试作·'))).toBe(true);
+    // The official ledger cannot name these skills: that is why the old hardcoded
+    // roster listed 262 official rows for a --diy-fixture batch and every sample
+    // skill fell off the list (displayed as a raw key reading zero).
+    expect(configuredSkillRows().some(r => r.key.startsWith('D-fix-'))).toBe(false);
+  });
+
+  it('#39: REVEAL / DECK_PLACE triggers actually reach the report', () => {
+    const batch = runBatch({
+      games: 40,
+      seed: 1,
+      maxSteps: 2000,
+      trackSkillTriggers: true,
+      configOverrides: { poolSource: 'diy-fixture', skillInjection: 0 },
+    });
+    expect(batch.violated).toBe(0);
+    const aggregate = batch.skillTriggerCounts ?? {};
+    // The fixture carries one sample per effect type. REVEAL and DECK_PLACE were
+    // minted back in 2.6.1 and never joined the old hand-written type list, so
+    // their rows read zero while the triggers did fire (计数对、名单漏收).
+    const keysOf = (effectType: string) =>
+      configuredSkillRows(
+        DIY_FIXTURE_GENERALS.filter(g =>
+          (g.skills ?? []).some(s => s.effects?.some(e => e.runtime?.type === effectType)),
+        ),
+      ).map(r => r.key);
+    const observed = [...keysOf('REVEAL'), ...keysOf('DECK_PLACE')];
+    expect(observed).toHaveLength(2);
+    for (const key of observed) expect(aggregate[key] ?? 0).toBeGreaterThan(0);
+    // Every counted key is a roster row: no off-list owner left unresolved.
+    const rosterKeys = new Set(configuredSkillRows(DIY_FIXTURE_GENERALS).map(r => r.key));
+    expect(Object.keys(aggregate).filter(key => !rosterKeys.has(key))).toEqual([]);
   });
 
   it('skillTriggerKey joins 模板id:技能名, resolving owners via the alias table (2.7.0)', () => {

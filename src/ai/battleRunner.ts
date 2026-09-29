@@ -18,6 +18,7 @@
 import type { GameAction } from '../action/ActionTypes';
 import { createAction } from '../action/ActionTypes';
 import { GameEngine } from '../core/GameEngine';
+import type { GameEvent } from '../core/Event';
 import type { EngineState } from '../core/GameState';
 import { syncPlayerSkills } from '../skills/skillCompiler';
 import { createRngState, rngNext } from '../core/rng';
@@ -167,12 +168,26 @@ interface RunOptions {
 }
 
 /**
- * Events a compiled skill effect can materialize as (SkillTriggerBridge).
- * The v2.5.3 GIVE sync missed this observation-only set (GIVE had no payload
- * then; EQUIP_STRIP joins in 2.6.0). Tool surface only — trackSkillTriggers
- * is default off, gameplay untouched.
+ * Is this event one a compiled skill effect actually minted?
+ *
+ * v2.8.14 (#39): this used to be a hand-maintained list of event TYPES, and it
+ * drifted three times (GIVE 2.5.3, EQUIP_STRIP 2.6.0, REVEAL/DECK_PLACE 2.6.1
+ * all landed in the bridge without joining the roster ⇒ those triggers were
+ * counted as zero). The bridge stamps `skillId` + `effectType` into the base
+ * payload of EVERY effect event it produces (SkillTriggerBridge.translateEffect)
+ * and nowhere else in the codebase, so that pair is the invariant to test
+ * against: a new effect type joins the report by construction, not by memory.
+ *
+ * Tool surface only — trackSkillTriggers is default off, gameplay untouched.
  */
-const SKILL_EFFECT_EVENT_TYPES = new Set(['DRAW', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP']);
+export function isSkillEffectEvent(ev: GameEvent): boolean {
+  const data = ev.data as Record<string, unknown> | undefined;
+  if (!data) return false;
+  return (
+    typeof data.skillId === 'string' && data.skillId.length > 0 &&
+    typeof data.effectType === 'string' && data.effectType.length > 0
+  );
+}
 
 /**
  * Batch-stable join key = `模板id:技能名` (v2.7.0 report-keying cut).
@@ -312,9 +327,8 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
       }
       if (skillTriggers) {
         for (const ev of events) {
-          if (!SKILL_EFFECT_EVENT_TYPES.has(ev.type)) continue;
-          const skillId = (ev.data as Record<string, unknown> | undefined)?.skillId;
-          if (typeof skillId !== 'string' || !skillId) continue;
+          if (!isSkillEffectEvent(ev)) continue;
+          const skillId = (ev.data as Record<string, unknown>).skillId as string;
           const key = skillTriggerKey(skillId, templateAliases);
           skillTriggers[key] = (skillTriggers[key] ?? 0) + 1;
         }

@@ -17,7 +17,7 @@
 import { runMatch, runBatch, type RecordedAction, type MatchResult } from './battleRunner';
 import { formatFactionStats, formatSkillTriggerStats, configuredSkillRows } from './battleReport';
 import { policyByName } from './policies/strategyPolicy';
-import type { MatchConfig } from './matchSetup';
+import { generalsForPoolSource, type MatchConfig } from './matchSetup';
 
 declare const process: {
   argv: string[];
@@ -199,8 +199,13 @@ function main(): void {
     for (const line of formatFactionStats(summary.factionStats)) console.log(line);
   }
   if (args.skillStats) {
+    // The expected roster must come from the pool the batch actually played
+    // with (v2.8.14 #39): it used to be hardcoded to the official ledger, so a
+    // --diy-fixture run listed 262 official rows and reported every sample
+    // skill as off-list/zero. Counts were right, the name list was wrong.
+    const roster = generalsForPoolSource(args.diyFixture ? 'diy-fixture' : undefined);
     console.log('  逐技能触发频次（计数=带技能标记的效果事件，键=将领模板id:技能名，双效果技能分计两次）:');
-    for (const line of formatSkillTriggerStats(summary.skillTriggerCounts ?? {}, configuredSkillRows())) {
+    for (const line of formatSkillTriggerStats(summary.skillTriggerCounts ?? {}, configuredSkillRows(roster))) {
       console.log(line);
     }
   }
