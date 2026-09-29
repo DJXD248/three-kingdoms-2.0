@@ -10,8 +10,8 @@
  *   npm run ai-battle                                  # 10 games, seed 1
  *   npm run ai-battle -- --games 500 --seed 7          # batch soak
  *   npm run ai-battle -- --players 3 --pool 6 --skill 0.5
- *   npm run ai-battle -- --skill 0 --skill-stats --games 500   # 真实池内容审计
- *   npm run ai-battle -- --policy aggressive --skill 0         # 策略档分布（默认 random）
+ *   npm run ai-battle -- --skill-stats --games 500             # 真实池内容审计（默认不注入练习技能）
+ *   npm run ai-battle -- --policy aggressive                   # 策略档分布（默认 random）
  *   npm run ai-battle -- --replay ai-battle-failures/match-7.json
  */
 import { runMatch, runBatch, type RecordedAction, type MatchResult } from './battleRunner';
@@ -49,7 +49,7 @@ function parseArgs(argv: string[]): CliArgs {
     players: 2,
     pool: 8,
     deck: 60,
-    skill: 0.35,
+    skill: 0,
     maxSteps: 3000,
     replay: null,
     out: null,

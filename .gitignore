@@ -6,3 +6,5 @@ dist/
 coverage/
 .ai-battle/
 ai-battle-failures/
+# Office/WPS 打开 xlsx 时在旁生成的隐藏占用文件（~$名字.xlsx），关掉就消失，别让它进仓库
+~$*

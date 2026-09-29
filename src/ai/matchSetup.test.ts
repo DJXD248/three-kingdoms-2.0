@@ -220,3 +220,28 @@ describe('matchSetup poolSource（仓库固定 DIY 样本进料口）', () => {
     expect(pool.map(g => g.id)).toContain(`${allGenerals[0].id}_p1`);
   });
 });
+
+/**
+ * v2.8.16 裁决：演练批次不再随机给将池塞「演練・」技能——官方将自己的技能
+ * 才是被测的对象。注入能力保留，但必须显式调高才生效。
+ */
+describe('演练技能注入：默认关闭，显式调高才开', () => {
+  const skillNames = (state: ReturnType<typeof build>) =>
+    state.players.flatMap(p => (p.generalPool as General[]).flatMap(g => (g.skills ?? []).map(s => s.name)));
+
+  it('defaultMatchConfig 无覆盖 ⇒ skillInjection＝0', () => {
+    expect(defaultMatchConfig(1).skillInjection).toBe(0);
+  });
+
+  it('默认装配的将池一张演练技能都没有（四个种子各验一次）', () => {
+    for (const seed of [1, 7, 33, 202]) {
+      const names = skillNames(build(seed, { playerCount: 2, poolPerPlayer: 6 }));
+      expect(names.filter(n => n.startsWith('演練・'))).toEqual([]);
+    }
+  });
+
+  it('显式 skillInjection:1 ⇒ 每将各带一张演练技能（老用途还在）', () => {
+    const names = skillNames(build(1, { playerCount: 2, poolPerPlayer: 6, skillInjection: 1 }));
+    expect(names.filter(n => n.startsWith('演練・'))).toHaveLength(12);
+  });
+});

@@ -35,7 +35,7 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
   const [advanced, setAdvanced] = useState(false);
   const [pool, setPool] = useState(8);
   const [deck, setDeck] = useState(60);
-  const [skill, setSkill] = useState(35); // percent
+  const [skill, setSkill] = useState(0); // percent — 0 = 不给将池塞演练技能（v2.8.16 起默认）
   const [maxSteps, setMaxSteps] = useState(3000);
   const [policies, setPolicies] = useState<string[]>(['aggressive', 'random', 'random', 'random']);
   const [seats, setSeats] = useState<AiBattleSeat[]>(EMPTY_SEATS);
@@ -255,7 +255,7 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-3 gap-3 mb-4">
             {numField('每人将池', pool, setPool, '1 - 30')}
             {numField('公共牌堆', deck, setDeck, '10 - 400')}
-            {numField('技能注入 %', skill, setSkill, '武将带演练技能概率')}
+            {numField('技能注入 %', skill, setSkill, '默认 0＝不给将池塞演练技能，想要才调高')}
           </div>
         )}
         {blockedUrl && (

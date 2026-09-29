@@ -236,7 +236,7 @@ describe('parseAiBattleHash', () => {
       players: 2,
       pool: 8,
       deck: 60,
-      skill: 0.35,
+      skill: 0,
       maxSteps: 3000,
       policies: ['random', 'random'],
       seats: [

@@ -81,7 +81,12 @@ export interface MatchConfig {
   playerCount: number;
   poolPerPlayer: number;
   deckSize: number;
-  /** 0..1 — probability a pool general carries an executable practice skill. */
+  /**
+   * 0..1 — probability a pool general carries an executable practice skill.
+   * v2.8.16 default = 0 (off): practice batches run on the ledger's own skills
+   * unless a caller raises this on purpose. The roll is still drawn at 0, so
+   * the setup RNG stream — and anchor B11's `--skill 0` path — is unchanged.
+   */
   skillInjection: number;
   baseHp: number;
   /** One entry per seat (index 0 = player 1); missing entries = random. */
@@ -98,7 +103,7 @@ export function defaultMatchConfig(seed: number, overrides: Partial<MatchConfig>
     playerCount: 2,
     poolPerPlayer: 8,
     deckSize: 60,
-    skillInjection: 0.35,
+    skillInjection: 0,
     baseHp: 6,
     ...overrides,
   };

@@ -89,8 +89,10 @@ export function parseAiBattleHash(hash: string): AiBattleParams | null {
     deck: num('deck', 60, 10, 400),
     skill: (() => {
       const raw = q.get('skill');
-      const v = raw === null ? 0.35 : Number(raw);
-      return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0.35));
+      // v2.8.16: absent = no practice-skill injection (the dev dialog's advanced
+      // knob has to be raised on purpose to get the old 2.2.4 behaviour back).
+      const v = raw === null ? 0 : Number(raw);
+      return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
     })(),
     maxSteps: num('maxSteps', 3000, 50, 20000),
     policies: (q.get('policies') ?? '')
