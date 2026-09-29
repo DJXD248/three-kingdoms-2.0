@@ -2173,3 +2173,17 @@ HANDOFF §3（版本行 2.8.17＋本轮调整十点＋2.8.16 降为"上一轮"�
 
 **没做**：抉择窗任何东西（用户第 1 条明令不给出口）；引擎动作集／结算／AI 一行未动；词汇表里 v2.8.16 欠的那行「默认 0＝不塞」；逐表目视版式（仍等用户允许切窗口）。**已在账上待办**：§八 余九条纯文案刀（v2.8.18，含护甲 2:1 写明白、"装备"→"军备"、牌堆命名统一、营地→本营、删 `BASE DESTROYED`、生命→体力）、#43 徽章与"强制发动"真管事（**会先交一份"每个徽章到底管什么"的短提案**，且很可能动锚）、#30 决斗（玩法刀⇒第一闸＝大白话复述等确认）、#38 择机、#47。
 
+### 十三、提交链与远端 CI（回填后）
+
+**提交链**：feat `596850e`（`src/skills`＋`src/store`＋`src/components`＋两份测试＋`package.json` 版本号，338 insertions/29 deletions）→ docs 登记 `5d1c978`（七面，含 `PLAYER_GLOSSARY.md` 与重生成后的 `词汇表.xlsx`）→ 附注标签 `v2.8.17` 挂 `5d1c978`（`git rev-parse v2.8.17^{}` 对账一致）→ 本回填提交。
+
+**推送（本轮走的是降级链第二档）**：先按规矩试直连——`curl -sI https://github.com` 超时（exit 28）、`git push origin master` 报 `Failed to connect to github.com:443 after 21116 ms` ⇒ 一次性借道 `-c http.proxy=http://127.0.0.1:10808`，master `bdf61b1..5d1c978` 与标签 `* [new tag] v2.8.17` **都由这一档推出**。推完复看 `git config --local --get http.proxy`／`--global` **仍为空**＝没有把代理写成持久配置（这条铁律第 N 次守住，与 v2.8.15 那次"直连失败→代理成功"同形）。
+
+**CI #186**（run `36590505649`、sha `5d1c978`、`event=push`、`head_branch=master`）＝**Success**，四 job 全绿、**0 失败步骤**：`lint` 9 步全 success（含 `Security audit` 与 `Run ESLint`）／`test (22)` 10 步全 success（Type check＋带地板门禁的测试＋覆盖上传）／`test (24)` 唯一非 success 步骤仍是**去重跳过的覆盖上传**（不是失败）／`build` 9 步全 success。**注解逐 job 从 API 量**：`lint` **11** 条＝`GameBoard.tsx` 的 10 条 react-hooks（4 conditional `useEffect`＋5 conditional `useMemo`＋1 missing dependency `cardTypeOrder`）＋1 条 runner「Node.js 20 is deprecated」；`test (22)`／`test (24)`／`build` 各 **1** 条同一条弃用通知 ⇒ **合计 14 条、全 `warning`、0 `error`**，与 #183/#184 逐 job 同分布＝**零新增**。
+
+**本轮新增的一条取证通道事实（登记为 §12-75⑩）**：远端不可达时，**公开仓库的匿名 REST 读取共用那条一次性代理**（`curl -x http://127.0.0.1:10808 https://api.github.com/repos/…/actions/runs/{id}`、`…/jobs`、`…/check-runs/{id}/annotations` 三层全读得到）。判据：**"系统化核验"约束的是证据层次（往前翻列表、逐 job、逐步骤、注解按 job 量），不是必须用哪一个客户端**——私有仓库年代同源 fetch 是唯一有登录态的路，v2.8.7 转公开后匿名 REST 就够；浏览器路径仍然有效。这条通道**没有任何凭据成分**：不铸 token、不读本机 git 凭据或代理配置文件。
+
+**三点顺带取证**：①一次 push 携带**两个提交**（`596850e`＋`5d1c978`）却**只产生一条 run**（挂在 tip sha 上）＝"每个提交各跑一条 CI"同样是误传；②推标签**没有**额外产生 run＝"推标签触发 CI"的**第九次反证**（§12-59）；③往前翻列表时确认上一轮的收线提交 `bdf61b1` 自身的 run **#185** 为 `completed success`。
+
+**边界照旧**：每文件用例数住在 job 日志里，匿名 API 对日志端点返回 404，从本机凭据铸 token 被常设规则禁止 ⇒ 远端证据形态＝同树同命令双腿地板全过＋零失败步骤＋注解逐 job 计数，不是从页面抄来的数字。
+
