@@ -1822,7 +1822,9 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **五面登记**：`PROJECT_ARCH_MAP.md` §F 新增小节「数值 0 与「全部」的按类型收口 ＋ 导入总结面板」（八行口径表＋四条新判据）＋§H8 一条 v2.8.13 落地状态注；`PROJECT_HANDOFF.md` §3 本轮条／§9 验证条／§12-68~70；`CHANGELOG.md` [2.8.13]；`README.md` 测试数行＋文档清单新增 `PLAYER_GLOSSARY.md`；`AGENTS.md` 新增两条常设规则（"哨兵值按类型合法，绝不全局放开"＋"导入总结由生效视图前后两次快照派生、必须现取现读 store"）；`package.json` 2.8.12→2.8.13；双历史本条与白话条；新文档 `PLAYER_GLOSSARY.md` 本体。
 
-**本刀没做的（避免下轮误读为已完成）**：`PLAYER_GLOSSARY.md` §八那十条**只报不修**——补偿抽归属要用户一句话定谁是规则、`tag`/`forced` 落地属 #43；#30 决斗流程仍待完整规则；#38／#39／#41／#42／#43 照旧待口令。远端 CI＝**PENDING**（登记提交推送后按 §12-64 的公开 API 路径核验并回填）。
+**远端 CI 核验（已回填）**：feat `ab381ed` → docs 登记 `afbfa89`（五面同步＋收尾手册登记清单补 `PLAYER_GLOSSARY.md`＋`package.json` 2.8.12→2.8.13）→ 附注标签 `v2.8.13` 挂 `afbfa89`（`git show` 复核指向一致）。**推送路径＝直连一次即通**（master 与标签各一次，未借道代理、未留任何持久 git 配置）。**远端只有一条 run＝CI #174**（run `36555185385`，sha `afbfa89`，`event=push`／`head_branch=master`，**Success**、总 **2m57s**）：详情页汇总两个矩阵腿各 **Test Files ✅ 77／Test Results ✅ 794**（＝定稿树本地读数在远端复现）；公开 API 逐 job 展开 `steps[].conclusion`＝`lint`（Security audit＋Run ESLint 全 success）／`test (22)`（Type check＋Run tests with coverage＋Upload coverage report 全 success）／`test (24)`（同上，唯 `Upload coverage report`＝**`skipped`**＝矩阵去重非失败）／`build`（Build production bundle＋Upload build artifacts 全 success）⇒ **失败步骤 0**；注解 **14 条＝lint 老 react-hooks 警告＋Node.js 20 弃用提示，0 错误**（逐条形态与 v2.8.12 相同）。feat `ab381ed` 不单独起 run（push 只跑 head sha），其改动被 `afbfa89` 这条 run 的 794 例完整覆盖，不是漏检。**§12-59 第五次拿到正面证据**：本轮照样推了附注标签，推后 run 列表顶部仍是 #174、无一条 `head_branch` 指向标签 ⇒ 标签不触发工作流。
+
+**本刀没做的（避免下轮误读为已完成）**：`PLAYER_GLOSSARY.md` §八那十条**只报不修**——补偿抽归属要用户一句话定谁是规则、`tag`/`forced` 落地属 #43；#30 决斗流程仍待完整规则；#38／#39／#41／#42／#43 照旧待口令。远端 CI 已核验全绿并回填＝**CI #174**（run `36555185385`、sha `afbfa89`），见上一条。
 
 
 
