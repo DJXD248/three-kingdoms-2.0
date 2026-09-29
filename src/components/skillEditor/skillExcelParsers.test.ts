@@ -65,6 +65,33 @@ describe('parseRowPerSkillSheet · 门槛栏导入', () => {
   });
 });
 
+// ── v2.8.13 刀#49 后半（用户裁 B＋方案2）：「数值」格按类型收口，拒收的必须点名 ──
+describe('parseRowPerSkillSheet · 数值格的 0 与「全部」', () => {
+  it('弃牌写「全部」＝整只手，读进模型且不报错', () => {
+    const row = [...SKILL_CELL, '效果A', '回合结束时', '弃牌', '全部', '伤害来源', '弃置其全部手牌', '无', ''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([v3Header, row]);
+    expect(parseWarnings).toEqual([]);
+    expect(entries[0].skills[0].effects![0].runtime).toEqual({ type: 'DISCARD', value: 0, target: 'ATTACKER' });
+  });
+
+  it('摸牌写 0：按没填处理，报告里点名是谁的哪个效果', () => {
+    const row = [...SKILL_CELL, '效果A', '回合结束时', '摸牌', 0, '自身', '摸光牌堆', '无', ''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([v3Header, row]);
+    expect(entries[0].skills[0].effects![0].runtime).toEqual({ type: 'DRAW_CARD', target: 'SELF' });
+    expect(parseWarnings).toHaveLength(1);
+    expect(parseWarnings[0]).toContain('关羽·测试技 效果1 数值');
+    expect(parseWarnings[0]).toContain('摸牌');
+    expect(parseWarnings[0]).toContain('按没填处理');
+  });
+
+  it('看牌堆顶写 0：单独提醒它的 0 不会被夹成 1（会真的看 0 张）', () => {
+    const row = [...SKILL_CELL, '效果A', '回合开始时', '看牌堆顶', 0, '自身', '偷看牌堆', '无', ''];
+    const { parseWarnings } = parseRowPerSkillSheet([v3Header, row]);
+    expect(parseWarnings).toHaveLength(1);
+    expect(parseWarnings[0]).toContain('看 0 张');
+  });
+});
+
 // ── v2.8.11 刀2：新增固定列「技能门槛」＝整组门槛；效果组起点改为按表头认 ──
 describe('parseRowPerSkillSheet · 技能门槛（整组门槛）列', () => {
   const v4Header = [...FIXED, '技能门槛',

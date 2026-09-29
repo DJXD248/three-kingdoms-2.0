@@ -152,6 +152,29 @@ const LEGACY_TARGET_LABELS: Record<string, NonNullable<SkillRuntimeEffect['targe
 /** Types the compiler can settle today (see skillCompiler SUPPORTED_EFFECT_TYPES). */
 export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE'];
 
+/**
+ * 数值 `0` 在这几个类型里**有真含义**＝「整只手（全部）」：它们都经
+ * `core/eventProcessors/handSelection.ts:42` 读欠账者的手牌，那里写着
+ * `count === 0 ? 整只手`（官方卡蔡文姬·断肠就是这么写的）。
+ * 其余类型**不许**填 0：摸牌 0＝摸不到牌、看牌堆顶根本不读这个数、
+ * 伤害/回复/护甲/拆装备会被引擎自己夹回 1 ⇒ 全局放开数字框只会造出
+ * 新一轮"看起来像没填、实际换成另一个数"的静默失真（§12-67）。
+ */
+export const WHOLE_HAND_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DISCARD', 'GIVE', 'DECK_PLACE'];
+
+/** 「0」在录入面上的唯一大白话说法（Excel 侧仍认数字 0，GUI 侧只认这句话）。 */
+export const WHOLE_HAND_LABEL = '整只手（全部）';
+
+/** 那三类效果在表格里的名字，用来把提醒写成一句能看懂的话。 */
+const WHOLE_HAND_TYPE_NAMES = WHOLE_HAND_RUNTIME_TYPES.map(t => runtimeEffectTypeLabels[t]).join('、');
+
+/**
+ * 「数值」格里指代「整只手」的两种写法：用户自己的话（刀#49 方案2，用户
+ * 2026-09-29 拍板：表格认这个词）与 GUI 复选框那句文案（照着界面抄也得能用）。
+ * **只进不出**：导出侧永远写数字 0，别让表格长出第二种「全部」形态。
+ */
+const WHOLE_HAND_VALUE_ALIASES: readonly string[] = ['全部', WHOLE_HAND_LABEL];
+
 export const runtimeTargetLabels: Record<NonNullable<SkillRuntimeEffect['target']>, string> = {
   SELF: '自身',
   ATTACKER: '伤害来源',
@@ -200,6 +223,48 @@ export function parseRuntimeValue(s: unknown): number | undefined {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return undefined;
   return Math.floor(n);
+}
+
+/** 「数值」格按类型读的结果：`value`＝落进模型的数（undefined＝按没填），`note`＝要点名的原话。 */
+export interface ValueCellRead {
+  value?: number;
+  note?: string;
+}
+
+/**
+ * v2.8.13（#49 方案 B＋2，用户 2026-09-29 拍板）：「数值」格按**类型**收口。
+ * 解析器不许再对 0 一视同仁——0 只在读手牌的那三类里等于「全部」，
+ * 别的类型写下 0 会被引擎换成另一个数（摸牌/伤害/回复/护甲/拆装备夹成 1，
+ * 看牌堆顶更狠：它的 0 不夹，就真的看 0 张）。那种"看着像填了、实际是另一个数"
+ * 正是 §12-67 的静默失真，所以按没填处理**并点名**。
+ */
+export function readValueCell(raw: unknown, type?: SkillRuntimeEffect['type']): ValueCellRead {
+  const cell = cleanCell(raw);
+  if (!cell) return {};
+
+  if (WHOLE_HAND_VALUE_ALIASES.includes(cell)) {
+    if (type && WHOLE_HAND_RUNTIME_TYPES.includes(type)) return { value: 0 };
+    if (type) {
+      return {
+        note: `「${cell}」＝整只手，只有 ${WHOLE_HAND_TYPE_NAMES} 认这个词；`
+          + `「${runtimeEffectTypeLabels[type]}」的数值不认它，这一格按没填处理`,
+      };
+    }
+    return {};
+  }
+
+  const n = parseRuntimeValue(cell);
+  if (n == null || n > 0) return { value: n };
+  if (type && WHOLE_HAND_RUNTIME_TYPES.includes(type)) return { value: 0 };
+  if (!type) return {};
+
+  const engineWouldDo = type === 'REVEAL'
+    ? '而且引擎对它的 0 不会夹成 1——会真的「看 0 张」，一张也不看'
+    : '引擎会把它当成 1';
+  return {
+    note: `数值填的是 0：只有 ${WHOLE_HAND_TYPE_NAMES} 认 0（＝整只手），`
+      + `「${runtimeEffectTypeLabels[type]}」这一格按没填处理（${engineWouldDo}）`,
+  };
 }
 
 // ── Effect column groups (Excel) ────────────────────────────────────
@@ -266,6 +331,8 @@ export interface ParsedEffectGroup {
   orphanGate?: string;
   /** 「触发」栏没看懂的原文（含只写了一半的细分写法）：不填、不猜，交回导入面。 */
   triggerUnreadable?: string;
+  /** 「数值」格这一格按没填处理时的大白话理由（#49 方案 B）：导入面必须点名，绝不静默换数。 */
+  valueNote?: string;
 }
 
 /**
@@ -303,7 +370,7 @@ export function parseEffectGroup(
 
   const type = parseRuntimeType(runtimeStr.type);
   const target = parseRuntimeTarget(runtimeStr.target);
-  const value = parseRuntimeValue(runtimeStr.value);
+  const valueRead = readValueCell(runtimeStr.value, type);
 
   const fields: ParsedEffectFields = {};
   if (label) fields.label = label;
@@ -311,12 +378,17 @@ export function parseEffectGroup(
   if (desc) fields.description = desc;
   if (type) {
     fields.runtime = { type };
-    if (value != null) fields.runtime.value = value;
+    if (valueRead.value != null) fields.runtime.value = valueRead.value;
     if (target) fields.runtime.target = target;
   }
   const gate = parseGateText(gateStr);
   if (gate.conditions.length > 0) fields.conditions = gate.conditions;
-  return { fields, gateUnknown: gate.unknown, triggerUnreadable: triggerRead.unreadable };
+  return {
+    fields,
+    gateUnknown: gate.unknown,
+    triggerUnreadable: triggerRead.unreadable,
+    valueNote: valueRead.note,
+  };
 }
 
 /** Serialize one effect into cells for the given width (export path). */

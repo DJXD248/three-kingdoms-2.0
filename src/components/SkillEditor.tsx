@@ -21,6 +21,11 @@ import {
   parseRowPerSkillSheet, parseLegacyDetailedRow, importEntryChangesNothing,
   SkillEditEntry, UnresolvedImportBlock,
 } from './skillEditor/skillExcelParsers';
+import {
+  snapshotForSummary, describeChanges, createdEntry, mergeSummaryEntry,
+  type ImportSummaryEntry, type SummarySnapshot,
+} from './skillEditor/importSummary';
+import { ImportSummaryPanel } from './skillEditor/ImportSummaryPanel';
 import { describeLockKey, findIdentityConflicts } from '../domain/identity';
 import { TriggerEditor } from './skillEditor/TriggerEditor';
 import { RuntimeEditor } from './skillEditor/RuntimeEditor';
@@ -102,6 +107,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   /** §H8: unresolved import blocks deferred for user resolution (create new / modify existing / skip). */
   const [pendingImports, setPendingImports] = useState<UnresolvedImportBlock[]>([]);
+  // v2.8.13：一次导入（含文本路、含待点选的新建）累积的"新增/修改了什么"，常驻到点「知道了」。
+  const [importSummary, setImportSummary] = useState<ImportSummaryEntry[]>([]);
   const [saved, setSaved] = useState(false);
   /** §H3: why a save/import/delete was refused. Persistent until the next try. */
   const [readOnlyNotice, setReadOnlyNotice] = useState('');
@@ -269,8 +276,29 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       locked.length > 0 ? `${denialMessage('USER_LOCKED')}｜${locked.join('、')}` : '',
     ].filter(Boolean).join('\n');
 
+  // v2.8.13 导入总结：条目一律由「写入前 / 写入后各取一次生效视图」派生（#47 裁决
+  // 同一口径：改动是 A 改 B 的数据改动）。出口层不再推断第二次（§12-56①）。
+  const pushSummary = (entry: ImportSummaryEntry | null) => {
+    if (entry) setImportSummary(prev => mergeSummaryEntry(prev, entry));
+  };
+  // **必须现取现读**：写入是在这次事件回调里同步落到 store 的，而组件闭包里的
+  // `getEditedGeneral` 还是上一次渲染那份（`skillEdits`/`generalEdits` 是旧的）——
+  // 拿它算"写入后"会算出与写入前一模一样的视图，于是所有改动条目都静默消失。
+  // 生效视图的唯一正主就是 store 自己的装配函数，这里不另写一份。
+  const editedSnapshot = (g: General): SummarySnapshot =>
+    snapshotForSummary(useGameStore.getState().getGeneralWithEdits(g));
+
   const handleImportText = () => {
-    const { count, rejected, deniedLock } = importSkillEditsFromText(importText);
+    // v2.8.13：文本路与 Excel 路共用同一份总结——写入前后各取一次生效视图，
+    // 名单由 store 交回来（它才知道哪几行真的写了），措辞在这里派生。
+    const pool = [...allGenerals, ...authoredGenerals];
+    const before = new Map(pool.map(g => [g.id, editedSnapshot(g)]));
+    const { count, rejected, deniedLock, applied } = importSkillEditsFromText(importText);
+    for (const id of applied) {
+      const g = pool.find(x => x.id === id);
+      const snap = before.get(id);
+      if (g && snap) pushSummary(describeChanges(snap, editedSnapshot(g)));
+    }
     setImportResult(
       `成功导入 ${count} 名将领的技能数据` +
       (rejected.length > 0 ? `；${rejected.length} 名被系统禁改：${rejected.join('、')}` : '') +
@@ -309,6 +337,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             skills: Parameters<typeof updateSkillEdit>[1] | null,
             gEdit: GeneralEditInput | null,
           ): boolean => {
+            const before = editedSnapshot(general);
             const decisions: ReturnType<typeof updateSkillEdit>[] = [];
             if (skills && skills.length > 0) decisions.push(updateSkillEdit(general.id, skills));
             if (gEdit) decisions.push(updateGeneralEdit(general.id, gEdit));
@@ -317,6 +346,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               rejectedRows.push({ name: general.name, denial: denied.denial });
               return false;
             }
+            pushSummary(describeChanges(before, editedSnapshot(general)));
             return true;
           };
           // v2.8.12 (#45): 「这一行写回去什么都不会变」——两条逐技能行格式共用。
@@ -463,6 +493,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       }, developerMode ? 'official' : 'DIY');
       
       if (result.ok) {
+        pushSummary(createdEntry(block.name, block.skills.map(s => s.name)));
         setImportResult(`✅ 已新建${pendingCreateLayer}「${block.name}」`);
         setPendingImports(prev => prev.filter((_, i) => i !== idx));
       } else {
@@ -476,6 +507,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       // Modify existing general
       type GeneralEditInput = Parameters<typeof updateGeneralEdit>[1];
       const facList: Faction[] = ['魏','蜀','吴','群','晋'];
+      const target = [...allGenerals, ...authoredGenerals].find(g => g.id === targetGeneralId);
+      const before = target ? editedSnapshot(target) : null;
       const ge: GeneralEditInput = {
         faction: (block.factionText && facList.includes(block.factionText as Faction)) ? block.factionText as Faction : undefined,
         hp: block.hp,
@@ -492,6 +525,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         setReadOnlyNotice(`${denialMessage(denied.denial)}｜无法修改「${block.name}」`);
         return;
       }
+      if (target && before) pushSummary(describeChanges(before, editedSnapshot(target)));
       setImportResult(`✅ 已更新将领「${block.name}」`);
       setPendingImports(prev => prev.filter((_, i) => i !== idx));
       setTimeout(() => setImportResult(''), 5000);
@@ -518,8 +552,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           forced: s.forced,
         })),
       }, developerMode ? 'official' : 'DIY');
-      if (result.ok) successCount++;
-      else failCount++;
+      if (result.ok) {
+        successCount++;
+        pushSummary(createdEntry(block.name, block.skills.map(s => s.name)));
+      } else failCount++;
     }
     if (successCount > 0) {
       setImportResult(`✅ 批量新建 ${successCount} 名${pendingCreateLayer}${failCount > 0 ? `，${failCount} 名失败` : ''}`);
@@ -923,6 +959,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               <p>同一将领的多个技能占多行，将领属性仅第一行填写。<span className="text-green-400">含下拉菜单和设定备注。</span>旧版3列/6列效果组的文件仍兼容导入（旧文件没有门槛栏，导入后按「无门槛」处理；也没有「技能门槛」列时整组门槛＝无）。</p>
               <p><span className="text-emerald-300">🚪 两级门槛：</span>「技能门槛」＝整组门槛（先判，不满足整条技能这一刻不响）；「效果N门槛」＝逐项门槛（后判，「选择其一」里不满足的选项会置灰并写明原因）。</p>
               <p><span className="text-emerald-300">⚡ 结构化效果：</span>效果组中填写<span className="text-emerald-300">效果类型（摸牌/伤害）+ 数值</span>后，该效果才会在对局中被引擎真实结算；不填＝纯描述。</p>
+              <p><span className="text-amber-300">🖐 数值栏的「全部」：</span>只有<span className="text-emerald-300">弃牌 / 发放 / 放回牌堆</span>认「全部」或数字 0（＝整只手，导出时仍写 0）；其它类型填 0 会被当作没填并在导入总结里点名。</p>
               <p className="text-amber-300">🚪 门槛栏（每个效果一栏，可留空）：{GATE_SYNTAX_HINT}</p>
               <p className="font-bold text-purple-200 mt-1.5">📋 简单格式（也支持导入）：</p>
               <p>将领名称 | <span className="text-amber-300">技能名：描述</span> | <span className="text-amber-300">技能名：描述</span> | ...</p>
@@ -952,6 +989,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         )}
+
+        {/* v2.8.13：本次导入总结（常驻，点「知道了」才消失） */}
+        <ImportSummaryPanel entries={importSummary} onDismiss={() => setImportSummary([])} />
 
         {/* 没看懂的格子（门槛/触发）：常驻清单，不自动消失——这些内容确实没有生效 */}
         {parseWarnings.length > 0 && (

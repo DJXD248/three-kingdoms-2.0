@@ -114,12 +114,12 @@ describe('N2 白锁：写闸门', () => {
     arm({ developerMode: true });
     useGameStore.getState().toggleGeneralLock(ledger.id);
     const devView = useGameStore.getState().importSkillEditsFromText(`${ledger.name}|锁挡行`);
-    expect(devView).toEqual({ count: 0, rejected: [], deniedLock: [ledger.name] });
+    expect(devView).toEqual({ count: 0, rejected: [], deniedLock: [ledger.name], applied: [] });
     expect(loadPersistedSkillEdits()[ledger.id]).toBeUndefined();
     // 未解锁就退开发者 ⇒ 金锁优先报 OFFICIAL，白锁仍住在档上
     useGameStore.setState({ developerMode: false });
     const playerView = useGameStore.getState().importSkillEditsFromText(`${ledger.name}|系统挡行`);
-    expect(playerView).toEqual({ count: 0, rejected: [ledger.name], deniedLock: [] });
+    expect(playerView).toEqual({ count: 0, rejected: [ledger.name], deniedLock: [], applied: [] });
   });
 
   it('身份改名级联是写：白锁卡的差异层字节不动', () => {

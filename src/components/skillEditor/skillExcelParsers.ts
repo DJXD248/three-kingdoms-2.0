@@ -304,6 +304,10 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
           const name = currentGeneral?.name || currentUnresolved?.name || '未知';
           parseWarnings.push(`${name}·${sName} ${seq} 触发：这句没看懂 → ${parsed.triggerUnreadable}`);
         }
+        if (parsed.valueNote) {
+          const name = currentGeneral?.name || currentUnresolved?.name || '未知';
+          parseWarnings.push(`${name}·${sName} ${seq} 数值：${parsed.valueNote}`);
+        }
         if (Object.keys(parsed.fields).length > 0) {
           effects.push({ id: `e${Date.now()}_${effects.length}`, ...parsed.fields });
           for (const u of parsed.gateUnknown) {

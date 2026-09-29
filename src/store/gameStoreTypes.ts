@@ -188,7 +188,7 @@ export interface GameState {
   batchDeleteEdits:(generalIds:string[])=>{applied:string[];rejected:string[];deniedLock:string[]};
   toggleDisabledGeneral:(id:string)=>EditDecision;
   batchToggleDisabled:(ids:string[],disabled:boolean)=>{applied:string[];rejected:string[];deniedLock:string[]};
-  importSkillEditsFromText:(text:string)=>{count:number;rejected:string[];deniedLock:string[]};
+  importSkillEditsFromText:(text:string)=>{count:number;rejected:string[];deniedLock:string[];applied:string[]};
   getGeneralWithEdits:(general:General)=>General;
   // v2.8.6 地基刀2 (§H3 layer ③): assembly reads the policy-filtered view and
   // the report, never the raw save-file. Blocked overlays stay on disk.

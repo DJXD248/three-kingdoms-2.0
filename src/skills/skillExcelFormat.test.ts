@@ -8,6 +8,10 @@ import {
   parseRuntimeType,
   parseRuntimeTarget,
   parseRuntimeValue,
+  readValueCell,
+  WHOLE_HAND_LABEL,
+  WHOLE_HAND_RUNTIME_TYPES,
+  SETTLEABLE_RUNTIME_TYPES,
   detectEffectGroupWidth,
   detectEffectGroupStart,
   SKILL_GATE_HEADER,
@@ -163,8 +167,75 @@ describe('skillExcelFormat: runtime field parsers', () => {
       .find(s => s.name === '断肠')!.effects![0];
     const cells = serializeEffectGroup(duanchang, 7);
     expect(cells[3]).toBe(0); // 「效果1数值」列原样写着 0
-    const back = parseEffectGroup(cells, 0, 7)!.fields;
-    expect(back.runtime).toEqual({ type: 'DISCARD', value: 0, target: 'ATTACKER' });
+    const back = parseEffectGroup(cells, 0, 7)!;
+    expect(back.fields.runtime).toEqual({ type: 'DISCARD', value: 0, target: 'ATTACKER' });
+    expect(back.valueNote).toBeUndefined(); // 自己导出的文件回灌自己⇒不该点名
+  });
+});
+
+describe('skillExcelFormat: 数值格按类型收口（v2.8.13 #49 方案 B＋2）', () => {
+  it('弃牌/发放/放回牌堆：0 与「全部」都读成整只手', () => {
+    for (const t of ['DISCARD', 'GIVE', 'DECK_PLACE'] as const) {
+      expect(readValueCell('0', t)).toEqual({ value: 0 });
+      expect(readValueCell('全部', t)).toEqual({ value: 0 });
+      expect(readValueCell(WHOLE_HAND_LABEL, t)).toEqual({ value: 0 }); // 照着 GUI 抄也得能用
+    }
+  });
+
+  it('其余类型填 0：按没填处理，并给出点名用的大白话理由', () => {
+    for (const t of ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'EQUIP_STRIP'] as const) {
+      const read = readValueCell('0', t);
+      expect(read.value).toBeUndefined();
+      expect(read.note).toContain('按没填处理');
+      expect(read.note).toContain(runtimeEffectTypeLabels[t]);
+      expect(read.note).toContain('当成 1');
+    }
+    // REVEAL 是唯一不被引擎夹成 1 的：0 会真的"一张也不看"，必须单独提醒
+    const reveal = readValueCell('0', 'REVEAL');
+    expect(reveal.value).toBeUndefined();
+    expect(reveal.note).toContain('看 0 张');
+    expect(reveal.note).not.toContain('当成 1');
+  });
+
+  it('其余类型写「全部」：这个词不归它们管，按没填处理并点名', () => {
+    for (const t of SETTLEABLE_RUNTIME_TYPES) {
+      const read = readValueCell('全部', t);
+      if (WHOLE_HAND_RUNTIME_TYPES.includes(t)) {
+        expect(read).toEqual({ value: 0 });
+      } else {
+        expect(read.value).toBeUndefined();
+        expect(read.note).toContain('全部');
+        expect(read.note).toContain('按没填处理');
+      }
+    }
+  });
+
+  it('照旧：正数原样、空/无/非数字不填，负数仍然不当数', () => {
+    expect(readValueCell('2', 'DRAW_CARD')).toEqual({ value: 2 });
+    expect(readValueCell('无', 'DRAW_CARD')).toEqual({});
+    expect(readValueCell('', 'DRAW_CARD')).toEqual({});
+    expect(readValueCell('两', 'DRAW_CARD')).toEqual({});
+    expect(readValueCell('-1', 'DRAW_CARD')).toEqual({});
+    // 效果类型本身没认出来时，数值格无从按类型判⇒沿用旧行为（runtime 整段都不会挂上）
+    expect(readValueCell('0', undefined)).toEqual({});
+  });
+
+  it('整组读入：三类认「全部」，其它类型的 0 会带出 valueNote', () => {
+    const give = parseEffectGroup(['发牌', '无', '发放', '全部', '目标', '把牌给他', '无'], 0, 7)!;
+    expect(give.fields.runtime).toEqual({ type: 'GIVE', value: 0, target: 'TARGET' });
+    expect(give.valueNote).toBeUndefined();
+
+    const reveal = parseEffectGroup(['窥看', '回合开始时', '看牌堆顶', 0, '自身', '偷看牌堆', '无'], 0, 7)!;
+    expect(reveal.fields.runtime).toEqual({ type: 'REVEAL', target: 'SELF' });
+    expect(reveal.fields.runtime!.value).toBeUndefined();
+    expect(reveal.valueNote).toContain('看 0 张');
+  });
+
+  it('方案2「只进不出」：导出永远写数字 0，绝不写「全部」', () => {
+    const cells = serializeEffectGroup(
+      { id: 'e1', runtime: { type: 'DISCARD', value: 0, target: 'ATTACKER' } }, 7);
+    expect(cells[3]).toBe(0);
+    expect(cells).not.toContain('全部');
   });
 });
 

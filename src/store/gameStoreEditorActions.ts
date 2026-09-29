@@ -242,6 +242,9 @@ export function buildEditorActions(
       const deniedLock: string[] = [];
       const edits = { ...get().skillEdits };
       const wctx = writeCtx();
+      // v2.8.13: 写入方必须报得出"我写了谁"——导入总结由调用方按生效视图前后各取
+      // 一次来派生，这里只交结构化名单，绝不交措辞（词表住在录入面，§12-67③）。
+      const applied: string[] = [];
       for (const line of lines) {
         const parts = line.split('|').map(part => part.trim());
         if (parts.length < 2) continue;
@@ -263,10 +266,11 @@ export function buildEditorActions(
           tag: tags[index] && validTags.includes(tags[index]) ? tags[index] as SkillTag : undefined,
         }));
         count++;
+        applied.push(general.id);
       }
       persistSkillEdits(edits);
       set({ skillEdits: edits });
-      return { count, rejected, deniedLock };
+      return { count, rejected, deniedLock, applied };
     },
 
     getGeneralWithEdits: general => {
