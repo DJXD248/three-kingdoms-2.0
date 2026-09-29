@@ -1,6 +1,6 @@
 // Excel 逐技能行的导入：门槛栏要变成结构化条件，读不懂的要如实报出来。
 import { describe, it, expect } from 'vitest';
-import { parseRowPerSkillSheet, resolveGeneralForImport } from './skillExcelParsers';
+import { parseRowPerSkillSheet, resolveGeneralForImport, importEntryChangesNothing } from './skillExcelParsers';
 import type { General } from '../../data/generals';
 
 const FIXED = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述'];
@@ -214,5 +214,101 @@ describe('resolveGeneralForImport · 三态判别根', () => {
   it('空白名/查无此名⇒missing', () => {
     expect(resolveGeneralForImport('  ', '魏', pool).kind).toBe('missing');
     expect(resolveGeneralForImport('孙策', '吴', pool).kind).toBe('missing');
+  });
+});
+
+// v2.8.12 真机反馈 #45：把自己导出的 Excel 原样重导，逐技能行格式没有"无变化"
+// 判定⇒报成"导入 95 名"、每张官方将留下空的 ✏️ 覆盖记录。判定必须是
+// **写回去会不会改变当前生效视图**，且不能靠"两边都是同一份对象"蒙对。
+describe('importEntryChangesNothing · 重导自己的导出＝零改动', () => {
+  const v4Header = [...FIXED, '技能门槛',
+    '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛',
+    '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述', '效果2门槛',
+    '设定备注'];
+  const ROW = [...SKILL_CELL, '体力≤1',
+    '选项A', '回合结束时', '摸牌', 1, '自身', '摸一张', '手牌=0',
+    '选项B', '受到伤害后→攻击伤害', '伤害', 2, '被作用者', '造成2点伤害', '手牌≥2', ''];
+  /** 解析一行⇒{general（仓库原始卡）, gEdit, skills}，与导入循环拿到的完全一样。 */
+  const parseRow = (row: (string | number | undefined)[] = ROW) =>
+    parseRowPerSkillSheet([v4Header, row]).entries[0];
+  /** 当前生效视图：编辑器保存过的技能就是这一份（effectMode 缺省、带真实 id）。 */
+  const viewOf = (e: ReturnType<typeof parseRow>, skills: General['skills']) =>
+    ({ ...e.general, skills });
+
+  it('逐字重导⇒无变化（先证判定成立）', () => {
+    const e = parseRow();
+    expect(importEntryChangesNothing(viewOf(e, e.skills as General['skills']), e.gEdit, e.skills)).toBe(true);
+  });
+
+  it('效果 id 每次解析都重新生成⇒不得算成变化', () => {
+    const e = parseRow();
+    const stored = (e.skills as General['skills']).map(s => ({
+      ...s, effects: s.effects?.map((f, i) => ({ ...f, id: `stale-${i}` })),
+    }));
+    expect(stored[0].effects![0].id).not.toBe(e.skills[0].effects![0].id);
+    expect(importEntryChangesNothing(viewOf(e, stored), e.gEdit, e.skills)).toBe(true);
+  });
+
+  it('存储侧写空串、导出侧写「无」⇒同一回事，不算变化', () => {
+    const noDesc = [...SKILL_CELL.slice(0, 10), '无', ...ROW.slice(11)];
+    const e = parseRow(noDesc);
+    expect(e.skills[0].description).toBeUndefined(); // 「无」确实读成"没有描述"
+    const stored = (e.skills as General['skills']).map(s => ({ ...s, description: '' }));
+    expect(importEntryChangesNothing(viewOf(e, stored), e.gEdit, e.skills)).toBe(true);
+  });
+
+  it('有效果而未写效果模式＝全部生效（导出把这一格写成「全部生效」，不得因此留标记）', () => {
+    const e = parseRow();
+    const withMode = (e.skills as General['skills']).map(s => ({ ...s, effectMode: 'all' as const }));
+    const noMode = (e.skills as General['skills']).map(s => ({ ...s, effectMode: undefined }));
+    expect(importEntryChangesNothing(viewOf(e, noMode), e.gEdit, withMode)).toBe(true);
+  });
+
+  it('门槛值改一个数字⇒判为有变化（判定不是恒真）', () => {
+    const e = parseRow();
+    const changed = structuredClone(e.skills) as General['skills'];
+    changed[0].effects![0].conditions = [{ metric: 'HAND_COUNT', op: 'EQ', value: 1 }];
+    expect(importEntryChangesNothing(viewOf(e, changed), e.gEdit, e.skills)).toBe(false);
+  });
+
+  it('整组门槛丢了⇒有变化', () => {
+    const e = parseRow();
+    const changed = structuredClone(e.skills) as General['skills'];
+    changed[0].conditions = undefined;
+    expect(importEntryChangesNothing(viewOf(e, changed), e.gEdit, e.skills)).toBe(false);
+  });
+
+  it('触发时机细分丢了⇒有变化（不能只比名字）', () => {
+    const e = parseRow();
+    const changed = structuredClone(e.skills) as General['skills'];
+    changed[0].effects![1].trigger = { type: 'onDamageTaken' };
+    expect(importEntryChangesNothing(viewOf(e, changed), e.gEdit, e.skills)).toBe(false);
+  });
+
+  it('运行时数值/目标丢了⇒有变化', () => {
+    const e = parseRow();
+    const changed = structuredClone(e.skills) as General['skills'];
+    changed[0].effects![0].runtime = { type: 'DRAW_CARD' };
+    expect(importEntryChangesNothing(viewOf(e, changed), e.gEdit, e.skills)).toBe(false);
+  });
+
+  it('技能条数不同⇒有变化', () => {
+    const e = parseRow();
+    const changed = structuredClone(e.skills) as General['skills'];
+    changed.push({ name: '多出来的一条' });
+    expect(importEntryChangesNothing(viewOf(e, changed), e.gEdit, e.skills)).toBe(false);
+  });
+
+  it('头部数值真的改了⇒有变化；没改⇒无变化', () => {
+    const e = parseRow();
+    const view = viewOf(e, e.skills as General['skills']);
+    expect(importEntryChangesNothing({ ...view, hp: 3 }, { hp: 4 }, e.skills)).toBe(false);
+    expect(importEntryChangesNothing(view, { hp: e.general.hp }, e.skills)).toBe(true);
+    expect(importEntryChangesNothing(view, { faction: '群' }, [])).toBe(false);
+  });
+
+  it('这一行不带技能、头字段也不冲突⇒整行是空操作，跳过', () => {
+    const e = parseRow();
+    expect(importEntryChangesNothing(viewOf(e, e.skills as General['skills']), {}, [])).toBe(true);
   });
 });

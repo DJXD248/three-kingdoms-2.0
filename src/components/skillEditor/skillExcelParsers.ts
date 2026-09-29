@@ -400,3 +400,54 @@ export const parseLegacyDetailedRow = (row: (string|number|undefined)[]): {
   }
   return { general, gEdit, skills };
 };
+
+// ── 导入「无变化」判定（v2.8.12 真机反馈 #45）──
+// 逐技能行格式（＝导出文件的格式）原先没有这一步：把自己导出的 Excel 原样
+// 重导，95 行全部计成"导入"，每张官方将凭空多一条 ✏️ 覆盖记录（退出开发者
+// 模式后还被算进"N 处改动已停用"）。判定对象是**写回去会不会改变当前生效
+// 视图**，所以比的是 `getEditedGeneral` 的那一份，不是仓库原始卡。
+// 比较前必须归一，否则永远不相等：
+//   ① 效果 id 每次解析都重新生成（`e${Date.now()}_…`）⇒不参与比较；
+//   ② 空串 / undefined、false / undefined 在存储侧与解析侧形态不同；
+//   ③ 导出把"有效果但没写模式"写成「全部生效」⇒两侧都按 'all' 认。
+const canonGate = (cs?: SkillCondition[]) =>
+  (cs ?? []).map(c => [c.metric, c.subject ?? null, c.op, c.value ?? null,
+    c.compareTo ? [c.compareTo.metric, c.compareTo.subject ?? null] : null]);
+
+const canonTrigger = (t?: SkillTriggerConfig) => t
+  ? [t.type, t.deploySubType ?? null, t.turnSubType ?? null, t.damageSubType ?? null,
+    t.killSubType ?? null, t.cardSubType ?? null, t.expireCondition ?? null]
+  : null;
+
+const canonRuntime = (r?: NonNullable<SkillEffect['runtime']>) => r
+  ? [r.type, r.value ?? null, r.target ?? null, r.dest ?? null]
+  : null;
+
+const canonEffect = (e: SkillEffect) =>
+  [e.label ?? null, e.description || null, canonTrigger(e.trigger), canonGate(e.conditions), canonRuntime(e.runtime)];
+
+const canonSkill = (s: SkillEditEntry | General['skills'][number]) => {
+  const effects = s.effects ?? [];
+  return [
+    s.name, s.description || null, s.tag ?? null, s.forced ? true : null,
+    canonTrigger(s.trigger),
+    effects.length > 0 ? (s.effectMode ?? 'all') : (s.effectMode ?? null),
+    effects.map(canonEffect), canonGate(s.conditions),
+  ];
+};
+
+/** 这一行写回去是否什么都不会改变（true＝该跳过，不该记成"导入"、也不留覆盖记录）。 */
+export const importEntryChangesNothing = (
+  edited: General,
+  gEdit: Record<string, unknown>,
+  skills: SkillEditEntry[],
+): boolean => {
+  if (gEdit.faction !== undefined && gEdit.faction !== edited.faction) return false;
+  if (gEdit.hp !== undefined && gEdit.hp !== edited.hp) return false;
+  if (gEdit.meleeAtk !== undefined && gEdit.meleeAtk !== edited.meleeAtk) return false;
+  if (gEdit.rangedAtk !== undefined && gEdit.rangedAtk !== edited.rangedAtk) return false;
+  if (skills.length === 0) return true; // 这一行不带技能⇒技能侧不会变
+  const incoming = JSON.stringify(skills.map(canonSkill));
+  const current = JSON.stringify(edited.skills.map(canonSkill));
+  return incoming === current;
+};

@@ -23,6 +23,7 @@ import {
   SETTLEABLE_RUNTIME_TYPE_LIST,
 } from './skillExcelFormat';
 import type { SkillCondition, SkillEffect, SkillTriggerConfig } from '../data/generals';
+import { allGenerals } from '../data/generals';
 import { compileSkill } from './skillCompiler';
 
 describe('skillExcelFormat: cell cleaning', () => {
@@ -143,14 +144,27 @@ describe('skillExcelFormat: runtime field parsers', () => {
     for (const label of RUNTIME_TARGET_LIST.split(',')) expect(parseRuntimeTarget(label)).toBeDefined();
   });
 
-  it('parses values: positive integers only', () => {
+  it('parses values: 非负整数；0 是引擎的「全部」哨兵，必须原样认回', () => {
     expect(parseRuntimeValue('2')).toBe(2);
     expect(parseRuntimeValue(3)).toBe(3);
     expect(parseRuntimeValue('2.7')).toBe(2);
-    expect(parseRuntimeValue('0')).toBeUndefined();
+    // v2.8.12 #48：导出侧会把官方的 value:0（＝弃置全部手牌）原样写进格子。
+    // 旧解析器按"最小 1"把 0 判成非法⇒导入自己的导出文件会把「弃置全部」
+    // 悄悄改成「弃置 1 张」。0 从此是合法数值，负数仍然非法。
+    expect(parseRuntimeValue('0')).toBe(0);
+    expect(parseRuntimeValue(0)).toBe(0);
     expect(parseRuntimeValue('-1')).toBeUndefined();
     expect(parseRuntimeValue('abc')).toBeUndefined();
     expect(parseRuntimeValue('无')).toBeUndefined();
+  });
+
+  it('#48 断肠整组往返：导出写 0 ⇒ 导入读回 0，一张卡都不被自己改坏', () => {
+    const duanchang = allGenerals.find(g => g.id === 'qun_012')!.skills
+      .find(s => s.name === '断肠')!.effects![0];
+    const cells = serializeEffectGroup(duanchang, 7);
+    expect(cells[3]).toBe(0); // 「效果1数值」列原样写着 0
+    const back = parseEffectGroup(cells, 0, 7)!.fields;
+    expect(back.runtime).toEqual({ type: 'DISCARD', value: 0, target: 'ATTACKER' });
   });
 });
 

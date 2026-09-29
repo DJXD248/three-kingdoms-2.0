@@ -18,7 +18,8 @@ import {
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
 import {
   parseSkillCell, isDetailedFormat, isRowPerSkillFormat, resolveGeneralByNameFaction,
-  parseRowPerSkillSheet, parseLegacyDetailedRow, SkillEditEntry, UnresolvedImportBlock,
+  parseRowPerSkillSheet, parseLegacyDetailedRow, importEntryChangesNothing,
+  SkillEditEntry, UnresolvedImportBlock,
 } from './skillEditor/skillExcelParsers';
 import { describeLockKey, findIdentityConflicts } from '../domain/identity';
 import { TriggerEditor } from './skillEditor/TriggerEditor';
@@ -318,6 +319,11 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             }
             return true;
           };
+          // v2.8.12 (#45): 「这一行写回去什么都不会变」——两条逐技能行格式共用。
+          // 只在**本来写得动**时才认：权限被拦的行必须照旧进"拒录"名单，
+          // 否则"无变化"会把读不了写的真话盖掉。
+          const isNoChangeRow = (general: General, ge: Record<string, unknown>, skills: SkillEditEntry[]) =>
+            mayEditGeneral(general.id) && importEntryChangesNothing(getEditedGeneral(general), ge, skills);
 
           for (const sheetName of workbook.SheetNames) {
             const sheet = workbook.Sheets[sheetName];
@@ -336,6 +342,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               // Auto-apply uniquely resolved rows immediately
               for (const entry of entries) {
                 const ge = entry.gEdit;
+                if (isNoChangeRow(entry.general, ge, entry.skills)) { skipped++; continue; }
                 const wrote = writeRow(
                   entry.general,
                   entry.skills.length > 0 ? entry.skills : null,
@@ -357,6 +364,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 const parsed = parseLegacyDetailedRow(row);
                 if (!parsed || !parsed.general) continue;
                 const ge = parsed.gEdit;
+                if (isNoChangeRow(parsed.general, ge, parsed.skills)) { skipped++; continue; }
                 const wrote = writeRow(
                   parsed.general,
                   parsed.skills.length > 0 ? parsed.skills : null,
@@ -422,6 +430,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     e.target.value = '';
   };
 
+  // v2.8.12 (#46): 待点选的「新建」落哪一层由模式决定（§H1：开发者模式=官方
+  // 本地草稿 G-*，玩家=DIY D-*）⇒措辞跟着模式说，不再一律喊"DIY 将领"。
+  const pendingCreateLayer = developerMode ? '官方本地草稿' : 'DIY 将领';
+
   // §H8: resolve a pending import block (create new / modify existing / skip)
   const handleResolvePending = (idx: number, action: 'create' | 'modify' | 'skip', targetGeneralId?: string) => {
     const block = pendingImports[idx];
@@ -451,7 +463,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       }, developerMode ? 'official' : 'DIY');
       
       if (result.ok) {
-        setImportResult(`✅ 已新建将领「${block.name}」`);
+        setImportResult(`✅ 已新建${pendingCreateLayer}「${block.name}」`);
         setPendingImports(prev => prev.filter((_, i) => i !== idx));
       } else {
         setImportResult(`❌ 新建失败：${result.reason}`);
@@ -510,7 +522,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       else failCount++;
     }
     if (successCount > 0) {
-      setImportResult(`✅ 批量新建 ${successCount} 名将领${failCount > 0 ? `，${failCount} 名失败` : ''}`);
+      setImportResult(`✅ 批量新建 ${successCount} 名${pendingCreateLayer}${failCount > 0 ? `，${failCount} 名失败` : ''}`);
       setPendingImports([]);
     } else {
       setImportResult(`❌ 全部新建失败`);
@@ -970,7 +982,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               <button onClick={() => setPendingImports([])}
                 className="text-[10px] px-1.5 py-0.5 rounded text-blue-400/70 hover:text-blue-200 hover:bg-blue-900/30">清空</button>
             </div>
-            <p className="text-[10px] text-blue-200/60 mb-2">每行可选择：① 新建为 DIY 将领 ② 挂到现有将领上修改 ③ 跳过不导入</p>
+            <p className="text-[10px] text-blue-200/60 mb-2">每行可选择：① 新建为 {pendingCreateLayer} ② 挂到现有将领上修改 ③ 跳过不导入</p>
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {pendingImports.map((block, idx) => (
                 <div key={idx} className="bg-black/30 border border-blue-700/30 rounded p-2 text-[10px]">

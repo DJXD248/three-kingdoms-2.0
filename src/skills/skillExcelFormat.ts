@@ -188,12 +188,17 @@ export function parseRuntimeTarget(s: string): SkillRuntimeEffect['target'] | un
   return byLabel ?? LEGACY_TARGET_LABELS[v];
 }
 
-/** Parse a positive integer value; invalid/missing -> undefined. */
+/**
+ * Parse the 数值 cell. 负数/小数/文字＝没有这个数（照旧 undefined）。
+ * **0 必须认**：它是引擎的「全部」哨兵（`handSelection.ts` 里 `count === 0 ⇒ 整只手`），
+ * 官方卡就这么写（断肠＝击杀者弃置全部手牌）。导出侧原样写出 0，导入侧若不认，
+ * 用户把自己导出的 Excel 再导回去，就会把「弃置全部」悄悄改成「弃置 1 张」。
+ */
 export function parseRuntimeValue(s: unknown): number | undefined {
   const v = cleanCell(s);
   if (!v) return undefined;
   const n = Number(v);
-  if (!Number.isFinite(n) || n < 1) return undefined;
+  if (!Number.isFinite(n) || n < 0) return undefined;
   return Math.floor(n);
 }
 
