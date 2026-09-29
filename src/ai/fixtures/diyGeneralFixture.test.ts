@@ -22,7 +22,8 @@ describe('DIY 固定样本：记录形状（§H1 唯一存在入口＋§H2 命�
       expect(isAcceptableAuthoredRecord(g)).toBe(true);
       expect(g.hp).toBeGreaterThan(0);
       expect(allGenerals.map(o => o.id)).not.toContain(g.id);
-      // §H1：identity 在创建时就显式落值（这里显式为空＝无身份、永不锁）
+      // §H1：identity 在创建时就显式落值（这里显式为空＝当前无身份，
+      // 此刻不产生锁键；日后填上身份就回到锁下）
       expect(g.identity).toBe('');
     }
     expect(new Set(ids).size).toBe(ids.length);

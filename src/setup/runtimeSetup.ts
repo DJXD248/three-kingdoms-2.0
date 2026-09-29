@@ -144,7 +144,7 @@ export function buildDraftCandidates(
     const seen = new Set<string>();
     return ordered.filter(general => {
       const key = lockKeyOf(general);
-      if (key === null) return true; // 无身份/DIY never locks, may coexist
+      if (key === null) return true; // 无身份/DIY：此刻不产生锁键，可共存
       if (seen.has(key)) return false;
       seen.add(key);
       return true;

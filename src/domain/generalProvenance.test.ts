@@ -67,7 +67,7 @@ describe('createAuthoredGeneral (§H1 唯一发号口)', () => {
     expect(explicit.ok && explicit.general.identity).toBe('测试身份');
   });
 
-  it('显式留空＝无身份（永不锁），不会被悄悄补成名字', () => {
+  it('显式留空＝当前无身份（不产生锁键，日后填上身份就回到锁下），不会被悄悄补成名字', () => {
     const none = createAuthoredGeneral({ ...baseInput, identity: '' }, 'DIY', fixedId);
     expect(none.ok && none.general.identity).toBe('');
   });

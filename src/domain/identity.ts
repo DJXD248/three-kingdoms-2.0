@@ -21,7 +21,11 @@ export type IdentityBearing = Pick<General, 'name' | 'identity' | 'faction'>;
  * Resolved identity key of a general (格1).
  * - `identity` absent (undefined)  ⇒ falls back to the general's own name
  *   (every official general carries its name-identity with zero data edits).
- * - `identity` explicitly blank/whitespace ⇒ NO identity (never locks).
+ * - `identity` explicitly blank/whitespace ⇒ NO identity: it produces no lock
+ *   key **while it stays blank**. Blank is a current state, not a permanent
+ *   exemption — `identity` is an editable field, so filling one in later puts
+ *   the general back under the lock (contract grid 8; §H1 says identity edits
+ *   are allowed in both directions: 有→无 and A→B).
  * - otherwise the trimmed stored registry key.
  */
 export function identityOf(g: Pick<General, 'name' | 'identity'>): string | null {

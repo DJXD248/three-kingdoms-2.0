@@ -87,7 +87,9 @@ export type AuthoringSuccess = { ok: true; general: General };
  * - writes `identity` EXPLICITLY (falling back to the name at creation), so a
  *   later rename can never silently move the lock key `identity.ts:27-34` derives
  * - `''` (explicit blank) is preserved: that general carries no identity and
- *   never locks, exactly like the editor's existing 无身份 semantics
+ *   no lock key while it stays blank (filling an identity in later puts the
+ *   general back under the lock — `identity` is an editable field, §H1),
+ *   exactly like the editor's existing 无身份 semantics
  * - `source` is stamped here and never rewritten afterwards
  */
 export function createAuthoredGeneral(

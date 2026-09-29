@@ -20,7 +20,7 @@ describe('identityOf — 回退链（契约 格1/格8）', () => {
   it('explicit identity wins, trimmed', () => {
     expect(identityOf(card('神关羽', '蜀', ' 关羽 '))).toBe('关羽');
   });
-  it("'' / whitespace identity = 无身份 = never locks", () => {
+  it("'' / whitespace identity = 无身份 = 不产生锁键（留空是当前状态，日后填身份即回到锁下）", () => {
     expect(identityOf(card('无名氏', '魏', ''))).toBeNull();
     expect(identityOf(card('无名氏', '魏', '   '))).toBeNull();
   });
@@ -44,6 +44,16 @@ describe('lockKeyOf / lockKeysOf / identitiesOf', () => {
     const batch = [card('关羽', '蜀'), card('甲', '魏', DIY_IDENTITY), card('乙', '吴', ''), card('关羽', '群')];
     expect(lockKeysOf(batch).size).toBe(2);
     expect(identitiesOf(batch)).toEqual(new Set(['关羽']));
+  });
+  it('留空＝当前状态的判定，不是永久豁免——身份可后续编辑（用户 2026-09-29 更正）', () => {
+    const blank = card('关云长', '蜀', '');
+    expect(lockKeyOf(blank)).toBeNull();
+    // 事后补上身份 ⇒ 立刻参与锁
+    expect(lockKeyOf({ ...blank, identity: '关羽' })).toBe(lockKey('关羽', '蜀'));
+    // 从 A 改到 B ⇒ 旧锁键不再由这张卡持有
+    expect(lockKeyOf({ ...blank, identity: '张飞' })).toBe(lockKey('张飞', '蜀'));
+    // 从有改回无 ⇒ 锁键消失（可逆，两个方向都合法）
+    expect(lockKeyOf({ ...card('关云长', '蜀', '关羽'), identity: '' })).toBeNull();
   });
 });
 
