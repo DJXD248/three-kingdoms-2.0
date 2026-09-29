@@ -17,6 +17,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     pool: nodeMajor >= 24 ? 'vmThreads' : undefined,
+    // 本机冷跑（vmThreads + jsdom 首次导入）下，ai/arena、core/gameFlow、ai/policies 各有一条
+    // 重用例会越过默认 5s 上限。已用 git stash 在 v2.8.14 干净树上复现＝改动前就存在的抖动，
+    // 不是新引入的回归，故把上限抬到 20s，让超时只反映真挂死。门槛与用例本身一律没动。
+    testTimeout: 20_000,
     // scripts/preflight-build.test.mjs: v2.3.3 (D-7) build 防呆脚本的守卫测试随脚本同目录登记。
     include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
     coverage: {
