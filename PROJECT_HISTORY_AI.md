@@ -1902,5 +1902,7 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 决斗流程**未实装**（#30＝玩法刀，三道闸①③全触发，且要判定 §H9 第 2／4 句是否构成新的 canonical 事实⇒**可能换锚**）；提示模式两档**未落地**（#42＝要新增那枚「都不发动」canonical 出口动作，不是设置页文案开关）；#41 **只裁未做**（默认关闭＝**换锚**，代价已写在 §H9 与本节）；#38（方案B 导出→仓库文件验证路＋"将领来源"自选开关）由施工会话择机；#43（锁定技自动结算，`tag`/`forced` 零消费者）照旧；`PLAYER_GLOSSARY.md` §八余下**九条**冲突照旧只报不修。CI 状态见 HANDOFF §9 本轮条与下方回填。
 
+**远端 CI（已回填）**：**CI #177**＝run `36563719706`、sha `4df1422`（docs 登记提交）、`event=push`／`head_branch=master`、**Success**、总 **2m55s**。逐条开详情页核对四个 job：`test (22)` 详情页原文「**succeeded in 1m 59s**」，步骤 `Type check` / `Run tests with coverage` / `Upload coverage report` 全绿；`test (24)` ~89s，唯一 `skipped`＝`Upload coverage report`（矩阵去重，非失败）；`lint` ~63s，含 `Security audit (high or above blocks)`＋`Run ESLint`；`build` ~48s。**失败步骤合计 0**；注解按 job 分别取数（不凭上一轮记忆）＝`test (22)` **1** 条 warning（`.github`＝遗留的「Node.js 20 is deprecated」runner 提示）、`lint` **11** 条 warning（ESLint 那批遗留 react-hooks 告警的注解呈现）、两处均 **0 errors**。**取证边界如实登记**：远端 vitest 的「77 文件／797 例」逐字读数在 job 日志里，匿名 API 取日志＝**404**，而**读本机凭据换 token 属禁令**，因此本轮远端证据的形态是「跑测试那一步在两条矩阵腿上都是绿的（同一命令、同一地板、同一 `4df1422` 树）」，不是抄到的用例计数。推送**直连一次即通**（master＋标签 `v2.8.14`），未借道代理、未留持久 git 配置；推标签后 run 列表仍只 #177 一条＝**§12-59「标签不触发工作流」的第六次正面反证**。另核：#172–#176 全部 `completed success`，本轮没有把旧 run 当新证据。
+
 
 
