@@ -1904,5 +1904,76 @@ Unresolved & Risk：①GameBoard/TestArena 拆分（F 序列尾刀）仍待用�
 
 **远端 CI（已回填）**：**CI #177**＝run `36563719706`、sha `4df1422`（docs 登记提交）、`event=push`／`head_branch=master`、**Success**、总 **2m55s**。逐条开详情页核对四个 job：`test (22)` 详情页原文「**succeeded in 1m 59s**」，步骤 `Type check` / `Run tests with coverage` / `Upload coverage report` 全绿；`test (24)` ~89s，唯一 `skipped`＝`Upload coverage report`（矩阵去重，非失败）；`lint` ~63s，含 `Security audit (high or above blocks)`＋`Run ESLint`；`build` ~48s。**失败步骤合计 0**；注解按 job 分别取数（不凭上一轮记忆）＝`test (22)` **1** 条 warning（`.github`＝遗留的「Node.js 20 is deprecated」runner 提示）、`lint` **11** 条 warning（ESLint 那批遗留 react-hooks 告警的注解呈现）、两处均 **0 errors**。**取证边界如实登记**：远端 vitest 的「77 文件／797 例」逐字读数在 job 日志里，匿名 API 取日志＝**404**，而**读本机凭据换 token 属禁令**，因此本轮远端证据的形态是「跑测试那一步在两条矩阵腿上都是绿的（同一命令、同一地板、同一 `4df1422` 树）」，不是抄到的用例计数。推送**直连一次即通**（master＋标签 `v2.8.14`），未借道代理、未留持久 git 配置；推标签后 run 列表仍只 #177 一条＝**§12-59「标签不触发工作流」的第六次正面反证**。另核：#172–#176 全部 `completed success`，本轮没有把旧 run 当新证据。**收线层＝回填提交自身的 CI 已核验**：**CI #178**（run `36564673705`、sha `841db8f`＝回填提交、**Success**、总 **2m36s**、四 job 全 success、**失败步骤 0**，唯一非 success 步骤仍是 `test (24)` 的 `Upload coverage report`＝矩阵去重）。这次回填的**推送路径**与上一条相反＝直连失败（`Failed to connect to github.com:443 after 21045 ms`，同刻探测 `127.0.0.1:10808`＝`200`）⇒ **一次性**借道代理推出，推完逐项复查 `--local`／`--global` 的 `http.proxy`/`https.proxy` **四项全空**。按先例登记到这一层收线，不再追"CI 的 CI"。
 
+---
+
+## Qoder 2.8.15：用户点名的一把交付刀＝`PLAYER_GLOSSARY.md` 做成 Excel（文件名照原话「词汇表」）——**形态选投影不选副本**：md 仍是唯一事实源，`词汇表.xlsx` 由 `npm run glossary-xlsx` 生成；本刀真正的 bug 不在解析而在**生成的二进制每次字节都不同**（exceljs 底下 jszip 给每个 zip 条目写 `new Date()`），修法＝写盘前重过一遍 jszip 把条目时间戳钉死；守卫四条**读回一律走 SheetJS**（跨库当裁判），并用"往 md 塞一行假词条"实证它会红。**`src/` 零改动 ⇒ 未走浏览器 E2E 并如实说明；未走真 Excel 打开确认**（官方对局基线 `{"1":112,"2":188}` 与样本基线 `{"1":108,"2":192}` 逐字未动）（2026-09-29）
+
+模型标记：本轮由 Qoder 主会话施工，无第二会话复算（非玩法、非内容刀，交付物是文档投影＋工具）。
+
+### 一、需求与形态判断
+
+用户原话只有一句：「词汇表（即仓库根目录 PLAYER_GLOSSARY.md），改成 Excel 表格，文件名称就用词汇表三个字」。第一决策不是"怎么排版"，而是**这份 Excel 与 md 的关系**：
+
+- 选**投影**：md 是唯一事实源，Excel 由命令生成。理由不是洁癖——本项目已经被"同一件事有两处写法"咬过（§12-55 显示与生效分叉、v2.8.12 导出用 ExcelJS／导入用 SheetJS 的不对称）。词汇表一旦变成两份正文，用户填的第三列、我改的第二列，迟早各说各话。
+- 投影的**固有代价**必须明说而不是藏起来：用户在 Excel 第三列写的答案，重跑生成命令会被覆盖 ⇒ md 表头新增的那段直接写「您填的答案请同时抄回本文件的第三列」。这条是设计后果，不是 bug，登记进 §12-73①。
+- 文件名照用户原话用 `词汇表.xlsx`（中文文件名在 Git／CI／Windows 三方都无害，实测 `git ls-files` 以八进制转义显示但读写正常）。
+
+### 二、生成器 `scripts/make-glossary-xlsx.mjs`
+
+- 解析：按 `^## ([一二三四五六七八九十])、` 切八节，节内 `|` 行按 `split('|').slice(1,-1)` 取格，分隔行用 `cells.every(c => /^[-:\s]*$/.test(c))` 滤掉；非表格行进 `notes`（目前只有 §四 末段"徽章不是开关"那一条，落到同名表尾部作斜体附注）；前言（第一行标题到 `## 一、` 之间）进 `说明` 表。
+- `clean()` 负责剥 markdown：`~~x~~` → `x（旧说法，已作废）`、`**x**` → `x`、`` `x` `` → `x`。§八 那条被裁决的旧句子因此带着"已作废"的语义进表，而不是丢掉删除线信息。
+- 表名硬约束：**≤31 字、不含 `: \ / ? * [ ]`**（Excel 的规矩），所以 `一、棋盘与数字（对局中一眼看到的）` 变成 `一 棋盘与数字`。这条也被守卫盯着。
+- 排版：表头加粗＋底色＋**冻结首行**（`ws.views=[{state:'frozen',ySplit:1}]`）、逐节列宽（§八 是 5 列：#／冲突／界面这么说／代码这么算／你的裁决）、第三列统一 34 宽留给用户填。
+- 产出 9 张表、**157 条词条**＝30/37/21/25/9/17/8/10，`说明` 表带每表条数一览。
+- 脚本同时 `export` `parse`／`SHEETS`／`renderXlsx`／`sheetCounts`，`main()` 用 `pathToFileURL(process.argv[1]).href === import.meta.url` 守卫 ⇒ 命令行照跑，测试可 import。
+
+### 三、本刀唯一的真 bug：生成的 xlsx 字节不稳定
+
+现象：同一份 md 连跑两次，md5 不同（`4df24a07ff122b31ed8c1a19907837fa` vs `2be9264f393d26a4668fadba103d6b99`）。第一反应是文档属性里的时间戳，把 `wb.created`／`wb.modified` 钉成固定 UTC 日期后**仍然变** ⇒ 说明 volatile 不在 docProps。
+
+定位：exceljs 的 `lib/utils/zip-stream.js` 里 `this.zip.file(options.name, data)` **不传 date**，jszip 每个条目自己 `new Date()`。也就是 zip 的 24 个条目本地头／中央目录里全写着当前时间。
+
+修法：写完不直接落盘，而是 `JSZip.loadAsync(await wb.xlsx.writeBuffer())` → 逐条目 `entry.date = EPOCH` → `generateAsync({type:'nodebuffer', compression:'DEFLATE'})` 落盘。验证三条：连跑三次 md5 全等；`unzip -l` 条目时间全为 `2026-09-29 00:00`；守卫里"两次渲染字节全等"那条常设盯着（`Buffer.compare(first, second) === 0`）。
+
+判据（§12-73②）：**任何要提交进仓库的生成物，第一道问是"重跑一次字节变不变"**。变＝仓库历史里的 diff 不再反映内容变化，"这一版词汇表改了哪条"就没法用 git 回答了。
+
+代价一条：`jszip` 原本是 exceljs 的传递依赖，本刀把它**显式写进 devDependencies**（`^3.10.1`，`npm install` 报 `up to date`＝没有真的新增包，只是把依赖说诚实）。
+
+### 四、守卫 `scripts/make-glossary-xlsx.test.mjs`（4 例）
+
+1. 八节都有对应表、表名合规（长度与非法字符）。
+2. md 每一行逐格落进 Excel（含表尾附注），且**零 markdown 残留**（`~~`／`**`／反引号／以 `-` 开头的分隔样式）。
+3. 两次渲染字节全等。
+4. **入库的 `词汇表.xlsx` 等于当前 md 的投影**（长度＋逐字节 compare）⇒ 改 md 忘重跑就红。
+
+读回**用 SheetJS（`xlsx`）而不是 exceljs**：本项目"写用 ExcelJS、读用 SheetJS"是同一条往返铁律（v2.8.12 那次不对称差点把「弃置全部」改弱成「弃置 1 张」），守卫若用自己写的那套库自查＝自己判卷。
+
+**咬人性实证**（不是"跑过一遍绿"）：`cp PLAYER_GLOSSARY.md` 备份后往表尾追加一行假词条 ⇒ 第 4 条转红（`expected 27486 to be 27545`），第 2 条仍绿（因为它两边都由同一份 md 派生，天然发现不了"两边一起变"——这正好说明为什么第 4 条不可省）；撤回后 4 条全绿，md 校验和复原为 `5abd2728…`。临时验证脚本 `tmp-verify-glossary.cjs` 完成使命后删除，其逻辑已固化进上面四条。
+
+### 五、`testTimeout` 那条抖动：先证归属，再动手
+
+本轮 coverage 首跑有 3 条重用例在 **5000ms** 超时（`src/ai/arena.test.ts:36`、`src/core/gameFlow.test.ts:598`、`src/ai/policies/strategyPolicy.test.ts:207`）。`vitest.config.ts` 从来没设过 `testTimeout`，默认就是 5s。
+
+归属取证：`git stash -u`（记下 md5）后在 **v2.8.14 干净树**上跑 coverage 三次，其中一次撞同样的 5s 超时 ⇒ **改动前就能复现**，不是本刀引入。`git stash pop` 全部复原（xlsx md5 一致；两个脚本文件 md5 只因 git 把 LF 转成 CRLF 而不同）。之后把上限抬到 `20_000`，注释里写清是哪三条用例、怎么证的、以及"地板与用例一律没动"。抬完后本轮三次 coverage 全绿。
+
+判据（§12-73⑥）：**"这是既有问题"本身是一条待证假设**，标准动作＝stash 到干净树复现。这是"复算清单要逐条自证伪"（§12-66⑨、§12-71⑤）的第三次实例。
+
+### 六、两处刻意的不做
+
+- **不加 `.gitattributes`**：实测既有 fixture `src/components/__fixtures__/skills-sample.xlsx` 在索引里就是 `i/-text`＝git 按 NUL 判二进制，本机 `core.autocrlf=true` 也碰不到它；而且第四条守卫会在二进制真被改坏时直接报红。为一个测量上不存在的问题加一份影响全仓库的属性文件是范围蔓延。
+- **未走浏览器 E2E**：`src/` 一行未改，构建产物 **2,030,740 字节＝与 v2.8.14 逐字节同体积**（成品里 `2.8.15` 出现 1 处、`2.8.14` 0 处），本轮没有任何界面行为可验。这条"没做＋为什么"必须写进登记，否则下一轮会以为我验过。
+
+### 七、账面（定稿树）
+
+`check` 0 错误；`npm test` **801 例／78 文件**（797/77 → +4／+1 文件＝新守卫；`scripts/**` 不进覆盖率分母，所以地板读数不受它影响）；`npm run test:coverage` **三次读数如实并列** 59.72·51.28·50.56·64.86／59.59·51.15·50.51·64.70／59.60·51.20·50.51·64.71（列序 Stmts/Branch/Funcs/Lines，地板 42/34/34/47 全过、三次 exit 0、**地板一律未调**）；`npx eslint .` **0 错误／29 条遗留警告**同四类零新增；`npm run build` **2,030.74 kB／gzip 593.81 kB**。两锚各两轮、归一化（去掉 `avg=`/`slowest=`/`wall=`/`Done in` 行）后 `cmp` 逐字节全等：B10 97 行＝won=300／exhausted=0／VIOLATIONS=0／**{"1":112,"2":188}**／五势力小账魏 116/56·193/138·13/1、蜀 136/71·205/132·14/2、吴 126/55·160/115·4/0、群 126/70·206/116·16/1、晋 96/48·134/95·4/0 逐格吻合 §12-43①；B11 `--diy-fixture --skill 0` 13 行＝**{"1":108,"2":192}**、三势力小账（魏 217/121·339/197·33/2、蜀 193/87·275/186·12/1、吴 190/92·297/214·8/1）与 v2.8.9 登记逐字相同。
+
+### 八、五面登记与一处自纠
+
+HANDOFF §3（版本行＋本轮调整九点）／§9（2.8.15 验证条）／§12-73（四条常设判据＋归属法＋边界）＋§9 文档职责那节加 Excel 投影职责＋读取顺序 4b 加一句；`PROJECT_ARCH_MAP.md` §F 词汇表行之后新增「`词汇表.xlsx`＝md 的投影」一整行（权威边界＋两条判据＋守卫实证）；`CHANGELOG.md` 新开 `[2.8.15]`；`README.md` 命令块加 `npm run glossary-xlsx`、文档清单加 `词汇表.xlsx` 并在 `PLAYER_GLOSSARY.md` 行标"唯一事实源"；`AGENTS.md` 加验证命令＋Key Files 一行（含"别手改前两列／填的答案抄回 md／字节稳定是故意的"）；`PROJECT_RELEASE_PIPELINE.md` §登记纪律加"改过 md 必须重跑该命令，守卫会替我确认"；`PLAYER_GLOSSARY.md` 表头加唯一事实源段。**自纠一处（纯文字）**：我在那段新文案里把第三列写成「您的理解」，八节表头一直是「你的理解」⇒ 已统一，判据＝新增文案里的列名必须与既有列名逐字一致；同类第二处＝§九文档职责里"§八那十条"已按 v2.8.14 销账实况改为"余下九条"。
+
+### 九、边界与下一步
+
+**我没做的**：真机浏览器 E2E（无界面行为可验，理由见⑥）；**用真 Excel 打开确认**（本机无 Excel，我的证人只有 SheetJS 跨库读回与 zip 完整性，打开体验由用户那一次点击定）；`词汇表.xlsx` 未做多语言／未加数据校验下拉（用户没要，且加了就得同步守卫与生成器）。既有待办一律未动：#30 决斗（玩法刀⇒三道闸）、#42 提示两档（需那枚「都不发动」canonical 出口）、#41 只裁未做（默认关闭＝**换锚**）、#38 择机、#43 `tag`/`forced` 零消费者、#47 至今未裁、`PLAYER_GLOSSARY.md` §八余九条照旧只报不修。CI 状态见 HANDOFF §9 本轮条与下方回填。
+
 
 

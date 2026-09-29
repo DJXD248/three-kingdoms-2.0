@@ -25,6 +25,7 @@ npm run test                                       # vitest run (unit tests)
 npm run test:coverage                              # vitest run --coverage -> coverage/
 npm run lint                                       # eslint . (flat config)
 npm run lint:fix                                   # eslint . --fix
+npm run glossary-xlsx                              # regenerate 词汇表.xlsx from PLAYER_GLOSSARY.md (the md is the single source of truth; run this after every md edit or scripts/make-glossary-xlsx.test.mjs turns npm test red)
 ```
 
 ## Core Module Map
@@ -117,6 +118,7 @@ Excel is a **bulk-edit surface for skills**, not an import path into a registry:
 | `src/rules/legalActions.ts` | Candidate action enumerator for AI (NOT the legality authority -- ActionValidator is) |
 | `src/data/generals.ts` | General card definitions |
 | `src/data/cards.ts` | Card deck definitions |
+| `PLAYER_GLOSSARY.md` → `词汇表.xlsx` | Player-facing glossary: **the md is the single source of truth**, the xlsx at repo root is a generated projection (`npm run glossary-xlsx`, script `scripts/make-glossary-xlsx.mjs`). Never hand-edit the xlsx's first two columns; answers the user writes into the xlsx's third column must be copied back into the md (regenerating overwrites the workbook). The build is byte-stable on purpose (zip entry timestamps pinned) so a committed binary only changes when the md does. |
 | `src/components/GameBoard.tsx` | Main game UI component |
 
 ## Game Phases

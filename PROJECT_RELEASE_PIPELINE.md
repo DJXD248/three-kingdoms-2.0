@@ -21,6 +21,10 @@ README 停留在"131 例"、AGENTS 引用了已不存在的 status/ 模块、CHA
 **2.8.13 起清单再加一份**：`PLAYER_GLOSSARY.md`（玩家词汇表，术语｜大白话翻译｜留给用户填写）。
 它**不是**第四份历史日志，但凡是界面上给用户看的措辞、术语、徽章文案发生变动，本轮必须同步它；
 只在措辞变了时改对应行，无变动则如实写明"本轮无词汇面变动"（职责登记见 `PROJECT_HANDOFF.md` §9）。
+**2.8.15 起这条清单多一个动作**：改过 `PLAYER_GLOSSARY.md` 就必须重跑 `npm run glossary-xlsx` 重新生成
+仓库根的 `词汇表.xlsx`（md 是唯一事实源，Excel 是它的投影）。忘了重跑不会静默过去——
+`scripts/make-glossary-xlsx.test.mjs` 里"入库 Excel＝当前 md 的投影"那条守卫会让 `npm test` 与 CI 一起变红。
+生成物字节稳定性也是这条纪律的一部分（zip 条目时间戳已钉死），所以 xlsx 的 diff 只应反映词汇真的变了。
 
 ## Step 1 — 本地验证门槛（全绿才许进入登记）
 
