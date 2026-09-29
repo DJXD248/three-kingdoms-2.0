@@ -16,6 +16,7 @@ import type { EngineState } from '../core/GameState';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { compileGeneralSkills } from './skillCompiler';
 import { evaluateSkillConditions } from './skillConditions';
+import { gateConditionsToText } from './skillGateText';
 import type { DataSkillDefinition } from './dataTypes';
 
 export interface TurnEndSkillCandidate {
@@ -25,6 +26,23 @@ export interface TurnEndSkillCandidate {
   generalName: string;
   /** Compiled definition — id doubles as the ACTIVATE_SKILL payload.skillId. */
   definition: DataSkillDefinition;
+}
+
+/**
+ * 2.8.17 (#42) — the ask window's full view: every selfTurn onTurnEnd skill on
+ * the field, each carrying whether it can be activated RIGHT NOW and, when it
+ * cannot, the plain-language reason. `listTurnEndSkillCandidates` below is this
+ * same list filtered, so 完整模式's greyed entries can never be mistaken for a
+ * second, looser legality source: activatable === membership in the legal set.
+ */
+export interface TurnEndAskItem {
+  playerId: number;
+  generalId: string;
+  generalName: string;
+  definition: DataSkillDefinition;
+  activatable: boolean;
+  /** null when activatable; otherwise the reason shown on the greyed entry. */
+  disabledReason: string | null;
 }
 
 function fieldGeneralsOf(state: EngineState, playerId: number) {
@@ -57,14 +75,15 @@ export function listAllTurnEndDefinitions(
 }
 
 /**
- * All un-consumed onTurnEnd definitions on `playerId`'s field. The ask window
- * additionally restricts to the current turn owner; candidates themselves are
- * owner-derived so other consumers (tests, editor previews) can query freely.
+ * Every selfTurn onTurnEnd definition on `playerId`'s field, each annotated
+ * with its current status. Consumed-by-ledger and gate-failing entries stay
+ * visible here (greyed) because 完整模式 shows the whole picture; the legal
+ * set is exactly the `activatable` subset.
  */
-export function listTurnEndSkillCandidates(
+export function listTurnEndAskItems(
   state: EngineState,
   playerId: number,
-): TurnEndSkillCandidate[] {
+): TurnEndAskItem[] {
   const { player, list } = fieldGeneralsOf(state, playerId);
   if (!player) return [];
   const turn = state.turn ?? 0;
@@ -73,7 +92,7 @@ export function listTurnEndSkillCandidates(
       .filter(c => c.turn === turn && c.playerId === playerId)
       .map(c => c.stableId),
   );
-  const candidates: TurnEndSkillCandidate[] = [];
+  const items: TurnEndAskItem[] = [];
   const nameByRuntimeId = new Map<string, string>();
   for (const fg of list) {
     const general = fg?.general as General | undefined;
@@ -85,24 +104,56 @@ export function listTurnEndSkillCandidates(
     // otherTurn subtypes never compile (skillCompiler skips them
     // honestly); selfTurn-or-unspecified is the askable shape.
     if (definition.turnSubType === 'otherTurn') continue;
-    if (consumed.has(`${turn}:${definition.id}`)) continue;
+    const generalId = String(definition.sourceGeneralId ?? '');
+    const alreadyUsed = consumed.has(`${turn}:${definition.id}`);
     // v2.7.3 threshold gate — the SAME pure predicate the trigger path calls.
-    // A skill whose conditions aren't met is not a candidate at all, so the
-    // ask-window HUD, legalActions and the AI driver share one view of legality.
-    if (!evaluateSkillConditions(definition.conditions, {
+    const conditionsMet = evaluateSkillConditions(definition.conditions, {
       state,
       ownerId: playerId,
       sourceGeneralId: definition.sourceGeneralId,
-    })) continue;
-    const generalId = String(definition.sourceGeneralId ?? '');
-    candidates.push({
+    });
+    const activatable = !alreadyUsed && conditionsMet;
+    items.push({
       playerId,
       generalId,
       generalName: nameByRuntimeId.get(generalId) ?? generalId,
       definition,
+      activatable,
+      disabledReason: disabledReasonOf(alreadyUsed, conditionsMet, definition.conditions),
     });
   }
-  return candidates;
+  return items;
+}
+
+function disabledReasonOf(
+  alreadyUsed: boolean,
+  conditionsMet: boolean,
+  conditions: DataSkillDefinition['conditions'],
+): string | null {
+  if (!alreadyUsed && conditionsMet) return null;
+  // 账本优先：门槛文本描述的是"此刻战场"，而"本回合已经用过"是不可逆的事实。
+  if (alreadyUsed) return '本回合已发动过';
+  return `不满足发动门槛：${gateConditionsToText(conditions)}`;
+}
+
+/**
+ * All activatable onTurnEnd definitions on `playerId`'s field. The ask window
+ * additionally restricts to the current turn owner; candidates themselves are
+ * owner-derived so other consumers (tests, editor previews) can query freely.
+ * This IS the legal set — legality is state-derived, never container-derived.
+ */
+export function listTurnEndSkillCandidates(
+  state: EngineState,
+  playerId: number,
+): TurnEndSkillCandidate[] {
+  return listTurnEndAskItems(state, playerId)
+    .filter(item => item.activatable)
+    .map(({ playerId: owner, generalId, generalName, definition }) => ({
+      playerId: owner,
+      generalId,
+      generalName,
+      definition,
+    }));
 }
 
 /** Resolve an ACTIVATE_SKILL payload back to a live candidate (or null). */

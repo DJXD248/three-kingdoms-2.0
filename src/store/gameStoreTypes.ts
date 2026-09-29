@@ -66,7 +66,14 @@ export interface TurnEndAskCandidate {
   generalName:string;
   skillName:string;
   description:string;
+  /** 2.8.17 完整模式：不可发动的候选照旧列出但置灰，activatable 恒等于合法集合成员。 */
+  activatable:boolean;
+  /** 置灰原因（大白话）；可发动时为 null。 */
+  disabledReason:string|null;
 }
+
+/** 2.8.17 (#42) 技能提示两档（默认 'smart'）。 */
+export type SkillPromptMode='smart'|'full';
 
 export interface TurnEndAsk {
   playerId:number;
@@ -110,6 +117,10 @@ export interface GameState {
   turnEndAsk:TurnEndAsk|null;
   settings:{
     resolution:string;windowMode:string;animationSpeed:number;masterVolume:number;musicVolume:number;sfxVolume:number;autoSave:boolean;
+    // 2.8.17 (#42) 技能提示两档：'smart'＝只在真有可发动技能时弹窗且只列能发动的；
+    // 'full'＝场上只要有回合结束技能就弹窗，不满足门槛的也列出并置灰写明原因。
+    // 默认 'smart'；与 autoSave 同类＝不落盘（不是对局事实，也不是回放输入）。
+    skillPromptMode:SkillPromptMode;
     // 2.2.6 replay/log saving (persisted in localStorage via replayStorage)
     autoSaveReplay:boolean;autoSaveLog:boolean;replayDirName:string|null;
   };

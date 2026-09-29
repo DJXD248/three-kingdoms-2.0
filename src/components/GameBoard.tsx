@@ -544,17 +544,23 @@ export default function GameBoard(){
           </div>
         </div>}
         {/* 2.3.1 turn-end ask HUD: real END_TURN is deferred until each candidate is
-            activated (canonical ACTIVATE_SKILL) or the player skips. The window itself
-            is container observation; the decisions inside it are recorded facts.
-            Hidden while a choice debt is live (the frozen world above). */}
+            activated (canonical ACTIVATE_SKILL) or the player declines. The window
+            itself is container observation; the decisions inside it are recorded
+            facts. Hidden while a choice debt is live (the frozen world above).
+            2.8.17 (#42)：唯一出口＝「都不发动」（旧「跳过并结束回合」按用户裁决合并
+            进这一个按钮）；完整模式把不满足门槛的技能照旧列出、置灰、写明原因。 */}
         {turnEndAsk&&!pendingChoice&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
           <div className="rounded-xl border-2 border-amber-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(245,158,11,0.35)'}}>
             <p className="text-sm font-black text-amber-300">🌙 回合结束询问 · 是否发动将领技能？</p>
             <p className="mt-0.5 text-[10px] text-amber-200/60">{turnEndAsk.windowId}</p>
+            {!turnEndAsk.candidates.some(c=>c.activatable)&&<p className="mt-1 text-[10px] text-amber-200/60">本回合这些技能都不可发动</p>}
             <div className="mt-2 flex flex-col gap-1.5">
-              {turnEndAsk.candidates.map(c=><button key={c.skillId} onClick={()=>activateTurnEndSkill(c.skillId,c.generalId)} title={c.description} className="rounded-lg border border-amber-600/60 bg-amber-900/50 px-3 py-1.5 text-xs font-bold text-amber-100 hover:bg-amber-800/60">⚡ {c.generalName}【{c.skillName}】</button>)}
+              {turnEndAsk.candidates.map(c=>c.activatable
+                ? <button key={c.skillId} onClick={()=>activateTurnEndSkill(c.skillId,c.generalId)} title={c.description} className="rounded-lg border border-amber-600/60 bg-amber-900/50 px-3 py-1.5 text-left text-xs font-bold text-amber-100 hover:bg-amber-800/60">⚡ {c.generalName}【{c.skillName}】<span className="mt-0.5 block text-[10px] font-normal text-amber-200/60">{c.description}</span></button>
+                : <div key={c.skillId} title={c.disabledReason ?? c.description} className="cursor-not-allowed rounded-lg border border-amber-800/40 bg-amber-950/40 px-3 py-1.5 text-left text-xs font-bold text-amber-100/30 grayscale">✕ {c.generalName}【{c.skillName}】{c.disabledReason&&<span className="ml-1 text-[10px] font-normal text-amber-300/70">（{c.disabledReason}）</span>}</div>)}
             </div>
-            <div className="mt-2"><Btn onClick={skipTurnEndAsk}>⏭️ 跳过并结束回合</Btn></div>
+            <div className="mt-2"><Btn onClick={skipTurnEndAsk}>🚫 都不发动</Btn></div>
+            <p className="mt-1 text-[10px] text-amber-200/40">都不发动＝一个也不发动，直接结束本回合</p>
           </div>
         </div>}
         {depNotice&&<div className="pointer-events-none absolute left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2"><div className="rounded-xl border-2 border-amber-500 bg-black/90 px-8 py-4 text-center animate-fadeIn"><p className="text-xl font-black text-amber-400">⚔️ 将领登场</p><p className="text-lg text-amber-200">{depNotice}</p></div></div>}

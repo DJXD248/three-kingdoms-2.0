@@ -174,6 +174,19 @@ export default function Settings({ onBack, hideDeveloper = false }: { onBack?: (
               </button>
             </SettingRow>
             <p className="text-xs text-amber-200/50">开启后，每次回合结束会自动保存当前对局。</p>
+            <SettingRow label="技能提示">
+              <button
+                onClick={() => updateSettings({ skillPromptMode: settings.skillPromptMode === 'full' ? 'smart' : 'full' })}
+                className={`rounded-lg px-4 py-1.5 text-sm font-bold transition-all ${
+                  settings.skillPromptMode === 'full' ? 'bg-amber-700 text-white hover:bg-amber-600' : 'bg-green-700 text-white hover:bg-green-600'
+                }`}
+              >
+                {settings.skillPromptMode === 'full' ? '完整' : '智能'}
+              </button>
+            </SettingRow>
+            <p className="text-xs text-amber-200/50">
+              智能（默认）：回合结束时只有存在可发动的将领技能才询问。完整：场上只要有回合结束技能就询问，暂时不能发动的也列出并写明原因。两档都不改变技能本身能不能发动。
+            </p>
           </SettingGroup>
 
           <SettingGroup title="录像与日志">

@@ -24,8 +24,8 @@ import { createEngineAwareSetter } from './engineAwareSetter';
 import { clearLocalGameSnapshot, saveLocalGameSnapshot } from './localGameSnapshot';
 import { resetLiveReplay } from '../replay/liveReplayRecorder';
 import { loadReplaySettings, persistReplaySettings } from '../replay/replayStorage';
-import type { GamePhase, DrawContext, Player, GameState, TurnEndAsk, TurnEndAskCandidate } from './gameStoreTypes';
-import { listTurnEndSkillCandidates, type TurnEndSkillCandidate } from '../skills/turnEndSkills';
+import type { GamePhase, DrawContext, Player, GameState, TurnEndAsk, TurnEndAskCandidate, SkillPromptMode } from './gameStoreTypes';
+import { listTurnEndSkillCandidates, listTurnEndAskItems, type TurnEndAskItem } from '../skills/turnEndSkills';
 
 // Store-level types live in gameStoreTypes.ts (stage B split); re-exported
 // here so existing consumers keep importing them from this module.
@@ -83,13 +83,27 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   // 2.3.1 turn-end ask: candidate shaping (store view of an engine-derived
   // candidate — never a second rule source, see skills/turnEndSkills).
-  const toTurnEndAskCandidate = (c: TurnEndSkillCandidate): TurnEndAskCandidate => ({
+  const toTurnEndAskCandidate = (c: TurnEndAskItem): TurnEndAskCandidate => ({
     skillId: c.definition.id,
     generalId: c.generalId,
     generalName: c.generalName,
     skillName: c.definition.name,
     description: c.definition.description,
+    activatable: c.activatable,
+    disabledReason: c.disabledReason,
   });
+
+  // 2.8.17 (#42) 技能提示两档的唯一分档处：智能＝只列可发动的（＝合法集合），
+  // 完整＝场上只要有回合结束技能就全列，不可发动的置灰写明原因。两档共用同一个
+  // 派生源，所以"看得见"永远不等于"能发动"——合法判定一处都没放宽。
+  const visibleTurnEndAskItems = (
+    engineState: EngineState,
+    playerId: number,
+    mode: SkillPromptMode,
+  ): TurnEndAskItem[] => {
+    const items = listTurnEndAskItems(engineState, playerId);
+    return mode === 'full' ? items : items.filter(item => item.activatable);
+  };
 
   // The real END_TURN commit, shared verbatim by the ungated endTurn path and
   // skipTurnEndAsk — exactly one place ever dispatches END_TURN in the store.
@@ -175,7 +189,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   seatModes:defaultSeatModes(),
   reactionWindow:null,
   turnEndAsk:null,
-  settings:{resolution:'1920x1080',windowMode:'全屏',animationSpeed:1,masterVolume:80,musicVolume:60,sfxVolume:70,autoSave:false,...loadReplaySettings()},
+  settings:{resolution:'1920x1080',windowMode:'全屏',animationSpeed:1,masterVolume:80,musicVolume:60,sfxVolume:70,autoSave:false,skillPromptMode:'smart',...loadReplaySettings()},
   developerMode:false,
   skillEdits:loadPersistedSkillEdits(),
   generalEdits:loadPersistedGeneralEdits(),
@@ -655,17 +669,19 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     // Engine-level END_TURN legality is unchanged (contract-table 口径): AI
     // seats never pass through this gate (their activations arrive as ordinary
     // policy-picked ACTIVATE_SKILL actions), and the test arena stays ungated.
+    // 2.8.17 两档：智能＝有可发动的才开窗；完整＝场上只要有回合结束技能就开窗，
+    // 不可发动的一律置灰写明原因。合法集合仍是 listTurnEndSkillCandidates。
     if(!state.isTestMode && !activePlayer.isAi && !state.turnEndAsk
        && state.phase==='playing' && state.engineState.currentPlayerId===activePlayer.id){
-      const candidates=listTurnEndSkillCandidates(state.engineState, activePlayer.id);
-      if(candidates.length>0){
+      const visible=visibleTurnEndAskItems(state.engineState, activePlayer.id, state.settings.skillPromptMode);
+      if(visible.length>0){
         const turn=state.engineState.turn ?? 0;
         const win=get().openReactionWindow(
           { type:'CUSTOM', data:{ reason:'turn-end-ask', playerId:activePlayer.id, stableId:`turn-end-ask:${turn}:${activePlayer.id}` } },
           [activePlayer.id],
         );
         if(win){
-          set({ turnEndAsk:{ playerId:activePlayer.id, windowId:win.id, candidates:candidates.map(toTurnEndAskCandidate) } });
+          set({ turnEndAsk:{ playerId:activePlayer.id, windowId:win.id, candidates:visible.map(toTurnEndAskCandidate) } });
           return;
         }
         // window refused (no participants) — fall through and commit honestly
@@ -715,10 +731,12 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
     // Ask bookkeeping from the NEW state (consumption already applied): zero
     // remaining candidates → the container window closes with the ask.
+    // 完整模式下"剩下"含置灰项（技能刚用过＝改列「本回合已发动过」），窗体继续
+    // 留着，出口只有「都不发动」；智能模式沿用原样——没有可发动的就闭窗。
     const wasAsked=state.turnEndAsk && state.turnEndAsk.playerId===actorId;
     let nextAsk:TurnEndAsk|null=null;
     if(wasAsked){
-      const remaining=listTurnEndSkillCandidates(engineState, actorId);
+      const remaining=visibleTurnEndAskItems(engineState, actorId, state.settings.skillPromptMode);
       nextAsk=remaining.length===0
         ? null
         : { ...state.turnEndAsk!, candidates:remaining.map(toTurnEndAskCandidate) };

@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   listAllTurnEndDefinitions,
+  listTurnEndAskItems,
   listTurnEndSkillCandidates,
   findTurnEndSkillCandidate,
   isCurrentTurnOwner,
@@ -99,6 +100,77 @@ describe('turnEndSkills · candidate derivation (2.3.1)', () => {
     expect(findTurnEndSkillCandidate(state, 1, 'g_watch:守夜:e1', 'other')).toBeNull();
     expect(isCurrentTurnOwner(state, 1)).toBe(true);
     expect(isCurrentTurnOwner(state, 2)).toBe(false);
+  });
+});
+
+describe('turnEndSkills · ask-item status (2.8.17 #42 两档提示)', () => {
+  /** 带门槛的回合结束技能：自身体力≥99 在测试场上永远不成立。 */
+  function gatedGeneral(id: string): General {
+    return makeGeneral(id, [{
+      name: '蓄锐',
+      description: '体力充沛时补充手牌',
+      effects: [{
+        id: 'e1',
+        trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+        runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+        conditions: [{ metric: 'GENERAL_HP', op: 'GTE', value: 99 }],
+      }],
+    }]);
+  }
+
+  it('完整视图把不满足门槛的技能也列出：activatable=false ＋ 大白话原因', () => {
+    const state = stateWithField(1, [gatedGeneral('g_gate')]);
+    const items = listTurnEndAskItems(state, 1);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      generalId: 'g_gate',
+      activatable: false,
+      disabledReason: '不满足发动门槛：体力≥99',
+    });
+    // 合法集合一位未放宽：置灰项绝不混进 candidates。
+    expect(listTurnEndSkillCandidates(state, 1)).toHaveLength(0);
+  });
+
+  it('没有门槛的技能＝可发动，且没有原因文本', () => {
+    const state = stateWithField(1, [makeGeneral('g_watch', [turnEndSkill()])]);
+    const items = listTurnEndAskItems(state, 1);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ activatable: true, disabledReason: null });
+  });
+
+  it('本回合已用过的优先说「本回合已发动过」——账本是不可逆事实，门槛只是此刻战场', () => {
+    const state = stateWithField(1, [gatedGeneral('g_gate')]);
+    state.turn = 5;
+    state.consumedSkills = [{
+      stableId: '5:g_gate:蓄锐:e1', skillId: 'g_gate:蓄锐:e1', turn: 5, playerId: 1,
+    }];
+    const items = listTurnEndAskItems(state, 1);
+    expect(items[0].disabledReason).toBe('本回合已发动过');
+  });
+
+  it('单一事实源：candidates 恒等于 items 的 activatable 子集（同序同键）', () => {
+    const state = stateWithField(1, [
+      makeGeneral('g_watch', [turnEndSkill()]),
+      gatedGeneral('g_gate'),
+    ]);
+    const items = listTurnEndAskItems(state, 1);
+    expect(items.map(i => i.definition.id)).toEqual([
+      'g_watch:守夜:e1',
+      'g_gate:蓄锐:e1',
+    ]);
+    expect(listTurnEndSkillCandidates(state, 1)).toEqual(
+      items.filter(i => i.activatable).map(({ playerId, generalId, generalName, definition }) => ({
+        playerId, generalId, generalName, definition,
+      })),
+    );
+  });
+
+  it('otherTurn 在两档里都不可见（编译层诚实跳过，不是靠过滤遮丑）', () => {
+    const state = stateWithField(1, [makeGeneral('g_other', [{
+      name: '守界',
+      effects: [{ id: 'e1', trigger: { type: 'onTurnEnd', turnSubType: 'otherTurn' }, runtime: { type: 'DRAW_CARD', value: 1 } }],
+    }])]);
+    expect(listTurnEndAskItems(state, 1)).toHaveLength(0);
   });
 });
 

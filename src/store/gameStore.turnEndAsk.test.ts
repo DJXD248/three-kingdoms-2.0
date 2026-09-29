@@ -11,7 +11,7 @@
  *     humans see zero behavior change;
  *   - a second 结束Turn press while the ask is open IS the honest skip.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useGameStore } from './gameStore';
 import type { Player } from './gameStore';
 import type { EngineState } from '../core/GameState';
@@ -250,6 +250,144 @@ describe('gameStore · 回合结束询问窗 (2.3.1)', () => {
     get().endTurn();
     expect(get().turnEndAsk).toBeNull();
     expect(get().engineState.turn).toBe(6);
+  });
+});
+
+/**
+ * 2.8.17 (#42) 技能提示两档：默认「智能」＝上面的全部行为一位未变；
+ * 「完整」＝场上只要有回合结束技能就开窗，不可发动的置灰写明原因。
+ * 两档唯一的出口都是同一个动作（skipTurnEndAsk → 真 END_TURN），
+ * 合法集合始终只有 listTurnEndSkillCandidates 那一处。
+ */
+describe('gameStore · 技能提示两档 (2.8.17 #42)', () => {
+  /** 门槛录在效果上，编译后成为该定义的 conditions（v2.8.3 刀 B 那条链）。 */
+  function gatedGeneral(id: string, skillName: string): General {
+    return {
+      id,
+      instanceId: id,
+      name: '将' + id,
+      faction: '蜀',
+      hp: 3,
+      type: '武将',
+      meleeAtk: 2,
+      rangedAtk: 1,
+      armor: 0,
+      skills: [{
+        name: skillName,
+        description: '体力充沛时补充手牌',
+        effects: [{
+          id: 'e1',
+          trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+          runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+          conditions: [{ metric: 'GENERAL_HP', op: 'GTE', value: 99 }],
+        }],
+      }],
+    } as unknown as General;
+  }
+
+  const setMode = (skillPromptMode: 'smart' | 'full') =>
+    useGameStore.setState(st => ({ settings: { ...st.settings, skillPromptMode } }));
+
+  beforeEach(() => {
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+  });
+
+  afterEach(() => setMode('smart'));
+
+  it('默认档位＝智能（设置一位没落地时，endTurn 的行为与 2.3.1 完全一致）', () => {
+    installStoreState(makeEngineState([watchGeneral('g_watch', '守夜')]));
+    expect(get().settings.skillPromptMode).toBe('smart');
+  });
+
+  it('智能档：门槛不满足＝没有可发动的＝不开窗，直接提交 END_TURN', () => {
+    installStoreState(makeEngineState([gatedGeneral('g_gate', '蓄锐')]));
+    setMode('smart');
+    get().endTurn();
+    expect(get().turnEndAsk).toBeNull();
+    expect(get().engineState.turn).toBe(6);
+  });
+
+  it('完整档：同一个状态开窗，技能照旧列出、置灰、写明不满足的门槛', () => {
+    installStoreState(makeEngineState([gatedGeneral('g_gate', '蓄锐')]));
+    setMode('full');
+    get().endTurn();
+
+    const ask = get().turnEndAsk;
+    expect(ask).not.toBeNull();
+    expect(ask?.candidates).toHaveLength(1);
+    expect(ask?.candidates[0]).toMatchObject({
+      skillId: 'g_gate:蓄锐:e1',
+      activatable: false,
+      disabledReason: '不满足发动门槛：体力≥99',
+    });
+    // 开窗本身仍是 B 类：零 dispatch，引擎计数器停在原地。
+    expect(get().engineState.turn).toBe(5);
+  });
+
+  it('完整档：置灰项的发动被引擎诚实拒绝（合法集合一位未放宽），窗仍留着', () => {
+    installStoreState(makeEngineState([gatedGeneral('g_gate', '蓄锐')]));
+    setMode('full');
+    get().endTurn();
+
+    expect(get().activateTurnEndSkill('g_gate:蓄锐:e1', 'g_gate')).toBe(false);
+    const state = get();
+    expect(state.engineState.consumedSkills ?? []).toHaveLength(0);
+    expect(state.engineState.turn).toBe(5);
+    expect(state.turnEndAsk?.candidates).toHaveLength(1);
+  });
+
+  it('完整档：「都不发动」＝同一个出口，闭窗并提交真 END_TURN', () => {
+    installStoreState(makeEngineState([gatedGeneral('g_gate', '蓄锐')]));
+    setMode('full');
+    get().endTurn();
+    get().skipTurnEndAsk();
+
+    const state = get();
+    expect(state.turnEndAsk).toBeNull();
+    expect(state.reactionWindow).toBeNull();
+    expect(state.engineState.turn).toBe(6);
+  });
+
+  it('完整档：能发动的照旧发动；用完后窗不闭，把刚用过的改列「本回合已发动过」', () => {
+    installStoreState(makeEngineState([
+      watchGeneral('g_watch', '守夜'),
+      gatedGeneral('g_gate', '蓄锐'),
+    ]));
+    setMode('full');
+    get().endTurn();
+
+    const opened = get().turnEndAsk;
+    expect(opened?.candidates.map(c => c.activatable)).toEqual([true, false]);
+
+    expect(get().activateTurnEndSkill('g_watch:守夜:e1', 'g_watch')).toBe(true);
+    const after = get();
+    expect(after.engineState.turn).toBe(5);
+    expect(after.turnEndAsk?.candidates).toHaveLength(2);
+    expect(after.turnEndAsk?.candidates[0]).toMatchObject({
+      skillId: 'g_watch:守夜:e1',
+      activatable: false,
+      disabledReason: '本回合已发动过',
+    });
+    expect(after.turnEndAsk?.candidates[1].disabledReason).toBe('不满足发动门槛：体力≥99');
+    // 出口仍然只有一个，按下去就走真实结束回合。
+    after.skipTurnEndAsk();
+    expect(get().turnEndAsk).toBeNull();
+    expect(get().engineState.turn).toBe(6);
+  });
+
+  it('同一状态切回智能档：可发动的照旧进窗，且窗内一位不多（两档只差可见性）', () => {
+    installStoreState(makeEngineState([
+      watchGeneral('g_watch', '守夜'),
+      gatedGeneral('g_gate', '蓄锐'),
+    ]));
+    setMode('smart');
+    get().endTurn();
+    const candidates = get().turnEndAsk?.candidates ?? [];
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].skillId).toBe('g_watch:守夜:e1');
+    expect(candidates[0].activatable).toBe(true);
+    expect(candidates[0].disabledReason).toBeNull();
   });
 });
 
