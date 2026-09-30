@@ -46,8 +46,8 @@ curl -sI --max-time 10 -x http://127.0.0.1:10808 https://github.com -o /dev/null
 
 ### 日常迭代流程
 
-1. 本地验证：`npm run check` / `test` / `lint` / `build` 全通过。
-2. 提交并按登记规则更新：核心三份 `PROJECT_HANDOFF.md`、`PROJECT_HISTORY_AI.md`、`PROJECT_HISTORY_HUMAN.md`；同时核对周边三份 `README.md`、`AGENTS.md`、`CHANGELOG.md` 的数字与模块清单是否过时（2.2.11 起纪律，见 `PROJECT_RELEASE_PIPELINE.md`）。
+1. 本地验证（五闸）：`npm run check` / `test:coverage`（**已含全量测试＋覆盖率棘轮门禁，不再另跑 `npm test`**）/ `lint` / `build` 全通过；对局基线按影响面分级跑（改了结算或其输入＝双轮逐字，只改内容/文档/UI＝单轮读数，见 `PROJECT_RELEASE_PIPELINE.md` Step 1）。
+2. 提交并按登记规则更新（2026-09-30 证据分层版）：**每个事实只有一个落点**——`PROJECT_HANDOFF.md` §3 一行提交索引、§9 是全仓库唯一的 CI 读数、`PROJECT_HISTORY_AI.md` 存完整证据（唯一详抄处）、`PROJECT_HISTORY_HUMAN.md` 8–12 行结论、`CHANGELOG.md` 3–6 行＋指针；周边 `README.md`/`AGENTS.md` 的易变数字带"as of 版本"戳；界面措辞变动同步 `PLAYER_GLOSSARY.md` 并重跑 `npm run glossary-xlsx`。长叙事的"周期收尾章"只在一条能力主线的几刀做完后写一次。
 3. `git push origin master && git push origin --tags`。
 4. GitHub Actions 自动运行 CI（lint+audit / Node 22 与 24 测试矩阵 / build），绿灯即远端验证通过。
 5. Pages 网页公开部署默认关闭，仅手动触发（Actions 页面运行 "Deploy to GitHub Pages"，且需先在仓库 Settings -> Pages -> Source 选择 "GitHub Actions"）。

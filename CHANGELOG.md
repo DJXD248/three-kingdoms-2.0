@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-09-30 — closeout process, evidence layering (zero `src/` change, so no version number and no tag)
+
+Measured answer to the user's "why does a knife take hours now": nine versions added 145,841 characters of
+source against 512,630 of markdown (**3.5×**, 32× for v2.8.16 alone) and 3 of every 4–5 commits were
+登记/回填/补记. The closeout is now layered — per knife: feat commit + one index line in HANDOFF §3 + CI
+readings in §9 only; per capability cycle: history chapter, CHANGELOG, contract rewrite. External AI review
+became a decision gate (gameplay rules / core contracts / process iron laws / verification standards, brief
+≈1,200 chars). What was cut is transcription, not evidence: opening the run detail page stays mandatory,
+"re-run it now" may never stand in for "it passed then". Authority: `PROJECT_RELEASE_PIPELINE.md` (also
+mirrored into the Qoder skill); criteria in HANDOFF §12-78; the round was reviewed by web GPT first
+(4,618-character verdict, archived outside the repo).
+
 ## [2.8.19] - 2026-09-30
 
 Badge knife 1 (#43, first half of ruling 5): skill badges stop being a single mutually-exclusive
