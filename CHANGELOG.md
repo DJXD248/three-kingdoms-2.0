@@ -14,6 +14,31 @@ became a decision gate (gameplay rules / core contracts / process iron laws / ve
 mirrored into the Qoder skill); criteria in HANDOFF §12-78; the round was reviewed by web GPT first
 (4,618-character verdict, archived outside the repo).
 
+## [2.8.21] - 2026-09-30
+
+Listener-scope knife (#69, first of the three knives the user authorised with 「明白了就开工吧」): two
+orthogonal axes now exist end to end — **「我听谁」** (listen only to myself / to my own seat / to the whole
+board) and **「被谁指名」** (becoming the target of an *attack* vs of a *skill* vs either). They run through
+the data model, the compiler, the trigger bridge's consumption path, the editor (two new dropdowns), Excel
+(a 13th fixed column plus an 8th column per effect group) and the player glossary. **Both defaults are the
+pre-expansion behaviour** (`self` / `attackTarget`), which is *why* the two anchors (B12 `{"1":106,"2":194}`,
+B11 `{"1":108,"2":192}`) still reproduce — this is an A-grade knife (it touches the listener consumption path)
+carrying a B-grade outcome.
+
+- 「我听谁」 is a *second* axis, so it gets its own cell: `supportsListenerScope` deliberately does **not**
+  live in `getTriggerSubOptions`, which hands out one sub-kind per timing. Orthogonal axes don't share a box.
+- Widening a listener means re-checking, per trigger type, **whether the key is on the event at all**. The
+  base-attack `BEFORE_DAMAGE` carries no `targetPlayerId`, so all three scopes stay silent there — that
+  pre-existing fact is now pinned by a test rather than left to luck.
+- Honest gap, stated in the UI itself: `skillTarget` / `anyTarget` are recordable but **have no emitter yet**
+  (the skill-target notification path ships with #70/#71), so choosing them stores a true constraint that
+  cannot ring in a game today. Capability before content, as with REVEAL/DECK_PLACE in 2.6.1.
+- Renaming the *main* label (成为攻击目标时 → 成为目标时) is the dangerous kind of wording change: an old
+  `.xlsx` would read as "didn't understand" and the skill would silently stop ringing, so the old wording is
+  accepted as a **whole-cell alias** and never written back out.
+- 872→900 tests (81 files). Details: HANDOFF §3 index row + §9 round entry, ARCH_MAP §F "监听扩面刀" +
+  §H9 ④ + §H10 anchor ledger + §H11 vocabulary rows.
+
 ## [2.8.20] - 2026-09-30
 
 Duel knife (#30, 2.8 knife 9): `DUEL` becomes the 10th settleable runtime effect primitive — a skill can
