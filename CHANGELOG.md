@@ -2,6 +2,94 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.19] - 2026-09-30
+
+Badge knife 1 (#43, first half of ruling 5): skill badges stop being a single mutually-exclusive
+label and become what the user's 2026-09-30 correction says they are — several per skill, with the
+meaning of each one stated the same way in the tooltip, the vocabulary sheet, the editor and the
+import report. **Settlement is untouched by design**: enforcement of 锁定技 / 限定技 / 强制发动 is
+knife 2, it needs the engine and it moves the anchors, so it waits for the user's word.
+
+- **One source of truth, new file `src/domain/skillTags.ts`**: `TAG_SEPARATOR`, `skillTagMeanings`
+  (five badges, each one sentence), `FORCED_MEANING`, `tagsOf()`, `formatTags()`,
+  `parseSkillTagsCell()`, `triggerTypesOf()`, `tagTimingWarnings()`. Tooltips and
+  `PLAYER_GLOSSARY.md` §四 read this one copy because four surfaces paraphrasing one concept is
+  how the last three vocabulary drifts started.
+- **The corrected semantics, verbatim from the ruling**: **锁定技 = cannot be nullled and cannot be
+  changed** — it is *not* "fires automatically", that is the separate 「强制发动」 switch;
+  **强制发动 = once its trigger and cost are met it fires / applies directly, no prompt**; and
+  **neither is correlated with** "numeric change + permanent effect" — the three combine freely.
+  A sample the user supplied is now a test: 闭月 carries 锁定技 **and** 遗计技 at once. A reverse pin
+  fails the suite if 锁定技's own explanation ever grows the words "自动发动" again, because this
+  class of defect does not crash — it teaches the next reader the wrong model.
+- **Model: `tags?: SkillTag[]` is the only field anything writes; the legacy single `tag` stays
+  readable forever.** Editor save deletes the inherited `tag` key so one skill never holds two
+  badge ledgers. Why the read side may not be dropped: a lost badge **silently widens** behaviour
+  (【限定技】 unread ⇒ "unlimited uses"), so unknown names are *named* on every import path instead of
+  being discarded. This is §12-76①'s alias discipline, this time on a field.
+- **Editor**: the badge row is now 「徽章（一枚技能可同时挂几枚）」 — five independent chips, lit ones
+  show `✓`, each with its meaning on hover. The Excel 「技能标签」 dropdown became **non-blocking**
+  (`showErrorMessage:false`) because this machine runs WPS and a blocking list makes
+  「锁定技、遗计技」 impossible to type in the first place.
+- **One splitter for all four import paths** (技能标签 cell / angle-bracket form in the skill name /
+  auto-detect at the start of the description / free text). **A real fork found in our own repo
+  and fixed**: the bracket branch accepted only the ideographic comma, so
+  `反馈<锁定技 遗计技>` parsed as *no badges* and said nothing; it now delegates to
+  `parseSkillTagsCell` (、,，;；/／+＋和与 and whitespace all split; `无`/empty ⇒ none).
+- **Display**: codex card face and detail, board and test arena all render every badge through
+  `formatTags(tagsOf(…))`; the badge filter matches "any of them" — clicking 遗计技 in the browser
+  returned exactly one general (貂蝉).
+- **Consistency check names, never edits (the restraint of this knife)**: `tagTimingWarnings`
+  compares what the badge claims with the trigger timings actually recorded (登场技 ⇒ 登场时机,
+ 遗计技 ⇒ `onDeath`) and reports through two outlets — the editor card's `⚠ 徽章与时机对不上 — …`
+  line and the import summary panel. Only **newly introduced** mismatches are reported (snapshot
+  compare, so re-importing the same file never repeats the sentence), nothing is reported while no
+  timing is recorded at all, and two broken badges produce two separate lines.
+- **Tests +42 (819 → 861, 78 → 80 files)**: new `src/domain/skillTags.test.ts` (23), new
+  `SkillEditor.badges.test.tsx` (10, including **export → re-import my own bytes ⇒ zero badges
+  lost and zero changes reported**, with `file-saver` mocked so nothing ever downloads to the
+  user's browser), `skillExcelParsers.test.ts` 33 → 42 (multi-badge cells, legacy `tag`-only
+  records still count as "unchanged", three spellings of the bracket form, typo named not dropped).
+- **Five gates (final tree)**: `check` 0 errors / `npm test` **861 · 80 files** / coverage
+  **60.57·52.16·51.35·65.70** (floors 42/34/34/47, **never adjusted**) / `npx eslint .` **0 errors**,
+  29 legacy warnings with none added / `npm run build` single file **2,037,595 bytes · gzip
+  598.07 kB** (+3,309 vs 2.8.18 = the new module, five chips, two display sites and the check copy).
+- **Both anchors verbatim, two runs each `cmp`-identical**: B12 **{"1":106,"2":194}**, B11
+  **{"1":108,"2":192}**, per-faction sub-ledgers equal to §H10. Plus a structural witness ahead of
+  the anchors: **no official card carries a single badge** (badges only exist where an import put
+  them), so the four surfaces this knife changed cannot reach a match.
+- **Real-browser E2E** (dev :5188 = the current tree, developer mode unlocked with the passphrase
+  the user typed, digest gate not bypassed): lit both badges on 闭月 → save → store **and**
+  `localStorage['three_kingdoms_skill_edits']` both read `tags:["锁定技","遗计技"]` **with no `tag`
+  key**; codex face + detail show both with the corrected tooltips; 遗计技 filter ⇒ exactly 貂蝉; no
+  ⚠ appeared because that skill records no trigger timings. Boundaries on the record: no export /
+  save-download entry was clicked in the browser (round trip proven by the mocked test instead),
+  and the ⚠ line has unit-test evidence only.
+- **Glossary moved with the code (rule 4b)**: §四 rows rewritten to the corrected semantics, plus a
+  new row 「徽章可以同时挂几枚」 quoting the 闭月 sample ⇒ §四 25 → **26**, total **159 → 160**
+  entries; §八 item 9 re-graded from ⏳ to **half delivered** (vocabulary / entry / display / check
+  aligned, settlement reads neither `tags` nor `forced`). `词汇表.xlsx` re-projected to **30,251**
+  bytes (the guard asserting "committed xlsx = current md projection" is green inside `npm test`).
+- **Duels: the user's fifth-round corrections are now on the map** (§H9): duel damage is **效果伤害
+  equal to what one melee attack would deal** (not "make a melee attack"), it ends when a side's
+  **体力 ≤ 0 after that damage is computed** with **HP really deducted each round** (not batched
+  after three), and point 10 is **"you cannot duel yourself"** — two different generals, while the
+  skill's initiator may still pick itself plus another general if the skill allows. Gate 1 for #30
+  is therefore passed; implementation is the next knife and will move the anchors.
+- **Not in this knife**: badge knife 2 (settlement enforcement of 锁定技 / 限定技's per-game budget /
+  强制发动 firing without a prompt; 觉醒技 still has no mechanism and no user definition), #30 duel
+  implementation, and any change to the compiler or the trigger bridge — both of which still read
+  neither `tags`/`tag` nor `forced`, which is now stated in the tooltip text itself.
+- **Registration faces**: HANDOFF §3／§9／**§12-77** (seven criteria: multi-valuing a stored field
+  keeps the old one read-only forever; badges, runtime switches and effect shapes may not
+  compensate for each other; "start governing" splits into two knives and the first may not touch
+  settlement; where a consistency check is allowed to stop; an "I changed no gameplay" claim needs
+  an external *and* a structural witness; download-touching round trips belong behind a mock;
+  before changing a parsing rule, count how many copies of it the repo has), ARCH_MAP **§H9** (the
+  corrected badge table with each badge's runtime truth, plus the three duel corrections),
+  **§H10** (v2.8.19 anchor reproduction), `PLAYER_GLOSSARY.md` §四/§八 + re-projected
+  `词汇表.xlsx`, `CHANGELOG.md`, `README.md`, `AGENTS.md`, both history documents.
+
 ## [2.8.18] - 2026-09-30
 
 The §八 wording knife from `PLAYER_GLOSSARY.md` — the seven unresolved "the screen says X, the rules compute Y" conflicts, plus the user's rulings 3 and 4 from the 2026-09-29 batch, quoted exactly: *"护甲：现在是 2 点护甲才挡 1 点伤害（单数不挡），是这样"* and *""装备"这个词：把技能描述改成"军备""*. **Pure presentation layer + authoring vocabulary: `src/core`, `src/action`, `src/rules` untouched, so both anchors stayed byte-identical** — that is this knife's external witness, not a self-claim.
