@@ -14,6 +14,27 @@ became a decision gate (gameplay rules / core contracts / process iron laws / ve
 mirrored into the Qoder skill); criteria in HANDOFF §12-78; the round was reviewed by web GPT first
 (4,618-character verdict, archived outside the repo).
 
+## [2.8.20] - 2026-09-30
+
+Duel knife (#30, 2.8 knife 9): `DUEL` becomes the 10th settleable runtime effect primitive — a skill can
+now make two generals trade blows, **three turns each, at most six calculations**, alternating, opening
+side = the skill's owner. Each round uses the *striking* side's current attack value, armour still absorbs
+1 point per 2, damage is typed **skill**, no card is spent, and the sequence truncates the moment someone
+reaches 0 HP while the initiating skill's own remaining effects still run; death pay-out stays in the
+normal FIFO queue. **There is still no "duel" button** — only a skill can start one, and no official or
+fixture general has a `DUEL` effect, which is *why* both anchors (B12 `{"1":106,"2":194}`, B11
+`{"1":108,"2":192}`) reproduce byte-identical under the strictest A-grade protocol.
+
+- One event, one derivation point: the bridge emits a single `DUEL` carrying both participants; rounds are
+  pre-solved inside `chainedConsequences` and re-applied by `EventProcessor` through a *constrained*
+  head-of-queue right (continuous-settlement effects only). No new action type, no second transition path.
+- Entry surface: new `VALUELESS_RUNTIME_TYPES = ['DUEL']` — a rule constant is not a fillable number, so the
+  value row is absent entirely and the Excel cell is never read.
+- **Open inference for the user's word**: whether "after taking damage"-class passives should ring *inside* a
+  duel is not covered by the rulings; this build says no (§12-81 states the counter-ruling's blast radius).
+- Details: HANDOFF §3 index row + §9 round entry (CI readings live there only), ARCH_MAP §F "DUEL 决斗流程原语"
+  twelve-cell contract table + §H10 anchor ledger, full evidence in `PROJECT_HISTORY_AI.md`.
+
 ## [2.8.19] - 2026-09-30
 
 Badge knife 1 (#43, first half of ruling 5): skill badges stop being a single mutually-exclusive
