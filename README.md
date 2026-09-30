@@ -12,7 +12,7 @@ npm run test                                      # Vitest 单元测试（900 �
 npm run test:coverage                             # 测试 + 覆盖率（含棘轮阈值门禁）
 npm run lint                                      # ESLint 检查
 npm run build                                     # 生产构建 -> dist/index.html（2.3.3 起不再内嵌 npm install；依赖缺失时显式报错指路）
-npm run ai-battle                                 # AI 随机对局跑器（命令行，见 2.2.4+；2.8.9 起可加 `--diy-fixture` 换用仓库固定 DIY 样本池＝锚 B11，默认官方池＝锚 B12。2.8.16 起演练技能注入默认关闭 ⇒ 官方池读数换档，旧锚 B10 止于 v2.8.15；锚名只记「命令＋池」，不记数值，见 PROJECT_ARCH_MAP.md §H10）
+npm run ai-battle                                 # AI 随机对局跑器（命令行，见 2.2.4+；2.8.9 起可加 `--diy-fixture` 换用仓库固定 DIY 样本池，默认官方池。锚名只记「命令＋池」，不记数值，换名账本见 PROJECT_ARCH_MAP.md §H10：2.8.16 起演练技能注入默认关闭⇒旧锚 B10 止于 v2.8.15；2026-10-01 审计更正轮起现行锚＝官方池 **B13**、样本池 **B14**（#71 响应链执法＝玩法变化，B12/B11 转历史，止于 v2.8.21））
 npm run glossary-xlsx                             # 从 PLAYER_GLOSSARY.md 重新生成 `词汇表.xlsx`（2.8.15 起；md 是唯一事实源，改过 md 必须重跑，否则 scripts/make-glossary-xlsx.test.mjs 那条"入库 Excel＝当前 md 的投影"守卫会让 npm test 变红）
 npm run ai-arena                                  # 三档策略互胜率擂台（见 2.2.7）
 ```

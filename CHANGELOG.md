@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-10-01 — version audit correction: anchors re-established B12→B13, B11→B14 (docs + one metadata cell, no new version, no tag)
+
+A version audit on HEAD measured what two earlier registrations had asserted without measuring: the
+「两锚逐字」 claims in the v2.8.22 (#71 response-chain enforcement knife) and v2.8.23 cells are **false**.
+Two rounds of `cmp` on HEAD are byte-identical (determinism is fine), but the readings moved — official pool
+winner seats 106/194 → **104/196**, and the fixture pool's winner seats 108/192 survived **only by
+coincidence** while its per-faction sub-ledgers moved too. A temporary worktree at `v2.8.21` reproduced the
+old readings verbatim, and `git log --stat` shows `c9d3e97` as the sole runtime commit in between: the
+enforcement knife genuinely moved hit/damage-taken skills into the reaction queue. Per the §H10 naming rule
+(value changes ⇒ new name) the current hard anchors are now **B13 {"1":104,"2":196}** and **B14
+{"1":108,"2":192}**, with full sub-ledgers and the correction trail in PROJECT_ARCH_MAP §H10 / HANDOFF §12-87.
+The same round folds in the metadata drift it found: `package.json` still said 2.8.22 after tag `v2.8.23`
+was cut — now corrected to 2.8.23, in this docs-only batch, deliberately without a new version or tag.
+Verification lessons pinned: "verbatim" means full-output normalized `cmp` **plus** cell-by-cell per-faction
+sub-ledgers, never the winner-seat line alone; nobody's registered reading (including last round's me) is
+evidence until re-measured on the current tree; an A-grade knife may not close out having run only its
+专项 tests (the full 938-test suite is being run on HEAD for the first time here).
+
 ## [Unreleased] - 2026-09-30 — closeout process, evidence layering (zero `src/` change, so no version number and no tag)
 
 Measured answer to the user's "why does a knife take hours now": nine versions added 145,841 characters of
