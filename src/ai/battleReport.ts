@@ -178,6 +178,10 @@ export function formatActionLine(step: number, action: RecordedAction): string {
     case 'CHOOSE_OPTION':
       detail = `抉择 ${p.choiceKey ?? '?'} → 选项${Number(p.optionIndex ?? -1) + 1}`;
       break;
+    case 'SKIP_REACTION':
+      // v2.8.22 (#71)：这一格不响应也是一次表态，日志里要有它（不写就会看成"没发生"）。
+      detail = `响应跳过 ${p.nodeKey ?? '?'}`;
+      break;
     case 'END_TURN':
       detail = '结束回合';
       break;

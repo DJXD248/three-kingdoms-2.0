@@ -334,6 +334,10 @@ describe('v2.7.3 触发路接线：真引擎门槛闸（身份面之后、效果
         description: '伤害达门槛才反弹 1 点',
         effects: [{ type: 'DAMAGE', value: 1, target: 'ATTACKER' }],
         sourceGeneralId: 'sc_victim', conditions: conds,
+        // v2.8.22 (#71)：本测钉的是**触发路上**的门槛闸。非 forced 的受击/受伤
+        // 两型已搬进问答队列（不在触发链上），故这里显式 forced=true 留在自动路；
+        // 问答路上的同一道闸由 skills/reactionChain.test.ts 钉。
+        forced: true,
       }]);
       const events = engine.dispatch(createAction('ATTACK', 1, {
         attackerId: 'sc_strong', targetId: 'sc_victim', ranged: false, consumeCard: makeCard('sc_cost_1'),

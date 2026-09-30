@@ -117,6 +117,10 @@ export function storeStateToEngineState(store: any): EngineState {
     // outstanding pendingChoice on rebuild would hand a frozen game back to
     // the world with the debt erased.
     pendingChoice: store?.engineState?.pendingChoice,
+    // v2.8.22 (#71) 响应链执法刀：同一个 A 类槽教训。重建时丢了待答队列，等于
+    // 把一场"正停在问答上"的棋交给世界、而且债被抹掉——D-1 的
+    // "常驻===重建"结构性等价要求这一格必须原样带过去。
+    pendingReaction: store?.engineState?.pendingReaction,
   };
 }
 

@@ -2,6 +2,7 @@
 import type { EngineState } from '../core/GameState';
 import type { GameEvent } from '../core/Event';
 import type { TriggerDefinition, TriggerContext, TriggerProcessResult } from './types';
+import { orderReactionCandidates, victimRefOf } from './reactionOrder';
 
 const MAX_TRIGGER_DEPTH = 32;
 const MAX_EVENTS_PER_CHAIN = 256;
@@ -53,9 +54,19 @@ export class TriggerEngine {
       return { events: [], depth, truncated: true };
     }
 
-    const matching = this.getAll()
-      .filter(trigger => trigger.enabled !== false && trigger.eventType === event.type)
-      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+    // 唯一顺序根＝reactionOrder（档位在上、受击组整组先、组内座次绕圈、席位内注册顺序）。
+    // 曾经这里是 `sort(priority desc)`⇒同档内悄悄用注册顺序，与座次和"谁挨的打"无关。
+    const matching = orderReactionCandidates(
+      this.getAll()
+        .filter(trigger => trigger.enabled !== false && trigger.eventType === event.type)
+        .map(trigger => ({
+          trigger,
+          ownerId: trigger.ownerId ?? '',
+          generalId: trigger.generalId,
+          priority: trigger.priority ?? 0
+        })),
+      { seatOrder: (state.players ?? []).map(player => player.id), ...victimRefOf(event) }
+    ).map(entry => entry.trigger);
 
     const emitted: GameEvent[] = [];
     const fired = new Set<string>();

@@ -1,4 +1,6 @@
 import type { RuleContext, RuleResult } from './types';
+import type { EngineState } from '../core/GameState';
+import { getReactionAsk } from '../skills/reactionChain';
 
 export class ActionValidator {
   validate(context: RuleContext): RuleResult {
@@ -23,6 +25,18 @@ export class ActionValidator {
         }
       } else {
         return { valid: false, reason: 'CHOICE_PENDING' };
+      }
+    } else if (state.phase !== 'gameOver' && hasOutstandingReaction(state)) {
+      // 冻结世界第二格（v2.8.22 响应链执法刀＝#71）：响应链问句挂着时，全场只
+      // 认**该答的那一席**的两个出口——发动（canonical ACTIVATE_SKILL）或跳过
+      // （canonical SKIP_REACTION）。和 pendingChoice 同一套理由：候选是此刻的
+      // 事实，让别人先动就会把"轮到谁答"这件事算成两句话。
+      // 排在 pendingChoice 之后：响应本身开出选择窗时，先还那张更近的债。
+      const ask = getReactionAsk(state);
+      const answering = action.type === 'ACTIVATE_SKILL' || action.type === 'SKIP_REACTION';
+      if (!answering) return { valid: false, reason: 'REACTION_PENDING' };
+      if (ask && action.playerId !== ask.playerId) {
+        return { valid: false, reason: 'NOT_REACTION_PLAYER' };
       }
     } else if (state.phase === 'drawing') {
       // The window itself (drawState) is the authority on who may act.
@@ -95,6 +109,27 @@ export class ActionValidator {
       }
     }
 
+    if (action.type === 'SKIP_REACTION') {
+      // v2.8.22 (#71): 同样只看形状。是不是当前那一格、该谁答，由解析器对着
+      // 现算的问句判，这里不第二个推导。
+      const payload = action.payload as any;
+      if (typeof payload?.nodeKey !== 'string' || !payload.nodeKey) {
+        return { valid: false, reason: 'INVALID_SKIP_REACTION_PAYLOAD' };
+      }
+    }
+
     return { valid: true };
   }
+}
+
+/**
+ * 便宜闸：状态里有没有"还没问完的响应格"。
+ *
+ * 这里刻意不重算问句（那是 `skills/reactionChain.getReactionAsk` 的唯一推导点），
+ * 只读槽位是否为空——结算后扫描会把问完的格一律收掉，所以"队列非空"与"有问句"
+ * 等价；而验证器是每次合法性探测都走的热路径，不能每次都把候选枚举一遍。
+ */
+function hasOutstandingReaction(state: EngineState): boolean {
+  const queue = state.pendingReaction;
+  return !!queue && queue.nodes.length > 0;
 }

@@ -12,6 +12,7 @@ import {
   TurnResolver,
   TurnEndSkillResolver,
   ChooseOptionResolver,
+  SkipReactionResolver,
   ResolveBaseLossResolver,
   SurrenderResolver,
 } from './resolvers';
@@ -29,6 +30,7 @@ export class ResolverRegistry {
     new TurnResolver(),
     new TurnEndSkillResolver(),
     new ChooseOptionResolver(),
+    new SkipReactionResolver(),
     new ResolveBaseLossResolver(),
     new SurrenderResolver(),
   ];

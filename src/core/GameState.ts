@@ -7,7 +7,7 @@
  */
 
 import { createRngState, type RngState } from './rng';
-import type { GameEvent } from './Event';
+import type { GameEvent, GameEventType } from './Event';
 
 export interface EngineStatusState {
   id: string;
@@ -80,6 +80,14 @@ export interface EngineState {
    * Optional: legacy states/saves lack it and simply carry no debt.
    */
   pendingChoice?: PendingChoice | null;
+  /**
+   * 响应链问答队列（v2.8.22＝#71）。与 pendingChoice 同族的 A 类可回放事实：
+   * 受击／受伤两型的"到点自动响"改成"停下来按座次规矩问"，问的那一席只有
+   * `ACTIVATE_SKILL`／`SKIP_REACTION` 两条合法动作（冻结世界门），所以队列里的
+   * 候选不会因为别人抢着出牌而过期。缺省=没有待答问答（v2.8.21 之前的状态、
+   * 旧存档照常读）。
+   */
+  pendingReaction?: PendingReaction | null;
 }
 
 /** One frozen candidate branch of a pending choice: label for the HUD plus
@@ -106,6 +114,40 @@ export interface PendingChoice {
   /** The debtor: only this player's CHOOSE_OPTION settles the offer. */
   playerId: number;
   options: PendingChoiceOption[];
+}
+
+/**
+ * 响应链问答队列（v2.8.22 响应链执法刀＝#71；§H9 第八/九/十轮）。A 类可回放
+ * 事实，与 `pendingChoice` 同族：**状态里只记事实**（哪一声事件在等人表态、
+ * 谁已经表过态），"此刻该问谁、他能选什么"一律由 `skills/reactionChain.ts`
+ * 现算（§12-79 派生点唯一）——所以一格问答不会因为世界变了而给出过期的选项。
+ *
+ * 记的两笔事实：
+ *  - `nodes`：**排队中的格**，先开先问（append-only，绝不插队＝§H9 第九轮⑨）。
+ *    每格带着它回应的那一声事件（`sourceEvent`）与表态台账。
+ *  - `serial`：本回合已开过的格数，只用来发号（键）与跑飞封顶，不参与判序。
+ */
+export interface PendingReaction {
+  /** 队列所属回合：换回合⇒旧队列作废（冻结世界门保证回合切换前已排空）。 */
+  turn: number;
+  /** 单调递增的格号源（`rn:<turn>:<serial>`，无 RNG）。 */
+  serial: number;
+  nodes: ReactionNode[];
+}
+
+export interface ReactionNode {
+  key: string;
+  /** 这一格在回应的那一声：结算侧**已经记下**的事件（类型＋数据原样存）。
+   *  效果翻译（TARGET/ATTACKER 这些角色）按它解，与触发链读的是同一条事实。 */
+  sourceEvent: ReactionSourceEvent;
+  /** 表态台账＝`${playerId}:${generalId}` 的集合（一员将领在一格里只表一次态，
+   *  多枚被动在那一次里自选＝§H9 第九轮⑤的三键问窗）。 */
+  answered: string[];
+}
+
+export interface ReactionSourceEvent {
+  type: GameEventType;
+  data: unknown;
 }
 
 export interface ConsumedSkill {

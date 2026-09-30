@@ -7,6 +7,11 @@
  * + ACTIVATE_SKILL 真响"两段（决策通道形态），onDeploy 走部署步重放
  * （v2.5.1 接线）。场景全部用真实内置模板克隆（换 id 防碰撞），判定键 =
  * 克隆体重编译的定义 id（与事件流 skillId 同一来源，绝不字符串拼接）。
+ *
+ * v2.8.22 #71 之后，「受击」「受伤」两型不再在结算链里自动响，而是停下来问一句
+ * （§H9 第九轮三类分流）。本专项口径一个字没改——这条定义到底打不打得出带自身
+ * skillId 的效果事件——只是喂招链里多了一问一答：场面欠答就替那一席点头，直到
+ * 世界不再欠答（`settleReactions`）。
  */
 import { describe, it, expect } from 'vitest';
 import { GameEngine } from '../core/GameEngine';
@@ -19,6 +24,7 @@ import type { GameCard } from '../data/cards';
 import { syncPlayerSkills, compileGeneralSkills } from './skillCompiler';
 import type { DataSkillDefinition } from './dataTypes';
 import { listTurnEndSkillCandidates } from './turnEndSkills';
+import { getReactionAsk } from './reactionChain';
 
 interface DefEntry {
   def: DataSkillDefinition;
@@ -157,6 +163,25 @@ function scenarioAction(entry: DefEntry, index: number): GameAction {
 }
 
 /**
+ * 替欠答那一席点头，直到世界不再欠答（#71）。
+ * 同一将领身上多枚可响应被动时由玩家自选，可达性只关心"被测的这一枚能响"，
+ * 所以选键优先命中被测定义，命中不了取 options[0]（喂招链上的旁人被动照旧顺带
+ * 点头——反伤／分发这类前置条件只有点了头才真实落地）。
+ */
+function settleReactions(engine: GameEngine, events: GameEvent[], wantedId: string): GameEvent[] {
+  let all = events;
+  for (let guard = 0; guard < 16; guard += 1) {
+    const ask = getReactionAsk(engine.state);
+    if (!ask) break;
+    const option = ask.options.find(entry => entry.skillId === wantedId) ?? ask.options[0];
+    all = [...all, ...engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: option.skillId, generalId: ask.generalId,
+    }))];
+  }
+  return all;
+}
+
+/**
  * 按触发类别构造必然触发场景并派发，返回该步事件流。
  * `injected`=预建 action（两跑用例：action.id 属派发层进程计数，
  * 同一对象复用于两跑为既有测试约定）。
@@ -173,6 +198,13 @@ function forceTrigger(
   const tag = `# 未覆盖触发 ${def.trigger}（可达性专项需登记场景）`;
   const attack = (payload: unknown): GameAction =>
     injected ?? createAction('ATTACK', 1, payload);
+  // 每个场景出口都过一遍问答：受击／受伤两型的效果此刻住在"点头那一趟"里。
+  // 先算完问答再取 state——dispatch 会把 engine.state 换成新对象，先取引用拿到
+  // 的就是点头前的旧快照。
+  const done = (engine: GameEngine, events: GameEvent[]) => {
+    const settled = settleReactions(engine, events, scenarioId);
+    return { state: engine.state, events: settled, scenarioId };
+  };
 
   if (def.trigger === 'onTurnStart') {
     // 主将挂 p2，p1 结束回合 → p2 回合开始自动链
@@ -182,7 +214,7 @@ function forceTrigger(
     ]);
     const engine = buildEngine(state);
     const action = injected ?? createAction('END_TURN', 1);
-    return { state: engine.state, events: engine.dispatch(action), scenarioId };
+    return done(engine, engine.dispatch(action));
   }
 
   if (def.trigger === 'onTurnEnd') {
@@ -198,7 +230,7 @@ function forceTrigger(
     const action = injected ?? createAction('ACTIVATE_SKILL', 1, {
       skillId: scenarioId, generalId: cloneId,
     });
-    return { state: engine.state, events: engine.dispatch(action), scenarioId };
+    return done(engine, engine.dispatch(action));
   }
 
   if (def.trigger === 'onDeploy') {
@@ -211,7 +243,7 @@ function forceTrigger(
     const action = injected ?? createAction('DEPLOY_GENERAL', 1, {
       general: clone, slot: 0, consumeCards: [{ ...COSTS[0] }],
     });
-    return { state: engine.state, events: engine.dispatch(action), scenarioId };
+    return done(engine, engine.dispatch(action));
   }
 
   if (def.trigger === 'onBecomingTarget' || def.trigger === 'onDeath'
@@ -230,9 +262,11 @@ function forceTrigger(
       const events = engine.dispatch(attack({
         attackerId: cloneId, targetId: `rc_feeder_${index}`, ranged: false, consumeCard: { ...COSTS[0] },
       }));
-      // 反伤必须真实发生，否则 skillDamage 场景是假可达
-      expect(hasTagged(events, `${feederId}:`), '刚烈反伤未触发=喂招链断裂').toBe(true);
-      return { state: engine.state, events, scenarioId };
+      const result = done(engine, events);
+      // 反伤必须真实发生，否则 skillDamage 场景是假可达。#71 之后刚烈不再自动响：
+      // 这一断言现在同时钉住"喂招那一格被点了头"，反伤才落进事件流。
+      expect(hasTagged(result.events, `${feederId}:`), '刚烈反伤未触发=喂招链断裂').toBe(true);
+      return result;
     }
     // owner 为受击/被击杀目标；onDeath 需一击致命：先手血。
     // 攻击方手里额外留一张牌：反馈型 DISCARD target=ATTACKER 需真实手牌才不空转。
@@ -258,7 +292,7 @@ function forceTrigger(
     const events = engine.dispatch(attack({
       attackerId: 'rc_plain_b', targetId: cloneId, ranged: false, consumeCard: { ...COSTS[0] },
     }));
-    return { state: engine.state, events, scenarioId };
+    return done(engine, events);
   }
 
   if (def.trigger === 'onDamageDealt' || def.trigger === 'onKill') {
@@ -277,7 +311,7 @@ function forceTrigger(
     const events = engine.dispatch(attack({
       attackerId: cloneId, targetId: 'rc_prey', ranged: false, consumeCard: { ...COSTS[0] },
     }));
-    return { state: engine.state, events, scenarioId };
+    return done(engine, events);
   }
 
   if (def.trigger === 'onCardLost') {
@@ -299,7 +333,7 @@ function forceTrigger(
       const events = engine.dispatch(attack({
         attackerId: qiangxiId, targetId: cloneId, ranged: false, consumeCard: { ...COSTS[0] },
       }));
-      return { state: engine.state, events, scenarioId };
+      return done(engine, events);
     }
     // 连营场景（lastHandLost 及其余手牌谓词）：克隆攻击断肠靶子 → 击杀弃光
     // 攻击方手牌 → DISCARD 派生 CARD_LOST remainingHand=0 → 摸回一张。
@@ -316,7 +350,7 @@ function forceTrigger(
     const events = engine.dispatch(attack({
       attackerId: cloneId, targetId: caiwenId, ranged: false, consumeCard: { ...COSTS[0] },
     }));
-    return { state: engine.state, events, scenarioId };
+    return done(engine, events);
   }
 
   throw new Error(tag);

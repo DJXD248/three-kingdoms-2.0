@@ -10,8 +10,10 @@ import { GameEngine } from '../core/GameEngine';
 import { dispatchStoreAction } from '../store/engineExecutionBridge';
 import { createAction } from '../action/ActionTypes';
 import type { EngineState, EnginePlayer } from '../core/GameState';
+import type { GameEvent } from '../core/Event';
 import type { General, Skill } from '../data/generals';
 import { syncPlayerSkills } from './skillCompiler';
+import { getReactionAsk } from './reactionChain';
 import { parseGateText } from './skillGateText';
 
 function makeGeneral(id: string, skills: Skill[]): General {
@@ -107,6 +109,27 @@ function buildEngine(players: EnginePlayer[]): GameEngine {
   return engine;
 }
 
+/**
+ * v2.8.22 响应链执法刀（#71）：受击／受伤两型已搬出自动结算链，效果落在"答完那句"
+ * 的那一次 dispatch 里。本文件这批端到端测钉的正是"技能的效果照旧落地"，所以每次
+ * 触发后把当前问句按顺序答完（每格选第一枚），把这些 dispatch 的事件流回给用例。
+ * 问答本身的形状（谁先答、跳过、冻结世界）由 skills/reactionChain.test.ts 钉。
+ */
+function answerReactions(engine: GameEngine, pick: 'first' | 'skip' = 'first'): GameEvent[] {
+  const out: GameEvent[] = [];
+  for (let guard = 0; guard < 16; guard += 1) {
+    const ask = getReactionAsk(engine.state);
+    if (!ask) break;
+    const action = pick === 'skip'
+      ? createAction('SKIP_REACTION', ask.playerId, { nodeKey: ask.nodeKey })
+      : createAction('ACTIVATE_SKILL', ask.playerId, {
+        skillId: ask.options[0].skillId, generalId: ask.generalId,
+      });
+    out.push(...engine.dispatch(action));
+  }
+  return out;
+}
+
 // The rules layer requires every ATTACK to carry a consumed resource card.
 const ATTACK_COST = { id: 'cost_1', name: '粮草', type: '粮草' };
 const ATTACK_COST_2 = { id: 'cost_2', name: '粮草', type: '粮草' };
@@ -148,8 +171,12 @@ describe('skill pipeline · end-to-end', () => {
     const events = engine.dispatch(
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
     );
+    // 搬出结算链：攻击那一趟只有问句、没有那一摸。
+    expect(events.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD')).toHaveLength(0);
+    expect(getReactionAsk(engine.state)!.generalId).toBe('g2');
+    const answered = answerReactions(engine);
 
-    const skillDraws = events.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD');
+    const skillDraws = answered.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD');
     expect(skillDraws).toHaveLength(1);
     expect((skillDraws[0].data as any).playerId).toBe(2);
 
@@ -175,6 +202,8 @@ describe('skill pipeline · end-to-end', () => {
     const p1 = engine.state.players.find(p => p.id === 1)!;
     expect(p1.hand).toHaveLength(0);
     expect(events.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD')).toHaveLength(0);
+    // v2.8.22：这一条在问答侧同样成立——身份不匹配的监听连问都不该被问。
+    expect(getReactionAsk(engine.state)).toBeNull();
   });
 
   it('general scope holds: a damage-taken skill only reacts to ITS OWN general', () => {
@@ -198,6 +227,8 @@ describe('skill pipeline · end-to-end', () => {
     );
 
     expect(events.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD')).toHaveLength(0);
+    // v2.8.22：同一条身份判定也管问答路——别人挨的打不会替 g2 开一句问。
+    expect(getReactionAsk(engine.state)).toBeNull();
     const p2 = engine.state.players.find(p => p.id === 2)!;
     expect(p2.hand).toHaveLength(0);
   });
@@ -253,11 +284,17 @@ describe('skill pipeline · end-to-end', () => {
     const events = engine.dispatch(
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
     );
+    // 答之前：攻击趟里两张问句都已开格（两声伤害），一张牌都还没摸。
+    expect(events.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD')).toHaveLength(0);
+    expect(engine.state.pendingReaction!.nodes).toHaveLength(2);
 
-    const draws = events.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD');
+    const draws = answerReactions(engine).filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD');
+    // 两声伤害＝两格问答（先开的先问），答之前一张都摸不到。
+    expect(engine.state.pendingReaction).toBeNull();
     // 刚腹 (attackDamage filter) reacts to the attack hit; 忍伤 (skillDamage
     // filter) reacts only to the follow-up skill damage from 烈攻 — and each
     // filter must reject the other damage category.
+    // v2.8.22：这两声现在是**两格**问答（先开的先问），所以答完的顺序＝伤害落地顺序。
     expect(draws).toHaveLength(2);
     expect((draws[0].data as any).skillId).toContain('刚腹');
     expect((draws[1].data as any).skillId).toContain('忍伤');
@@ -273,6 +310,7 @@ describe('skill pipeline · end-to-end', () => {
 
     // g1 attacks g2 → g2's 奸雄 draws exactly one deck card, consumed once.
     engine.dispatch(createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }));
+    answerReactions(engine); // v2.8.22：那一摸现在要点头（答一句才落地）
 
     const drawnIds = [
       ...(engine.state.players[1].hand as any[]).map(c => c.id),
@@ -296,14 +334,34 @@ describe('skill pipeline · end-to-end', () => {
       ]),
     };
 
-    const first = dispatchStoreAction(storeState,
+    // v2.8.22：问答也走同一条桥——pendingReaction 是随状态一起搬的 A 类槽，
+    // 每次 dispatch 都重建引擎，所以"答一句"必须能在重建后的状态上接着答。
+    const answerThroughBridge = (state: EngineState): EngineState => {
+      let current = state;
+      for (let guard = 0; guard < 4; guard += 1) {
+        const ask = getReactionAsk(current);
+        if (!ask) break;
+        current = dispatchStoreAction({ engineState: current }, createAction(
+          'ACTIVATE_SKILL', ask.playerId, { skillId: ask.options[0].skillId, generalId: ask.generalId },
+        )).engineState;
+      }
+      return current;
+    };
+
+    const opened = dispatchStoreAction(storeState,
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }));
+    // 攻击趟里没摸——问句挂着。
+    expect((opened.engineState.players[1].hand as any[])).toHaveLength(0);
+    const first = { engineState: answerThroughBridge(opened.engineState) };
     expect((first.engineState.players[1].hand as any[]).map((c: any) => c.id)).toEqual(['deck_1']);
 
-    const second = dispatchStoreAction({ engineState: first.engineState },
+    const openedSecond = dispatchStoreAction({ engineState: first.engineState },
       createAction('ATTACK', 1, { attackerId: 'g3', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST_2 }));
-    // Lethal follow-up: victim dies but the damage-taken draw still resolves.
-    expect((second.engineState.players[1].hand as any[]).map((c: any) => c.id)).toEqual(['deck_1', 'deck_2']);
+    const second = { engineState: answerThroughBridge(openedSecond.engineState) };
+    // Lethal follow-up. v2.8.22 换的那笔账（如实登记）：扫描在整块结算**之后**开格，
+    // 当场阵亡的将领已经离场⇒不再被问⇒旧口径"死了也照样摸一张"翻转成"死了就不问"。
+    // 与 §H9 第七轮"阵亡者不结算受伤类"同一条纪律；受伤但未死的那一摸见上一段。
+    expect((second.engineState.players[1].hand as any[]).map((c: any) => c.id)).toEqual(['deck_1']);
     expect(second.engineState.players[1].fieldGenerals).toHaveLength(0);
     expect((second.engineState.players[1].graveyard as any[]).map((c: any) => c.id)).toContain('g2');
   });
@@ -319,7 +377,7 @@ describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () 
     };
   }
 
-  it('counter damage hits the attacker and settles AFTER the source damage in one dispatch', () => {
+  it('counter damage hits the attacker — 受击那一格现在先问一句，点头之后才落地', () => {
     const attacker = makeGeneral('g1', []);
     const victim = makeGeneral('g2', [huici()]);
     const engine = buildEngine([
@@ -331,22 +389,25 @@ describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () 
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
     );
 
-    const counters = events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill');
+    // 搬出结算链（v2.8.22 #71）：攻击那一趟不再有反伤，只留下一句"要不要响"。
+    expect(events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill')).toHaveLength(0);
+    const ask = getReactionAsk(engine.state)!;
+    expect(ask.sourceEvent.type).toBe('BEFORE_DAMAGE');
+    expect(ask.playerId).toBe(2);
+    expect((engine.state.players.find(p => p.id === 1)!.fieldGenerals as any[])[0].currentHp).toBe(4);
+
+    const answered = answerReactions(engine);
+    const counters = answered.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill');
     expect(counters).toHaveLength(1);
     expect((counters[0].data as any).targetId).toBe('g1');
     expect((counters[0].data as any).sourceGeneralId).toBe('g2');
 
-    // Frozen timing (ARCH_MAP Trigger 契约表): the trigger chain queues the
-    // derived effect at the tail, so the counter settles after the attack's
-    // own AFTER_DAMAGE within the same dispatch.
-    const types = events.map(e => e.type);
-    expect(types.indexOf('DAMAGE') < types.lastIndexOf('DAMAGE')).toBe(true);
-    expect(types.indexOf('BEFORE_DAMAGE')).toBeLessThan(types.lastIndexOf('DAMAGE'));
-
-    const p1 = engine.state.players.find(p => p.id === 1)!;
-    const p2 = engine.state.players.find(p => p.id === 2)!;
-    expect((p1.fieldGenerals as any[])[0].currentHp).toBe(3); // 4 - 1 counter
-    expect((p2.fieldGenerals as any[])[0].currentHp).toBe(2); // 4 - 2 attack
+    // 挨打的血照旧先落地：问的是"这一次受击要不要响"，不是把伤害本身推后。
+    // 读引擎当前状态，不读答复前的旧引用（dispatch 会换掉整个 state）。
+    const after = engine.state.players.find(p => p.id === 2)!;
+    const afterAttacker = engine.state.players.find(p => p.id === 1)!;
+    expect((after.fieldGenerals as any[])[0].currentHp).toBe(2); // 4 - 2 attack
+    expect((afterAttacker.fieldGenerals as any[])[0].currentHp).toBe(3); // 4 - 1 counter
   });
 
   it('attacks on a base never trigger becoming-target skills', () => {
@@ -366,6 +427,8 @@ describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () 
 
     expect(events.some(e => e.type === 'BEFORE_DAMAGE')).toBe(true);
     expect(events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill')).toHaveLength(0);
+    // v2.8.22：打本营那一声没有"受击的将领"⇒问答侧同样不开格。
+    expect(getReactionAsk(engine.state)).toBeNull();
     const p2 = engine.state.players.find(p => p.id === 2)!;
     expect(p2.baseHp).toBe(9);
     expect((engine.state.players.find(p => p.id === 1)!.fieldGenerals as any[])[0].currentHp).toBe(4);
@@ -387,11 +450,13 @@ describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () 
     );
 
     expect(events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill')).toHaveLength(0);
+    // v2.8.22：同一席位里没挨打的那一员也不被问（身份轴两条路共用一份实现）。
+    expect(getReactionAsk(engine.state)).toBeNull();
     const p1 = engine.state.players.find(p => p.id === 1)!;
     expect((p1.fieldGenerals as any[])[0].currentHp).toBe(4);
   });
 
-  it('the counter still lands even when the source damage kills the target (frozen timing)', () => {
+  it('当场被打死的将领不再被问——旧「死了也照样反伤」的冻结时序按第七轮口径翻转', () => {
     const attacker = makeGeneral('g1', []);
     const victim = { ...makeGeneral('g2', [huici()]), hp: 2 };
     const engine = buildEngine([
@@ -405,12 +470,14 @@ describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () 
 
     const deaths = events.filter(e => e.type === 'DEATH');
     expect(deaths).toHaveLength(1);
-    const counters = events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill');
-    expect(counters).toHaveLength(1);
+    // 扫描排在整块结算之后：这一格还没开口问，人已经离场⇒没有候选⇒不开格。
+    // 于是旧事实"来源伤害把目标打死，反伤照样落地"翻转为"当场死就不问"。
+    expect(getReactionAsk(engine.state)).toBeNull();
+    expect(answerReactions(engine)).toHaveLength(0);
 
     const p1 = engine.state.players.find(p => p.id === 1)!;
     const p2 = engine.state.players.find(p => p.id === 2)!;
-    expect((p1.fieldGenerals as any[])[0].currentHp).toBe(3);
+    expect((p1.fieldGenerals as any[])[0].currentHp).toBe(4); // 无反伤
     expect(p2.fieldGenerals).toHaveLength(0);
     expect((p2.graveyard as any[]).map((c: any) => c.id)).toContain('g2');
   });
@@ -551,21 +618,28 @@ describe('skill pipeline · Stage C coverage (HEAL / GAIN_ARMOR / skill-kill DEA
           hand: Array.from({ length: handCards }, (_, i) => ({ id: `hand_${i}`, name: '粮草', type: '粮草' })),
         }),
       ]);
-      const events = engine.dispatch(
+      engine.dispatch(
         createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
       );
+      // v2.8.22 #71：门槛活在同一张表上，只是位置从"结算链里静默筛"搬到"问句里
+      // 摆不摆得出这一键"。门槛过 ⇒ 开格、有键可点；门槛不过 ⇒ 连格都不开。
+      const ask = getReactionAsk(engine.state);
+      const answered = answerReactions(engine);
       const p2 = engine.state.players.find(p => p.id === 2)!;
       return {
-        skillDraws: events.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD'),
+        askOptions: ask?.options.map(o => o.skillName) ?? [],
+        skillDraws: answered.filter(e => e.type === 'DRAW' && (e.data as any).effectType === 'DRAW_CARD'),
         handSize: (p2.hand as unknown[]).length,
       };
     };
 
     const open = attackInto(0);
+    expect(open.askOptions).toHaveLength(1);
     expect(open.skillDraws).toHaveLength(1);
     expect(open.handSize).toBe(1);
 
     const blocked = attackInto(2);
+    expect(blocked.askOptions).toEqual([]);
     expect(blocked.skillDraws).toHaveLength(0);
     expect(blocked.handSize).toBe(2);
   });

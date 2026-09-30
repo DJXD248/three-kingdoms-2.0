@@ -26,6 +26,8 @@ import { resetLiveReplay } from '../replay/liveReplayRecorder';
 import { loadReplaySettings, persistReplaySettings } from '../replay/replayStorage';
 import type { GamePhase, DrawContext, Player, GameState, TurnEndAsk, TurnEndAskCandidate, SkillPromptMode } from './gameStoreTypes';
 import { listTurnEndSkillCandidates, listTurnEndAskItems, type TurnEndAskItem } from '../skills/turnEndSkills';
+import { getReactionAsk } from '../skills/reactionChain';
+import type { ReactionAnsweredData } from '../core/Event';
 
 // Store-level types live in gameStoreTypes.ts (stage B split); re-exported
 // here so existing consumers keep importing them from this module.
@@ -176,6 +178,68 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     if (get().settings.autoSave) {
       saveLocalGameSnapshot(get().createSerializedSnapshot(get().roomName));
     }
+  };
+
+  // v2.8.22 响应链执法刀 (#71)：响应链问答的两个出口共用这一次提交。欠债的那一席、
+  // 是哪一格、能选哪几枚，全部从 EngineState 现算（`getReactionAsk`＝唯一推导点），
+  // 调用方只能递"想发动哪一枚"，永远决定不了"该谁答、答哪格"。热座玩家点按钮与
+  // AI 司机挑动作都落在这里——基础游戏规则不分人和 AI（用户 2026-09-30 口径）。
+  const commitReactionAnswer = (skillId: string | null, generalId: string | null): boolean => {
+    const state = get();
+    const ask = getReactionAsk(state.engineState);
+    if (!ask) return false;
+    const option = skillId === null ? undefined
+      : ask.options.find(entry => entry.skillId === skillId && entry.generalId === generalId);
+    if (skillId !== null && !option) return false;
+
+    const action = skillId === null
+      ? createAction('SKIP_REACTION', ask.playerId, { nodeKey: ask.nodeKey })
+      : createAction('ACTIVATE_SKILL', ask.playerId, { skillId, generalId });
+    const { engineState, events } = dispatchStoreAction(state, action);
+    // 诚实拒绝：这一句表态没能记进事件流（门槛不过／问句已换人），投影就一动不动，
+    // 窗还开着，玩家看得见自己没点成。
+    const answered = events.find(event => event.type === 'REACTION_ANSWERED')
+      ?.data as ReactionAnsweredData | undefined;
+    if (!answered) return false;
+
+    if (state.isTestMode) {
+      set({ ...buildTestArenaState(state, engineState) });
+      return true;
+    }
+
+    // 效果可能打死将领、击破势力甚至终局——照 chooseOption/activateTurnEndSkill 的
+    // 口径做全量投影，绝不局部打补丁。
+    const defeatedPlayerId = (events.find(event => event.type === 'PLAYER_DEFEATED')?.data as any)?.playerId;
+    const defeatedEventPlayer = typeof defeatedPlayerId === 'number'
+      ? engineState.players.find(player => player.id === defeatedPlayerId)
+      : undefined;
+    const pendingDraw = engineState.drawState;
+    const outcome = deriveResultState(state, engineState);
+
+    set({
+      ...engineStateToStoreProjection(engineState, state.currentPlayerIndex),
+      currentRound: engineState.round || state.currentRound,
+      phase: outcome.phase,
+      turnPhase: outcome.turnPhase,
+      winnerId: outcome.winnerId,
+      defeatEvent: typeof defeatedPlayerId === 'number' && defeatedEventPlayer
+        ? { faction: (defeatedEventPlayer as any).faction ?? null, name: (defeatedEventPlayer as any).name ?? '' }
+        : state.defeatEvent,
+      drawContext: pendingDraw ? buildDrawContext(engineState, pendingDraw) : null,
+      revealedDrawCards: pendingDraw ? [] : state.revealedDrawCards,
+      // 只有真发动才飘一条：跳过是"什么都没发生"，不该有一条像发动过的提示。
+      ...(option ? {
+        skillActivations: [...state.skillActivations, {
+          id: `${engineState.turn}:${answered.nodeKey}:${answered.subjectKey}:${option.skillId}`,
+          generalName: answered.generalName,
+          skillName: answered.skillName ?? option.skillName,
+          message: option.label || `${option.skillName}已响应`,
+          color: '#38bdf8',
+          timestamp: Date.now(),
+        }],
+      } : {}),
+    });
+    return true;
   };
 
   return ({
@@ -811,6 +875,12 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     });
     return true;
   },
+
+  // v2.8.22 响应链执法刀 (#71)：三键问窗的两个出口，各自都是一条 canonical 动作
+  // （发动＝ACTIVATE_SKILL／跳过＝SKIP_REACTION）。窗体本身仍是容器的观察面，
+  // 窗里的每一次表态都进事件流、进录像。
+  activateReactionSkill:(skillId,generalId)=>commitReactionAnswer(skillId,generalId),
+  skipReaction:()=>commitReactionAnswer(null,null),
 
   updateSettings: s => set((st: GameState) => {
     const settings = { ...st.settings, ...s };

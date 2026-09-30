@@ -21,6 +21,12 @@ export interface TriggerDefinition {
   enabled?: boolean;
   ownerId?: number | string;
   skillId?: string;
+  /**
+   * 这条监听属于哪一员将领（运行时实例 id）。顺序比较器要用它判断"这件事是不是打在
+   * 我身上"——同一个席位里"挨打的那一员"和"没挨打的那一员"响应先后不同（用户第八轮
+   * 工作例：A→C→D→B），只看 `ownerId`（席位）分不出这一层。
+   */
+  generalId?: string;
   condition?: (context: TriggerContext) => boolean;
   createEvents: (context: TriggerContext) => GameEvent[];
 }

@@ -15,11 +15,21 @@ export type ActionType =
   | 'RESOLVE_BASE_LOSS'
   | 'ACTIVATE_SKILL'
   | 'CHOOSE_OPTION'
+  // v2.8.22 响应链执法刀（#71）：响应链问答的"这一格我不响应"。§12-75① 的口径
+  // 是"一个也不做的正身能由既有动作代记就绝不另立 ActionType"——回合结束那格
+  // 由那次 END_TURN 代记，响应链这一格没有任何既有动作能代记，所以必须自己一条。
+  | 'SKIP_REACTION'
   | 'SURRENDER';
 
 export interface ChooseOptionPayload {
   choiceKey: string;
   optionIndex: number;
+}
+
+/** SKIP_REACTION 的载荷：只点名"哪一格的表态我交了白卷"，表态单位（哪一员将
+ *  领）由当前问句从状态里现算，绝不从载荷里信它。 */
+export interface SkipReactionPayload {
+  nodeKey: string;
 }
 
 export interface GameAction<T = unknown> {

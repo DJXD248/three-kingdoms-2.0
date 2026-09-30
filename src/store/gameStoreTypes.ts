@@ -164,6 +164,12 @@ export interface GameState {
   // 2.6.3 choice channel: pick option `optionIndex` of the live
   // engineState.pendingChoice offer (canonical CHOOSE_OPTION dispatch).
   chooseOption:(optionIndex:number)=>boolean;
+  // v2.8.22 响应链执法刀 (#71): the two exits of one live reaction ask
+  // (EngineState.pendingReaction). Which seat answers and which cell it is
+  // are re-derived from engine state by the store — callers only name the
+  // skill; `skipReaction()` is the always-legal exit (§12-61 问窗必有出口).
+  activateReactionSkill:(skillId:string,generalId:string)=>boolean;
+  skipReaction:()=>boolean;
   // 2.2.25 reaction-window entry (no skill auto-opens this cut)
   openReactionWindow:(sourceEvent?:GameEvent,participants?:number[])=>ReactionWindowState|null;
   passReaction:(playerId:number)=>boolean;

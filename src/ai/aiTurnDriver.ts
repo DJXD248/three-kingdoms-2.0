@@ -25,6 +25,7 @@ import type { GameAction } from '../action/ActionTypes';
 import { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { syncPlayerSkills } from '../skills/skillCompiler';
+import { getReactionAsk, type ReactionAsk } from '../skills/reactionChain';
 import { createStrategyPolicy, parseTier } from './policies/strategyPolicy';
 import { randomPolicy, type AiPolicy } from './policies/randomPolicy';
 import type { AiSeatTier } from '../setup/runtimeSetup';
@@ -61,6 +62,18 @@ function aiSeatOf(state: GameState, playerId: number | null | undefined): Player
 
 function allSeatsAi(state: GameState): boolean {
   return state.players.length > 0 && state.players.every(p => p.isAi === true);
+}
+
+/**
+ * v2.8.22 响应链执法刀 (#71)：此刻状态里有没有待答的响应问句。
+ * 先做便宜的槽位闸再算问句——司机每一拍都走这里，不能每次都把候选枚举一遍；
+ * 而"队列非空"与"有问句"等价（结算后扫描会把问完的格一律收掉）。
+ */
+function liveReactionAsk(state: GameState): ReactionAsk | null {
+  const engineState = state.engineState as EngineState;
+  const queue = engineState?.pendingReaction;
+  if (!queue || queue.nodes.length === 0) return null;
+  return getReactionAsk(engineState);
 }
 
 /** Ask the seat's policy what it would do, with the repeat guard applied. */
@@ -106,7 +119,15 @@ function applyPolicyAction(state: GameState, playerId: number, action: GameActio
     // the ask window — one canonical ACTIVATE_SKILL action, no direct state
     // edits. Consumption drops the candidate from the next legalActions, so
     // the stagnation guard cannot loop on it.
-    case 'ACTIVATE_SKILL': return state.activateTurnEndSkill(String(p?.skillId ?? ''), String(p?.generalId ?? ''));
+    case 'ACTIVATE_SKILL': {
+      const ask = liveReactionAsk(state);
+      // #71：响应问句挂着时，策略挑到的这一枚就是那一格的选项，走响应出口；
+      // 没有问句才是回合结束询问那条路。两条路各自都只认一条 canonical 动作。
+      if (ask) return state.activateReactionSkill(String(p?.skillId ?? ''), String(p?.generalId ?? ''));
+      return state.activateTurnEndSkill(String(p?.skillId ?? ''), String(p?.generalId ?? ''));
+    }
+    // #71 的另一个出口：跳过＝SKIP_REACTION，出口恒常存在，永不失败到锁死队列。
+    case 'SKIP_REACTION': return state.skipReaction();
     // 2.6.3: the frozen world leaves the debtor's policy exactly the recorded
     // options to pick from — the choice arrives as a canonical CHOOSE_OPTION.
     case 'CHOOSE_OPTION': return state.chooseOption(Number(p?.optionIndex) || 0);
@@ -175,6 +196,20 @@ export function runAiStep(state: GameState): boolean {
     if (firstEnabled < 0) return false;
     state.chooseOption(firstEnabled);
     return true;
+  }
+  // v2.8.22 (#71)：响应链问答是同一句冻结世界的道理——此刻全场只认"该答的那一
+  // 席"。AI 席按自己的策略立刻答，挑的仍是 `legalActions` 里那两条 canonical
+  // 动作，与人类点按钮同一条路（基础游戏规则不区分人和 AI＝用户 2026-09-30 口径）；
+  // 人席返回 false，交给问窗 HUD。
+  const reactionAsk = liveReactionAsk(state);
+  if (reactionAsk && (state.phase === 'playing' || state.phase === 'drawing')) {
+    const seat = aiSeatOf(state, reactionAsk.playerId);
+    if (!seat) return false;
+    const tier: AiSeatTier = seat.aiTier ?? 'balanced';
+    const action = pickPolicyAction(state, reactionAsk.playerId, tier);
+    if (action && applyPolicyAction(state, reactionAsk.playerId, action)) return true;
+    // 兜底＝跳过：那一格永远有这个出口（§12-61），队列不会卡在一席沉默上。
+    return state.skipReaction();
   }
   switch (state.phase) {
     case 'lobby':

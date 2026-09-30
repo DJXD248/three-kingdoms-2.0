@@ -381,25 +381,31 @@ describe('skillCompiler · compileGeneralSkills', () => {
 });
 
 describe('skillCompiler · syncPlayerSkills', () => {
-  it('registers compiled skills of field generals into a fresh engine', () => {
+  function oneGeneralEngine(stateSkill: Partial<Skill>) {
+    const card = {
+      general: general({ skills: [skill({ name: '奸雄', ...stateSkill })] }),
+      ownerId: 1,
+    };
     const state = createInitialEngineState();
     state.players = [
-      {
-        id: 1,
-        name: 'P1',
-        fieldGenerals: [
-          {
-            general: general({ skills: [skill({ name: '奸雄' })] }),
-            ownerId: 1,
-          },
-        ],
-      },
+      { id: 1, name: 'P1', fieldGenerals: [card] },
       { id: 2, name: 'P2', fieldGenerals: [] },
-    ];
+    ] as never;
     const engine = new GameEngine(state);
-    const count = syncPlayerSkills(engine, state);
+    return { engine, state };
+  }
 
-    expect(count).toBe(1);
+  // v2.8.22 响应链执法刀（#71）：受击／受伤两型的非 forced 定义**压根不注册**到
+  // 触发链上——它们改走问答（skills/reactionChain），注册数为 0 是设计不是漏注册。
+  it('compiles the deferred pair but registers nothing (非 forced 受击/受伤走问答，不进触发链)', () => {
+    const { engine, state } = oneGeneralEngine({});
+    expect(syncPlayerSkills(engine, state)).toBe(1);
+    expect(engine.triggers.getByOwner(1)).toHaveLength(0);
+  });
+
+  it('registers the forced one (强制发动照旧自动响) into a fresh engine', () => {
+    const { engine, state } = oneGeneralEngine({ forced: true });
+    expect(syncPlayerSkills(engine, state)).toBe(1);
     const triggers = engine.triggers.getByOwner(1);
     expect(triggers).toHaveLength(1);
     expect(triggers[0].eventType).toBe('DAMAGE');

@@ -297,6 +297,9 @@ export function compileSkill(
     // v2.8.11 刀2：单效果定义把两级门槛并成一槽（AND 语义，整组在前）。
     // 两侧都空⇒undefined，v2.8.10 之前的输出逐字不变。
     conditions: mergeGates(skill.conditions, c.conditions),
+    // v2.8.22 响应链执法刀：录入面的「强制发动」透传到编译模型。
+    // 只在真为 true 时落键——缺省定义的键集合与 v2.8.21 逐字一致。
+    ...(skill.forced === true ? { forced: true } : {}),
   });
 
   const candidates: CompiledEffect[] = [];
@@ -341,6 +344,9 @@ export function compileSkill(
         turnSubType: group[0].turnSubType,
         choiceMode: true,
         conditions: skill.conditions?.length ? skill.conditions : undefined,
+        // 「强制发动」是技能级录入，choice 组同样继承（整组自动发动，组内择一
+        // 仍由既有的抉择窗负责——那是 CHOICE_REQUIRED 的路，不另开一条）。
+        ...(skill.forced === true ? { forced: true } : {}),
       });
     }
   } else {

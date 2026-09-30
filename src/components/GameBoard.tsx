@@ -8,6 +8,7 @@ import { General, factionColors, skillTagColors } from '../data/generals';
 import { skillTagMeanings, tagsOf } from '../domain/skillTags';
 import { GameCard } from '../data/cards';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { getReactionAsk } from '../skills/reactionChain';
 import { getGeneralCardVisual } from '../utils/generalCardVisual';
 import { clearLocalGameSnapshot, saveLocalGameSnapshot } from '../store/localGameSnapshot';
 import Rules from './Rules';
@@ -44,6 +45,12 @@ export default function GameBoard(){
   const skipTurnEndAsk=useGameStore(s=>s.skipTurnEndAsk);
   const pendingChoice=useGameStore(s=>s.engineState.pendingChoice);
   const chooseOption=useGameStore(s=>s.chooseOption);
+  const engineState=useGameStore(s=>s.engineState);
+  const activateReactionSkill=useGameStore(s=>s.activateReactionSkill);
+  const skipReactionAsk=useGameStore(s=>s.skipReaction);
+  // v2.8.22 响应链执法刀：HUD 与校验器/合法动作表/store/AI 共用同一个派生点。
+  // engineState 只在落新事实时换引用 ⇒ 每个动作重算一次，而非每帧。
+  const reactionAsk=useMemo(()=>getReactionAsk(engineState),[engineState]);
 
   const [vm,setVm]=useState<ViewMode>('board');
   const [ins,setIns]=useState<InspectTarget|null>(null);
@@ -506,8 +513,9 @@ export default function GameBoard(){
           </div>
         ))}</div>}
         {/* 2.2.25 §12-9c: reaction-window HUD — entry mechanism only, mirrors the resident container.
-            While a turn-end ask owns this window (2.3.1), the dedicated ask HUD below replaces it. */}
-        {reactionWindow&&!(turnEndAsk&&reactionWindow.id===turnEndAsk.windowId)&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+            While a turn-end ask owns this window (2.3.1), the dedicated ask HUD below replaces it.
+            2.8.22：响应链问句活着时这里也让位——冻结世界里只有欠答那一席能动手。 */}
+        {reactionWindow&&!(turnEndAsk&&reactionWindow.id===turnEndAsk.windowId)&&!reactionAsk&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
           <div className="rounded-xl border-2 border-sky-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(14,165,233,0.35)'}}>
             <p className="text-sm font-black text-sky-300">⏳ 反应窗口开启 · 等待通过</p>
             <p className="mt-0.5 text-[10px] text-sky-200/60">{reactionWindow.id}</p>
@@ -544,13 +552,30 @@ export default function GameBoard(){
             </div>
           </div>
         </div>}
+        {/* 2.8.22 响应链问窗（§H9 第九/十轮）：受击／受伤节点已从自动结算链搬出来
+            开格排队，先开先问、一席一席绕座次。人和 AI 读同一个派生点，只是 AI
+            由自己的策略立刻作答。问句活着＝冻结世界：只有欠答那一席动手，且只有
+            「发动某枚」与「跳过」两种动作（校验器门）。跳过是恒常出口（§12-61）。 */}
+        {reactionAsk&&!pendingChoice&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+          <div className="rounded-xl border-2 border-rose-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(244,63,94,0.35)'}}>
+            <p className="text-sm font-black text-rose-300">🔔 响应询问 · {players.find(p=>p.id===reactionAsk.playerId)?.name ?? `玩家${reactionAsk.playerId}`}（{reactionAsk.generalName}），{reactionAsk.sourceEvent.type==='BEFORE_DAMAGE'?'成为目标时':'受到伤害后'}是否发动技能？</p>
+            <p className="mt-0.5 text-[10px] text-rose-200/60">{reactionAsk.nodeKey}</p>
+            <div className="mt-2 flex flex-col gap-1.5">
+              {reactionAsk.options.map(o=>(
+                <button key={o.skillId} onClick={()=>activateReactionSkill(o.skillId,reactionAsk.generalId)} title={o.label} className="rounded-lg border border-rose-600/60 bg-rose-900/50 px-3 py-1.5 text-left text-xs font-bold text-rose-100 hover:bg-rose-800/60">⚡ {reactionAsk.generalName}【{o.skillName}】<span className="mt-0.5 block text-[10px] font-normal text-rose-200/60">{o.label}</span></button>
+              ))}
+            </div>
+            <div className="mt-2"><Btn onClick={skipReactionAsk}>🚫 跳过</Btn></div>
+            <p className="mt-1 text-[10px] text-rose-200/40">跳过＝这一格一个也不发动，继续问下一席</p>
+          </div>
+        </div>}
         {/* 2.3.1 turn-end ask HUD: real END_TURN is deferred until each candidate is
             activated (canonical ACTIVATE_SKILL) or the player declines. The window
             itself is container observation; the decisions inside it are recorded
             facts. Hidden while a choice debt is live (the frozen world above).
             2.8.17 (#42)：唯一出口＝「都不发动」（旧「跳过并结束回合」按用户裁决合并
             进这一个按钮）；完整模式把不满足门槛的技能照旧列出、置灰、写明原因。 */}
-        {turnEndAsk&&!pendingChoice&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+        {turnEndAsk&&!pendingChoice&&!reactionAsk&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
           <div className="rounded-xl border-2 border-amber-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(245,158,11,0.35)'}}>
             <p className="text-sm font-black text-amber-300">🌙 回合结束询问 · 是否发动将领技能？</p>
             <p className="mt-0.5 text-[10px] text-amber-200/60">{turnEndAsk.windowId}</p>

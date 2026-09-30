@@ -18,6 +18,7 @@ import type { General, Skill, SkillTriggerConfig } from '../data/generals';
 import { allGenerals } from '../data/generals';
 import type { GameCard } from '../data/cards';
 import { syncPlayerSkills, compileGeneralSkills } from '../skills/skillCompiler';
+import { getReactionAsk } from './reactionChain';
 
 function makeGeneral(id: string, hp: number, skills: Skill[]): General {
   return {
@@ -278,6 +279,10 @@ function scenarioFor(trigger: SkillTriggerConfig['type']): Scenario {
         build: () => {
           const taker = makeGeneral('cc_taker', 6, [{
             name: '分发',
+            // 喂招脚手架，不是被测对象：#71 之后「受伤」两型要点头才响，而本场景
+            // 验的是 onCardGained 那一格能不能开账。把喂招那枚钉成「强制发动」
+            // （第三类分流），它照旧自动付代价，CARD_GAINED 才会真实存在。
+            forced: true,
             effects: [{ id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'GIVE', value: 1, target: 'ATTACKER' } }],
           }]);
           return {
@@ -316,6 +321,26 @@ function fieldOf(state: EngineState, generalId: string) {
   return undefined;
 }
 
+/**
+ * v2.8.22 #71：「受击」「受伤」两型不再在结算链里自动响，改为停下来问一句。
+ * 本文件验的是**选择面**（choice 开账→冻结→择定→落账）能不能在十个触发键上
+ * 逐个走通，所以问答只当作喂招链上多出来的一趟：开格就点头，选择面照旧在
+ * 点头那一趟里开账。问句绝不吞掉择一——下面的断言链一个字没改，只是事件流
+ * 多拼了一段。
+ */
+function answerPendingReaction(engine: GameEngine, wantedId: string): GameEvent[] {
+  let all: GameEvent[] = [];
+  for (let guard = 0; guard < 8; guard += 1) {
+    const ask = getReactionAsk(engine.state);
+    if (!ask) break;
+    const option = ask.options.find(entry => entry.skillId === wantedId) ?? ask.options[0];
+    all = [...all, ...engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: option.skillId, generalId: ask.generalId,
+    }))];
+  }
+  return all;
+}
+
 describe('2.6.4 choice 面可达全谱：十个触发键每键可开账、可择定、账清（合成模板，内置零载荷）', () => {
   for (const trigger of TRIGGER_KEYS) {
     it(`${trigger}：choiceMode 触发开一张要约→冻结探针→欠债人择定落账`, () => {
@@ -325,7 +350,9 @@ describe('2.6.4 choice 面可达全谱：十个触发键每键可开账、可择
       syncPlayerSkills(engine, engine.state);
 
       const fireEvents = engine.dispatch(sc.fire({ defId, generalId }));
-      const required = fireEvents.filter(e => e.type === 'CHOICE_REQUIRED');
+      const answerEvents = answerPendingReaction(engine, defId);
+      const openEvents = [...fireEvents, ...answerEvents];
+      const required = openEvents.filter(e => e.type === 'CHOICE_REQUIRED');
       expect(required, `${trigger} 应恰开一张 CHOICE_REQUIRED`).toHaveLength(1);
       const offer = required[0].data as Record<string, unknown>;
       expect(String(offer.choiceKey)).toMatch(/^ch:\d+:\d+:/);
@@ -337,7 +364,7 @@ describe('2.6.4 choice 面可达全谱：十个触发键每键可开账、可择
         { label: 'B：获得1点护甲', types: ['GAIN_ARMOR'] },
       ]);
       // 延后结算：开账瞬间双分支都未落账
-      expect(fireEvents.some(e => e.type === 'DAMAGE' && String((e.data as Record<string, unknown>)?.skillId ?? '') === defId)).toBe(false);
+      expect(openEvents.some(e => e.type === 'DAMAGE' && String((e.data as Record<string, unknown>)?.skillId ?? '') === defId)).toBe(false);
       const handBefore = (engine.state.players.find(p => p.id === sc.chooserPid)!.hand as unknown[]).length;
       const armorBefore = fieldOf(engine.state, generalId)?.currentArmor ?? 0;
 
@@ -352,7 +379,7 @@ describe('2.6.4 choice 面可达全谱：十个触发键每键可开账、可择
       const pickEvents = engine.dispatch(createAction('CHOOSE_OPTION', sc.chooserPid, {
         choiceKey: String(offer.choiceKey), optionIndex: sc.pick,
       }));
-      const flat = [...fireEvents, ...pickEvents];
+      const flat = [...fireEvents, ...answerEvents, ...pickEvents];
       const resolvedIdx = flat.findIndex(e => e.type === 'CHOICE_RESOLVED');
       expect(resolvedIdx).toBeGreaterThanOrEqual(0);
       const resolved = flat.filter(e => e.type === 'CHOICE_RESOLVED');
@@ -362,6 +389,8 @@ describe('2.6.4 choice 面可达全谱：十个触发键每键可开账、可择
         optionIndex: sc.pick, label: sc.pick === 0 ? 'A：摸两张牌' : 'B：获得1点护甲',
       });
       expect(engine.state.pendingChoice ?? null).toBeNull();
+      // 问答链收干净：点头+择定之后世界不再欠答（§12-61 窗必须有出口）。
+      expect(engine.state.pendingReaction ?? null).toBeNull();
 
       const draw = pickEvents.filter(e => e.type === 'DRAW'
         && String((e.data as Record<string, unknown>)?.skillId ?? '') === defId);
@@ -409,11 +438,17 @@ describe('2.6.4 choice 面可达全谱：十个触发键每键可开账、可择
       makePlayer(2, { fieldGenerals: [makeFieldGeneral(owner, 2, 0)] }),
     ]));
     syncPlayerSkills(engine, engine.state);
-    const events = engine.dispatch(attack('cc_plain_d', gid));
+    // #71：孤效果那一枚是「受伤」型，现在先问一句才响。问答照旧开不出选择账——
+    // 分组契约（choiceMode 未成立）与问句无关，两条路都不该开窗。
+    const events = [
+      ...engine.dispatch(attack('cc_plain_d', gid)),
+      ...answerPendingReaction(engine, defs[0].id),
+    ];
     expect(events.some(e => e.type === 'CHOICE_REQUIRED')).toBe(false);
     expect(events.some(e => e.type === 'DRAW'
       && String((e.data as Record<string, unknown>)?.skillId ?? '') === defs[0].id)).toBe(true);
     expect(engine.state.pendingChoice ?? null).toBeNull();
+    expect(engine.state.pendingReaction ?? null).toBeNull();
   });
 
   it('同配置两跑逐字节一致：choice 开账+择定全链零新增随机面', () => {

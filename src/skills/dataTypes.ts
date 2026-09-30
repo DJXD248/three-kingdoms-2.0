@@ -113,6 +113,16 @@ export interface DataSkillDefinition {
    *  触发路与 ACTIVATE_SKILL 决策路消费同一实现。 */
   conditions?: SkillCondition[];
   /**
+   * v2.8.22 响应链执法刀·**强制发动**（§H9 第九轮 a/c 三类分流的第二档）：
+   * 满足门槛即自动发动、不进问答队列。录入面 `Skill.forced` 早就存在（2.4 内容
+   * 量产），但结算侧零消费＝"记录而未消费"（§12-55）——本刀起它成为**唯一的
+   * 自动发动开关**：受击/受伤两型（`onBecomingTarget`／`onDamageTaken`）的非
+   * forced 定义搬到响应链问答（人和 AI 同一队列、同一扇窗），forced 定义与
+   * 其余全部触发型照旧自动结算，逐字不变。
+   * 消费点单点=`skills/reactionChain.ts` 的 `isReactionTrigger`＋`autoFires`。
+   */
+  forced?: boolean;
+  /**
    * v2.7.2 choice 生产者面（GPT 三检 Q5 最小验证刀）：候选从哪里枚举。
    * 缺省（undefined）=v2.6.3 行为=逐效果预译分支，一字未动。
    * 'TARGET' = 场上将领候选（模板效果逐候选填 targetId）；

@@ -7,6 +7,8 @@ import type { TriggerContext } from '../triggers/types';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { evaluateSkillConditions } from './skillConditions';
 import { gateConditionsToText } from './skillGateText';
+import { matchesSkillEvent } from './skillEventMatch';
+import { isReactionTrigger } from './reactionTriggers';
 import {
   enumerateHandCardCandidates,
   enumerateTargetCandidates,
@@ -39,7 +41,9 @@ const TRIGGER_EVENT_MAP: Partial<Record<DataSkillTrigger, GameEventType>> = {
   // effect-translation code, never a second one.
 };
 
-const PRIORITY: Partial<Record<DataSkillTrigger, number>> = {
+/** 档位表（只给档，同档内先后由 `triggers/reactionOrder.ts` 决定）。导出是给
+ * 响应链候选枚举用同一份档——两处各写一份迟早分叉。 */
+export const PRIORITY: Partial<Record<DataSkillTrigger, number>> = {
   onDeploy: 100,
   onTurnStart: 50,
   onDamageTaken: 50,
@@ -61,8 +65,21 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
-function idEq(ownerId: number | string, candidate: unknown): boolean {
-  return candidate !== undefined && candidate !== null && String(candidate) === String(ownerId);
+/**
+ * 注册面的**分流开关**（§H9 第九轮 a/c 三类分流，v2.8.22 响应链执法刀）。
+ * true＝这枚定义**不进触发链**：它听的那一声（受击／受伤）改成走响应链问答
+ * 队列——候选由 `skills/reactionChain.ts` 从 EngineState 枚举，发动经 canonical
+ * `ACTIVATE_SKILL`、不发动经 canonical `SKIP_REACTION`。形态与 `onTurnEnd`
+ * 故意缺席 `TRIGGER_EVENT_MAP` 一模一样（**同一枚技能绝不允许既自动响又问**）。
+ *
+ * `forced`（强制发动）＝"满足触发条件与代价后直接响、不用玩家点头"（§H9 用户
+ * 更正 c 条），所以它留在自动路上；该字段此前只活在录入面、结算侧零消费
+ * （§12-55），本刀起它是唯一的自动发动开关。其余触发型一字未动。
+ */
+export function defersToReactionQueue(skill: DataSkillDefinition): boolean {
+  // choiceMode 技能不进反应队列，直接开选择账
+  if ((skill as unknown as Record<string, unknown>).choiceMode === true) return false;
+  return isReactionTrigger(skill.trigger) && skill.forced !== true;
 }
 
 /**
@@ -75,121 +92,14 @@ function buildCondition(
   binding: SkillOwnerBinding
 ): (context: TriggerContext) => boolean {
   const { ownerId, skill } = binding;
-  const generalId = skill.sourceGeneralId;
-  const damageFilter = skill.damageTypeFilter;
-  // v2.8.21 监听扩面刀：两维的缺省值都必须等于扩面前的逐字行为——
-  // 不听别人的事（self）、只听攻击引起的目标（attack）。
-  const scope = skill.listenerScope ?? 'self';
-  const targetSource = skill.targetSource ?? 'attack';
-
-  /** 「我听谁」的玩家那一层。`field` 档不比玩家键，但**事件必须带着这个键**：
-   *  缺键＝这件事根本没落到某一位玩家身上（本营被攻击的 BEFORE_DAMAGE 就是这种），
-   *  那是"没有受击者"，不是"受击者不是我"⇒ 三档都不响。这条保住了扩面前
-   *  "打本营不会触发将领的受击类技能"那一既有事实。 */
-  const playerMatches = (playerKey: unknown): boolean =>
-    scope === 'field'
-      ? playerKey !== undefined && playerKey !== null
-      : idEq(ownerId, playerKey);
-
-  /** 「我听谁」的将领那一层：只有 `self` 档认这一层（扩面门的严格写法——
-   *  知道将Id 时键必须对得上，缺键＝对不上＝不响）。手牌／回合开始这类事件的键
-   *  本来就只有玩家一维（将领不持牌），那里 `self` 与 `allySeat` 是同一件事。 */
-  const generalMatches = (generalKey: unknown): boolean =>
-    scope !== 'self' || !generalId || idEq(generalId, generalKey);
-
-  /** 「这事是谁引起的」（v2.8.21 第二维）：读通知事件**已经记下**的那个字段，
-   *  不在这里重新推断伤害数学。缺 `damageType`＝攻击结算那一条路（今日
-   *  `BEFORE_DAMAGE` 的唯一生产者=`AttackResolver`，它不带这个字段）⇒ 记为攻击
-   *  引起。技能指定目标的那一档由 #70/#71 的发射器显式带 `damageType:'skill'`。 */
-  const sourceMatches = (data: Record<string, unknown>): boolean => {
-    if (targetSource === 'any') return true;
-    const kind = data.damageType === 'skill' ? 'skill' : 'attack';
-    return kind === targetSource;
-  };
-
-  const identityCheck = (context: TriggerContext): boolean => {
-    const data = asRecord(context.event.data);
-    switch (trigger) {
-      case 'onTurnStart':
-        return playerMatches(data.playerId);
-      case 'onDeploy': {
-        if (!playerMatches(data.playerId)) return false;
-        if (generalId && scope === 'self') {
-          const deployedId = data.general && typeof data.general === 'object'
-            ? getRuntimeCardId(data.general as never)
-            : data.general === undefined ? '' : String(data.general);
-          if (deployedId && deployedId !== String(generalId)) return false;
-        }
-        return true;
-      }
-      case 'onDamageTaken': {
-        if (!playerMatches(data.targetPlayerId)) return false;
-        if (!generalMatches(data.targetId ?? data.target)) return false;
-        if (damageFilter && data.damageType !== damageFilter) return false;
-        return true;
-      }
-      case 'onDamageDealt': {
-        const action = asRecord(data.action);
-        if (!playerMatches(action.playerId)) return false;
-        if (generalId) {
-          const payload = asRecord(action.payload);
-          if (!generalMatches(payload.attackerId ?? action.attackerId)) return false;
-        }
-        // AFTER_DAMAGE is currently emitted only by attack resolution, so a
-        // skill-damage filter can never match here (documented engine fact).
-        if (damageFilter === 'skill') return false;
-        if (damageFilter === 'attack' && data.damageType !== undefined && data.damageType !== 'attack') return false;
-        return true;
-      }
-      case 'onKill': {
-        if (!playerMatches(data.attackerPlayerId)) return false;
-        if (!generalMatches(data.attackerId)) return false;
-        return true;
-      }
-      case 'onDeath': {
-        if (!playerMatches(data.targetPlayerId)) return false;
-        if (!generalMatches(data.targetId)) return false;
-        return true;
-      }
-      case 'onBecomingTarget': {
-        // BEFORE_DAMAGE for a base attack carries no targetPlayerId, so the
-        // owner check below legitimately never matches — being attacked as a
-        // base is not "a general becoming a target"（`field` 档同样不响：那里
-        // 缺的是"受击者"这个人，不是"受击者不是我"）。
-        if (!playerMatches(data.targetPlayerId)) return false;
-        if (!generalMatches(data.targetId ?? data.target)) return false;
-        return sourceMatches(data);
-      }
-      case 'onCardLost':
-      case 'onCardGained': {
-        // Hands live on players, not general instances (same keying lesson
-        // as DISCARD, 2.5.0): CARD_* keys the losing/gaining PLAYER only.
-        // sourceGeneralId never narrows these triggers.
-        if (!playerMatches(data.playerId)) return false;
-        if (trigger === 'onCardLost' && skill.cardFilter && skill.cardFilter !== 'any') {
-          // v2.6.2 emission-source predicates. The via/remainingHand facts
-          // are recorded by the derivation itself (chainedConsequences), so
-          // the condition reads settled truth rather than re-deriving it.
-          const via = typeof data.via === 'string' ? data.via : '';
-          if (skill.cardFilter === 'equipment') return via === 'EQUIP';
-          if (!via || via === 'EQUIP') return false;
-          if (skill.cardFilter === 'lastHand') {
-            return typeof data.remainingHand === 'number' && data.remainingHand === 0;
-          }
-        }
-        return true;
-      }
-      default:
-        return false;
-    }
-  };
-
+  // v2.8.22：身份那一层搬进 `skillEventMatch.ts`——触发链与响应链候选必须逐字
+  // 同意"这事是不是发生在我身上"，两处各写一份迟早分叉（一响一不响最难查）。
   // v2.7.3 gate conditions ride AFTER identity (先身份、再门槛). Pure predicate
   // over already-recorded facts, fail-closed, emits nothing by itself.
-  return (context) => identityCheck(context) && evaluateSkillConditions(skill.conditions, {
+  return (context) => matchesSkillEvent(trigger, binding, context.event) && evaluateSkillConditions(skill.conditions, {
     state: context.state,
     ownerId,
-    sourceGeneralId: generalId,
+    sourceGeneralId: skill.sourceGeneralId,
     event: context.event,
   });
 }
@@ -224,6 +134,11 @@ export class SkillTriggerBridge {
   constructor(private readonly triggerEngine: TriggerEngine) {}
 
   registerSkill(binding: SkillOwnerBinding) {
+    // v2.8.22 响应链执法刀：受击／受伤两型的非 forced 定义**根本不注册**到触发
+    // 链上——它们改走响应链问答（`skills/reactionChain.ts`），发动经 canonical
+    // `ACTIVATE_SKILL`。不注册的形态与 `onTurnEnd` 故意缺席 `TRIGGER_EVENT_MAP`
+    // 同一条纪律：同一枚技能绝不允许既自动响又停下来问。
+    if (defersToReactionQueue(binding.skill)) return [];
     const eventType = TRIGGER_EVENT_MAP[binding.skill.trigger];
     if (!eventType) return [];
 
@@ -235,6 +150,9 @@ export class SkillTriggerBridge {
       enabled: binding.enabled !== false,
       ownerId: binding.ownerId,
       skillId: binding.skill.id,
+      // 顺序比较器要按"这一员"分组（同席位内挨打的那一员先表态），故把将领实例
+      // id 一并带到 trigger 上；读法与 `generalMatches` 用的同一个键。
+      generalId: binding.skill.sourceGeneralId,
       condition: buildCondition(binding.skill.trigger, binding),
       createEvents: (context) =>
         SkillTriggerBridge.createSkillEvents(binding, context.state, context.event)

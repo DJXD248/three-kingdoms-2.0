@@ -12,6 +12,7 @@ import { createAction } from '../action/ActionTypes';
 import type { EngineState, EnginePlayer } from '../core/GameState';
 import type { General, Skill, SkillTriggerConfig } from '../data/generals';
 import { compileSkill, syncPlayerSkills } from './skillCompiler';
+import { getReactionAsk } from './reactionChain';
 
 const ATTACK_COST = { id: 'cost_1', name: '粮草', type: '粮草' };
 
@@ -69,10 +70,14 @@ function buildEngine(players: EnginePlayer[]): GameEngine {
   return engine;
 }
 
-/** 受伤摸一张（「我听谁」的载体）。 */
+/** 受伤摸一张（「我听谁」的载体）。
+ *  v2.8.22 (#71) 起带 `forced: true`：受击／受伤两型的**非** forced 定义已搬进
+ *  响应链问答（不再注册到触发链），本测钉的是触发路上的身份轴，故显式留在自动路。
+ *  问答路读同一张表的证人见文件末尾那一条。 */
 function drawWhenHurt(scope?: SkillTriggerConfig['listenerScope']): Skill {
   return {
     name: '护院',
+    forced: true,
     effects: [{
       id: 'e1',
       trigger: scope ? { type: 'onDamageTaken', listenerScope: scope } : { type: 'onDamageTaken' },
@@ -81,16 +86,23 @@ function drawWhenHurt(scope?: SkillTriggerConfig['listenerScope']): Skill {
   };
 }
 
-/** 被指名就回刺一击（「成为目标」来源档的载体）。 */
+/** 被指名就回刺一击（「成为目标」来源档的载体）。同上：留在自动路才测得动来源档。 */
 function counterWhenTargeted(sub?: SkillTriggerConfig['targetSubType']): Skill {
   return {
     name: '回刺',
+    forced: true,
     effects: [{
       id: 'e1',
       trigger: sub ? { type: 'onBecomingTarget', targetSubType: sub } : { type: 'onBecomingTarget' },
       runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' },
     }],
   };
+}
+
+/** 问答路形态（非 forced）：同一份轴、走 `getReactionAsk`。 */
+function askWhenHurt(scope?: SkillTriggerConfig['listenerScope']): Skill {
+  const skill = drawWhenHurt(scope);
+  return { ...skill, forced: false };
 }
 
 describe('监听扩面 · compileSkill 映射', () => {
@@ -249,5 +261,24 @@ describe('监听扩面 · 桥接消费（真实对局事件）', () => {
 
     expect((engine.state.players.find(p => p.id === 1)!.fieldGenerals as any[])[0].currentHp).toBe(4);
     expect(engine.state.players.find(p => p.id === 2)!.baseHp).toBe(9);
+  });
+
+  // 问答路读的是同一份表：身份判定唯一实现在 skillEventMatch.ts，两条路各自消费
+  // ⇒ 这里钉"扩面在问答侧同样成立"，防止只有一条路扩了面。
+  it('问答路读同一张「我听谁」表：听场上⇒旁人挨打也开格问；只听自己⇒不开格', () => {
+    const build = (skill: Skill) => {
+      const engine = buildEngine([
+        makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g1', []), 1)], hand: [ATTACK_COST] }),
+        makePlayer(2, { fieldGenerals: [makeFieldGeneral(makeGeneral('g2', [skill]), 2)] }),
+        makePlayer(3, { fieldGenerals: [makeFieldGeneral(makeGeneral('g3', []), 3)] }),
+      ]);
+      engine.dispatch(createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g3', ranged: false, consumeCard: ATTACK_COST }));
+      return getReactionAsk(engine.state);
+    };
+    const wide = build(askWhenHurt('field'));
+    expect(wide).not.toBeNull();
+    expect(wide!.playerId).toBe(2);
+    expect(build(askWhenHurt())).toBeNull();
+    expect(build(askWhenHurt('allySeat'))).toBeNull();
   });
 });

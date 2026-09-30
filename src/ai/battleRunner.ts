@@ -21,6 +21,7 @@ import { GameEngine } from '../core/GameEngine';
 import type { GameEvent } from '../core/Event';
 import type { EngineState } from '../core/GameState';
 import { syncPlayerSkills } from '../skills/skillCompiler';
+import { getReactionAsk } from '../skills/reactionChain';
 import { createRngState, rngNext } from '../core/rng';
 import { allFactions } from '../data/generals';
 import { buildMatchState, defaultMatchConfig, type MatchConfig } from './matchSetup';
@@ -351,14 +352,20 @@ export function runMatch(config: MatchConfig, options: RunOptions = {}): MatchRe
           status = 'won';
           break;
         }
+        // v2.8.22 (#71) 响应链问答：待答格非空⇒一定有问句（扫描会收掉问完的格）。
+        const reactionDebtor = (state.pendingReaction?.nodes.length ?? 0) > 0
+          ? getReactionAsk(state)?.playerId ?? null
+          : null;
         const actor =
           state.pendingChoice
             // Frozen world (2.6.3): an outstanding offer routes the step to
             // its debtor before the draw-window owner does.
             ? state.pendingChoice.playerId
-            : state.phase === 'drawing' && state.drawState
+            // 次序与校验器一致：选择债先于响应债。欠答的那一席拿到这一步，
+            // 策略从 legalActions 里挑（发动或跳过），与人类点按钮同一条路。
+            : reactionDebtor ?? (state.phase === 'drawing' && state.drawState
               ? state.drawState.playerId
-              : state.currentPlayerId ?? firstPlayerId;
+              : state.currentPlayerId ?? firstPlayerId);
         const engine = new GameEngine(state, { recordHistory: false });
         syncPlayerSkills(engine, state);
         let next: GameAction | null;

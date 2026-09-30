@@ -32,6 +32,10 @@ import {
   applyChoiceResolvedEvent,
 } from './eventProcessors/choiceEvents';
 import {
+  applyReactionAnsweredEvent,
+  applyReactionQueueSyncedEvent,
+} from './eventProcessors/reactionEvents';
+import {
   applyPlayerDefeatedEvent,
   applyGameOverEvent,
 } from './eventProcessors/playerEvents';
@@ -128,6 +132,10 @@ export class EventProcessor {
         return applyChoiceRequiredEvent(state, event);
       case 'CHOICE_RESOLVED':
         return applyChoiceResolvedEvent(state, event);
+      case 'REACTION_ANSWERED':
+        return applyReactionAnsweredEvent(state, event);
+      case 'REACTION_QUEUE_SYNCED':
+        return applyReactionQueueSyncedEvent(state, event);
       case 'PLAYER_DEFEATED':
         return applyPlayerDefeatedEvent(state, event);
       case 'GAME_OVER':

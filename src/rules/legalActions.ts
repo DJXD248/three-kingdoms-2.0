@@ -29,6 +29,7 @@ import { createAction } from '../action/ActionTypes';
 import type { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { listTurnEndSkillCandidates } from '../skills/turnEndSkills';
+import { getReactionAsk } from '../skills/reactionChain';
 
 const RESOURCE_TYPES = new Set(['粮草', '材料', '军备', 'SUPPLY', 'MATERIAL', 'ARMAMENT']);
 
@@ -103,6 +104,23 @@ export function getLegalActions(engine: GameEngine, playerId: number): GameActio
         if (option.enabled === false) return;
         tryPush('CHOOSE_OPTION', { choiceKey: pending.key, optionIndex: index });
       });
+    }
+    return out;
+  }
+
+  // ── Frozen world, second cell (v2.8.22 响应链执法刀＝#71): an outstanding
+  // reaction ask owns the action space, and its answer set is enumerated from
+  // the ONE derivation point — 「发动A」「发动B」「跳过」, in comparator order.
+  // Not the debtor's seat ⇒ nothing at all, same as the offer branch above. ──
+  const reactionAsk = getReactionAsk(state);
+  if (reactionAsk) {
+    if (reactionAsk.playerId === playerId) {
+      for (const option of reactionAsk.options) {
+        tryPush('ACTIVATE_SKILL', { skillId: option.skillId, generalId: reactionAsk.generalId });
+      }
+      // §12-61：问窗必须有出口，而且出口恒常存在——跳过永远合法，绝不把对局
+      // 锁死在一格问答上。
+      tryPush('SKIP_REACTION', { nodeKey: reactionAsk.nodeKey });
     }
     return out;
   }

@@ -7,6 +7,11 @@ import type { EngineState } from './GameState';
 import type { GameEvent, RandomOutcomeData } from './Event';
 import { resolveTriggerChain } from './EngineDispatchFlow';
 import { echoDuelRounds } from './eventProcessors/duelEvents';
+import {
+  isReactionSourceEvent,
+  reactionQueueFingerprint,
+  syncReactionQueue,
+} from '../skills/reactionChain';
 import type { DrawOutcomeFlow, OverrideFailure } from './eventProcessors/drawEvents';
 
 /**
@@ -132,6 +137,8 @@ export function transition(
   // case, nothing to double-settle — but they must reach the trigger chain
   // for onCardLost/onCardGained listeners within the same dispatch. The
   // bounded rounds above already cap any give→gain→give pile-up.
+  // 注意这个名字里的 "reaction"＝"要重入触发链的衍生事件"，与 v2.8.22 的**响应链**
+  // （受击/受伤问答，见下面的 `syncReactionState`）是两回事，别混。
   const REACTION_EVENT_TYPES: ReadonlySet<GameEvent['type']> = new Set(['DEATH', 'CARD_LOST', 'CARD_GAINED']);
   let pendingReactions = derived.filter(event => REACTION_EVENT_TYPES.has(event.type));
   for (let round = 0; pendingReactions.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
@@ -146,6 +153,10 @@ export function transition(
     events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingReactions: pendingReactions.length } });
   }
 
+  // v2.8.22 响应链执法刀（#71）·结算后扫描：把"这一声要不要有人表态"从触发链的
+  // 自动发动搬出来，落成状态里的一个问答队列（乙案＝搬出结算链、同一个窗问答）。
+  // 纯派生 of（已结算状态，本次 dispatch 的事件序列）⇒ 常驻/重建/回放三路同果；
+  // 只有队列真的变了才写事件，没有变化时事件流逐字不变（旧录像与日志零扰动）。
   // D-2a: every random selection made in this dispatch leaves the pure path
   // as a RANDOM_OUTCOME event (purpose/value/stableId). Stable ids are
   // stamped here from post-transition coordinates; replay forwards the
@@ -157,5 +168,41 @@ export function transition(
     events.push({ type: 'RANDOM_OUTCOME', data: outcome });
   });
 
+  // 位置在所有结算与触发链重入之后：响应链问的是"这一趟结算完的事实"，不参与
+  // 触发链本身，也绝不插到 RANDOM_OUTCOME 之前去改动既有事件流的次序。
+  next = syncReactionState(next, events, ctx);
+
   return { state: next, events, accepted: true, overrideFailures: flow.diagnostics ?? [] };
+}
+
+/**
+ * 结算后的响应链扫描（#71 的唯一调用点）。
+ *
+ * 触发条件先做免费闸：这一趟既没有可响应的一声（受击／受伤，且非决斗逐轮）、
+ * 状态里也没有待答队列 ⇒ 原样返回，事件流一个字都不动。这条闸是"旧对局零扰动"
+ * 的构造保证，不是优化。
+ *
+ * 队列没变（指纹相同）也不写事件——只有真的收格／开格／记账才落一条
+ * `REACTION_QUEUE_SYNCED`，并经唯一突变入口 `EventProcessor` 落槽。封顶丢格是
+ * 如实账：与 `TRIGGER_REENTRY_LIMIT` 同一手法，只往事件流里记一条 CUSTOM 观察
+ * 标记，不进状态。
+ */
+function syncReactionState(
+  state: EngineState,
+  events: GameEvent[],
+  ctx: TransitionContext,
+): EngineState {
+  const hasSource = events.some(event => isReactionSourceEvent(event));
+  const current = state.pendingReaction ?? null;
+  if (!hasSource && !current) return state;
+
+  const { queue, overflow } = syncReactionQueue(state, events);
+  const changed = reactionQueueFingerprint(current) !== reactionQueueFingerprint(queue);
+  if (!changed) {
+    if (overflow > 0) events.push({ type: 'CUSTOM', data: { kind: 'REACTION_QUEUE_LIMIT', overflow } });
+    return state;
+  }
+  const syncEvent: GameEvent = { type: 'REACTION_QUEUE_SYNCED', data: { queue, overflow } };
+  events.push(syncEvent);
+  return ctx.processor.process(state, [syncEvent]);
 }
