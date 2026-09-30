@@ -2448,6 +2448,8 @@ HANDOFF §3（版本行 2.8.17＋本轮调整十点＋2.8.16 降为"上一轮"�
 - **真机 E2E**（热座房 `E2E2820B`、dev 5175、全程真实点击、`window.__TK__` 只读不注入）：活体事件链 seq 35 `ATTACK` 挂 `DUEL` → `DAMAGE{skill,2,R1,newHp1}` → `R2 newHp1` → `R3 newHp0` → `DEATH{skillKill:true}` → `DRAW_REQUIRED{reason:'compensation',playerId:1,totalCards:1,resumePlayerId:2}`，终态 `phase playing／timeline ACTION／当前席 2`；录入面侧实测数值行整行缺席、保存双侧无 `value` 键。全程未点任何导出／下载入口；E2E 期间在您浏览器 localStorage 写过一枚临时 DIY 决斗技能（玩家侧可变环境、**不是 CI 输入**）。
 - **词汇表（规则 4b）**：§四 新增「决斗（技能效果，2.8.20 起）」、`整只手／数值 0` 补一句"决斗根本没有数量可填"、§七 那条从"决斗**没有**"改为"**牌还是没有、流程已经有了**"⇒ md **160→161 条**，`npm run glossary-xlsx` 重跑 `词汇表.xlsx` 30,251→**30,520** 字节；投影守卫在同一次 `test:coverage` 里绿＝md 与 xlsx 双侧同进本刀。
 
+- **远端 CI＝#198**（run `36668066367`、sha `33a1cb1`、`event=push`／`head_branch=master`）＝**success**、2m38s：详情页四 job（`lint`／`test (22)`／`test (24)`／`build`）全 success、失败步骤 **0**，注解逐 job 从 `check-runs/{id}/annotations` 量得 **11／1／1／1＝14 条全 warning、0 error**＝与 #186–#194 同分布（正常态，按改版只在此留一句，明细落 §9）。**本回填提交自身的 run 不再单独立账**（Step 4 一轮封顶）。
+
 ### 八、GPT 设计门采纳的四条（原文落 ARCH_MAP §F 本节末）
 
 1. **"连续结算"是一类效果形态，不是一个特例**：凡"必须一口气算完、不许被别的事实插队"的效果走同一份受约束批次前置权，而不是各自开快车道、各自新增第二转移路径。
