@@ -5,6 +5,9 @@ import {
   SkillEffect, SkillEffectMode, effectModeLabels, sourceLabels, type GeneralSource,
 } from '../data/generals';
 import { isRepositoryOfficial, sourceOf } from '../domain/generalProvenance';
+import {
+  FORCED_MEANING, formatTags, skillTagMeanings, tagTimingWarnings, tagsOf,
+} from '../domain/skillTags';
 import { denialMessage, mayModifyGeneral, type EditDenial } from '../domain/generalPolicy';
 import {
   triggerToStr,
@@ -133,7 +136,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       if (gEdit.meleeAtk != null) result.meleeAtk = gEdit.meleeAtk;
       if (gEdit.rangedAtk != null) result.rangedAtk = gEdit.rangedAtk;
     }
-    if (sEdit) result.skills = sEdit.map(s => ({ name: s.name, description: s.description, tag: s.tag, trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced }));
+    if (sEdit) result.skills = sEdit.map(s => ({ name: s.name, description: s.description, tags: tagsOf(s), trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced }));
     return result;
   }, [generalEdits, skillEdits]);
 
@@ -194,7 +197,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     }
     setSelectedGeneral(g);
     const edited = getEditedGeneral(g);
-    setEditingSkills(edited.skills.map(s => ({ name: s.name, description: s.description, tag: s.tag, trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced })));
+    setEditingSkills(edited.skills.map(s => ({ name: s.name, description: s.description, tags: tagsOf(s), trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced })));
     setEditName(edited.name);
     setEditFaction(edited.faction);
     setEditHp(edited.hp);
@@ -266,8 +269,15 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const handleRemoveSkill = (index: number) => setEditingSkills(prev => prev.filter((_, i) => i !== index));
   const handleSkillChange = (index: number, field: 'name' | 'description', value: string) =>
     setEditingSkills(prev => prev.map((s, i) => i === index ? { ...s, [field]: value } : s));
-  const handleSkillTagChange = (index: number, tag: SkillTag | '') =>
-    setEditingSkills(prev => prev.map((s, i) => i === index ? { ...s, tag: tag === '' ? undefined : tag as SkillTag } : s));
+  const handleSkillTagToggle = (index: number, tag: SkillTag) =>
+    setEditingSkills(prev => prev.map((s, i) => {
+      if (i !== index) return s;
+      const cur = tagsOf(s);
+      const next = cur.includes(tag) ? cur.filter(t => t !== tag) : [...cur, tag];
+      const merged: typeof s = { ...s, tags: next.length > 0 ? next : undefined };
+      delete merged.tag;   // 写出面只产生 tags：旧字段留在记录里＝一枚技能两份徽章账
+      return merged;
+    }));
 
   /** v2.8.8: 两类拒绝各说各话——系统禁改 vs 用户自己的白锁，绝不并栏（§12-55）。 */
   const denialNotice = (official: string[], locked: string[]) =>
@@ -392,7 +402,11 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               for (const row of rows.slice(1)) {
                 if (!row || row.length < 6) continue;
                 const parsed = parseLegacyDetailedRow(row);
-                if (!parsed || !parsed.general) continue;
+                if (!parsed) continue;
+                for (const t of parsed.tagUnknown) {
+                  unreadableCells.push(`${parsed.rawName || parsed.general?.name || '未知'}·${t} — 这枚徽章我不认识，所以没记下`);
+                }
+                if (!parsed.general) continue;
                 const ge = parsed.gEdit;
                 if (isNoChangeRow(parsed.general, ge, parsed.skills)) { skipped++; continue; }
                 const wrote = writeRow(
@@ -412,7 +426,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 if (!generalName) continue;
                 const general = resolveGeneralByNameFaction(generalName);
                 if (!general) continue;
-                const skills: { name: string; description?: string; tag?: SkillTag }[] = [];
+                const skills: SkillEditEntry[] = [];
                 for (let col = 1; col < row.length; col++) {
                   const cellValue = String(row[col] || '').trim();
                   if (!cellValue) continue;
@@ -421,9 +435,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 }
                 if (skills.length > 0) {
                   const origSkills = general.skills;
-                  const same = skills.length === origSkills.length && skills.every((s: {name:string;description?:string;tag?:SkillTag}, si: number) => {
+                  const same = skills.length === origSkills.length && skills.every((s, si) => {
                     const o = origSkills[si]; if (!o) return false;
-                    return s.name === o.name && (s.description || '') === (o.description || '') && (s.tag || '') === (o.tag || '');
+                    return s.name === o.name && (s.description || '') === (o.description || '')
+                      && formatTags(tagsOf(s)) === formatTags(tagsOf(o));
                   });
                   if (same) { skipped++; continue; }
                   if (!writeRow(general, skills, null)) continue;
@@ -483,7 +498,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         skills: block.skills.map(s => ({
           name: s.name,
           description: s.description || '',
-          tag: s.tag,
+          tags: tagsOf(s),
           trigger: s.trigger,
           effects: s.effects,
           effectMode: s.effectMode,
@@ -544,7 +559,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         skills: block.skills.map(s => ({
           name: s.name,
           description: s.description || '',
-          tag: s.tag,
+          tags: tagsOf(s),
           trigger: s.trigger,
           effects: s.effects,
           effectMode: s.effectMode,
@@ -657,7 +672,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             // Skill basic info
             row.push(
               sk.name || '无',
-              sk.tag || '无',
+              formatTags(tagsOf(sk)) || '无',
               sk.forced ? '是' : '无',
               triggerToStr(sk.trigger),
               sk.effectMode === 'choice' ? '选择其一' : sk.effectMode === 'all' ? '全部生效' : '无',
@@ -690,7 +705,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             // Dropdowns
             const r = dataRowIdx;
             ws.getCell(r, 2).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${factionList}"`] };
-            ws.getCell(r, 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${tagList}"`] };
+            // 徽章列可以填多枚（「锁定技、遗计技」），下拉只当提示用：
+            // showErrorMessage=false 让组合值写得进去，读法见 domain/skillTags.ts。
+            ws.getCell(r, 7).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: false, formulae: [`"${tagList}"`] };
             ws.getCell(r, 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${forcedList}"`] };
             ws.getCell(r, 9).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
             ws.getCell(r, 10).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${modeList}"`] };
@@ -1202,7 +1219,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                           )}
                         </p>
                         <p className="text-[10px] text-purple-400/60 truncate">
-                          {edited.skills.map(s => s.tag ? `${s.name}<${s.tag}>` : s.name).join('、')}
+                          {edited.skills.map(s => tagsOf(s).length > 0 ? `${s.name}<${formatTags(tagsOf(s))}>` : s.name).join('、')}
                         </p>
                       </div>
                       {incomplete && !multiSelectMode && <span className="text-[10px] text-amber-400 flex-shrink-0" title="技能设定未完成">⚠</span>}
@@ -1326,13 +1343,14 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-purple-400/60 font-bold">技能 {i + 1}</span>
-                          {skill.tag && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold border"
-                              style={{ color: skillTagColors[skill.tag], borderColor: skillTagColors[skill.tag] + '50', backgroundColor: skillTagColors[skill.tag] + '15' }}>
-                              {skill.tag}
+                          {tagsOf(skill).map(t => (
+                            <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full font-bold border"
+                              title={skillTagMeanings[t]}
+                              style={{ color: skillTagColors[t], borderColor: skillTagColors[t] + '50', backgroundColor: skillTagColors[t] + '15' }}>
+                              {t}
                             </span>
-                          )}
-                          {skill.forced && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-900/30 text-red-300 border border-red-800/30">强制</span>}
+                          ))}
+                          {skill.forced && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-900/30 text-red-300 border border-red-800/30" title={FORCED_MEANING}>强制发动</span>}
                           {hasEffects && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-900/30 text-cyan-300 border border-cyan-800/30">{skill.effects!.length}个效果</span>}
                         </div>
                         <button onClick={() => handleRemoveSkill(i)}
@@ -1347,22 +1365,36 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                             <input type="text" value={skill.name} onChange={e => handleSkillChange(i, 'name', e.target.value)}
                               className="w-full px-3 py-1.5 rounded-lg bg-black/50 border border-purple-700/30 text-purple-100 text-sm focus:outline-none focus:border-purple-500" />
                           </div>
-                          <div className="w-28">
-                            <label className="text-[10px] text-purple-400/60 mb-1 block">标签</label>
-                            <select value={skill.tag || ''} onChange={e => handleSkillTagChange(i, e.target.value as SkillTag | '')}
-                              className="w-full px-2 py-1.5 rounded-lg bg-black/50 border border-purple-700/30 text-purple-100 text-sm focus:outline-none focus:border-purple-500">
-                              <option value="">无</option>
-                              {allSkillTags.map(t => <option key={t} value={t}>{t}</option>)}
-                            </select>
-                          </div>
                           <div className="w-20 flex flex-col items-center">
                             <label className="text-[10px] text-purple-400/60 mb-1 block">强制发动</label>
                             <button onClick={() => updateSkill({ forced: !skill.forced })}
                               className={`w-10 h-5 rounded-full relative transition-all ${skill.forced ? 'bg-red-600' : 'bg-gray-700'}`}
-                              title={skill.forced ? '强制发动：满足条件自动发动，需满足代价' : '非强制：由玩家选择是否发动'}>
+                              title={skill.forced ? `强制发动：${FORCED_MEANING}` : '不强制：由玩家选择是否发动'}>
                               <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${skill.forced ? 'left-5' : 'left-0.5'}`} />
                             </button>
                           </div>
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] text-purple-400/60 mb-1 block">徽章（一枚技能可同时挂几枚）</label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {allSkillTags.map(t => {
+                              const on = tagsOf(skill).includes(t);
+                              return (
+                                <button key={t} onClick={() => handleSkillTagToggle(i, t)}
+                                  title={skillTagMeanings[t]}
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all"
+                                  style={on
+                                    ? { color: skillTagColors[t], borderColor: skillTagColors[t] + '80', backgroundColor: skillTagColors[t] + '25' }
+                                    : { color: '#9ca3af', borderColor: '#4b556350', backgroundColor: 'transparent' }}>
+                                  {on ? '✓' : ''}{t}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {tagTimingWarnings(skill).map((w, wi) => (
+                            <p key={wi} className="mt-1 text-[10px] text-amber-300">⚠ 徽章与时机对不上 — {w}</p>
+                          ))}
                         </div>
 
                         {/* Single-effect mode (no sub-effects) */}

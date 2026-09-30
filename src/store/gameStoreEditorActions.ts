@@ -1,8 +1,9 @@
 // Editor/developer-mode slice extracted from gameStore.ts (stabilization
 // stage B, D-6 first split). Behavior is a verbatim move; the store wires
 // these in via `...buildEditorActions(get, set)`.
-import type { General, SkillTag } from '../data/generals';
+import type { General } from '../data/generals';
 import { allGenerals } from '../data/generals';
+import { tagsOf, parseSkillTagsCell } from '../domain/skillTags';
 import {
   persistSkillEdits,
   persistGeneralEdits,
@@ -233,7 +234,6 @@ export function buildEditorActions(
       }),
 
     importSkillEditsFromText: text => {
-      const validTags = ['锁定技', '限定技', '登场技', '遗计技', '觉醒技'];
       const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
       let count = 0;
       const rejected: string[] = [];
@@ -259,12 +259,19 @@ export function buildEditorActions(
         }
         const skillNames = parts[1].split(',').map(v => v.trim()).filter(Boolean);
         const descriptions = parts.length >= 3 ? parts[2].split(',').map(v => v.trim()) : [];
-        const tags = parts.length >= 4 ? parts[3].split(',').map(v => v.trim()) : [];
-        edits[general.id] = skillNames.map((name, index) => ({
-          name,
-          description: descriptions[index] || '',
-          tag: tags[index] && validTags.includes(tags[index]) ? tags[index] as SkillTag : undefined,
-        }));
+        const tagCells = parts.length >= 4 ? parts[3].split(',').map(v => v.trim()) : [];
+        edits[general.id] = skillNames.map((name, index) => {
+          const read = parseSkillTagsCell(tagCells[index] ?? '');
+          // 认不出的徽章名照旧点名，绝不静默丢（§12-76①）。
+          for (const u of read.unknown) {
+            console.warn(`[content] 将领 ${general.name}·${name} 的徽章我不认识，所以没记下 → ${u}`);
+          }
+          return {
+            name,
+            description: descriptions[index] || '',
+            tags: read.tags.length > 0 ? read.tags : undefined,
+          };
+        });
         count++;
         applied.push(general.id);
       }
@@ -299,7 +306,7 @@ export function buildEditorActions(
         result.skills = sEdits.map(skill => ({
           name: skill.name,
           description: skill.description,
-          tag: skill.tag,
+          tags: tagsOf(skill),
           trigger: skill.trigger,
           effects: skill.effects,
           effectMode: skill.effectMode,

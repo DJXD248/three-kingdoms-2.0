@@ -1,6 +1,7 @@
 // 导入总结（v2.8.13，用户 2026-09-29 需求）：一次导入到底新增/改动了哪些将领。
 // 全部为无状态纯函数：只吃"写入前后的当前生效视图"，不认识 store 也不认识组件。
 import { General } from '../../data/generals';
+import { formatTags, tagTimingWarnings, tagsOf } from '../../domain/skillTags';
 
 /** 总结要读的字段——一律从生效视图取，绝不从仓库原始卡取（#47 裁决同一口径）。 */
 export interface SummarySnapshot {
@@ -9,11 +10,13 @@ export interface SummarySnapshot {
   hp: number;
   meleeAtk: number;
   rangedAtk: number;
-  skills: { name: string; description: string; tag: string }[];
+  skills: { name: string; description: string; tags: string }[];
+  /** 徽章名与实际触发时机对不上的技能（刀1＝只点名，不改结算、不改数值）。 */
+  tagWarnings: string[];
 }
 
 export type ImportSummaryEntry =
-  | { kind: 'created'; name: string; skills: string[] }
+  | { kind: 'created'; name: string; skills: string[]; warnings?: string[] }
   | { kind: 'modified'; name: string; items: string[] };
 
 /** describeChanges 只会产出"修改"这一类，返回类型就照实收窄，别让调用方替它猜。 */
@@ -27,8 +30,10 @@ export function snapshotForSummary(g: General): SummarySnapshot {
     meleeAtk: g.meleeAtk,
     rangedAtk: g.rangedAtk,
     skills: g.skills.map(s => ({
-      name: s.name, description: s.description ?? '', tag: s.tag ?? '',
+      name: s.name, description: s.description ?? '', tags: formatTags(tagsOf(s)),
     })),
+    tagWarnings: g.skills.flatMap(s =>
+      tagTimingWarnings(s).map(w => `技能「${s.name}」${w}`)),
   };
 }
 
@@ -59,7 +64,7 @@ function describeSkillChanges(
     const b = before[i], a = after[i];
     if (b.name !== a.name) continue;
     const sameCount = beforeNames.filter(n => n === b.name).length === afterNames.filter(n => n === b.name).length;
-    const changed = b.description !== a.description || b.tag !== a.tag;
+    const changed = b.description !== a.description || b.tags !== a.tags;
     const label = `技能「${b.name}」改动`;
     if (sameCount && changed && !items.includes(label)) items.push(label);
   }
@@ -80,11 +85,19 @@ export function describeChanges(
   if (before.meleeAtk !== after.meleeAtk) items.push(`近战 ${before.meleeAtk}→${after.meleeAtk}`);
   if (before.rangedAtk !== after.rangedAtk) items.push(`远程 ${before.rangedAtk}→${after.rangedAtk}`);
   items.push(...describeSkillChanges(before.skills, after.skills));
+  // 徽章名与时机对不上：这次导入**新造成**的才说（原本就存在的旧账不重复报）。
+  // 刀1 只点名、不改结算——卡面写着「登场技」而结算永远不在登场时响，玩家按卡面
+  // 理解去打法就会误会，所以这句必须出现在导入总结里，不能只活在单测里。
+  items.push(...after.tagWarnings.filter(w => !before.tagWarnings.includes(w)));
   return items.length > 0 ? { kind: 'modified', name: after.name, items } : null;
 }
 
-export function createdEntry(name: string, skillNames: string[]): ImportSummaryEntry {
-  return { kind: 'created', name, skills: skillNames };
+/** 新建一条总结。`warnings`＝徽章与时机对不上的点名（刀1：只说，不改结算）。 */
+export function createdEntry(name: string, skillNames: string[], warnings: string[] = []): ImportSummaryEntry {
+  return {
+    kind: 'created', name, skills: skillNames,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
 }
 
 /** 同一名将领在一次导入里被写两次 ⇒ 合成一条（总结回答的是"本次导入后怎么样了"）。 */
@@ -97,7 +110,11 @@ export function mergeSummaryEntry(
   const existing = prev[i];
   if (existing.kind === 'created' && next.kind === 'created') {
     const skills = Array.from(new Set([...existing.skills, ...next.skills]));
-    return [...prev.slice(0, i), { ...existing, skills }, ...prev.slice(i + 1)];
+    const warnings = Array.from(new Set([...(existing.warnings ?? []), ...(next.warnings ?? [])]));
+    return [...prev.slice(0, i), {
+      ...existing, skills,
+      ...(warnings.length > 0 ? { warnings } : {}),
+    }, ...prev.slice(i + 1)];
   }
   if (existing.kind === 'modified' && next.kind === 'modified') {
     const items = Array.from(new Set([...existing.items, ...next.items]));
@@ -112,7 +129,10 @@ export function renderSummaryText(entries: ImportSummaryEntry[]): string {
   const lines: string[] = [];
   if (created.length > 0) {
     lines.push(`新增 ${created.length} 名`);
-    for (const e of created) lines.push(`· ${e.name}：${e.skills.join('、') || '（无技能）'}`);
+    for (const e of created) {
+      const warn = e.warnings?.length ? `；⚠ ${e.warnings.join('；')}` : '';
+      lines.push(`· ${e.name}：${e.skills.join('、') || '（无技能）'}${warn}`);
+    }
   }
   if (modified.length > 0) {
     if (lines.length > 0) lines.push('');

@@ -8,11 +8,15 @@ import {
   readTriggerCell, detectEffectGroupWidth, parseEffectGroup,
   SKILL_GATE_HEADER, detectEffectGroupStart, parseSkillGate,
 } from '../../skills/skillExcelFormat';
+import { parseSkillTagsCell, tagsOf, formatTags } from '../../domain/skillTags';
 
 /** 编辑器与导入共用的技能条目类型（原为组件内 `typeof editingSkills`，仅类型层面替换）。 */
 export interface SkillEditEntry {
   name: string;
   description?: string;
+  /** v2.8.19：一枚技能可同时挂几枚徽章；读写走 domain/skillTags.ts。 */
+  tags?: SkillTag[];
+  /** 旧形态（单枚）：仍然读得到，写出面不再产生。 */
   tag?: SkillTag;
   trigger?: SkillTriggerConfig;
   effects?: SkillEffect[];
@@ -24,9 +28,9 @@ export interface SkillEditEntry {
 
 // ── Parse a single skill cell like "武圣：远程伤害+1" or "反馈<锁定技>：描述"
 // Also auto-detects tags embedded in the description, e.g.:
-//   "替身：限定技，当你被击杀时..." → name="替身", tag="限定技", description="当你被击杀时..."
-//   "反馈<锁定技>：描述"            → name="反馈", tag="锁定技", description="描述"
-export const parseSkillCell = (cell: string): { name: string; description?: string; tag?: SkillTag } | null => {
+//   "替身：限定技，当你被击杀时..."  → name="替身", tags=["限定技"], description="当你被击杀时..."
+//   "反馈<锁定技、遗计技>：描述"     → name="反馈", tags=["锁定技","遗计技"], description="描述"
+export const parseSkillCell = (cell: string): { name: string; description?: string; tags?: SkillTag[] } | null => {
   const text = cell.trim();
   if (!text) return null;
 
@@ -45,37 +49,44 @@ export const parseSkillCell = (cell: string): { name: string; description?: stri
     description = text.substring(splitIdx + 1).trim();
   }
 
-  // 1) Try extracting tag from skill name: "反馈<锁定技>"
-  let tag: SkillTag | undefined;
+  const tags: SkillTag[] = [];
+  const addTag = (t: string) => {
+    const trimmed = t.trim();
+    if (tagList.includes(trimmed) && !tags.includes(trimmed as SkillTag)) tags.push(trimmed as SkillTag);
+  };
+
+  // 1) Try extracting tags from skill name: "反馈<锁定技、遗计技>"
   const tagMatch = skillName.match(/^(.+?)[<＜《](.+?)[>＞》]$/);
   if (tagMatch) {
     skillName = tagMatch[1].trim();
-    const tagText = tagMatch[2].trim();
-    if (tagList.includes(tagText)) {
-      tag = tagText as SkillTag;
-    }
+    // 分隔口径与「技能标签」列共用 domain/skillTags.ts，别在这里各认各的
+    for (const t of parseSkillTagsCell(tagMatch[2]).tags) addTag(t);
   }
 
-  // 2) If no tag found yet, try auto-detecting from description start
+  // 2) If no tag found yet, try auto-detecting from the description start
   //    e.g. "限定技，当你被击杀时..." or "锁定技。你的..." or "觉醒技 - 当..."
-  if (!tag && description) {
-    for (const t of tagList) {
-      // Check if description starts with a tag name followed by a separator
-      if (description.startsWith(t)) {
+  //    连续多枚也吃："锁定技、遗计技，当你…"（v2.8.19：徽章可多枚并存）
+  if (tags.length === 0 && description) {
+    for (;;) {
+      let matched = '';
+      for (const t of tagList) {
+        if (!description.startsWith(t)) continue;
         const afterTag = description.substring(t.length);
         // Must be followed by separator: ，,。.、；;：: space - or end of string
-        if (afterTag.length === 0 || /^[，,。.、；;：:\-\s]/.test(afterTag)) {
-          tag = t as SkillTag;
-          // Remove the tag and leading separators from description
-          description = afterTag.replace(/^[，,。.、；;：:\-\s]+/, '').trim();
-          break;
-        }
+        if (afterTag.length === 0 || /^[，,。.、；;：:\-\s]/.test(afterTag)) { matched = t; break; }
       }
+      if (!matched) break;
+      addTag(matched);
+      description = description.substring(matched.length).replace(/^[，,。.、；;：:\-\s]+/, '').trim();
     }
   }
 
   if (!skillName) return null;
-  return { name: skillName, description: description || undefined, tag };
+  return {
+    name: skillName,
+    description: description || undefined,
+    tags: tags.length > 0 ? tags : undefined,
+  };
 };
 
 const clean = (s: string) => { const v = s.trim(); return v === '无' ? '' : v; };
@@ -259,13 +270,17 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
 
     const sName = clean(String(row[5] || ''));
     if (!sName) continue;
-    const sTag = clean(String(row[6] || ''));
     const sForced = clean(String(row[7] || ''));
     const sTrigger = clean(String(row[8] || ''));
     const sMode = clean(String(row[9] || ''));
     const sDesc = clean(String(row[10] || ''));
 
-    const tag = (allSkillTags as readonly string[]).includes(sTag) ? sTag as SkillTag : undefined;
+    const tagRead = parseSkillTagsCell(String(row[6] || ''));
+    for (const u of tagRead.unknown) {
+      const name = currentGeneral?.name || currentUnresolved?.name || '未知';
+      parseWarnings.push(`${name}·${sName} 技能标签：这枚徽章我不认识，所以没记下 → ${u}`);
+    }
+    const tags = tagRead.tags;
     const forced = sForced === '是' || undefined;
     const skillTriggerRead = readTriggerCell(sTrigger);
     if (skillTriggerRead.unreadable) {
@@ -321,7 +336,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
 
     if (currentGeneral) {
       currentSkills.push({
-        name: sName, tag, forced, trigger,
+        name: sName, tags, forced, trigger,
         effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
         effects: effects.length > 0 ? effects : undefined,
         description: sDesc || undefined,
@@ -329,7 +344,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
       });
     } else if (currentUnresolved) {
       currentUnresolved.skills.push({
-        name: sName, tag, forced, trigger,
+        name: sName, tags, forced, trigger,
         effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
         effects: effects.length > 0 ? effects : undefined,
         description: sDesc || undefined,
@@ -347,6 +362,8 @@ export const parseLegacyDetailedRow = (row: (string|number|undefined)[]): {
   general: General | undefined;
   gEdit: Record<string,unknown>;
   skills: SkillEditEntry[];
+  /** 认不出的徽章名：交调用方点名，绝不静默丢（§12-76①）。 */
+  tagUnknown: string[];
   rawName?: string;
   rawFac?: string;
   rawHp?: number;
@@ -368,6 +385,7 @@ export const parseLegacyDetailedRow = (row: (string|number|undefined)[]): {
       general: undefined,
       gEdit: {},
       skills: [],
+      tagUnknown: [],
       rawName: name,
       rawFac,
       rawHp: Number.isFinite(hp) ? hp : undefined,
@@ -387,22 +405,24 @@ export const parseLegacyDetailedRow = (row: (string|number|undefined)[]): {
     rangedAtk: rAtk != null && rAtk !== general.rangedAtk ? rAtk : undefined,
   };
   const skills: SkillEditEntry[] = [];
+  const tagUnknown: string[] = [];
   let col = 5;
   while (col < row.length) {
     const sName = clean(String(row[col] || ''));
     if (!sName) { col += 5; continue; }
-    const sTag = clean(String(row[col + 1] || ''));
     const sForced = clean(String(row[col + 2] || ''));
     const sMode = clean(String(row[col + 3] || ''));
     const sDesc = clean(String(row[col + 4] || ''));
-    const tag = (allSkillTags as readonly string[]).includes(sTag) ? sTag as SkillTag : undefined;
+    const tagRead = parseSkillTagsCell(row[col + 1] == null ? '' : String(row[col + 1]));
+    for (const u of tagRead.unknown) tagUnknown.push(`${sName}：${u}`);
+    const tags = tagRead.tags;
     const forced = sForced === '是' || undefined;
     const effectMode = (sMode === '选择其一' || sMode === 'choice') ? 'choice' as SkillEffectMode
       : (sMode === '全部生效' || sMode === 'all') ? 'all' as SkillEffectMode : undefined;
-    skills.push({ name: sName, tag, forced, effectMode, description: sDesc || undefined });
+    skills.push({ name: sName, tags, forced, effectMode, description: sDesc || undefined });
     col += 5;
   }
-  return { general, gEdit, skills };
+  return { general, gEdit, skills, tagUnknown };
 };
 
 // ── 导入「无变化」判定（v2.8.12 真机反馈 #45）──
@@ -433,7 +453,7 @@ const canonEffect = (e: SkillEffect) =>
 const canonSkill = (s: SkillEditEntry | General['skills'][number]) => {
   const effects = s.effects ?? [];
   return [
-    s.name, s.description || null, s.tag ?? null, s.forced ? true : null,
+    s.name, s.description || null, formatTags(tagsOf(s)) || null, s.forced ? true : null,
     canonTrigger(s.trigger),
     effects.length > 0 ? (s.effectMode ?? 'all') : (s.effectMode ?? null),
     effects.map(canonEffect), canonGate(s.conditions),

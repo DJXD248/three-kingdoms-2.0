@@ -21,6 +21,17 @@ export type SkillTag = '锁定技' | '限定技' | '登场技' | '遗计技' | '
 
 export const allSkillTags: SkillTag[] = ['锁定技', '限定技', '登场技', '遗计技', '觉醒技'];
 
+/**
+ * 一枚技能可以同时挂几枚徽章（用户 2026-09-30 更正：闭月＝锁定技＋遗计技）。
+ * 徽章语义（同一轮更正，逐字口径）：
+ *  - 锁定技＝这枚技能**不能被无效、不能被改变**（不是"到点自动响"）；
+ *  - 限定技＝一局之内的次数额度；登场技／遗计技＝上场响／被击杀时响；
+ *  - 觉醒技＝本作尚无觉醒机制，纯显示。
+ * `forced`（强制发动）＝满足触发条件与代价后**直接响／直接适用效果**，不用玩家点头。
+ * 徽章与 `forced`、与"数值变化／持续生效"三者**互不相关**，可任意组合。
+ * 读取一律走 domain/skillTags.ts 的 tagsOf()，别处不要自己拼两个字段。
+ */
+
 export const skillTagColors: Record<SkillTag, string> = {
   '锁定技': '#ef4444',
   '限定技': '#f59e0b',
@@ -223,6 +234,9 @@ export const effectModeLabels: Record<SkillEffectMode, string> = {
 export interface Skill {
   name: string;
   description?: string;
+  /** v2.8.19：徽章可多枚并存，读写一律走 domain/skillTags.ts 的 tagsOf()。 */
+  tags?: SkillTag[];
+  /** 旧形态（单枚）：仍然读得到，任何写出面不再产生它。 */
   tag?: SkillTag;
   trigger?: SkillTriggerConfig;       // 单效果技能的触发时机（向后兼容）
   effects?: SkillEffect[];            // 多效果列表

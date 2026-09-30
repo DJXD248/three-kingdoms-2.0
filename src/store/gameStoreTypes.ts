@@ -1,6 +1,7 @@
 // Store-level types extracted from gameStore.ts (stabilization stage B, D-6
 // first split). Pure type moves — shapes and semantics are unchanged.
-import type { General, Faction, GeneralSource, SkillTag, SkillTriggerConfig, SkillEffect, SkillEffectMode, SkillCondition } from '../data/generals';
+import type { General, Faction, GeneralSource } from '../data/generals';
+import type { SkillEdit } from './editorPersistence';
 import type { AuthoredGeneralInput } from '../domain/generalProvenance';
 import type { BlockedOverlay, EditDecision, EditDenial } from '../domain/generalPolicy';
 import type { GameCard } from '../data/cards';
@@ -125,7 +126,7 @@ export interface GameState {
     autoSaveReplay:boolean;autoSaveLog:boolean;replayDirName:string|null;
   };
   developerMode:boolean;
-  skillEdits:Record<string, {name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;conditions?:SkillCondition[];forced?:boolean}[]>;
+  skillEdits:Record<string, SkillEdit[]>;
   generalEdits:Record<string, {name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number;identity?:string}>;
   disabledGenerals:Set<string>;
   // v2.8.0 identity lock: maintained registry of identity names (身份管理).
@@ -173,7 +174,7 @@ export interface GameState {
   disableDeveloperMode:()=>void;
   // v2.8.6 地基刀2 (§H3 layer ②): these are guarded writes — a denied one
   // returns the reason and writes nothing.
-  updateSkillEdit:(generalId:string, skills:{name:string;description?:string;tag?:SkillTag;trigger?:SkillTriggerConfig;effects?:SkillEffect[];effectMode?:SkillEffectMode;conditions?:SkillCondition[];forced?:boolean}[])=>EditDecision;
+  updateSkillEdit:(generalId:string, skills:SkillEdit[])=>EditDecision;
   updateGeneralEdit:(generalId:string, edits:{name?:string;faction?:Faction;hp?:number;meleeAtk?:number;rangedAtk?:number;identity?:string})=>EditDecision;
   // v2.8.5 authoring (§H1): the ONLY way a new general enters the store. `id`
   // and `source` are stamped by generalProvenance at creation and never

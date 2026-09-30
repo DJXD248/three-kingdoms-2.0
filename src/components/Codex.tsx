@@ -4,6 +4,7 @@ import { allGenerals, General, Faction, factionColors, SkillTag, allSkillTags, s
 import { allCards, GameCard } from '../data/cards';
 import SkillEditor from './SkillEditor';
 import { denialMessage } from '../domain/generalPolicy';
+import { skillTagMeanings, tagsOf } from '../domain/skillTags';
 
 type TabType = '将领' | '卡牌';
 
@@ -34,7 +35,7 @@ export default function Codex() {
       if (factionFilter !== '全部' && g.faction !== factionFilter) return false;
       if (typeFilter !== '全部' && g.type !== typeFilter) return false;
       if (skillTagFilter !== '全部') {
-        if (!g.skills.some(sk => sk.tag === skillTagFilter)) return false;
+        if (!g.skills.some(sk => tagsOf(sk).includes(skillTagFilter))) return false;
       }
       if (searchText) {
         const s = searchText.toLowerCase();
@@ -42,7 +43,7 @@ export default function Codex() {
           g.name.toLowerCase().includes(s) ||
           g.faction.includes(s) ||
           g.skills.some(sk => sk.name.toLowerCase().includes(s)) ||
-          g.skills.some(sk => sk.tag?.includes(s)) ||
+          g.skills.some(sk => tagsOf(sk).some(t => t.includes(s))) ||
           g.type.includes(s) ||
           String(g.hp).includes(s) ||
           String(g.meleeAtk).includes(s) ||
@@ -73,21 +74,21 @@ export default function Codex() {
     allGenerals.map(g => getEdited(g)).filter(g =>
       (f === '全部' || g.faction === f) &&
       (typeFilter === '全部' || g.type === typeFilter) &&
-      (skillTagFilter === '全部' || g.skills.some(sk => sk.tag === skillTagFilter))
+      (skillTagFilter === '全部' || g.skills.some(sk => tagsOf(sk).includes(skillTagFilter)))
     ).length;
 
   const typeCount = (t: '全部' | '武将' | '文将') =>
     allGenerals.map(g => getEdited(g)).filter(g =>
       (factionFilter === '全部' || g.faction === factionFilter) &&
       (t === '全部' || g.type === t) &&
-      (skillTagFilter === '全部' || g.skills.some(sk => sk.tag === skillTagFilter))
+      (skillTagFilter === '全部' || g.skills.some(sk => tagsOf(sk).includes(skillTagFilter)))
     ).length;
 
   const tagCount = (t: SkillTag | '全部') =>
     allGenerals.map(g => getEdited(g)).filter(g =>
       (factionFilter === '全部' || g.faction === factionFilter) &&
       (typeFilter === '全部' || g.type === typeFilter) &&
-      (t === '全部' || g.skills.some(sk => sk.tag === t))
+      (t === '全部' || g.skills.some(sk => tagsOf(sk).includes(t)))
     ).length;
 
   const cardTypeCount = (t: '全部' | '粮草' | '材料' | '军备') =>
@@ -328,12 +329,13 @@ export default function Codex() {
                   <div key={i} className="rounded-lg bg-amber-900/40 text-amber-200 text-sm border border-amber-700/30 px-3 py-1.5">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-bold">{s.name}</span>
-                      {s.tag && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold border"
-                          style={{ color: skillTagColors[s.tag], borderColor: skillTagColors[s.tag] + '50', backgroundColor: skillTagColors[s.tag] + '15' }}>
-                          {s.tag}
+                      {tagsOf(s).map(t => (
+                        <span key={t} title={skillTagMeanings[t]}
+                          className="text-[10px] px-1.5 py-0.5 rounded-full font-bold border"
+                          style={{ color: skillTagColors[t], borderColor: skillTagColors[t] + '50', backgroundColor: skillTagColors[t] + '15' }}>
+                          {t}
                         </span>
-                      )}
+                      ))}
                     </div>
                     {s.description && <p className="text-amber-300/60 text-xs mt-1">{s.description}</p>}
                   </div>
@@ -419,12 +421,13 @@ function GeneralCard({ general, onClick }: { general: General; onClick: () => vo
           {general.skills.slice(0, 3).map((s, i) => (
             <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-black/40 text-amber-300/80 flex items-center gap-0.5">
               {s.name}
-              {s.tag && (
-                <span className="text-[8px] px-1 rounded-full font-bold"
-                  style={{ color: skillTagColors[s.tag], backgroundColor: skillTagColors[s.tag] + '20' }}>
-                  {s.tag}
+              {tagsOf(s).map(t => (
+                <span key={t} title={skillTagMeanings[t]}
+                  className="text-[8px] px-1 rounded-full font-bold"
+                  style={{ color: skillTagColors[t], backgroundColor: skillTagColors[t] + '20' }}>
+                  {t}
                 </span>
-              )}
+              ))}
             </span>
           ))}
           {general.skills.length > 3 && (

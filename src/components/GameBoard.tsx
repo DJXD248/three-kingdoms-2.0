@@ -5,6 +5,7 @@ import {
   hasFreeCampSlot, isInEnemyTerritory,
 } from '../rules/battlefieldRules';
 import { General, factionColors, skillTagColors } from '../data/generals';
+import { skillTagMeanings, tagsOf } from '../domain/skillTags';
 import { GameCard } from '../data/cards';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { getGeneralCardVisual } from '../utils/generalCardVisual';
@@ -684,7 +685,7 @@ export default function GameBoard(){
               {fg&&own&&fg.isArming&&<p className="mb-2 text-center text-xs text-blue-400/70">🛡️ 整备状态：本回合无法移动和攻击</p>}
               {fg&&own&&isSch&&fg.justDeployed&&!fg.isArming&&<p className="mb-2 text-center text-xs text-amber-500/60">📜文将登场回合只能移动或攻击其一</p>}
               {fg&&own&&inEnemy&&<p className="mb-2 text-center text-xs text-yellow-500/60">⚠️ 敌方区域：补给多烧 1 张手牌，这张只算代价、不算回复（交 3 张只回 2 点）</p>}
-              <div className="mb-4"><h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-400/80">技能</h3><div className="flex flex-wrap gap-1.5">{getGeneralWithEdits(g).skills.map((s,i)=><div key={i} className="rounded-lg border border-amber-700/20 bg-amber-900/30 px-2.5 py-1 text-xs font-medium text-amber-200"><span className="font-bold">{s.name}</span>{s.tag&&<span className="ml-1 text-[9px] px-1 py-0.5 rounded-full font-bold border" style={{color:skillTagColors[s.tag],borderColor:skillTagColors[s.tag]+'50',backgroundColor:skillTagColors[s.tag]+'15'}}>{s.tag}</span>}{s.description&&<span className="text-amber-300/50 text-[10px] ml-1">— {s.description}</span>}</div>)}</div></div>
+              <div className="mb-4"><h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-400/80">技能</h3><div className="flex flex-wrap gap-1.5">{getGeneralWithEdits(g).skills.map((s,i)=><div key={i} className="rounded-lg border border-amber-700/20 bg-amber-900/30 px-2.5 py-1 text-xs font-medium text-amber-200"><span className="font-bold">{s.name}</span>{tagsOf(s).map(t=><span key={t} className="ml-1 text-[9px] px-1 py-0.5 rounded-full font-bold border" style={{color:skillTagColors[t],borderColor:skillTagColors[t]+'50',backgroundColor:skillTagColors[t]+'15'}} title={skillTagMeanings[t]}>{t}</span>)}{s.description&&<span className="text-amber-300/50 text-[10px] ml-1">— {s.description}</span>}</div>)}</div></div>
               {fg&&own&&<div className="flex flex-wrap gap-2 border-t border-amber-800/20 pt-3">
                 <button onClick={()=>canMov&&startMove(fg)} disabled={!canMov} title={movReason} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canMov?'bg-blue-700/80 text-white hover:bg-blue-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🚶前进{isSch?' (-1牌)':''}</button>
                 <button onClick={()=>canAtk&&meleeN>0&&startAtk(fg,false)} disabled={!canAtk||meleeN===0} title={canAtk?meleeReason:(atkReason||meleeReason)} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canAtk&&meleeN>0?'bg-red-700/80 text-white hover:bg-red-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>⚔️近战(-1牌)</button>

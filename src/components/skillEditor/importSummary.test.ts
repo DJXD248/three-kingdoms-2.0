@@ -16,7 +16,8 @@ const snap = (over: Partial<SummarySnapshot> = {}): SummarySnapshot => ({
   hp: 4,
   meleeAtk: 2,
   rangedAtk: 1,
-  skills: [{ name: '武圣', description: '', tag: '' }],
+  skills: [{ name: '武圣', description: '', tags: '' }],
+  tagWarnings: [],
   ...over,
 });
 
@@ -37,7 +38,7 @@ describe('导入总结 · 字段改动只点名并写出旧→新', () => {
   it('只有技能文本变了也算改动：点名那条技能，不铺平到"哪个槽变了"', () => {
     expect(itemsOf(
       snap(),
-      snap({ skills: [{ name: '武圣', description: '杀招额外伤害', tag: '锁定技' }] }),
+      snap({ skills: [{ name: '武圣', description: '杀招额外伤害', tags: '锁定技' }] }),
     )).toEqual(['技能「武圣」改动']);
   });
 });
@@ -45,22 +46,22 @@ describe('导入总结 · 字段改动只点名并写出旧→新', () => {
 describe('导入总结 · 技能清单的增删与顺序', () => {
   it('新增与移除各点名一次，同名多张按张数如实报', () => {
     expect(itemsOf(
-      snap({ skills: [{ name: '武圣', description: '', tag: '' }, { name: '旧技', description: '', tag: '' }] }),
-      snap({ skills: [{ name: '武圣', description: '', tag: '' }, { name: '义绝', description: '', tag: '' }] }),
+      snap({ skills: [{ name: '武圣', description: '', tags: '' }, { name: '旧技', description: '', tags: '' }] }),
+      snap({ skills: [{ name: '武圣', description: '', tags: '' }, { name: '义绝', description: '', tags: '' }] }),
     )).toEqual(['新增技能「义绝」', '移除技能「旧技」']);
   });
 
   it('集合没变、只换了顺序⇒单独说一句，绝不说成增删', () => {
     expect(itemsOf(
-      snap({ skills: [{ name: '甲', description: '', tag: '' }, { name: '乙', description: '', tag: '' }] }),
-      snap({ skills: [{ name: '乙', description: '', tag: '' }, { name: '甲', description: '', tag: '' }] }),
+      snap({ skills: [{ name: '甲', description: '', tags: '' }, { name: '乙', description: '', tags: '' }] }),
+      snap({ skills: [{ name: '乙', description: '', tags: '' }, { name: '甲', description: '', tags: '' }] }),
     )).toEqual(['技能顺序调整']);
   });
 
   it('同名技能张数变了⇒不报"改动"（那是增删，两条不能混着说）', () => {
     const items = itemsOf(
-      snap({ skills: [{ name: '武圣', description: '', tag: '' }] }),
-      snap({ skills: [{ name: '武圣', description: '', tag: '' }, { name: '武圣', description: '第二张', tag: '' }] }),
+      snap({ skills: [{ name: '武圣', description: '', tags: '' }] }),
+      snap({ skills: [{ name: '武圣', description: '', tags: '' }, { name: '武圣', description: '第二张', tags: '' }] }),
     );
     expect(items).toEqual(['新增技能「武圣」']);
     expect(items.join('')).not.toContain('改动');

@@ -1,6 +1,6 @@
 // Excel 逐技能行的导入：门槛栏要变成结构化条件，读不懂的要如实报出来。
 import { describe, it, expect } from 'vitest';
-import { parseRowPerSkillSheet, resolveGeneralForImport, importEntryChangesNothing } from './skillExcelParsers';
+import { parseRowPerSkillSheet, parseSkillCell, resolveGeneralForImport, importEntryChangesNothing } from './skillExcelParsers';
 import type { General } from '../../data/generals';
 
 const FIXED = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述'];
@@ -337,5 +337,71 @@ describe('importEntryChangesNothing · 重导自己的导出＝零改动', () =>
   it('这一行不带技能、头字段也不冲突⇒整行是空操作，跳过', () => {
     const e = parseRow();
     expect(importEntryChangesNothing(viewOf(e, e.skills as General['skills']), {}, [])).toBe(true);
+  });
+
+  it('徽章两枚并存：导出再导一次仍是零改动（比对读的是同一份口径）', () => {
+    const e = parseRow([...SKILL_CELL.slice(0, 6), '锁定技、遗计技', ...SKILL_CELL.slice(7),
+      ...ROW.slice(11)]);
+    expect(e.skills[0].tags).toEqual(['锁定技', '遗计技']);
+    expect(importEntryChangesNothing(viewOf(e, e.skills as General['skills']), e.gEdit, e.skills)).toBe(true);
+  });
+
+  it('存档里还是旧单值形态的徽章⇒读得出，不因为字段换了名字就当成"没挂徽章"', () => {
+    const e = parseRow([...SKILL_CELL.slice(0, 6), '限定技', ...SKILL_CELL.slice(7), ...ROW.slice(11)]);
+    const stored = (e.skills as General['skills']).map(s => ({
+      name: s.name, description: s.description, tag: '限定技' as const,
+      effects: s.effects, forced: s.forced, trigger: s.trigger, conditions: s.conditions, effectMode: s.effectMode,
+    }));
+    expect(importEntryChangesNothing(viewOf(e, stored), e.gEdit, e.skills)).toBe(true);
+  });
+});
+
+describe('徽章多枚 · 一句技能名的三种写法都要拆对（用户样本：闭月＝锁定技＋遗计技）', () => {
+  it('尖括号里两枚⇒都记下，名字不带括号', () => {
+    expect(parseSkillCell('反馈<锁定技、遗计技>：造成伤害后摸牌')).toEqual({
+      name: '反馈', tags: ['锁定技', '遗计技'], description: '造成伤害后摸牌',
+    });
+  });
+
+  it('描述开头连着写两枚⇒都提出来，徽章文字不得留在描述里', () => {
+    expect(parseSkillCell('闭月：锁定技、遗计技，当你被击杀时…')).toEqual({
+      name: '闭月', tags: ['锁定技', '遗计技'], description: '当你被击杀时…',
+    });
+  });
+
+  it('一格里几种分隔写法都算两枚（表是人手填的）', () => {
+    for (const cell of ['反馈<锁定技、遗计技>：x', '反馈<锁定技 遗计技>：x', '反馈<锁定技/遗计技>：x']) {
+      expect(parseSkillCell(cell)!.tags).toEqual(['锁定技', '遗计技']);
+    }
+  });
+
+  it('不认识的那枚不当徽章收下（不认识的必须由导入面点名，不能猜成"没有徽章"）', () => {
+    expect(parseSkillCell('反馈<锁定技、被动技>：x')!.tags).toEqual(['锁定技']);
+  });
+});
+
+describe('徽章多枚 · 技能标签列的读法', () => {
+  const rowOf = (tagCell: string) => [...SKILL_CELL.slice(0, 6), tagCell, ...SKILL_CELL.slice(7)];
+
+  it('「无」与空格子都是"确实没有徽章"，不是"没录"', () => {
+    for (const cell of ['无', '']) {
+      const { entries, parseWarnings } = parseRowPerSkillSheet([FIXED, rowOf(cell)]);
+      expect(entries[0].skills[0].tags).toEqual([]);
+      expect(parseWarnings).toEqual([]);
+    }
+  });
+
+  it('两枚并存⇒按格子里的顺序记下', () => {
+    const { entries, parseWarnings } = parseRowPerSkillSheet([FIXED, rowOf('遗计技、锁定技')]);
+    expect(entries[0].skills[0].tags).toEqual(['遗计技', '锁定技']);
+    expect(parseWarnings).toEqual([]);
+  });
+
+  it('拼错的那枚点名到"谁·哪个技能"，认识的那枚照收（绝不整格丢弃）', () => {
+    const { entries, parseWarnings } = parseRowPerSkillSheet([FIXED, rowOf('锁定技、遗计济')]);
+    expect(entries[0].skills[0].tags).toEqual(['锁定技']);
+    expect(parseWarnings).toHaveLength(1);
+    expect(parseWarnings[0]).toContain('关羽·测试技');
+    expect(parseWarnings[0]).toContain('遗计济');
   });
 });

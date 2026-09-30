@@ -4,6 +4,9 @@ import { isAcceptableAuthoredRecord, stripFrozenFields } from '../domain/general
 export type SkillEdit = {
   name: string;
   description?: string;
+  /** v2.8.19：徽章可多枚并存（写出面只产生这个字段）。 */
+  tags?: SkillTag[];
+  /** 旧存档的单枚形态：仍然读得到，读法见 domain/skillTags.ts 的 tagsOf()。 */
   tag?: SkillTag;
   trigger?: SkillTriggerConfig;
   effects?: SkillEffect[];
