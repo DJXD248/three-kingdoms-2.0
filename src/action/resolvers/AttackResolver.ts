@@ -4,6 +4,7 @@ import type { EngineState } from '../../core/GameState';
 import type { GameEvent } from '../../core/Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { applyArmorDamage } from '../../core/armorDamage';
+import { getAttackValue } from '../../core/attackValue';
 
 interface Position {
   zone: 'camp' | 'front' | 'battle';
@@ -60,15 +61,10 @@ function canTargetBase(attacker: any, targetPlayerId: number, attackerPlayerId: 
   return (p.zone === 'front' || p.zone === 'camp') && p.areaOwnerId === targetPlayerId;
 }
 
-function getAttackValue(attacker: any, ranged: boolean) {
-  const explicit = ranged ? attacker?.rangedAtk : attacker?.meleeAtk;
-  if (typeof explicit === 'number') return Math.max(0, explicit);
-  const hp = Number(attacker?.maxHp ?? attacker?.general?.hp ?? 0);
-  return ranged ? (hp >= 4 ? 1 : 2) : (hp >= 4 ? 2 : 1);
-}
-
-// applyArmorDamage now lives in core/armorDamage.ts (shared with skill damage
-// settlement in EventProcessor) — single canonical implementation.
+// Both halves of the attack damage math now live in the core layer as the
+// single canonical implementations, shared with skill damage settlement and
+// the duel flow: applyArmorDamage (core/armorDamage.ts) and getAttackValue
+// (core/attackValue.ts).
 
 export class AttackResolver implements ActionResolver {
   canResolve(action: GameAction): boolean {

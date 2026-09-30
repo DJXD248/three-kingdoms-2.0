@@ -137,7 +137,7 @@ describe('skill trigger tracking (2.4.3 content audit)', () => {
   it('#39: the counter keys off the bridge payload, not a hand-written type list', () => {
     const state = buildMatchState(defaultMatchConfig(901, { poolPerPlayer: 3, deckSize: 30 }));
     const playerId = state.players[0].id;
-    const types: DataSkillEffectType[] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE'];
+    const types: DataSkillEffectType[] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE', 'DUEL'];
     const events = SkillTriggerBridge.createSkillEvents(
       {
         ownerId: playerId,

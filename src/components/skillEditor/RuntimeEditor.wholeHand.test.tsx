@@ -79,3 +79,30 @@ describe('数值录入面 · 「整只手（全部）」只在该出现的类型
     expect(ui.onChange).toHaveBeenLastCalledWith({ type: 'DRAW_CARD', value: 1, target: 'SELF' });
   });
 });
+
+// 2.8 刀9：决斗的轮数由规则定死（双方各三轮、最多六次）——给它一个数字框＝请项目
+// 把"界面写 1、生效六轮"的分叉搬进界面，所以数值整行不渲染；目标照旧要选。
+describe('数值录入面 · 「没有数量可填」的类型（决斗）', () => {
+  afterEach(cleanup);
+
+  it('决斗：数值行整行缺席（无数字框、无勾选框），但目标照旧可选', () => {
+    const ui = renderWith({ type: 'DUEL', target: 'TARGET' });
+    expect(ui.checkbox).toBeNull();
+    expect(ui.numberBox).toBeNull();
+    expect(ui.typeSelect.value).toBe('DUEL');
+    const targetSelect = Array.from(document.querySelectorAll('select'))
+      .find(s => Array.from(s.options).some(o => o.value === 'TARGET')) as HTMLSelectElement;
+    expect(targetSelect.value).toBe('TARGET');
+  });
+
+  it('预览说规则定死的轮数，不说一个数', () => {
+    const view = render(<RuntimeEditor runtime={{ type: 'DUEL', target: 'TARGET' }} onChange={() => {}} />);
+    expect(view.container.textContent).toContain('决斗（双方各三轮，最多六次）');
+  });
+
+  it('从「整只手」的弃牌换到决斗⇒值写成 undefined，绝不把 0 或 1 塞进不读数的类型', () => {
+    const ui = renderWith({ type: 'DISCARD', value: 0, target: 'TARGET' });
+    fireEvent.change(ui.typeSelect, { target: { value: 'DUEL' } });
+    expect(ui.onChange).toHaveBeenLastCalledWith({ type: 'DUEL', value: undefined, target: 'TARGET' });
+  });
+});

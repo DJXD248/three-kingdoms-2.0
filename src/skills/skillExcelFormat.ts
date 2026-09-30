@@ -153,6 +153,7 @@ export const runtimeEffectTypeLabels: Record<SkillRuntimeEffect['type'], string>
   EQUIP_STRIP: '拆掉装备',
   REVEAL: '看牌堆顶',
   DECK_PLACE: '放回牌堆',
+  DUEL: '决斗',
 };
 
 /**
@@ -169,7 +170,14 @@ const LEGACY_TARGET_LABELS: Record<string, NonNullable<SkillRuntimeEffect['targe
 };
 
 /** Types the compiler can settle today (see skillCompiler SUPPORTED_EFFECT_TYPES). */
-export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE'];
+export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE', 'DUEL'];
+
+/**
+ * 2.8 刀9：**根本不读「数值」格的类型**。决斗的轮数是规则常量（双方各三轮＝
+ * 最多六次，§H9 第六轮①），把它做成可填数字＝"界面写 1、生效是 6"的分叉
+ * （§12-55／v2.8.13 同族），所以录入面不给它数字框、Excel 侧填了也点名退回。
+ */
+export const VALUELESS_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DUEL'];
 
 /**
  * 数值 `0` 在这几个类型里**有真含义**＝「整只手（全部）」：它们都经
@@ -260,6 +268,16 @@ export interface ValueCellRead {
 export function readValueCell(raw: unknown, type?: SkillRuntimeEffect['type']): ValueCellRead {
   const cell = cleanCell(raw);
   if (!cell) return {};
+
+  // 决斗这类根本不读数的类型：填了数字或「全部」才点名退回；
+  // 「无」/看不懂的话沿用别的类型的习惯＝按没填，不作声。
+  if (type && VALUELESS_RUNTIME_TYPES.includes(type)) {
+    if (!WHOLE_HAND_VALUE_ALIASES.includes(cell) && parseRuntimeValue(cell) == null) return {};
+    return {
+      note: `「${runtimeEffectTypeLabels[type]}」没有数量可填（决斗的轮数由规则定死：双方各三轮、最多六次），`
+        + `这一格按没填处理`,
+    };
+  }
 
   if (WHOLE_HAND_VALUE_ALIASES.includes(cell)) {
     if (type && WHOLE_HAND_RUNTIME_TYPES.includes(type)) return { value: 0 };

@@ -851,6 +851,128 @@ describe('EventProcessor', () => {
     });
   });
 
+  describe('DUEL event (2.8 刀9)', () => {
+    function duelist(
+      id: string,
+      ownerId: number,
+      hp: number,
+      meleeAtk: number,
+      currentArmor = 0,
+      armorCards: Array<{ id: string; name?: string; type?: string }> = [],
+    ) {
+      return {
+        general: { id, name: `决斗者${id}`, faction: '魏', hp, type: '武将', meleeAtk, rangedAtk: 1, armor: 0, skills: [] },
+        currentHp: hp, maxHp: hp, meleeAtk, rangedAtk: 1, armor: 0,
+        currentArmor, armorCards, isArming: armorCards.length > 0,
+        hasMoved: false, hasAttacked: false, hasSupplied: false, justDeployed: false,
+        ownerId, position: { zone: 'front' as const, slot: 0, areaOwnerId: ownerId === 1 ? 2 : 1 },
+      };
+    }
+    const build = (a: unknown, b: unknown) => createTestState([
+      createTestPlayer(1, { fieldGenerals: [a] as never }),
+      createTestPlayer(2, { fieldGenerals: [b] as never }),
+    ]);
+    const duel = (data: Record<string, unknown> = {}): GameEvent => ({
+      type: 'DUEL',
+      data: {
+        sourcePlayerId: 1, sourceGeneralId: 'du_a',
+        targetPlayerId: 2, targetId: 'du_b',
+        skillId: 'du_skill', skillName: '搦战', effectType: 'DUEL', value: 0,
+        ...data,
+      },
+    });
+    const fieldOf = (state: EngineState, playerId: number, id: string) =>
+      (state.players.find(p => p.id === playerId)?.fieldGenerals as unknown as Array<Record<string, any>> | undefined)
+        ?.find(fg => fg?.general?.id === id);
+    const roundsOf = (collected: GameEvent[]) => collected
+      .filter(e => e.type === 'DAMAGE')
+      .map(e => e.data as Record<string, any>);
+
+    it('满六轮：双方各打满三次、逐轮交替、块内六条伤害按序入队（§H9 第六轮①）', () => {
+      const state = build(duelist('du_a', 1, 20, 2), duelist('du_b', 2, 20, 3));
+      const collected: GameEvent[] = [];
+      const result = processor.process(state, [duel()], collected);
+      const rounds = roundsOf(collected);
+
+      expect(rounds).toHaveLength(6);
+      expect(rounds.map(r => r.duelRound)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(rounds.map(r => [r.sourceGeneralId, r.targetId, r.value, r.damageType])).toEqual([
+        ['du_a', 'du_b', 2, 'skill'], ['du_b', 'du_a', 3, 'skill'],
+        ['du_a', 'du_b', 2, 'skill'], ['du_b', 'du_a', 3, 'skill'],
+        ['du_a', 'du_b', 2, 'skill'], ['du_b', 'du_a', 3, 'skill'],
+      ]);
+      // 先手恒为发起方一侧；每一轮都真的进了状态（预解＝计划，落子仍走唯一结算口）
+      expect(fieldOf(result, 1, 'du_a')!.currentHp).toBe(11); // 20 - 3×3
+      expect(fieldOf(result, 2, 'du_b')!.currentHp).toBe(14); // 20 - 3×2
+      // 决斗本体零状态位移：技能载荷原样带进每一轮，报告/日志据此归属
+      expect(rounds[0].skillId).toBe('du_skill');
+      expect(rounds[0].effectType).toBe('DUEL');
+    });
+
+    it('致死即截断：块长止于那一轮、死者不再被轮换、善后归阵亡方（§H5-6＋§H9 第四轮③）', () => {
+      const state = build(duelist('du_a', 1, 5, 2), duelist('du_b', 2, 3, 2));
+      const collected: GameEvent[] = [];
+      const result = processor.process(state, [duel()], collected);
+      const rounds = roundsOf(collected);
+
+      expect(rounds.map(r => r.duelRound)).toEqual([1, 2, 3]);
+      expect(rounds[2]).toMatchObject({ targetId: 'du_b', newHp: 0 });
+      expect(fieldOf(result, 2, 'du_b')).toBeUndefined();
+      expect((result.players.find(p => p.id === 2)!.graveyard as Array<{ id: string }>).map(c => c.id)).toEqual(['du_b']);
+      // 技能伤害致死沿用既有派生链：DEATH → 补偿抽归阵亡方（第 2 家），不开第二条路
+      expect(collected.filter(e => e.type === 'DEATH').map(e => e.data)).toEqual([
+        { targetPlayerId: 2, targetId: 'du_b', attackerPlayerId: 1, attackerId: 'du_a', skillKill: true },
+      ]);
+      expect(collected.filter(e => e.type === 'DRAW_REQUIRED')
+        .map(e => (e.data as { playerId?: number } | undefined)?.playerId)).toEqual([2]);
+      expect(result.drawState).toMatchObject({ reason: 'compensation', playerId: 2, totalCards: 1 });
+      expect(fieldOf(result, 1, 'du_a')!.currentHp).toBe(3); // 第 2 轮挨的那一下仍在
+    });
+
+    it('算出 0 伤害照样占一轮并继续轮换；护甲按 2 挡 1 入算（§H5-6＋§H5-3）', () => {
+      const zeroAtk = build(duelist('du_a', 1, 3, 0), duelist('du_b', 2, 3, 0));
+      const zeroCollected: GameEvent[] = [];
+      const zeroResult = processor.process(zeroAtk, [duel()], zeroCollected);
+      expect(roundsOf(zeroCollected).map(r => r.value)).toEqual([0, 0, 0, 0, 0, 0]);
+      expect(fieldOf(zeroResult, 1, 'du_a')!.currentHp).toBe(3);
+      expect(fieldOf(zeroResult, 2, 'du_b')!.currentHp).toBe(3);
+
+      const armored = build(
+        duelist('du_a', 1, 10, 2),
+        duelist('du_b', 2, 10, 0, 3, [{ id: 'du_arm_1', name: '军备', type: '军备' }, { id: 'du_arm_2', name: '军备', type: '军备' }]),
+      );
+      const armorCollected: GameEvent[] = [];
+      const armorResult = processor.process(armored, [duel()], armorCollected);
+      const rounds = roundsOf(armorCollected);
+      const b = fieldOf(armorResult, 2, 'du_b')!;
+      expect(rounds.map(r => r.targetId)).toEqual(['du_b', 'du_a', 'du_b', 'du_a', 'du_b', 'du_a']);
+      // 3 点甲吃 2 点伤害：先 2 点挡 1 点，剩 1 点不够挡、原地留着 ⇒ 掉 1 体力
+      expect(rounds.map(r => r.newHp)).toEqual([9, 10, 7, 10, 5, 10]);
+      expect(rounds.map(r => r.newArmor)).toEqual([1, 0, 1, 0, 1, 0]);
+      expect(b.currentHp).toBe(5);
+      expect(b.currentArmor).toBe(1);
+      // 军备点数与卡的既有关系照单继承：技能伤害只扣点、不脱卡（普攻侧才脱）
+      expect(b.armorCards).toHaveLength(2);
+      expect(armorResult.discardPile).toHaveLength(0);
+    });
+
+    it('诚实空转：自己对自己／任一侧不在场／缺载荷 ⇒ 零轮次零状态位移（§H9 第五轮③）', () => {
+      const make = () => build(duelist('du_a', 1, 5, 2), duelist('du_b', 2, 5, 2));
+      for (const event of [
+        duel({ targetId: 'du_a' }),
+        duel({ targetId: 'du_ghost' }),
+        duel({ sourceGeneralId: 'du_ghost' }),
+        { type: 'DUEL' as const, data: {} },
+      ]) {
+        const before = make();
+        const collected: GameEvent[] = [];
+        const after = processor.process(structuredClone(before), [event as GameEvent], collected);
+        expect(collected).toEqual([]);
+        expect(after).toEqual(before);
+      }
+    });
+  });
+
   describe('immutability', () => {
     it('should not mutate the original state', () => {
       const player = createTestPlayer(1, { baseHp: 5 });

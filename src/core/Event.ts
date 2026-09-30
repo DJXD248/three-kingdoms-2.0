@@ -12,6 +12,7 @@ export type GameEventType =
   | 'EQUIP_STRIP'
   | 'REVEAL'
   | 'DECK_PLACE'
+  | 'DUEL'
   | 'CHOICE_REQUIRED'
   | 'CHOICE_RESOLVED'
   | 'CARD_LOST'

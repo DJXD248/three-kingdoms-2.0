@@ -2,19 +2,34 @@ import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getTurnStartDrawCount } from '../turnRules';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
+import { deriveDuelRounds } from './duelEvents';
 
 /**
  * Some domain outcomes (player defeat, game over, compensation draw) are
  * deterministic consequences of a primary event. Keep those consequences
  * inside the canonical event-processing layer so Resolver code only states
  * what happened.
+ *
+ * Return value (2.8 刀9): `null` = everything this event derived already sits
+ * at the queue TAIL (the pre-existing behaviour of every branch here). A
+ * non-null array is a block of events for the CONTINUOUS settlement of a
+ * single primary event — the caller (EventProcessor.process) places it at the
+ * queue HEAD so nothing can cut into it. Only continuous-settlement effects
+ * may use this right; every other branch keeps pushing to the tail.
  */
 export function enqueueDerivedConsequences(
   queue: GameEvent[],
   event: GameEvent,
   before: EngineState,
   next: EngineState,
-): void {
+): GameEvent[] | null {
+  if (event.type === 'DUEL') {
+    // 决斗本体不改状态（applyDuelEvent 恒等），全部后果＝逐轮预解的伤害块。
+    // 块内只含本原语派生的 DAMAGE，整块前置＝"决斗连续完成、中间不插入任何
+    // 流程"（§H5-6）＋"决斗先、同技能后序效果接着走完"（§H9 第六轮②）。
+    return deriveDuelRounds(next, event);
+  }
+
   if (event.type === 'DAMAGE') {
     const data = event.data as any;
     const targetPlayerId = typeof data?.targetPlayerId === 'number' ? data.targetPlayerId : null;
@@ -207,4 +222,6 @@ export function enqueueDerivedConsequences(
       }
     }
   }
+
+  return null;
 }

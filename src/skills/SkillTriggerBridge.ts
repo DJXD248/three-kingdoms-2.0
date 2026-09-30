@@ -421,6 +421,27 @@ export class SkillTriggerBridge {
         };
       }
 
+      if (effect.type === 'DUEL') {
+        // DUEL (2.8 刀9, §H5-6＋§H9): the bridge only NAMES the two
+        // participants — it emits no DAMAGE here, because the round plan has
+        // to read post-settlement state and must run to completion without
+        // anything cutting in. A-side (first strike) is always the owner's
+        // general; B-side uses the usual target-role table, so a skill can
+        // duel the general it acts on (and SELF resolves to the owner's own
+        // general = "自己不能和自己决斗" → honest no-op downstream).
+        const targetRef = SkillTriggerBridge.findGeneralRef(state, targetId);
+        return {
+          type: 'DUEL',
+          data: {
+            ...data,
+            sourcePlayerId: Number(sourceId),
+            sourceGeneralId: binding.skill.sourceGeneralId,
+            targetPlayerId: targetRef?.player.id,
+            targetId: targetId ?? data.targetId,
+          },
+        };
+      }
+
       return {
         type: 'CUSTOM',
         data: { ...data, kind: effect.type }

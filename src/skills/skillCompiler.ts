@@ -86,6 +86,7 @@ const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>([
   'EQUIP_STRIP',
   'REVEAL',
   'DECK_PLACE',
+  'DUEL',
 ]);
 
 export interface SkillSkip {

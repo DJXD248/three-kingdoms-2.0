@@ -6,6 +6,7 @@ import type { RuleEngine } from '../rules/RuleEngine';
 import type { EngineState } from './GameState';
 import type { GameEvent, RandomOutcomeData } from './Event';
 import { resolveTriggerChain } from './EngineDispatchFlow';
+import { echoDuelRounds } from './eventProcessors/duelEvents';
 import type { DrawOutcomeFlow, OverrideFailure } from './eventProcessors/drawEvents';
 
 /**
@@ -87,6 +88,14 @@ export function transition(
   const flow: DrawOutcomeFlow = { produced: [], overrides: ctx.outcomeOverrides ?? undefined, overridePos: 0 };
   const derived: GameEvent[] = [];
   let next = ctx.processor.process(state, events, derived, flow);
+
+  // 2.8 刀9: a duel's round block is derived inside the queue, so it never
+  // reaches `events` by itself (dispatch 不返回内联追加事件). Echo it right
+  // after the DUEL event it came from so the log / 录像 / AI report see every
+  // round in the order the queue settled them: 各轮伤害 → 同技能后序效果 →
+  // 死亡善后。Replay re-dispatches actions (never replays this array), and
+  // DAMAGE is not a reaction type, so the echo cannot double-settle.
+  echoDuelRounds(events, derived);
 
   // v2.5.1 onDeploy wiring (§12-26): syncPlayerSkills runs per-dispatch in
   // the container, so a general deployed by THIS action had no listener when

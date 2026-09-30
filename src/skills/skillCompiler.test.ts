@@ -263,6 +263,18 @@ describe('skillCompiler · compileSkill', () => {
     expect(top.definitions[0].effects[0]).toMatchObject({ type: 'DECK_PLACE', value: 0, dest: 'TOP' });
   });
 
+  it('compiles a DUEL effect with no value — 2.8 刀9 决斗原语（第 10 个可结算类型，轮数归规则）', () => {
+    const duel = compileSkill(
+      general(),
+      skill({ effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'TARGET' } }] }),
+      'g1',
+    );
+    expect(duel.definitions).toHaveLength(1);
+    expect(duel.skipped).toHaveLength(0);
+    expect(duel.definitions[0].effects[0]).toMatchObject({ type: 'DUEL', target: 'TARGET' });
+    expect(duel.definitions[0].effects[0].value).toBeUndefined(); // 无数量可填≠偷偷塞一个 1
+  });
+
   it('choice 模式（2.6.3）：同触发两个带 runtime 效果 → 一张 choiceMode 定义（多 effects 一触发）', () => {
     const { definitions, skipped } = compileSkill(
       general(),

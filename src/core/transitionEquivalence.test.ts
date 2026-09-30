@@ -1643,5 +1643,189 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(actions.map(a => rawEvents(againEngine.dispatch(a)))).toEqual(steps);
     expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
+
+  // ── 2.8 刀9 DUEL 决斗流程原语（非内容刀：合成模板实证接线，内置将零载荷） ──
+
+  it('决斗全链四路对账：逐轮伤害紧挨 DUEL、后序效果在块尾之后、决斗内不响触发监听、阵亡善后归阵亡方 (2.8 刀9)', () => {
+    const challenger = makeGeneral('du_elj', 10, [
+      {
+        name: '挑战',
+        effects: [
+          { id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'TARGET' } },
+          { id: 'e2', trigger: { type: 'onDamageDealt' }, runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' } },
+        ],
+      },
+      {
+        name: '掠杀',
+        effects: [{ id: 'e1', trigger: { type: 'onKill' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+      },
+    ]);
+    const victim = makeGeneral('du_vic', 8, [
+      {
+        name: '遗命',
+        effects: [{ id: 'e1', trigger: { type: 'onDeath' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+      },
+      {
+        name: '忍创',
+        effects: [{ id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+      },
+    ]);
+    const build = () => makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(challenger, 1, 0)],
+        hand: COSTS.slice(0, 2).map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2, 0)] }),
+    ]);
+    const actions = [attack('du_elj', 'du_vic', 0)];
+
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    const steps = [rawEvents(engine.dispatch(actions[0]))];
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    const flat = steps[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    // ① 一场决斗＝一条 DUEL 事件，其后立刻紧跟逐轮伤害（连续结算、中间不插入任何流程）
+    const duelIdx = flat.findIndex(e => e.type === 'DUEL');
+    const duels = flat.filter(e => e.type === 'DUEL');
+    expect(duels).toHaveLength(1);
+    expect(duels[0].data).toMatchObject({
+      sourcePlayerId: 1, sourceGeneralId: 'du_elj', targetPlayerId: 2, targetId: 'du_vic', effectType: 'DUEL',
+    });
+    expect(flat.slice(duelIdx, duelIdx + 6).map(e => e.type))
+      .toEqual(['DUEL', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE']);
+
+    // ② 第 5 轮致死即截断：块长 5、死者不再被轮换；先手恒为发起方、逐轮交替
+    const rounds = flat.slice(duelIdx + 1, duelIdx + 6).map(e => e.data!);
+    expect(rounds.map(r => r.duelRound)).toEqual([1, 2, 3, 4, 5]);
+    expect(rounds.map(r => [r.sourceGeneralId, r.targetId, r.newHp, r.newArmor])).toEqual([
+      ['du_elj', 'du_vic', 4, 0], ['du_vic', 'du_elj', 8, 0],
+      ['du_elj', 'du_vic', 2, 0], ['du_vic', 'du_elj', 6, 0],
+      ['du_elj', 'du_vic', 0, 0],
+    ]);
+    // 决斗伤害＝技能伤害、逐轮复用同一枚技能载荷（报告/日志据此归属）
+    expect(rounds.every(r => r.damageType === 'skill' && String(r.skillId).includes('挑战:e1'))).toBe(true);
+
+    // ③ 同技能后序效果在整块之后落账，且决斗算学时读不到它
+    const followIdx = flat.findIndex(e => e.type === 'GAIN_ARMOR' && String(e.data?.skillId ?? '').includes('挑战:e2'));
+    expect(followIdx).toBe(duelIdx + 6);
+    expect(fieldHp(engine.state, 1, 'du_elj')).toEqual({ hp: 6, armor: 1 });
+
+    // ④ 决斗每一"打"不响任何触发监听：忍创只被开场那次普攻打响（决斗里它挨了 3 下）
+    const enduring = flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('忍创:e1'));
+    expect(enduring).toHaveLength(1);
+
+    // ⑤ 致死善后沿用既有派生链：onKill / onDeath 同局成立，补偿抽归阵亡方（P2）
+    expect(flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('掠杀:e1'))).toHaveLength(1);
+    expect(flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('遗命:e1'))).toHaveLength(1);
+    expect(engine.state.drawState).toMatchObject({ reason: 'compensation', playerId: 2, totalCards: 1 });
+    expect(fieldHp(engine.state, 2, 'du_vic')).toBeUndefined();
+    expect((engine.state.players.find(p => p.id === 2)!.graveyard as Array<{ id: string }>).map(c => c.id)).toEqual(['du_vic']);
+    // 技能击杀的 DEATH 经有界重入回路落回事件流（沿用既有形状），DRAW_REQUIRED 本体仍不内联回显
+    const deaths = flat.filter(e => e.type === 'DEATH');
+    expect(deaths).toHaveLength(1);
+    expect(deaths[0].data).toMatchObject({ targetPlayerId: 2, targetId: 'du_vic', attackerPlayerId: 1, attackerId: 'du_elj', skillKill: true });
+    expect(flat.indexOf(deaths[0])).toBeGreaterThan(followIdx);
+    expect(flat.filter(e => e.type === 'DRAW_REQUIRED')).toHaveLength(0);
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    let bridgeState = build();
+    const bridgeSteps: string[][] = [];
+    for (const action of actions) {
+      const r = dispatchStoreAction({ engineState: bridgeState }, action);
+      bridgeState = r.engineState;
+      bridgeSteps.push(rawEvents(r.events));
+    }
+    expect(bridgeSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    let reconcileState = build();
+    const reconcileSteps: string[][] = [];
+    for (const action of actions) {
+      const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
+      reconcileState = r.engineState;
+      reconcileSteps.push(rawEvents(r.events));
+    }
+    expect(reconcileSteps).toEqual(steps);
+    expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.processed).toBe(1);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    // 同配置两跑逐字节一致：决斗零新增随机面（轮数规则定死、逐轮算术读定死的状态）
+    const againEngine = new GameEngine(build());
+    syncPlayerSkills(againEngine, againEngine.state);
+    expect(actions.map(a => rawEvents(againEngine.dispatch(a)))).toEqual(steps);
+    expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
+
+  it('决斗零位移反例：满六轮双方都活着不截断；SELF 目标＝自己对自己⇒诚实空转 (2.8 刀9)', () => {
+    const longA = makeGeneral('du_long', 20, [
+      {
+        name: '搦战',
+        effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'TARGET' } }],
+      },
+      {
+        name: '自斗',
+        effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'SELF' } }],
+      },
+    ]);
+    const tankField = makeFieldGeneral(makeGeneral('du_tank', 20, [
+      {
+        name: '铁壁',
+        effects: [{ id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+      },
+    ]), 2, 0);
+    Object.assign(tankField, {
+      currentArmor: 4,
+      armorCards: [{ id: 'du_arm_1', name: '军备', type: '军备' }, { id: 'du_arm_2', name: '军备', type: '军备' }],
+      isArming: true,
+    });
+    const build = () => makeState([
+      makePlayer(1, {
+        fieldGenerals: [makeFieldGeneral(longA, 1, 0)],
+        hand: COSTS.slice(0, 2).map(c => ({ ...c })),
+      }),
+      makePlayer(2, { fieldGenerals: [tankField] }),
+    ]);
+    const action = attack('du_long', 'du_tank', 0);
+
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    const steps = [rawEvents(engine.dispatch(action))];
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    const flat = steps[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    // 两条 DUEL：搦战逐轮入队，自斗（aId===bId）零轮次、不占状态
+    const duels = flat.filter(e => e.type === 'DUEL');
+    expect(duels.map(e => String(e.data?.skillId ?? ''))).toEqual(['du_long:搦战:e1', 'du_long:自斗:e1']);
+    expect(duels[1].data).toMatchObject({ sourceGeneralId: 'du_long', targetId: 'du_long' });
+
+    const duelIdx = flat.findIndex(e => e.type === 'DUEL');
+    const rounds = flat.slice(duelIdx + 1, duelIdx + 7);
+    expect(rounds.map(e => e.type)).toEqual(Array.from({ length: 6 }, () => 'DAMAGE'));
+    expect(rounds.map(e => e.data!.duelRound)).toEqual([1, 2, 3, 4, 5, 6]);
+    // 开场普攻已把 4 点甲吃空（攻击侧脱卡），决斗从裸体力算起：各三轮＝各掉 6 点
+    expect(rounds.map(e => [e.data!.targetId, e.data!.newHp])).toEqual([
+      ['du_tank', 18], ['du_long', 18], ['du_tank', 16], ['du_long', 16], ['du_tank', 14], ['du_long', 14],
+    ]);
+    expect(fieldHp(engine.state, 1, 'du_long')).toEqual({ hp: 14, armor: 0 });
+    expect(fieldHp(engine.state, 2, 'du_tank')).toEqual({ hp: 14, armor: 0 });
+    expect(engine.state.drawState).toBeNull(); // 无人阵亡 ⇒ 无补偿抽
+    // 铁壁只被开场普攻打响；决斗里它挨的三次一律静默
+    expect(flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('铁壁:e1'))).toHaveLength(1);
+    // 自斗空转不产生任何伤害事件：全场 DAMAGE ＝ 普攻 1 条 ＋ 决斗 6 条
+    expect(flat.filter(e => e.type === 'DAMAGE')).toHaveLength(7);
+
+    const againEngine = new GameEngine(build());
+    syncPlayerSkills(againEngine, againEngine.state);
+    expect(rawEvents(againEngine.dispatch(action))).toEqual(steps[0]);
+    expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
 });
 

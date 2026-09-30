@@ -30,7 +30,8 @@ export type DataSkillEffectType =
   | 'GIVE'
   | 'EQUIP_STRIP'
   | 'REVEAL'
-  | 'DECK_PLACE';
+  | 'DECK_PLACE'
+  | 'DUEL';
 
 /** v2.7.3 自定义条件门槛谓词（§G 建议书第 4 项，十二格表见 ARCH_MAP F 节）。
  * 条件不是事件也不是状态：它只决定"这条监听要不要响"，产零事件、写零状态。

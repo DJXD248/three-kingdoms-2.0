@@ -2,7 +2,7 @@
 import { SkillRuntimeEffect } from '../../data/generals';
 import {
   runtimeEffectTypeLabels, runtimeTargetLabels, SETTLEABLE_RUNTIME_TYPES,
-  WHOLE_HAND_RUNTIME_TYPES, WHOLE_HAND_LABEL,
+  WHOLE_HAND_RUNTIME_TYPES, WHOLE_HAND_LABEL, VALUELESS_RUNTIME_TYPES,
 } from '../../skills/skillExcelFormat';
 
 // ── Structured runtime effect editor (类型 + 数值 + 目标) ──
@@ -20,6 +20,7 @@ const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number) => stri
   EQUIP_STRIP: v => `拆掉 ${v} 张军备卡`,
   REVEAL: v => `观看牌堆顶 ${v} 张`,
   DECK_PLACE: v => (v === 0 ? '把全部手牌放回牌堆' : `把 ${v} 张手牌放回牌堆`),
+  DUEL: () => '与目标将领决斗（双方各三轮，最多六次）',
 };
 
 export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEffect; onChange: (r: SkillRuntimeEffect | undefined) => void }) {
@@ -30,6 +31,7 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
   // 其余类型的 0 没有含义，所以勾选框**只在这三类出现**——全局放开数字框＝新的静默失真。
   const supportsWholeHand = !!runtime && WHOLE_HAND_RUNTIME_TYPES.includes(runtime.type);
   const isWholeHand = supportsWholeHand && runtime?.value === 0;
+  const isValueless = !!runtime && VALUELESS_RUNTIME_TYPES.includes(runtime.type);
 
   const handleTypeChange = (val: string) => {
     if (!val) { onChange(undefined); return; }
@@ -38,7 +40,10 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
     onChange({
       type: nextType,
       // 换到一个不懂 0 的类型时绝不把 0 带过去（那正是"界面写 0、引擎当 1"的成因）。
-      value: WHOLE_HAND_RUNTIME_TYPES.includes(nextType) ? carried : Math.max(1, carried),
+      // 换成根本不读数的类型（决斗）时留空：给它塞一个 1＝把无意义的数字写进数据。
+      value: VALUELESS_RUNTIME_TYPES.includes(nextType)
+        ? undefined
+        : WHOLE_HAND_RUNTIME_TYPES.includes(nextType) ? carried : Math.max(1, carried),
       target: runtime?.target ?? 'TARGET',
     });
   };
@@ -64,22 +69,28 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
 
       {runtime && (
         <div className="flex items-center gap-2 pl-4">
-          <label className="text-[10px] text-emerald-400/50 whitespace-nowrap">└ 数值</label>
-          {supportsWholeHand && (
-            <label className="flex items-center gap-1 text-[10px] text-emerald-300 whitespace-nowrap">
-              <input type="checkbox" checked={!!isWholeHand} aria-label={WHOLE_HAND_LABEL}
-                onChange={e => onChange({
-                  ...runtime,
-                  value: e.target.checked ? 0 : Math.max(1, Math.floor(Number(runtime.value ?? 1)) || 1),
-                })} />
-              {WHOLE_HAND_LABEL}
-            </label>
-          )}
-          {/* 勾上「整只手」时**不显示**数字框：让它显示 1 就是数字框与生效值分叉（§12-55 同族）。 */}
-          {!isWholeHand && (
-            <input type="number" min={1} max={10} value={runtime.value ?? 1}
-              onChange={e => onChange({ ...runtime, value: Math.max(1, parseInt(e.target.value) || 1) })}
-              className={`${runtimeSelectCls} w-16`} />
+          {/* 决斗这类由规则定死数量的效果：不渲染数值行（给它一个数字框＝请项目
+              把"界面写 1、生效是六轮"的分叉搬进界面）。目标仍要选——决斗打谁。 */}
+          {!isValueless && (
+            <>
+              <label className="text-[10px] text-emerald-400/50 whitespace-nowrap">└ 数值</label>
+              {supportsWholeHand && (
+                <label className="flex items-center gap-1 text-[10px] text-emerald-300 whitespace-nowrap">
+                  <input type="checkbox" checked={!!isWholeHand} aria-label={WHOLE_HAND_LABEL}
+                    onChange={e => onChange({
+                      ...runtime,
+                      value: e.target.checked ? 0 : Math.max(1, Math.floor(Number(runtime.value ?? 1)) || 1),
+                    })} />
+                  {WHOLE_HAND_LABEL}
+                </label>
+              )}
+              {/* 勾上「整只手」时**不显示**数字框：让它显示 1 就是数字框与生效值分叉（§12-55 同族）。 */}
+              {!isWholeHand && (
+                <input type="number" min={1} max={10} value={runtime.value ?? 1}
+                  onChange={e => onChange({ ...runtime, value: Math.max(1, parseInt(e.target.value) || 1) })}
+                  className={`${runtimeSelectCls} w-16`} />
+              )}
+            </>
           )}
           <label className="text-[10px] text-emerald-400/50 whitespace-nowrap ml-2">目标</label>
           <select value={runtime.target || 'TARGET'}

@@ -212,7 +212,7 @@ export interface SkillEffect {
 
 /** 效果的结构化运行时载荷：类型 + 数值 + 目标角色 */
 export interface SkillRuntimeEffect {
-  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE' | 'EQUIP_STRIP' | 'REVEAL' | 'DECK_PLACE';
+  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE' | 'EQUIP_STRIP' | 'REVEAL' | 'DECK_PLACE' | 'DUEL';
   value?: number;
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
   /** 仅 DECK_PLACE 使用：手牌移到牌堆顶还是底（默认 BOTTOM） */

@@ -26,6 +26,7 @@ import {
   applyRevealEvent,
   applyDeckPlaceEvent,
 } from './eventProcessors/deckEvents';
+import { applyDuelEvent } from './eventProcessors/duelEvents';
 import {
   applyChoiceRequiredEvent,
   applyChoiceResolvedEvent,
@@ -72,8 +73,18 @@ export class EventProcessor {
       const before = next;
       next = this.apply(next, event, flow);
       const derivedStart = queue.length;
-      enqueueDerivedConsequences(queue, event, before, next);
-      if (collected) collected.push(...queue.slice(derivedStart));
+      // 2.8 刀9: the derivation point normally appends (queue.push) and returns
+      // null. A continuous-settlement effect (so far only DUEL) instead hands
+      // back a whole block that belongs at the HEAD of the queue — see
+      // PROJECT_ARCH_MAP §F "DUEL 决斗流程原语", 队列前置权（封口）row. The
+      // block's CONTENT is still decided by the single derivation point; this
+      // loop only decides placement, so nothing here mints game facts.
+      const headBlock = enqueueDerivedConsequences(queue, event, before, next);
+      const tailDerived = queue.slice(derivedStart);
+      if (headBlock && headBlock.length > 0) {
+        queue.unshift(...headBlock);
+      }
+      if (collected) collected.push(...(headBlock ?? []), ...tailDerived);
     }
 
     return next;
@@ -111,6 +122,8 @@ export class EventProcessor {
         return applyRevealEvent(state, event);
       case 'DECK_PLACE':
         return applyDeckPlaceEvent(state, event);
+      case 'DUEL':
+        return applyDuelEvent(state, event);
       case 'CHOICE_REQUIRED':
         return applyChoiceRequiredEvent(state, event);
       case 'CHOICE_RESOLVED':

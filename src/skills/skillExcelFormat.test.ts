@@ -11,6 +11,7 @@ import {
   readValueCell,
   WHOLE_HAND_LABEL,
   WHOLE_HAND_RUNTIME_TYPES,
+  VALUELESS_RUNTIME_TYPES,
   SETTLEABLE_RUNTIME_TYPES,
   detectEffectGroupWidth,
   detectEffectGroupStart,
@@ -214,6 +215,7 @@ describe('skillExcelFormat: 数值格按类型收口（v2.8.13 #49 方案 B＋2�
 
   it('其余类型写「全部」：这个词不归它们管，按没填处理并点名', () => {
     for (const t of SETTLEABLE_RUNTIME_TYPES) {
+      if (VALUELESS_RUNTIME_TYPES.includes(t)) continue; // 决斗另有专门一条（根本不读数）
       const read = readValueCell('全部', t);
       if (WHOLE_HAND_RUNTIME_TYPES.includes(t)) {
         expect(read).toEqual({ value: 0 });
@@ -223,6 +225,18 @@ describe('skillExcelFormat: 数值格按类型收口（v2.8.13 #49 方案 B＋2�
         expect(read.note).toContain('按没填处理');
       }
     }
+  });
+
+  it('决斗（2.8 刀9）：数值格根本不读——填了才点名，「无」仍按没填不作声', () => {
+    for (const cell of ['全部', '0', '3', WHOLE_HAND_LABEL]) {
+      const read = readValueCell(cell, 'DUEL');
+      expect(read.value).toBeUndefined();
+      expect(read.note).toContain(runtimeEffectTypeLabels.DUEL);
+      expect(read.note).toContain('按没填处理');
+    }
+    // 沿用其它类型的习惯：看不懂的话与「无」＝空着，不该为一句没填的话报警
+    expect(readValueCell('无', 'DUEL')).toEqual({});
+    expect(readValueCell('', 'DUEL')).toEqual({});
   });
 
   it('照旧：正数原样、空/无/非数字不填，负数仍然不当数', () => {
