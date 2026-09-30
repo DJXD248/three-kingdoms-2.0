@@ -2356,6 +2356,6 @@ HANDOFF §3（版本行 2.8.17＋本轮调整十点＋2.8.16 降为"上一轮"�
 
 - **登记面**：HANDOFF §3 本轮条／§9 本轮条／**§12-77**（七条判据）；ARCH_MAP **§H9**（徽章语义表＋"每枚徽章的运行时真话"，以及决斗三处更正）、**§H10**（v2.8.19 两锚复现记录）、CHANGELOG、README（测试计数与词汇表条数）、AGENTS.md（徽章常设规则一条）、双历史本轮章、`PLAYER_GLOSSARY.md`＋`词汇表.xlsx`。
 - **本刀没做的（不是遗漏）**：**刀 2 结算执法**（等您口令，见 §九末）；**觉醒技**仍没有任何机制、也没有您的定义 ⇒ 现在纯粹是分类标签，实现它之前要先问语义；#30 决斗实现；`Skill.forced` 依旧零消费者——这一点现在连 tooltip 自己都写着，免得玩家以为拨了开关就会变。
-- **远端 CI**：**PENDING**（本轮登记提交推送后核验并回填 §9 与本节；上一轮 #191 的账已结，无需重取）。
+- **远端 CI（本轮实测，回填）**：提交链＝feat `a82bcfe` → docs 登记 `5e60bf1`（附注标签 `v2.8.19` 挂此）→ 本回填提交。推送＝**一次性借道代理**（直连 `git push` 报 `Failed to connect to github.com:443 after 21068 ms`，master 与标签各靠 `-c http.proxy=http://127.0.0.1:10808` 推成，推完复看 `--local`／`--global` 的 `http.proxy` 仍为空＝零持久配置）。**CI #193**（run `36650322925`、sha `5e60bf1`、`event=push`）＝**Success**：四条 job `conclusion=success`、**0 失败步骤**（`test (24)` 唯一非 success＝去重跳过的 `Upload coverage report`；`test (22)` 本轮十步全 success）；注解逐 job 从 `check-runs/{id}/annotations` 量得 **11／1／1／1＝14 条、`annotation_level` 全为 warning、0 failure**＝`lint` 那 11 条仍是「Node.js 20 is deprecated」1 条＋`GameBoard.tsx` 的 10 条 react-hooks（4 conditional `useEffect`＋5 conditional `useMemo`＋1 missing dependency `cardTypeOrder`），与 #186–#191 逐 job 同分布＝**零新增**。判据侧两条再成立：一次 push 带两个提交只产生一条 run；**推标签不产生 run**（§12-59 第十一次反证）。**#192**（run `36605031587`、sha `fd7f5ab`）本轮在列表里读到 completed/success，按"不为登记检验结果的记录再追记"的停手判据不为其单开登记面；本回填提交自身的 run 若被后续引用，照旧**重新从 API 量一遍**。
 
 

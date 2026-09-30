@@ -80,6 +80,15 @@ knife 2, it needs the engine and it moves the anchors, so it waits for the user'
   强制发动 firing without a prompt; 觉醒技 still has no mechanism and no user definition), #30 duel
   implementation, and any change to the compiler or the trigger bridge — both of which still read
   neither `tags`/`tag` nor `forced`, which is now stated in the tooltip text itself.
+- **Remote CI (measured this round)**: direct push failed (`Failed to connect to github.com:443 after
+  21068 ms`), so master `fd7f5ab..5e60bf1` and tag `v2.8.19` each went out through a **one-shot**
+  `-c http.proxy=http://127.0.0.1:10808`; `--local`/`--global` `http.proxy` re-read as **empty** after
+  = no persistent config written. **CI #193** (run `36650322925`, sha `5e60bf1`, `event=push`) =
+  **Success**, all four jobs `conclusion=success` with **0 failed steps** (the only non-success step is
+  the deduped `Upload coverage report` in `test (24)`); annotations re-measured **per job** from
+  `check-runs/{id}/annotations` = **11 / 1 / 1 / 1 = 14, every one `warning`, 0 failures** — the same
+  distribution as #186–#191, i.e. **nothing new**. Two standing criteria re-confirmed: one push with
+  two commits produces **one** run, and pushing a tag produces **none**.
 - **Registration faces**: HANDOFF §3／§9／**§12-77** (seven criteria: multi-valuing a stored field
   keeps the old one read-only forever; badges, runtime switches and effect shapes may not
   compensate for each other; "start governing" splits into two knives and the first may not touch
