@@ -2,10 +2,12 @@
 import { useState } from 'react';
 import {
   SkillTriggerConfig, SkillTriggerType, allTriggerTypes, triggerTypeLabels,
-  getTriggerSubOptions,
+  getTriggerSubOptions, supportsListenerScope,
   DeploySubType, deploySubLabels,
   TurnSubType, turnSubLabels,
   DamageSubType, damageSubLabels,
+  TargetSubType, targetSubLabels,
+  ListenerScope, listenerScopeLabels,
   KillSubType, killSubLabels,
   CardSubType, cardSubLabels,
   ExpireCondition, expireLabels,
@@ -45,6 +47,24 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
     if (!val) { resetQuick({ type: trigger.type }); return; }
     resetQuick({ ...trigger, [field]: val });
   };
+
+  // v2.8.21 两个新维度（成为目标的来源／我听谁）各自独立成键：清空哪一格就只掉哪一格。
+  // 上面那个旧的 handleSubChange 清空细分会把整条触发重置，照搬过来会顺手抹掉另一轴。
+  const patchTrigger = (
+    patch: Partial<SkillTriggerConfig>,
+    drop: Exclude<keyof SkillTriggerConfig, 'type'>[],
+  ) => {
+    if (!trigger) return;
+    const next: SkillTriggerConfig = { ...trigger, ...patch };
+    for (const k of drop) delete next[k];
+    resetQuick(next);
+  };
+  const handleTargetSubChange = (val: string) => patchTrigger(
+    val ? { targetSubType: val as TargetSubType } : {},
+    val ? [] : ['targetSubType']);
+  const handleScopeChange = (val: string) => patchTrigger(
+    val ? { listenerScope: val as ListenerScope } : {},
+    val ? [] : ['listenerScope']);
 
   return (
     <div className="rounded-lg border border-cyan-900/30 bg-cyan-950/15 p-2 space-y-1.5">
@@ -106,6 +126,25 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
         </div>
       )}
 
+      {/* v2.8.21 监听扩面刀：「成为目标」的来源档。 */}
+      {subKind === 'target' && (
+        <div className="pl-4 space-y-1">
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] text-cyan-400/50 whitespace-nowrap">└ 被谁指名</label>
+            <select value={trigger?.targetSubType || ''} onChange={e => handleTargetSubChange(e.target.value)} className={selectCls}>
+              <option value="">请选择</option>
+              {(Object.entries(targetSubLabels) as [TargetSubType, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+          <p className="text-[9px] text-cyan-500/50 leading-tight">
+            不选＝只算攻击（与今天对局逐字一致）。
+            {trigger?.targetSubType && trigger.targetSubType !== 'attackTarget'
+              ? '这一档已经如实记下，但对局里现在只有「攻击指名目标」会发出这一声——技能那一路排在下一刀，接上之后才真的响。'
+              : ''}
+          </p>
+        </div>
+      )}
+
       {subKind === 'kill' && (
         <div className="flex items-center gap-2 pl-4">
           <label className="text-[10px] text-cyan-400/50 whitespace-nowrap">└ 击杀对象</label>
@@ -136,6 +175,23 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
         </div>
       )}
 
+      {/* v2.8.21 监听扩面刀：「我听谁」＝与触发时机正交的第二轴，只在认这一栏的时机上出现。 */}
+      {currentType && supportsListenerScope(currentType as SkillTriggerType) && (
+        <div className="pl-4 space-y-1">
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] text-cyan-400/50 whitespace-nowrap">└ 我听谁</label>
+            <select value={trigger?.listenerScope || ''} onChange={e => handleScopeChange(e.target.value)} className={selectCls}>
+              <option value="">请选择</option>
+              {(Object.entries(listenerScopeLabels) as [ListenerScope, string][]).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+          <p className="text-[9px] text-cyan-500/50 leading-tight">
+            不选＝只听自己（与今天对局逐字一致）。手牌、回合这类事件本来就记在玩家身上，
+            所以这类时机里「只听自己」与「听己方（同一席位）」是同一回事。
+          </p>
+        </div>
+      )}
+
       {/* Preview summary */}
       {currentType && (
         <div className="flex items-center gap-1 pt-0.5">
@@ -144,6 +200,9 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
           {subKind === 'deploy' && trigger?.deploySubType && <span className="text-[10px] text-cyan-400/70">→ {deploySubLabels[trigger.deploySubType]}</span>}
           {subKind === 'turn' && trigger?.turnSubType && <span className="text-[10px] text-cyan-400/70">→ {turnSubLabels[trigger.turnSubType]}</span>}
           {subKind === 'damage' && trigger?.damageSubType && <span className="text-[10px] text-cyan-400/70">→ {damageSubLabels[trigger.damageSubType]}</span>}
+          {/* 「成为目标」的预览把默认档也写出来：不选就是攻击，界面别说半句话。 */}
+          {subKind === 'target' && <span className="text-[10px] text-cyan-400/70">→ {targetSubLabels[trigger?.targetSubType ?? 'attackTarget']}</span>}
+          {trigger?.listenerScope && <span className="text-[10px] text-amber-300/70">· {listenerScopeLabels[trigger.listenerScope]}</span>}
           {subKind === 'kill' && trigger?.killSubType && <span className="text-[10px] text-cyan-400/70">→ {killSubLabels[trigger.killSubType]}</span>}
           {subKind === 'card' && trigger?.cardSubType && <span className="text-[10px] text-cyan-400/70">→ {cardSubLabels[trigger.cardSubType]}</span>}
           {subKind === 'expire' && trigger?.expireCondition && <span className="text-[10px] text-cyan-400/70">→ {expireLabels[trigger.expireCondition]}</span>}

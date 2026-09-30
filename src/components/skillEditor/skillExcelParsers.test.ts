@@ -405,3 +405,91 @@ describe('徽章多枚 · 技能标签列的读法', () => {
     expect(parseWarnings[0]).toContain('遗计济');
   });
 });
+
+describe('parseRowPerSkillSheet · 「我听谁」列（v2.8.21 监听扩面刀）', () => {
+  const GROUP8 = ['效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛', '效果1我听谁'];
+  const v5Header = [...FIXED, '技能门槛', '我听谁', ...GROUP8, '设定备注'];
+  const head = (trigger: string) => [...SKILL_CELL.slice(0, 8), trigger, ...SKILL_CELL.slice(9)];
+
+  it('技能级「我听谁」挂在这条技能的触发上', () => {
+    const row = [...head('受到伤害后'), '无', '听场上（所有玩家）',
+      '护院', '受到伤害后', '摸牌', 1, '自身', '己方有人受伤就摸一张', '无', '听己方（同一席位）', ''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([v5Header, row]);
+    expect(parseWarnings).toEqual([]);
+    expect(entries[0].skills[0].trigger).toEqual({ type: 'onDamageTaken', listenerScope: 'field' });
+    expect(entries[0].skills[0].effects![0].trigger).toEqual({ type: 'onDamageTaken', listenerScope: 'allySeat' });
+  });
+
+  it('留空＝不填（缺省＝只听自己＝扩面前的逐字行为）', () => {
+    const row = [...head('受到伤害后'), '无', '无', '护院', '受到伤害后', '摸牌', 1, '自身', '受伤摸一张', '无', '无', ''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([v5Header, row]);
+    expect(parseWarnings).toEqual([]);
+    expect(entries[0].skills[0].trigger).toEqual({ type: 'onDamageTaken' });
+    expect(entries[0].skills[0].effects![0].trigger).toEqual({ type: 'onDamageTaken' });
+  });
+
+  it('时机不认这一栏／词不认识／没有触发时机：三种都点名，绝不静默收下', () => {
+    const ignored = parseRowPerSkillSheet([v5Header,
+      [...head('回合结束时'), '无', '听场上（所有玩家）', '无', '无', '无', '无', '无', '无', '无', '无', '']]);
+    expect(ignored.entries[0].skills[0].trigger).toEqual({ type: 'onTurnEnd' });
+    expect(ignored.parseWarnings).toHaveLength(1);
+    expect(ignored.parseWarnings[0]).toContain('我听谁');
+    expect(ignored.parseWarnings[0]).toContain('回合结束时');
+
+    const unknown = parseRowPerSkillSheet([v5Header,
+      [...head('受到伤害后'), '无', '听隔壁', '无', '无', '无', '无', '无', '无', '无', '无', '']]);
+    expect(unknown.parseWarnings).toHaveLength(1);
+    expect(unknown.parseWarnings[0]).toContain('听隔壁');
+
+    const noTrigger = parseRowPerSkillSheet([v5Header,
+      [...SKILL_CELL.slice(0, 8), '无', ...SKILL_CELL.slice(9), '无', '只听自己', '无', '无', '无', '无', '无', '无', '无', '无', '']]);
+    expect(noTrigger.entries[0].skills[0].trigger).toBeUndefined();
+    expect(noTrigger.parseWarnings).toHaveLength(1);
+    expect(noTrigger.parseWarnings[0]).toContain('没有触发时机');
+  });
+
+  it('旧版 12 固定列（没有「我听谁」这一栏）照旧导入，一栏都不填', () => {
+    const oldHeader = [...FIXED, '技能门槛', '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛', '设定备注'];
+    const row = [...head('受到伤害后'), '无', '护院', '受到伤害后', '摸牌', 1, '自身', '受伤摸一张', '无', ''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([oldHeader, row]);
+    expect(parseWarnings).toEqual([]);
+    expect(entries[0].skills[0].trigger).toEqual({ type: 'onDamageTaken' });
+  });
+
+  it('这一组只写了「我听谁」⇒不凭空造效果，只回显', () => {
+    const row = [...head('受到伤害后'), '无', '无', '无', '无', '无', '无', '无', '无', '无', '听场上（所有玩家）', ''];
+    const { entries, parseWarnings } = parseRowPerSkillSheet([v5Header, row]);
+    expect(entries[0].skills[0].effects).toBeUndefined();
+    expect(parseWarnings).toHaveLength(1);
+    expect(parseWarnings[0]).toContain('我听谁');
+  });
+});
+
+describe('importEntryChangesNothing · 两个新维度按默认档归一（v2.8.21）', () => {
+  const oldHeader = [...FIXED, '技能门槛',
+    '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛', '设定备注'];
+  const oldRow = ['赵云', '蜀', 4, 2, 1, '回刺', '无', '否', '成为攻击目标时', '无', '被人指名就回刺', '无',
+    '回刺', '成为攻击目标时', '伤害', 1, '伤害来源', '被指名就回刺', '无', ''];
+  const parsed = parseRowPerSkillSheet([oldHeader, oldRow]);
+  const e = parsed.entries[0];
+
+  it('旧写法「成为攻击目标时」读成显式攻击档：与现行卡面（不写细分）是同一件事', () => {
+    expect(parsed.parseWarnings).toEqual([]);
+    expect(e.skills[0].trigger).toEqual({ type: 'onBecomingTarget', targetSubType: 'attackTarget' });
+    const stored = (e.skills as General['skills']).map(s => ({
+      ...s,
+      trigger: { type: 'onBecomingTarget' as const },
+      effects: s.effects?.map(f => ({ ...f, trigger: { type: 'onBecomingTarget' as const } })),
+    }));
+    expect(importEntryChangesNothing({ ...e.general, skills: stored }, e.gEdit, e.skills)).toBe(true);
+  });
+
+  it('但真的扩了面（听场上）⇒判为有变化，判定不是恒真', () => {
+    const stored = (e.skills as General['skills']).map(s => ({
+      ...s, trigger: { type: 'onBecomingTarget' as const },
+    }));
+    const widened = structuredClone(e.skills) as General['skills'];
+    widened[0].trigger = { type: 'onBecomingTarget', targetSubType: 'attackTarget', listenerScope: 'field' };
+    expect(importEntryChangesNothing({ ...e.general, skills: stored }, e.gEdit, widened)).toBe(false);
+  });
+});

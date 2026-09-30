@@ -77,15 +77,44 @@ function buildCondition(
   const { ownerId, skill } = binding;
   const generalId = skill.sourceGeneralId;
   const damageFilter = skill.damageTypeFilter;
+  // v2.8.21 监听扩面刀：两维的缺省值都必须等于扩面前的逐字行为——
+  // 不听别人的事（self）、只听攻击引起的目标（attack）。
+  const scope = skill.listenerScope ?? 'self';
+  const targetSource = skill.targetSource ?? 'attack';
+
+  /** 「我听谁」的玩家那一层。`field` 档不比玩家键，但**事件必须带着这个键**：
+   *  缺键＝这件事根本没落到某一位玩家身上（本营被攻击的 BEFORE_DAMAGE 就是这种），
+   *  那是"没有受击者"，不是"受击者不是我"⇒ 三档都不响。这条保住了扩面前
+   *  "打本营不会触发将领的受击类技能"那一既有事实。 */
+  const playerMatches = (playerKey: unknown): boolean =>
+    scope === 'field'
+      ? playerKey !== undefined && playerKey !== null
+      : idEq(ownerId, playerKey);
+
+  /** 「我听谁」的将领那一层：只有 `self` 档认这一层（扩面门的严格写法——
+   *  知道将Id 时键必须对得上，缺键＝对不上＝不响）。手牌／回合开始这类事件的键
+   *  本来就只有玩家一维（将领不持牌），那里 `self` 与 `allySeat` 是同一件事。 */
+  const generalMatches = (generalKey: unknown): boolean =>
+    scope !== 'self' || !generalId || idEq(generalId, generalKey);
+
+  /** 「这事是谁引起的」（v2.8.21 第二维）：读通知事件**已经记下**的那个字段，
+   *  不在这里重新推断伤害数学。缺 `damageType`＝攻击结算那一条路（今日
+   *  `BEFORE_DAMAGE` 的唯一生产者=`AttackResolver`，它不带这个字段）⇒ 记为攻击
+   *  引起。技能指定目标的那一档由 #70/#71 的发射器显式带 `damageType:'skill'`。 */
+  const sourceMatches = (data: Record<string, unknown>): boolean => {
+    if (targetSource === 'any') return true;
+    const kind = data.damageType === 'skill' ? 'skill' : 'attack';
+    return kind === targetSource;
+  };
 
   const identityCheck = (context: TriggerContext): boolean => {
     const data = asRecord(context.event.data);
     switch (trigger) {
       case 'onTurnStart':
-        return idEq(ownerId, data.playerId);
+        return playerMatches(data.playerId);
       case 'onDeploy': {
-        if (!idEq(ownerId, data.playerId)) return false;
-        if (generalId) {
+        if (!playerMatches(data.playerId)) return false;
+        if (generalId && scope === 'self') {
           const deployedId = data.general && typeof data.general === 'object'
             ? getRuntimeCardId(data.general as never)
             : data.general === undefined ? '' : String(data.general);
@@ -94,17 +123,17 @@ function buildCondition(
         return true;
       }
       case 'onDamageTaken': {
-        if (!idEq(ownerId, data.targetPlayerId)) return false;
-        if (generalId && !idEq(generalId, data.targetId ?? data.target)) return false;
+        if (!playerMatches(data.targetPlayerId)) return false;
+        if (!generalMatches(data.targetId ?? data.target)) return false;
         if (damageFilter && data.damageType !== damageFilter) return false;
         return true;
       }
       case 'onDamageDealt': {
         const action = asRecord(data.action);
-        if (!idEq(ownerId, action.playerId)) return false;
+        if (!playerMatches(action.playerId)) return false;
         if (generalId) {
           const payload = asRecord(action.payload);
-          if (!idEq(generalId, payload.attackerId ?? action.attackerId)) return false;
+          if (!generalMatches(payload.attackerId ?? action.attackerId)) return false;
         }
         // AFTER_DAMAGE is currently emitted only by attack resolution, so a
         // skill-damage filter can never match here (documented engine fact).
@@ -113,29 +142,30 @@ function buildCondition(
         return true;
       }
       case 'onKill': {
-        if (!idEq(ownerId, data.attackerPlayerId)) return false;
-        if (generalId && !idEq(generalId, data.attackerId)) return false;
+        if (!playerMatches(data.attackerPlayerId)) return false;
+        if (!generalMatches(data.attackerId)) return false;
         return true;
       }
       case 'onDeath': {
-        if (!idEq(ownerId, data.targetPlayerId)) return false;
-        if (generalId && !idEq(generalId, data.targetId)) return false;
+        if (!playerMatches(data.targetPlayerId)) return false;
+        if (!generalMatches(data.targetId)) return false;
         return true;
       }
       case 'onBecomingTarget': {
         // BEFORE_DAMAGE for a base attack carries no targetPlayerId, so the
         // owner check below legitimately never matches — being attacked as a
-        // base is not "a general becoming a target".
-        if (!idEq(ownerId, data.targetPlayerId)) return false;
-        if (generalId && !idEq(generalId, data.targetId ?? data.target)) return false;
-        return true;
+        // base is not "a general becoming a target"（`field` 档同样不响：那里
+        // 缺的是"受击者"这个人，不是"受击者不是我"）。
+        if (!playerMatches(data.targetPlayerId)) return false;
+        if (!generalMatches(data.targetId ?? data.target)) return false;
+        return sourceMatches(data);
       }
       case 'onCardLost':
       case 'onCardGained': {
         // Hands live on players, not general instances (same keying lesson
         // as DISCARD, 2.5.0): CARD_* keys the losing/gaining PLAYER only.
         // sourceGeneralId never narrows these triggers.
-        if (!idEq(ownerId, data.playerId)) return false;
+        if (!playerMatches(data.playerId)) return false;
         if (trigger === 'onCardLost' && skill.cardFilter && skill.cardFilter !== 'any') {
           // v2.6.2 emission-source predicates. The via/remainingHand facts
           // are recorded by the derivation itself (chainedConsequences), so

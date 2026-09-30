@@ -41,6 +41,7 @@
  */
 
 import type { General, Skill, SkillCondition, SkillEffect, SkillTriggerType } from '../data/generals';
+import { supportsListenerScope } from '../data/generals';
 import type {
   DataSkillDefinition,
   DataSkillEffectType,
@@ -151,6 +152,8 @@ interface CompiledEffect {
   damageTypeFilter?: DataSkillDefinition['damageTypeFilter'];
   cardFilter?: DataSkillDefinition['cardFilter'];
   turnSubType?: DataSkillDefinition['turnSubType'];
+  targetSource?: DataSkillDefinition['targetSource'];
+  listenerScope?: DataSkillDefinition['listenerScope'];
   /** v2.8.3 门槛：录在**这条效果**上，编译后成为该定义的 conditions。 */
   conditions?: SkillCondition[];
   /** Trigger identity used by the choice grouping (2.6.3): effects compiled
@@ -209,6 +212,21 @@ export function compileSkill(
       if (triggerConfig.damageSubType === 'attackDamage') damageTypeFilter = 'attack';
       else if (triggerConfig.damageSubType === 'skillDamage') damageTypeFilter = 'skill';
     }
+    // v2.8.21 监听扩面刀·来源档：只有「成为目标时」这一型有这一维。**缺省不写＝
+    // 'attack'**（扩面前 label 写死的就是"成为攻击目标时"，官方四条与 DIY 夹具
+    // 那条的描述也都这么写）⇒ 这一维今日不扩响、不动两个锚池。
+    let targetSource: DataSkillDefinition['targetSource'];
+    if (mapped === 'onBecomingTarget') {
+      const sub = triggerConfig.targetSubType;
+      targetSource = sub === 'skillTarget' ? 'skill' : sub === 'anyTarget' ? 'any' : 'attack';
+    }
+    // v2.8.21 监听扩面刀·「我听谁」：缺省不写＝'self'＝扩面前逐字行为。
+    // 只在触发型自认支持这一维时才带上（录入面认不出的组合由 Excel 侧点名，
+    // 编译器这一侧绝不把"听场上"悄悄塞进一个听不懂的时机）。
+    let listenerScope: DataSkillDefinition['listenerScope'];
+    if (triggerConfig.listenerScope && supportsListenerScope(triggerConfig.type)) {
+      listenerScope = triggerConfig.listenerScope;
+    }
     // v2.6.2 card-trigger predicates (连营/枭姬 keys): 'anyLost' and an
     // absent sub-type stay the pre-expansion any-source behavior (undefined
     // filter). A sub-type that contradicts its trigger direction, or a
@@ -254,8 +272,10 @@ export function compileSkill(
       damageTypeFilter,
       cardFilter,
       turnSubType,
+      targetSource,
+      listenerScope,
       conditions: effect.conditions && effect.conditions.length > 0 ? effect.conditions : undefined,
-      signature: `${mapped}|${damageTypeFilter ?? ''}|${cardFilter ?? ''}|${turnSubType ?? ''}`,
+      signature: `${mapped}|${damageTypeFilter ?? ''}|${cardFilter ?? ''}|${turnSubType ?? ''}|${targetSource ?? ''}|${listenerScope ?? ''}`,
     };
   };
 
@@ -268,6 +288,8 @@ export function compileSkill(
     sourceGeneralId: runtimeGeneralId,
     damageTypeFilter: c.damageTypeFilter,
     cardFilter: c.cardFilter,
+    targetSource: c.targetSource,
+    listenerScope: c.listenerScope,
     // ACTIVATE_SKILL addressing (2.3.1): id doubles as `<general>:<skill>:<effect>`,
     // these two fields let resolvers/UI read the parts without parsing.
     effectId: c.effect.id,
@@ -314,6 +336,8 @@ export function compileSkill(
         sourceGeneralId: runtimeGeneralId,
         damageTypeFilter: group[0].damageTypeFilter,
         cardFilter: group[0].cardFilter,
+        targetSource: group[0].targetSource,
+        listenerScope: group[0].listenerScope,
         turnSubType: group[0].turnSubType,
         choiceMode: true,
         conditions: skill.conditions?.length ? skill.conditions : undefined,

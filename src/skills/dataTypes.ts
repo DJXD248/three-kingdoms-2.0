@@ -80,6 +80,18 @@ export interface DataSkillDefinition {
   sourceGeneralId?: string;
   /** Restrict damage triggers to a single damage source category. */
   damageTypeFilter?: 'attack' | 'skill';
+  /** v2.8.21 监听扩面刀·来源档（只挂在 `onBecomingTarget` 上）：这一下"被指定为
+   *  目标"是攻击引起的还是技能引起的。缺省 `'attack'`＝扩面前的逐字行为（通知
+   *  事件今天唯一的生产者是攻击结算），与官方四条＋DIY 夹具那条的描述一致⇒
+   *  两个锚池结构上不动。求值点=`SkillTriggerBridge` 的 identityCheck。
+   *  如实账：`'skill'`／`'any'` 两档**今日无发射器**（技能指定目标不发通知），
+   *  发射器在 #70/#71——本刀交付的是"读得到、且只按记录的事实判"的消费面。 */
+  targetSource?: 'attack' | 'skill' | 'any';
+  /** v2.8.21 监听扩面刀·「我听谁」：发生在别人身上的事算不算我的触发。
+   *  缺省 `'self'`＝扩面前行为（只认自己身上）。`'allySeat'`＝同一玩家席位的
+   *  全部将领（§H9 第七轮②的"己方"＝席位，不是势力）；`'field'`＝全场任一席。
+   *  手牌／回合开始这类事件本来就挂在玩家身上，那里 `self` 与 `allySeat` 同义。 */
+  listenerScope?: 'self' | 'allySeat' | 'field';
   /** v2.6.2: restrict onCardLost triggers to an emission-source predicate
    * (equipment strip / hand paths with a remainingHand fact / any source).
    * CARD_GAINED has no source variety yet — the filter never narrows it. */

@@ -47,7 +47,7 @@ export type SkillTriggerType =
   | 'onOtherDeploy'      // 其他将领登场时
   | 'onTurnStart'        // 回合开始时
   | 'onTurnEnd'          // 回合结束时
-  | 'onBecomingTarget'   // 成为攻击目标时
+  | 'onBecomingTarget'   // 成为目标时（v2.8.21 起：攻击／技能两档由 targetSubType 定）
   | 'onDamageTaken'      // 受到伤害后
   | 'onTargetConfirmed'  // 确定攻击目标时（攻击方视角）
   | 'onDamageDealt'      // 造成伤害后
@@ -75,6 +75,19 @@ export type KillSubType = 'killAlly' | 'killEnemy';
  *  位置（手牌/装备）与时点（是否最后一张手牌）谓词化——连营/枭姬的
  *  原文语义钥匙。anyLost/anyGained 为宽松默认（与扩面前行为一致）。 */
 export type CardSubType = 'anyLost' | 'equipmentLost' | 'lastHandLost' | 'handLost' | 'anyGained';
+/** v2.8.21 监听扩面刀·第一维「这事是谁引起的」：`onBecomingTarget` 原来只有一
+ *  个写死的名字（成为**攻击**目标时），决斗那类"被技能点为目标"因此无法表达。
+ *  用户口径（§H9 第九轮⑦）＝既有技能按**描述**定档，描述只有三种写法；缺省
+ *  （旧写法/没选）＝`attackTarget`，与官方四条＋DIY 夹具那一条的描述逐字一致
+ *  ⇒ 不扩响，两个锚池结构上不动。 */
+export type TargetSubType = 'attackTarget' | 'skillTarget' | 'anyTarget';
+/** v2.8.21 监听扩面刀·第二维「我听谁」：§H9 第七轮② 的"己方"＝**同一个玩家
+ *  席位**（用户原话更正，不是同势力），"场上"＝第三方座位也算。
+ *  缺省（undefined）＝`self`＝监听只认发生在自己身上的事，即扩面前的逐字行为。
+ *  注意：手牌与回合这两类事件天生挂在**玩家**身上（将领不持牌），所以
+ *  `onCardLost`／`onCardGained`／`onTurnStart` 三档里 `self` 与 `allySeat`
+ *  是同一个意思，只有 `field` 真的扩面。 */
+export type ListenerScope = 'self' | 'allySeat' | 'field';
 export type ExpireCondition =
   | 'untilSelfTurnStart' | 'untilSelfTurnEnd'
   | 'untilOtherTurnStart' | 'untilOtherTurnEnd'
@@ -87,6 +100,8 @@ export interface SkillTriggerConfig {
   damageSubType?: DamageSubType;         // onDamageTaken/onDamageDealt/onBaseDamaged 细分
   killSubType?: KillSubType;             // onKill 细分
   cardSubType?: CardSubType;             // onCardLost/onCardGained 细分（v2.6.2）
+  targetSubType?: TargetSubType;         // onBecomingTarget 来源细分（v2.8.21，缺省＝攻击）
+  listenerScope?: ListenerScope;         // 「我听谁」（v2.8.21，缺省＝只听自己＝扩面前行为）
   expireCondition?: ExpireCondition;     // untilExpire 细分
 }
 
@@ -96,7 +111,7 @@ export const triggerTypeLabels: Record<SkillTriggerType, string> = {
   onOtherDeploy: '其他将领登场时',
   onTurnStart: '回合开始时',
   onTurnEnd: '回合结束时',
-  onBecomingTarget: '成为攻击目标时',
+  onBecomingTarget: '成为目标时',
   onDamageTaken: '受到伤害后',
   onTargetConfirmed: '确定攻击目标时',
   onDamageDealt: '造成伤害后',
@@ -135,6 +150,12 @@ export const cardSubLabels: Record<CardSubType, string> = {
   anyLost: '失去任意牌', equipmentLost: '失去军备牌', lastHandLost: '失去最后一张手牌',
   handLost: '失去手牌', anyGained: '获得任意牌',
 };
+export const targetSubLabels: Record<TargetSubType, string> = {
+  attackTarget: '成为攻击目标', skillTarget: '成为技能目标', anyTarget: '成为目标（两种都算）',
+};
+export const listenerScopeLabels: Record<ListenerScope, string> = {
+  self: '只听自己', allySeat: '听己方（同一席位）', field: '听场上（所有玩家）',
+};
 export const expireLabels: Record<ExpireCondition, string> = {
   untilSelfTurnStart: '到下个己方回合开始前', untilSelfTurnEnd: '到下个己方回合结束前',
   untilOtherTurnStart: '到下个其他玩家回合开始前', untilOtherTurnEnd: '到下个其他玩家回合结束前',
@@ -142,15 +163,35 @@ export const expireLabels: Record<ExpireCondition, string> = {
 };
 
 // 哪些触发类型需要哪些细分选项
-export function getTriggerSubOptions(type: SkillTriggerType): 'deploy' | 'turn' | 'damage' | 'kill' | 'card' | 'expire' | null {
+export function getTriggerSubOptions(type: SkillTriggerType): 'deploy' | 'turn' | 'damage' | 'target' | 'kill' | 'card' | 'expire' | null {
   switch (type) {
     case 'onOtherDeploy': return 'deploy';
     case 'onTurnStart': case 'onTurnEnd': return 'turn';
     case 'onDamageTaken': case 'onDamageDealt': case 'onBaseDamaged': return 'damage';
+    case 'onBecomingTarget': return 'target';
     case 'onKill': return 'kill';
     case 'onCardLost': case 'onCardGained': return 'card';
     case 'untilExpire': return 'expire';
     default: return null;
+  }
+}
+
+/**
+ * v2.8.21「我听谁」适用面（§H9 第七轮②/③：受击、受伤、失去/获得牌、登场、
+ * 回合开始这些都是"发生在某个人身上的事"，所以监听者可以听自己／听同席位／听全场）。
+ * 刻意不放进 `getTriggerSubOptions`：那一函数一型只发一档，而这一维与
+ * `damageSubType` 之类**并存**（「受到伤害后」既可以挑"哪种伤害"也可以挑"听谁"），
+ * 所以它是第二条轴、由录入面与 Excel 各占一列／一格独立往返。
+ * `onOtherDeploy` 不在此列：它的细分本来就是"己方他人登场／他人登场"，
+ * 再叠一维会互相矛盾；`onTurnEnd` 根本没有自动发动路径（2.3.1 单路径纪律）。
+ */
+export function supportsListenerScope(type: SkillTriggerType): boolean {
+  switch (type) {
+    case 'onDeploy': case 'onTurnStart': case 'onBecomingTarget':
+    case 'onDamageTaken': case 'onDamageDealt': case 'onKill': case 'onDeath':
+    case 'onCardLost': case 'onCardGained':
+      return true;
+    default: return false;
   }
 }
 

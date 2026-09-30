@@ -15,6 +15,10 @@ import {
   effectGroupHeaders,
   serializeEffectGroup,
   serializeSkillGate,
+  LISTENER_SCOPE_HEADER,
+  LISTENER_SCOPE_HINT,
+  LISTENER_SCOPE_LIST,
+  listenerScopeToStr,
   RUNTIME_TYPE_LIST,
   RUNTIME_TARGET_LIST,
 } from '../skills/skillExcelFormat';
@@ -604,11 +608,13 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // ── Export to Excel using ExcelJS ──
   // Format: one row per SKILL (not per general). Each general occupies N rows (N = number of skills).
   // Multi-effect skills: sub-effects occupy additional columns within the skill row.
-  // Effect group (7 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 | 门槛 — 只有填了效果类型(+数值)的效果
+  // Effect group (8 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 | 门槛 | 我听谁 — 只有填了效果类型(+数值)的效果
   // 才会被技能编译器接入对局结算（见 skills/skillCompiler.ts）；门槛=该效果的发动条件（可空）。
-  // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 技能门槛 | 效果1标注 | 效果1触发 | 效果1效果类型 | 效果1数值 | 效果1目标 | 效果1描述 | 效果1门槛 | ... | 设定备注
+  // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 技能门槛 | 我听谁 | 效果1标注 | 效果1触发 | ... | 设定备注
   // v2.8.11 刀2：新增固定列「技能门槛」＝整组门槛（技能级）；效果组第 7 列
   // 「效果N门槛」＝逐项门槛，两者是两级（先整组、再逐项）。
+  // v2.8.21 监听扩面刀：再加一轴（技能级固定列「我听谁」＋效果组第 8 列「效果N我听谁」），
+  // 与门槛同样是两级分工；旧文件没有这些列＝按没填读（＝只听自己）。
   const handleExport = useCallback(async () => {
     try {
       const factionOrder: Faction[] = ['魏', '蜀', '吴', '群', '晋'];
@@ -635,8 +641,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
 
         const ws = wb.addWorksheet(faction);
 
-        // Build header
-        const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述', '技能门槛'];
+        // Build header（13 个固定列＋每组 8 列＋设定备注；解析侧按表头认列，不按位置写死）
+        const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述', '技能门槛', LISTENER_SCOPE_HEADER];
         for (let e = 0; e < maxEffects; e++) header.push(...effectGroupHeaders(e + 1));
         header.push('设定备注');
 
@@ -647,8 +653,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         });
         // 两个门槛列（整组「技能门槛」＋逐效果「效果N门槛」）读的是同一个解析器，
         // 写法提示就同一句——只挑第一列贴会把逐效果那列的批注挤掉（v2.8.11 复算查出）。
+        // 「我听谁」两列同理（v2.8.21）。
         header.forEach((h, i) => {
           if (h.endsWith('门槛')) hdr.getCell(i + 1).note = { texts: [{ text: GATE_SYNTAX_HINT }] };
+          if (h === LISTENER_SCOPE_HEADER || /^效果\d+我听谁$/.test(h)) {
+            hdr.getCell(i + 1).note = { texts: [{ text: LISTENER_SCOPE_HINT }] };
+          }
         });
 
         // Data rows — one row per skill
@@ -678,11 +688,13 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               sk.effectMode === 'choice' ? '选择其一' : sk.effectMode === 'all' ? '全部生效' : '无',
               sk.description || '无',
               serializeSkillGate(sk.conditions),
+              // 「我听谁」住在触发配置里，导出时拆成自己的一列（与「技能门槛」同理）。
+              listenerScopeToStr(sk.trigger?.listenerScope),
             );
 
-            // Sub-effects (7-col groups: runtime fields + 发动门槛)
+            // Sub-effects (8-col groups: runtime fields + 发动门槛 + 我听谁)
             for (let e = 0; e < maxEffects; e++) {
-              row.push(...serializeEffectGroup(sk.effects?.[e], 7));
+              row.push(...serializeEffectGroup(sk.effects?.[e], 8));
             }
 
             // Note (only on first skill row)
@@ -711,19 +723,21 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             ws.getCell(r, 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${forcedList}"`] };
             ws.getCell(r, 9).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
             ws.getCell(r, 10).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${modeList}"`] };
+            ws.getCell(r, 13).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${LISTENER_SCOPE_LIST}"`] };
             for (let ei = 0; ei < maxEffects; ei++) {
-              // v3 group layout (1-based, 12 个固定列后): 标注=13+7n | 触发=14+7n |
-              // 类型=15+7n | 数值=16+7n | 目标=17+7n | 描述=18+7n | 门槛=19+7n
-              ws.getCell(r, 14 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
-              ws.getCell(r, 15 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
-              ws.getCell(r, 17 + ei * 7).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
+              // v4 group layout (1-based, 13 个固定列后): 标注=14+8n | 触发=15+8n |
+              // 类型=16+8n | 数值=17+8n | 目标=18+8n | 描述=19+8n | 门槛=20+8n | 我听谁=21+8n
+              ws.getCell(r, 15 + ei * 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
+              ws.getCell(r, 16 + ei * 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
+              ws.getCell(r, 18 + ei * 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
+              ws.getCell(r, 21 + ei * 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${LISTENER_SCOPE_LIST}"`] };
             }
           }
         }
 
         // Column widths
-        const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40, 26];
-        for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40, 26);
+        const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40, 26, 18];
+        for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40, 26, 18);
         widths.push(30);
         widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       }

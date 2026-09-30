@@ -13,6 +13,10 @@ import {
   WHOLE_HAND_RUNTIME_TYPES,
   VALUELESS_RUNTIME_TYPES,
   SETTLEABLE_RUNTIME_TYPES,
+  LISTENER_SCOPE_HEADER,
+  LISTENER_SCOPE_LIST,
+  listenerScopeToStr,
+  readListenerScopeCell,
   detectEffectGroupWidth,
   detectEffectGroupStart,
   SKILL_GATE_HEADER,
@@ -28,7 +32,7 @@ import {
   SETTLEABLE_RUNTIME_TYPE_LIST,
 } from './skillExcelFormat';
 import type { SkillCondition, SkillEffect, SkillTriggerConfig } from '../data/generals';
-import { allGenerals } from '../data/generals';
+import { allGenerals, listenerScopeLabels } from '../data/generals';
 import { compileSkill } from './skillCompiler';
 
 describe('skillExcelFormat: cell cleaning', () => {
@@ -282,9 +286,9 @@ describe('skillExcelFormat: effect column groups', () => {
     expect(detectEffectGroupWidth(v3Header)).toBe(7);
   });
 
-  it('builds v3 header cells for group n', () => {
+  it('builds v4 header cells for group n（v2.8.21 起第 8 列＝我听谁）', () => {
     expect(effectGroupHeaders(2)).toEqual([
-      '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述', '效果2门槛',
+      '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述', '效果2门槛', '效果2我听谁',
     ]);
   });
 
@@ -474,5 +478,94 @@ describe('skillExcelFormat — 「技能门槛」列（v2.8.11 整组门槛，�
     expect(detectEffectGroupStart(v3)).toBe(11);
     // 认不出「效果1标注」＝回退 11（旧档逐字行为）
     expect(detectEffectGroupStart(['将领名称', '势力'])).toBe(11);
+  });
+});
+
+describe('skillExcelFormat: 监听扩面（v2.8.21 「我听谁」＋「成为目标」来源档）', () => {
+  it('新的来源档进了下拉，也认得回去', () => {
+    const opts = buildTriggerOptionStrings();
+    expect(opts).toContain('成为目标时→成为技能目标');
+    expect(opts).toContain('成为目标时→成为目标（两种都算）');
+    for (const opt of ['成为目标时→成为攻击目标', '成为目标时→成为技能目标', '成为目标时→成为目标（两种都算）']) {
+      const read = readTriggerCell(opt);
+      expect(read.unreadable).toBeUndefined();
+      expect(triggerToStr(read.trigger)).toBe(opt);
+    }
+  });
+
+  it('半截细分照样不认（绝不替用户放宽自己写下的限制）', () => {
+    expect(readTriggerCell('成为目标时→攻击').unreadable).toBe('成为目标时→攻击');
+    expect(readTriggerCell('成为目标时→技能').unreadable).toBe('成为目标时→技能');
+  });
+
+  it('旧写法「成为攻击目标时」只进不出：读得懂，写出来是现行说法', () => {
+    const read = readTriggerCell('成为攻击目标时');
+    expect(read.unreadable).toBeUndefined();
+    expect(read.trigger).toEqual({ type: 'onBecomingTarget', targetSubType: 'attackTarget' });
+    expect(triggerToStr(read.trigger)).toBe('成为目标时→成为攻击目标');
+    // 写出面永远不会再产生旧词（单向门，v2.8.4 判据）
+    expect(buildTriggerOptionStrings().some(s => s === '成为攻击目标时')).toBe(false);
+  });
+
+  it('「我听谁」三档认得、留空＝没填、认不出的原文交回', () => {
+    for (const label of Object.values(listenerScopeLabels)) {
+      expect(readListenerScopeCell(label).scope).toBeTruthy();
+    }
+    expect(readListenerScopeCell('无').scope).toBeUndefined();
+    expect(readListenerScopeCell('').unknown).toBeUndefined();
+    expect(readListenerScopeCell('听全队').unknown).toBe('听全队');
+    expect(readListenerScopeCell(undefined).scope).toBeUndefined();
+    expect(listenerScopeToStr(undefined)).toBe('无');
+    expect(LISTENER_SCOPE_LIST.split(',')).toHaveLength(4);
+  });
+
+  it('表头认出 8 列组；旧档 3/6/7 列照常认（新列只在自己导出里出现）', () => {
+    const v4Header = ['x', ...effectGroupHeaders(1), ...effectGroupHeaders(2)];
+    expect(detectEffectGroupWidth(v4Header)).toBe(8);
+    expect(effectGroupHeaders(1)).toHaveLength(8);
+    expect(effectGroupHeaders(1)[7]).toBe('效果1' + LISTENER_SCOPE_HEADER);
+    expect(detectEffectGroupWidth(['x', '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛'])).toBe(7);
+  });
+
+  it('效果组的「我听谁」挂在这一组自己的触发上，导出再导入逐字回来', () => {
+    const original: SkillEffect = {
+      id: 'e1',
+      label: '护院',
+      trigger: { type: 'onDamageTaken', listenerScope: 'allySeat' },
+      runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+      description: '己方有人受伤就摸一张',
+    };
+    const cells = serializeEffectGroup(original, 8);
+    expect(cells[7]).toBe('听己方（同一席位）');
+    const back = parseEffectGroup(cells, 0, 8)!;
+    expect(back.fields.trigger).toEqual(original.trigger);
+    expect(back.scopeIgnored).toBeUndefined();
+    expect(back.scopeUnknown).toBeUndefined();
+    expect(serializeEffectGroup({ ...original, ...back.fields } as SkillEffect, 8)).toEqual(cells);
+  });
+
+  it('没细分的触发导出来是「无」，读回去也不带这一维（缺省＝扩面前行为）', () => {
+    const plain: SkillEffect = { id: 'e1', label: '奸雄', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } };
+    const cells = serializeEffectGroup(plain, 8);
+    expect(cells[1]).toBe('受到伤害后');
+    expect(cells[7]).toBe('无');
+    const back = parseEffectGroup(cells, 0, 8)!;
+    expect(back.fields.trigger).toEqual({ type: 'onDamageTaken' });
+  });
+
+  it('时机不认这一栏：点名退回，不静默收下', () => {
+    const parsed = parseEffectGroup(['纯描述', '回合结束时', '摸牌', '1', '自身', '到回合结束摸一张', '无', '听场上（所有玩家）'], 0, 8)!;
+    expect(parsed.scopeIgnored).toBe('听场上（所有玩家）');
+    expect(parsed.fields.trigger).toEqual({ type: 'onTurnEnd' });
+    const unknown = parseEffectGroup(['纯描述', '回合结束时', '摸牌', '1', '自身', '到回合结束摸一张', '无', '听隔壁'], 0, 8)!;
+    expect(unknown.scopeUnknown).toBe('听隔壁');
+  });
+
+  it('只写了「我听谁」的一组不凭空造效果', () => {
+    const parsed = parseEffectGroup(['无', '无', '无', '无', '无', '无', '无', '听场上（所有玩家）'], 0, 8)!;
+    expect(parsed.fields).toEqual({});
+    expect(parsed.scopeIgnored).toBe('听场上（所有玩家）');
+    expect(parseEffectGroup(['无', '无', '无', '无', '无', '无', '无', '无'], 0, 8)).toBeNull();
+    expect(serializeEffectGroup(undefined, 8)).toEqual(['无', '无', '无', '无', '无', '无', '无', '无']);
   });
 });

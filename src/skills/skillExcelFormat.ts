@@ -7,9 +7,13 @@
  *   - effect column-group serialization & parsing for ALL widths:
  *       v1 (legacy, 3 cols): 标注 | 触发 | 描述
  *       v2 (6 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述
- *       v3 (current, 7 cols): v2 + 门槛
+ *       v3 (7 cols): v2 + 门槛
+ *       v4 (current, 8 cols): v3 + 我听谁（v2.8.21 监听扩面刀）
  *     Width is detected from the header row, so old exported files still import.
  *   - 门槛（发动条件）cell <-> structured conditions, via skillGateText.ts.
+ *   - 「我听谁」cell <-> ListenerScope：它是**独立一列**，不挤进触发那句话里，
+ *     因为它与「伤害类型」那类细分是并存的第二轴（同一刻既要挑"哪种伤害"
+ *     也要挑"听谁的事"，一句话装不下两个正交的选择）。
  *
  * These helpers only translate between spreadsheet cells and the data model in
  * data/generals.ts. Whether an effect actually executes in-game is decided
@@ -27,17 +31,22 @@ import type {
   DamageSubType,
   KillSubType,
   CardSubType,
+  TargetSubType,
+  ListenerScope,
   ExpireCondition,
 } from '../data/generals';
 import {
   allTriggerTypes,
   triggerTypeLabels,
   getTriggerSubOptions,
+  supportsListenerScope,
   deploySubLabels,
   turnSubLabels,
   damageSubLabels,
   killSubLabels,
   cardSubLabels,
+  targetSubLabels,
+  listenerScopeLabels,
   expireLabels,
 } from '../data/generals';
 import { parseGateText, gateConditionsToText } from './skillGateText';
@@ -52,7 +61,8 @@ export function cleanCell(s: unknown): string {
 
 // ── Trigger <-> string ──────────────────────────────────────────────
 
-/** Format a trigger config as a readable string; undefined -> "无". */
+/** Format a trigger config as a readable string; undefined -> "无".
+ *  「我听谁」不写进这句话——它住在自己的列里（`LISTENER_SCOPE_HEADER`）。 */
 export function triggerToStr(t?: SkillTriggerConfig): string {
   if (!t || !t.type) return EMPTY;
   let s = triggerTypeLabels[t.type] || t.type;
@@ -60,6 +70,7 @@ export function triggerToStr(t?: SkillTriggerConfig): string {
   if (sub === 'deploy' && t.deploySubType) s += '→' + deploySubLabels[t.deploySubType];
   if (sub === 'turn' && t.turnSubType) s += '→' + turnSubLabels[t.turnSubType];
   if (sub === 'damage' && t.damageSubType) s += '→' + damageSubLabels[t.damageSubType];
+  if (sub === 'target' && t.targetSubType) s += '→' + targetSubLabels[t.targetSubType];
   if (sub === 'kill' && t.killSubType) s += '→' + killSubLabels[t.killSubType];
   if (sub === 'card' && t.cardSubType) s += '→' + cardSubLabels[t.cardSubType];
   if (sub === 'expire' && t.expireCondition) s += '→' + expireLabels[t.expireCondition];
@@ -77,6 +88,7 @@ export function buildTriggerOptionStrings(): string[] {
     if (subKind === 'deploy') labels = Object.values(deploySubLabels);
     else if (subKind === 'turn') labels = Object.values(turnSubLabels);
     else if (subKind === 'damage') labels = Object.values(damageSubLabels);
+    else if (subKind === 'target') labels = Object.values(targetSubLabels);
     else if (subKind === 'kill') labels = Object.values(killSubLabels);
     else if (subKind === 'card') labels = Object.values(cardSubLabels);
     else labels = Object.values(expireLabels);
@@ -94,8 +106,22 @@ export function buildTriggerOptionStrings(): string[] {
  */
 const LEGACY_CARD_SUB_LABELS: Record<string, CardSubType> = { 失去装备牌: 'equipmentLost' };
 
+/**
+ * v2.8.21 整格别名（同一个单向门，只是这次换的是**主名**）：`onBecomingTarget`
+ * 原来只有一个写死的名字「成为攻击目标时」，来源扩成三档后主名改成了泛指的
+ * 「成为目标时」。旧文件里那一格整句就是旧主名，所以别名挂在**整格**上、
+ * 归一成正现行的「成为目标时→成为攻击目标」再走严格读法；**写出侧只出现行写法**。
+ * 不认这一枚别名的后果与上面那族一样：老 `.xlsx` 里的受击类技能会读成"没看懂"，
+ * 技能照进、照显示、只是不再响。
+ */
+const LEGACY_TRIGGER_CELL_ALIASES: Record<string, string> = {
+  成为攻击目标时: `${triggerTypeLabels.onBecomingTarget}→${targetSubLabels.attackTarget}`,
+};
+
 /** 把 cell 里的旧细分词换成现行写法；不认识的一律原样交回。 */
 function normaliseLegacySubLabel(s: string): string {
+  const whole = LEGACY_TRIGGER_CELL_ALIASES[s];
+  if (whole) return whole;
   const i = s.indexOf('→');
   if (i < 0) return s;
   const sub = s.slice(i + 1).trim();
@@ -120,6 +146,7 @@ export function strToTrigger(s: string): SkillTriggerConfig | undefined {
     if (subKind === 'deploy') cfg.deploySubType = (Object.entries(deploySubLabels) as [DeploySubType, string][]).find(([, v]) => v === subLabel)?.[0];
     if (subKind === 'turn') cfg.turnSubType = (Object.entries(turnSubLabels) as [TurnSubType, string][]).find(([, v]) => v === subLabel)?.[0];
     if (subKind === 'damage') cfg.damageSubType = (Object.entries(damageSubLabels) as [DamageSubType, string][]).find(([, v]) => v === subLabel)?.[0];
+    if (subKind === 'target') cfg.targetSubType = (Object.entries(targetSubLabels) as [TargetSubType, string][]).find(([, v]) => v === subLabel)?.[0];
     if (subKind === 'kill') cfg.killSubType = (Object.entries(killSubLabels) as [KillSubType, string][]).find(([, v]) => v === subLabel)?.[0];
     if (subKind === 'card') cfg.cardSubType = (Object.entries(cardSubLabels) as [CardSubType, string][]).find(([, v]) => v === subLabel)?.[0];
     if (subKind === 'expire') cfg.expireCondition = (Object.entries(expireLabels) as [ExpireCondition, string][]).find(([, v]) => v === subLabel)?.[0];
@@ -140,6 +167,44 @@ export function readTriggerCell(s: unknown): { trigger?: SkillTriggerConfig; unr
   if (parsed && triggerToStr(parsed) === canonical) return { trigger: parsed };
   return { unreadable: trimmed };
 }
+
+// ── 「我听谁」（v2.8.21 监听扩面刀：独立一列，技能级与逐效果级各一列） ────
+
+/** 固定列名＝技能级那一栏；效果组第 8 列名是 `效果N我听谁`。 */
+export const LISTENER_SCOPE_HEADER = '我听谁';
+
+/** 写出侧：三档都写现行标签，没填＝「无」（＝只听自己＝扩面前的逐字行为）。 */
+export function listenerScopeToStr(scope?: ListenerScope): string {
+  return scope ? listenerScopeLabels[scope] : EMPTY;
+}
+
+export interface ListenerScopeRead {
+  scope?: ListenerScope;
+  /** 这一格写了字但词表认不出来：原文交回导入面逐条点名，绝不静默丢。 */
+  unknown?: string;
+}
+
+/** 只翻译词表，**不判断这一格挂的时机认不认这一栏**——那句人话由调用方写
+ *  （只有录入侧知道"这是谁的哪个效果"，报得出名字；同 v2.8.3 门槛的分工）。
+ *  时机认不认这一栏由 `data/generals.ts` 的 `supportsListenerScope` 单点判定
+ *  （编译器与录入面共用同一个根，不许两处各写一份）。 */
+export function readListenerScopeCell(raw: unknown): ListenerScopeRead {
+  const cell = cleanCell(raw);
+  if (!cell) return {};
+  const scope = (Object.entries(listenerScopeLabels) as [ListenerScope, string][])
+    .find(([, label]) => label === cell)?.[0];
+  return scope ? { scope } : { unknown: cell };
+}
+
+/** 三档的 Excel 下拉内容（「无」＝不填＝只听自己）。 */
+export const LISTENER_SCOPE_LIST = [EMPTY, ...Object.values(listenerScopeLabels)].join(',');
+
+/** 贴在这两列（技能级「我听谁」＋「效果N我听谁」）表头批注上的一句话。 */
+export const LISTENER_SCOPE_HINT =
+  '「我听谁」＝这一声响的时候，技能听多宽：只听自己／听己方（同一席位）／听场上（所有玩家）。'
+  + '留空＝只听自己（与今天对局一致）。'
+  + '只有部署、回合开始、成为目标、受到伤害、造成伤害、击杀、阵亡、失去牌、获得牌这些时机认这一栏；'
+  + '别的时机填了会按没填处理，并在导入报告里点名（不会静默收下）。';
 
 // ── Runtime effect fields ───────────────────────────────────────────
 
@@ -306,22 +371,25 @@ export function readValueCell(raw: unknown, type?: SkillRuntimeEffect['type']): 
 
 // ── Effect column groups (Excel) ────────────────────────────────────
 
-export type EffectGroupWidth = 3 | 6 | 7;
+export type EffectGroupWidth = 3 | 6 | 7 | 8;
 
 export const EFFECT_GROUP_COLS_V1 = ['标注', '触发', '描述'] as const;
 export const EFFECT_GROUP_COLS_V2 = ['标注', '触发', '效果类型', '数值', '目标', '描述'] as const;
 /** v2.8.3（刀 B）：第 7 列「门槛」——大白话文本，多条件用顿号/逗号/换行分隔。 */
 export const EFFECT_GROUP_COLS_V3 = [...EFFECT_GROUP_COLS_V2, '门槛'] as const;
+/** v2.8.21（监听扩面刀）：第 8 列「我听谁」——三档词表见 listenerScopeLabels。 */
+export const EFFECT_GROUP_COLS_V4 = [...EFFECT_GROUP_COLS_V3, LISTENER_SCOPE_HEADER] as const;
 
-/** Header cells for effect group n (1-based), current (7-col) format. */
+/** Header cells for effect group n (1-based), current (8-col) format. */
 export function effectGroupHeaders(n: number): string[] {
-  return EFFECT_GROUP_COLS_V3.map(c => `效果${n}${c}`);
+  return EFFECT_GROUP_COLS_V4.map(c => `效果${n}${c}`);
 }
 
 /** Detect the effect-group width of a sheet from its header row. */
 export function detectEffectGroupWidth(header: unknown[]): EffectGroupWidth {
   const cells = header.map(h => String(h ?? '').trim());
-  if (cells.some(h => /^效果\d+门槛/.test(h))) return 7;
+  if (cells.some(h => /^效果\d+我听谁$/.test(h))) return 8;
+  if (cells.some(h => /^效果\d+门槛$/.test(h))) return 7;
   return cells.some(h => /^效果\d+效果类型$/.test(h)) ? 6 : 3;
 }
 
@@ -370,6 +438,11 @@ export interface ParsedEffectGroup {
   triggerUnreadable?: string;
   /** 「数值」格这一格按没填处理时的大白话理由（#49 方案 B）：导入面必须点名，绝不静默换数。 */
   valueNote?: string;
+  /** 「我听谁」格写了但词表认不出来（v2.8.21）：交回导入面点名。 */
+  scopeUnknown?: string;
+  /** 「我听谁」格认出来了，但这一组的触发时机不认这一栏（v2.8.21）：
+   *  **不静默收下**——填了却没人读，就是下一轮的"显示与生效分叉"（§12-55 同族）。 */
+  scopeIgnored?: string;
 }
 
 /**
@@ -387,22 +460,30 @@ export function parseEffectGroup(
   let runtimeStr = { type: '', value: '', target: '' };
   let desc: string;
   let gateStr = '';
+  let scopeStr = '';
   if (width === 3) {
     desc = get(2);
   } else {
     runtimeStr = { type: get(2), value: get(3), target: get(4) };
     desc = get(5);
     if (width === 7) gateStr = get(6);
+    if (width === 8) { gateStr = get(6); scopeStr = get(7); }
   }
   const hasEffectBody = !!(label || desc || runtimeStr.type);
   const triggerRead = readTriggerCell(triggerStr);
   const canFormEffect = hasEffectBody || !!triggerRead.trigger;
-  if (!canFormEffect && !gateStr && !triggerRead.unreadable) return null;
+  if (!canFormEffect && !gateStr && !scopeStr && !triggerRead.unreadable) return null;
   if (!canFormEffect) {
-    // 这一组里没有一个"站得住的效果"（只写了门槛，或触发写法没看懂）：
+    // 这一组里没有一个"站得住的效果"（只写了门槛/只听谁，或触发写法没看懂）：
     // 不凭空造一个空效果占位（那会挤占效果编号并显示成"纯描述"），
     // 把原文交回导入面如实报告。
-    return { fields: {}, gateUnknown: [], orphanGate: gateStr, triggerUnreadable: triggerRead.unreadable };
+    return {
+      fields: {},
+      gateUnknown: [],
+      orphanGate: gateStr,
+      triggerUnreadable: triggerRead.unreadable,
+      ...(scopeStr ? { scopeIgnored: scopeStr } : {}),
+    };
   }
 
   const type = parseRuntimeType(runtimeStr.type);
@@ -420,11 +501,29 @@ export function parseEffectGroup(
   }
   const gate = parseGateText(gateStr);
   if (gate.conditions.length > 0) fields.conditions = gate.conditions;
+
+  // 「我听谁」挂在**这一组的触发**上（与技能级那一栏是两回事，同门槛的两级分工）。
+  const scopeRead = readListenerScopeCell(scopeStr);
+  let scopeUnknown: string | undefined;
+  let scopeIgnored: string | undefined;
+  if (scopeRead.scope) {
+    const fittedType = fields.trigger?.type;
+    if (fittedType && supportsListenerScope(fittedType)) {
+      fields.trigger = { ...(fields.trigger as SkillTriggerConfig), listenerScope: scopeRead.scope };
+    } else {
+      scopeIgnored = scopeStr;
+    }
+  } else if (scopeRead.unknown) {
+    scopeUnknown = scopeRead.unknown;
+  }
+
   return {
     fields,
     gateUnknown: gate.unknown,
     triggerUnreadable: triggerRead.unreadable,
     valueNote: valueRead.note,
+    scopeUnknown,
+    scopeIgnored,
   };
 }
 
@@ -434,6 +533,7 @@ export function serializeEffectGroup(
   width: EffectGroupWidth,
 ): (string | number)[] {
   if (!eff) {
+    if (width === 8) return [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY];
     if (width === 7) return [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY];
     return width === 6
       ? [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]
@@ -453,6 +553,7 @@ export function serializeEffectGroup(
     rt && rt.target ? runtimeTargetLabels[rt.target] : EMPTY,
     eff.description || EMPTY,
   ];
-  if (width === 7) cells.push(gateConditionsToText(eff.conditions));
+  if (width >= 7) cells.push(gateConditionsToText(eff.conditions));
+  if (width === 8) cells.push(listenerScopeToStr(eff.trigger?.listenerScope));
   return cells;
 }

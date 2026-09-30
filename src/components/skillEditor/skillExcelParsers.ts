@@ -1,12 +1,13 @@
 // Excel/文本技能导入解析器 —— 2.2.14 从 SkillEditor.tsx 纯移动拆出（D-6 阶段 F）。
 // 全部为无状态纯函数：输入行数据，输出编辑条目；不触碰组件状态或 store。
 import {
-  allGenerals, General, Faction, SkillTag, allSkillTags,
+  allGenerals, supportsListenerScope, General, Faction, SkillTag, allSkillTags,
   SkillTriggerConfig, SkillEffect, SkillEffectMode, SkillCondition,
 } from '../../data/generals';
 import {
-  readTriggerCell, detectEffectGroupWidth, parseEffectGroup,
+  readTriggerCell, triggerToStr, detectEffectGroupWidth, parseEffectGroup,
   SKILL_GATE_HEADER, detectEffectGroupStart, parseSkillGate,
+  LISTENER_SCOPE_HEADER, readListenerScopeCell,
 } from '../../skills/skillExcelFormat';
 import { parseSkillTagsCell, tagsOf, formatTags } from '../../domain/skillTags';
 
@@ -171,11 +172,13 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
   const header = rows[0] || [];
   const noteColIndex = header.findIndex(h => String(h || '').trim() === '设定备注');
   const effectEndExclusive = noteColIndex === -1 ? header.length : noteColIndex; // don't parse 备注列
-  const groupWidth = detectEffectGroupWidth(header); // 3 (legacy) | 6 (runtime) | 7 (runtime + 门槛)
+  const groupWidth = detectEffectGroupWidth(header); // 3 (legacy) | 6 (runtime) | 7 (+门槛) | 8 (+我听谁)
   // v2.8.11 刀2：效果组起点从表头认（旧导出=11，含「技能门槛」列的新导出=12），
   // 「技能门槛」列按表头定位；旧文件没有这一列⇒整组门槛=无（逐字旧行为）。
   const groupStart = detectEffectGroupStart(header);
   const skillGateCol = header.findIndex(h => String(h || '').trim() === SKILL_GATE_HEADER);
+  // v2.8.21 监听扩面刀：技能级「我听谁」同样按表头定位（旧文件没有这一列＝不填＝只听自己）。
+  const skillScopeCol = header.findIndex(h => String(h || '').trim() === LISTENER_SCOPE_HEADER);
   const dataRows = rows.slice(1); // skip header
   const entries: { general: General; gEdit: Record<string,unknown>; skills: SkillEditEntry[] }[] = [];
   const parseWarnings: string[] = [];
@@ -275,19 +278,40 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
     const sMode = clean(String(row[9] || ''));
     const sDesc = clean(String(row[10] || ''));
 
+    // 点名要用得出名字：本行的将领（未解析出来时用「未知」）＋技能名。
+    const rowName = currentGeneral?.name || currentUnresolved?.name || '未知';
+
     const tagRead = parseSkillTagsCell(String(row[6] || ''));
     for (const u of tagRead.unknown) {
-      const name = currentGeneral?.name || currentUnresolved?.name || '未知';
-      parseWarnings.push(`${name}·${sName} 技能标签：这枚徽章我不认识，所以没记下 → ${u}`);
+      parseWarnings.push(`${rowName}·${sName} 技能标签：这枚徽章我不认识，所以没记下 → ${u}`);
     }
     const tags = tagRead.tags;
     const forced = sForced === '是' || undefined;
     const skillTriggerRead = readTriggerCell(sTrigger);
     if (skillTriggerRead.unreadable) {
-      const name = currentGeneral?.name || currentUnresolved?.name || '未知';
-      parseWarnings.push(`${name}·${sName} 技能触发：这句没看懂 → ${skillTriggerRead.unreadable}`);
+      parseWarnings.push(`${rowName}·${sName} 技能触发：这句没看懂 → ${skillTriggerRead.unreadable}`);
     }
     const trigger = skillTriggerRead.trigger;
+
+    // v2.8.21 监听扩面刀：技能级「我听谁」＝这条技能整体听多宽。它挂在触发上，
+    // 但**只在该触发时机认这一栏时才挂**——填了却没人读，就是"显示与生效分叉"（§12-55 同族），
+    // 所以认不得的一律点名退回，绝不静默收下。
+    let triggerWithScope = trigger;
+    if (skillScopeCol >= 0) {
+      const scopeRead = readListenerScopeCell(row[skillScopeCol]);
+      if (scopeRead.unknown) {
+        parseWarnings.push(`${rowName}·${sName} 我听谁：这个词我不认识，所以没记下 → ${scopeRead.unknown}`);
+      } else if (scopeRead.scope) {
+        const scopeLabel = String(row[skillScopeCol]).trim();
+        if (trigger && supportsListenerScope(trigger.type)) {
+          triggerWithScope = { ...trigger, listenerScope: scopeRead.scope };
+        } else if (trigger) {
+          parseWarnings.push(`${rowName}·${sName} 我听谁：触发时机「${sTrigger}」不听这一栏，「${scopeLabel}」按没填处理`);
+        } else {
+          parseWarnings.push(`${rowName}·${sName} 我听谁：这一行没有触发时机，「${scopeLabel}」没处可挂，按没填处理`);
+        }
+      }
+    }
     const effectMode = (sMode === '选择其一' || sMode === 'choice') ? 'choice' as SkillEffectMode
       : (sMode === '全部生效' || sMode === 'all') ? 'all' as SkillEffectMode : undefined;
 
@@ -296,14 +320,13 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
       ? parseSkillGate(clean(String(row[skillGateCol] || '')))
       : { conditions: undefined as SkillCondition[] | undefined, unknown: [] as string[] };
     if (groupGate.unknown.length > 0) {
-      const name = currentGeneral?.name || currentUnresolved?.name || '未知';
       for (const u of groupGate.unknown) {
-        parseWarnings.push(`${name}·${sName} 技能门槛：这句没看懂 → ${u}`);
+        parseWarnings.push(`${rowName}·${sName} 技能门槛：这句没看懂 → ${u}`);
       }
     }
 
-    // Parse sub-effects from col 11 onwards (groups of 3 for legacy files,
-    // 6 — 标注/触发/效果类型/数值/目标/描述 — or 7 — v2 + 门槛 — for current exports)
+    // Parse sub-effects from the first group column onwards: 3 (legacy),
+    // 6 (标注/触发/效果类型/数值/目标/描述), 7 (v2 + 门槛) or 8 (v3 + 我听谁).
     const effects: SkillEffect[] = [];
     let col = groupStart;
     while (col + groupWidth - 1 < effectEndExclusive) {
@@ -312,22 +335,26 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
         const seq = `效果${Math.floor((col - groupStart) / groupWidth) + 1}`;
         // 整组只有门槛/只有看不懂的触发：这不是一個效果，绝不凭空造一个空效果，只如实回显。
         if (parsed.orphanGate) {
-          const name = currentGeneral?.name || currentUnresolved?.name || '未知';
-          parseWarnings.push(`${name}·${sName} ${seq}：只写了门槛「${parsed.orphanGate}」，没写这是哪个效果，这条没被记下`);
+          parseWarnings.push(`${rowName}·${sName} ${seq}：只写了门槛「${parsed.orphanGate}」，没写这是哪个效果，这条没被记下`);
         }
         if (parsed.triggerUnreadable) {
-          const name = currentGeneral?.name || currentUnresolved?.name || '未知';
-          parseWarnings.push(`${name}·${sName} ${seq} 触发：这句没看懂 → ${parsed.triggerUnreadable}`);
+          parseWarnings.push(`${rowName}·${sName} ${seq} 触发：这句没看懂 → ${parsed.triggerUnreadable}`);
         }
         if (parsed.valueNote) {
-          const name = currentGeneral?.name || currentUnresolved?.name || '未知';
-          parseWarnings.push(`${name}·${sName} ${seq} 数值：${parsed.valueNote}`);
+          parseWarnings.push(`${rowName}·${sName} ${seq} 数值：${parsed.valueNote}`);
+        }
+        // 「我听谁」这一格：词表认不出／这一组的时机不认这一栏，都必须点名（v2.8.21）。
+        if (parsed.scopeUnknown) {
+          parseWarnings.push(`${rowName}·${sName} ${seq} 我听谁：这个词我不认识，所以没记下 → ${parsed.scopeUnknown}`);
+        }
+        if (parsed.scopeIgnored) {
+          const effTrigger = parsed.fields.trigger ? triggerToStr(parsed.fields.trigger) : '（这一组没有触发时机）';
+          parseWarnings.push(`${rowName}·${sName} ${seq} 我听谁：触发时机「${effTrigger}」不听这一栏，「${parsed.scopeIgnored}」按没填处理`);
         }
         if (Object.keys(parsed.fields).length > 0) {
           effects.push({ id: `e${Date.now()}_${effects.length}`, ...parsed.fields });
           for (const u of parsed.gateUnknown) {
-            const name = currentGeneral?.name || currentUnresolved?.name || '未知';
-            parseWarnings.push(`${name}·${sName} 效果${effects.length}：门槛里这句没看懂 → ${u}`);
+            parseWarnings.push(`${rowName}·${sName} 效果${effects.length}：门槛里这句没看懂 → ${u}`);
           }
         }
       }
@@ -336,7 +363,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
 
     if (currentGeneral) {
       currentSkills.push({
-        name: sName, tags, forced, trigger,
+        name: sName, tags, forced, trigger: triggerWithScope,
         effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
         effects: effects.length > 0 ? effects : undefined,
         description: sDesc || undefined,
@@ -344,7 +371,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
       });
     } else if (currentUnresolved) {
       currentUnresolved.skills.push({
-        name: sName, tags, forced, trigger,
+        name: sName, tags, forced, trigger: triggerWithScope,
         effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
         effects: effects.length > 0 ? effects : undefined,
         description: sDesc || undefined,
@@ -438,9 +465,17 @@ const canonGate = (cs?: SkillCondition[]) =>
   (cs ?? []).map(c => [c.metric, c.subject ?? null, c.op, c.value ?? null,
     c.compareTo ? [c.compareTo.metric, c.compareTo.subject ?? null] : null]);
 
+/**
+ * v2.8.21 两个新维度必须**按默认档归一**后再比：编译器把「成为目标时」的空细分读成
+ * 「成为攻击目标」、把空的「我听谁」读成「只听自己」，所以"没写"与"显式写了默认档"
+ * 在结算侧是同一件事。不归一⇒把自己早先导出的 Excel 原样重导，四张官方将的
+ * 「成为攻击目标时」会凭空多出 targetSubType ⇒ 造出 ✏️ 覆盖记录（#45 同族）。
+ */
 const canonTrigger = (t?: SkillTriggerConfig) => t
   ? [t.type, t.deploySubType ?? null, t.turnSubType ?? null, t.damageSubType ?? null,
-    t.killSubType ?? null, t.cardSubType ?? null, t.expireCondition ?? null]
+    t.killSubType ?? null, t.cardSubType ?? null, t.expireCondition ?? null,
+    t.targetSubType ?? (t.type === 'onBecomingTarget' ? 'attackTarget' : null),
+    t.listenerScope ?? 'self']
   : null;
 
 const canonRuntime = (r?: NonNullable<SkillEffect['runtime']>) => r
