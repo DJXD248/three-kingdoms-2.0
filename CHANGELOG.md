@@ -88,7 +88,10 @@ knife 2, it needs the engine and it moves the anchors, so it waits for the user'
   the deduped `Upload coverage report` in `test (24)`); annotations re-measured **per job** from
   `check-runs/{id}/annotations` = **11 / 1 / 1 / 1 = 14, every one `warning`, 0 failures** — the same
   distribution as #186–#191, i.e. **nothing new**. Two standing criteria re-confirmed: one push with
-  two commits produces **one** run, and pushing a tag produces **none**.
+  two commits produces **one** run, and pushing a tag produces **none**. The backfill commit's own run
+  is also verified = **CI #194** (run `36651051564`, sha `9e0baa2`): four jobs success, 0 failed steps,
+  14 annotations all `warning` = same distribution; the stop rule applies from there (no run-of-the-record
+  of the run is registered).
 - **Registration faces**: HANDOFF §3／§9／**§12-77** (seven criteria: multi-valuing a stored field
   keeps the old one read-only forever; badges, runtime switches and effect shapes may not
   compensate for each other; "start governing" splits into two knives and the first may not touch
