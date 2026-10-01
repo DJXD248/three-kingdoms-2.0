@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.25] - 2026-10-01 — forced-enforcement knife (#72): the 「强制发动」 switch now actually decides who speaks
+
+One skill definition is now either **asked** or **auto-fired**, never both: `SkillTriggerBridge.defersToReactionQueue` is the
+repo's only read of `forced`, the "which events does this trigger hear" table is merged into ONE leaf module
+(`skills/reactionTriggers.ts` — the bridge's duplicate copy is gone), the duel's two listener layers re-enter the trigger chain
+(`isDuelListenerEvent`; rounds still never do) behind an identity filter that provably cannot double-write, and the opening probe
+now counts both paths (`hasReactionListeners`) so a forced-only field no longer stamps its own layer `'settled'`. Honest edges:
+`onTurnEnd` stays outside the table (2.3.1) so a forced turn-end skill still asks; no official or fixture skill carries
+`forced:true` today ⇒ structural no-op, **B13 + B14 reproduced byte-identical (two rounds each, sub-ledgers cell-by-cell), anchors unchanged**;
+the real-browser witness of the duel ask window and the auto-fire moves to #81 (user's combined route). Full evidence in
+`PROJECT_HISTORY_AI.md` this chapter; CI readings only in HANDOFF §9; criteria §12-89; contract §H9 round 12 / §F duel row.
+
 ## [2.8.24] - 2026-10-01 — duel knife 2 (#70): 「两端响、逐轮不响、收官累计判定值」 implemented verbatim per §H9 seventh round
 
 Duels now ask twice and stay silent in between: the opening (becoming-a-skill-target) offers each side one
