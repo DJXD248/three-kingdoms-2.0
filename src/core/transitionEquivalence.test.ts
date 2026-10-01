@@ -2177,5 +2177,132 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(again.flat()).toEqual(residentFlat);
     expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
+
+  // ── v2.8.25 #72 强制发动执法刀：`forced` 是"自动响／停下来问"的唯一开关，
+  //    而"这一型听哪几一声"全库只有一份表 ⇒ 决斗那两层自动路也听得见。 ──
+
+  /** 同一份模板，只把两枚被动的「强制发动」开关拨一下——决斗的形状必须一模一样。 */
+  function duelForcedFixture(forced: boolean) {
+    const challenger = makeGeneral('fz_atk', 10, [
+      { name: '搦战', effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'TARGET' } }] },
+    ]);
+    const target = makeGeneral('fz_tgt', 10, [
+      { name: '伺隙', forced, effects: [{
+        id: 'e1', trigger: { type: 'onBecomingTarget', targetSubType: 'skillTarget' },
+        runtime: { type: 'HEAL', value: 2, target: 'SELF' },
+      }] },
+      { name: '刚毅', forced, effects: [{
+        id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'allDamage' },
+        runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+      }] },
+    ]);
+    return () => {
+      const tgtField = makeFieldGeneral(target, 2, 0);
+      Object.assign(tgtField, { currentHp: 7 }); // 带伤上阵：普攻再掉 2 ⇒ 开局时只剩 5
+      return makeState([
+        makePlayer(1, { fieldGenerals: [makeFieldGeneral(challenger, 1, 0)], hand: COSTS.slice(0, 2).map(c => ({ ...c })) }),
+        makePlayer(2, { fieldGenerals: [tgtField] }),
+      ]);
+    };
+  }
+
+  const duelRoundShape = (flat: Array<{ type: string; data?: Record<string, unknown> }>) => flat
+    .filter(e => typeof e.data?.duelRound === 'number')
+    .map(e => [e.data!.duelRound, e.data!.targetId, e.data!.newHp]);
+  const duelInjuryShape = (flat: Array<{ type: string; data?: Record<string, unknown> }>) => flat
+    .filter(e => e.type === 'DUEL_INJURY')
+    .map(e => [e.data!.targetId, e.data!.value]);
+
+  it('强制发动在决斗两层都听得到：开局那一声先响完才开打、收官那一笔只响一次、逐轮静默、全程不开问窗，四路逐事件一致 (2.8 刀25)', () => {
+    const build = duelForcedFixture(true);
+    const action = attack('fz_atk', 'fz_tgt', 0);
+
+    const engine = new GameEngine(build());
+    syncPlayerSkills(engine, engine.state);
+    // ① 一趟派发自己走完两层：**没有**任何一步是"等人点头"（forced 的定义压根不进问答队列）。
+    const steps = [rawEvents(engine.dispatch(action))];
+    expect(getReactionAsk(engine.state)).toBeNull();
+    expect(engine.state.pendingReaction ?? null).toBeNull();
+    const flat = steps[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    // ② 开局那一层有听众⇒逐轮等这一层走完：探针（两类听众都算）把块切成了只有一声。
+    const duelIdx = flat.findIndex(e => e.type === 'DUEL');
+    expect(duelIdx).toBeGreaterThanOrEqual(0);
+    expect(flat[duelIdx + 1].type).toBe('BEFORE_DAMAGE');
+    expect(flat[duelIdx + 1].data).toMatchObject({ duelStage: 'opening', damageType: 'skill' });
+    // 伺隙（强制）在那一声上自动响：回复 2 点排在**逐轮之前**＝"这一层全部响完，决斗才开始"。
+    const healIdx = flat.findIndex(e => e.type === 'HEAL');
+    const firstRoundIdx = flat.findIndex(e => typeof e.data?.duelRound === 'number');
+    expect(healIdx).toBeGreaterThan(duelIdx + 1);
+    expect(healIdx).toBeLessThan(firstRoundIdx);
+
+    // ③ 续跑令与逐轮：起点读的是自动答复落账后的状态（第一"打"后剩 5＝7−2）。
+    const resumed = flat.filter(e => e.type === 'DUEL');
+    expect(resumed).toHaveLength(2);
+    expect(resumed[1].data).toMatchObject({ duelStage: 'answered' });
+    expect(duelRoundShape(flat)).toEqual([
+      [1, 'fz_tgt', 5], [2, 'fz_atk', 8], [3, 'fz_tgt', 3], [4, 'fz_atk', 6], [5, 'fz_tgt', 1], [6, 'fz_atk', 4],
+    ]);
+    expect(duelInjuryShape(flat)).toEqual([['fz_tgt', 6], ['fz_atk', 6]]);
+
+    // ④ 刚毅（强制「受到伤害后」）在这一趟里只响两次：普攻那一声＋决斗收官那一声。
+    //    逐轮挨的那三次一律静默——这一条从前在自动路上**结构上做不到**（收官那一声
+    //    压根没喂给触发链），本刀把它补上，同时"逐轮不响"一字未松。
+    const draws = flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('刚毅:e1'));
+    expect(draws).toHaveLength(2);
+    expect(fieldHp(engine.state, 2, 'fz_tgt')).toEqual({ hp: 1, armor: 0 });
+    expect(fieldHp(engine.state, 1, 'fz_atk')).toEqual({ hp: 4, armor: 0 });
+    expect((engine.state.players.find(p => p.id === 2)!.hand ?? [])).toHaveLength(2);
+
+    // ⑤ 四路逐事件一致：这一层没有问答，所以步数也应答的脚本一样只有一步。
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    const bridged = playViaStore(build(), [action], dispatchStoreAction);
+    expect(bridged.steps).toEqual(steps);
+    expect(JSON.stringify(normalize(bridged.final as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const reconciled = playViaStore(build(), [action], dispatchStoreActionReconcile);
+    expect(reconciled.steps).toEqual(steps);
+    expect(JSON.stringify(normalize(reconciled.final as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const againEngine = new GameEngine(build());
+    syncPlayerSkills(againEngine, againEngine.state);
+    expect([rawEvents(againEngine.dispatch(action))]).toEqual(steps);
+    expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+  });
+
+  it('同一份模板摘掉「强制发动」⇒两层都改为问人；点完头之后的逐轮与收官与自动路逐字同形（forced 是唯一判别位） (2.8 刀25)', () => {
+    const run = (forced: boolean) => {
+      const engine = new GameEngine(duelForcedFixture(forced)());
+      syncPlayerSkills(engine, engine.state);
+      const steps = [rawEvents(engine.dispatch(attack('fz_atk', 'fz_tgt', 0)))];
+      answerResident(engine, steps);
+      const flat = steps.flat().map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+      return { engine, flat };
+    };
+
+    const auto = run(true);
+    const asked = run(false);
+    // 问答路：普攻那一声＋开局那一声＋收官那一声＝三格，各答一次。
+    expect(asked.flat.filter(e => e.type === 'REACTION_ANSWERED')).toHaveLength(3);
+    expect(getReactionAsk(asked.engine.state)).toBeNull();
+    // 决斗本体（逐轮与收官两笔账）读的是同一条派生点⇒与自动路逐字同形；
+    // 差别只在"谁来说、什么时候说"，绝不在伤害数学或块次序上。
+    expect(duelRoundShape(asked.flat)).toEqual(duelRoundShape(auto.flat));
+    expect(duelInjuryShape(asked.flat)).toEqual(duelInjuryShape(auto.flat));
+    // 落账结果也同形：同一批回复与摸牌，只有点头与否不同。
+    expect(fieldHp(asked.engine.state, 2, 'fz_tgt')).toEqual(fieldHp(auto.engine.state, 2, 'fz_tgt'));
+    expect(fieldHp(asked.engine.state, 1, 'fz_atk')).toEqual(fieldHp(auto.engine.state, 1, 'fz_atk'));
+    expect((asked.engine.state.players.find(p => p.id === 2)!.hand ?? [])).toHaveLength(2);
+    // 自动路绝不被问（一枚定义只走一条路＝绝不一技能两响）。
+    expect(auto.flat.filter(e => e.type === 'REACTION_ANSWERED')).toHaveLength(0);
+  });
 });
 

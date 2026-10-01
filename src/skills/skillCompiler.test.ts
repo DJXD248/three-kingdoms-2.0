@@ -403,13 +403,18 @@ describe('skillCompiler · syncPlayerSkills', () => {
     expect(engine.triggers.getByOwner(1)).toHaveLength(0);
   });
 
+  // v2.8.25 强制发动执法刀：一个触发型听得懂**几一声**就注册几枚监听（唯一一份
+  // 表在 `skills/reactionTriggers.ts` 的 `TRIGGER_EVENTS`，问答路同读它）。
+  // 「受到伤害后」＝两声（`DAMAGE` ＋决斗收官那笔 `DUEL_INJURY`）。第一枚的 id
+  // 逐字不变（扩面前就是它），多出来的那枚才带事件后缀——旧录像/日志的寻址零扰动。
   it('registers the forced one (强制发动照旧自动响) into a fresh engine', () => {
     const { engine, state } = oneGeneralEngine({ forced: true });
     expect(syncPlayerSkills(engine, state)).toBe(1);
     const triggers = engine.triggers.getByOwner(1);
-    expect(triggers).toHaveLength(1);
+    expect(triggers.map(t => t.eventType)).toEqual(['DAMAGE', 'DUEL_INJURY']);
     expect(triggers[0].eventType).toBe('DAMAGE');
     expect(triggers[0].id).toBe('skill:1:test_001:奸雄:e1');
+    expect(triggers[1].id).toBe('skill:1:test_001:奸雄:e1#DUEL_INJURY');
   });
 
   it('registers nothing for descriptive built-in skills', () => {

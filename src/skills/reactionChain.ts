@@ -27,14 +27,14 @@
  */
 import type { General } from '../data/generals';
 import type { EngineState, PendingReaction, ReactionNode } from '../core/GameState';
-import type { GameEvent, ReactionAnsweredData } from '../core/Event';
+import type { GameEvent, GameEventType, ReactionAnsweredData } from '../core/Event';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { compileGeneralSkills } from './skillCompiler';
 import { evaluateSkillConditions } from './skillConditions';
 import { matchesSkillEvent } from './skillEventMatch';
-import { PRIORITY, SkillTriggerBridge } from './SkillTriggerBridge';
+import { PRIORITY, SkillTriggerBridge, defersToReactionQueue } from './SkillTriggerBridge';
 import type { DataSkillDefinition } from './dataTypes';
-import { REACTION_EVENT_TYPES, isReactionTrigger, reactionTriggerOfEvent } from './reactionTriggers';
+import { eventsHeardBy, reactionTriggerOfEvent } from './reactionTriggers';
 import { orderReactionCandidates, victimRefOf, type ReactionCandidate } from '../triggers/reactionOrder';
 
 /**
@@ -93,19 +93,17 @@ interface RankedReactionCandidate extends Omit<ReactionCandidate, 'generalId'> {
 }
 
 /**
- * 某一格的**全部**可响应候选，已按比较器排好序（不过滤台账）。
- * 与触发链同一条判定链：编译→时机对得上→身份（`matchesSkillEvent` 单点）→
- * 门槛（`evaluateSkillConditions`）→比较器。
+ * 两条路共用的那一次遍历（v2.8.25 强制发动执法刀）。
  *
- * 一条免费得来的规则：`onDeath`/阵亡者不算候选——离场的将领不在
- * `fieldGenerals` 里，压根不参评（§H9 第七轮"阵亡者不结算受伤类"）。
+ * `accept` 只决定"这一枚定义算哪一类听众"，**身份（`matchesSkillEvent`）与门槛
+ * （`evaluateSkillConditions`）两层判定两类共用**——分开写两份迟早分叉，而这一族
+ * 分叉的表征是"自动路响了、问答路没候选"或反过来，最难查。
  */
-export function listReactionCandidates(
+function collectListeners(
   state: EngineState,
   node: ReactionNode,
+  accept: (definition: DataSkillDefinition, nodeType: GameEventType) => boolean,
 ): RankedReactionCandidate[] {
-  const trigger = reactionTriggerOfEvent(node.sourceEvent.type);
-  if (!trigger) return [];
   const sourceEvent = sourceEventOf(node);
   const seatOrder = state.players.map(player => player.id);
   const candidates: RankedReactionCandidate[] = [];
@@ -118,13 +116,8 @@ export function listReactionCandidates(
       const runtimeId = getRuntimeCardId(general as never) || general.id;
       const { definitions } = compileGeneralSkills(general, runtimeId);
       for (const definition of definitions) {
-        // 三类分流：只有"不强制"的受击／受伤两型进这一格问答。
-        if (!isReactionTrigger(definition.trigger) || definition.forced === true) continue;
-        // choiceMode 技能不进反应队列，直接开选择账
-        if ((definition as unknown as Record<string, unknown>).choiceMode === true) continue;
-        if (!REACTION_EVENT_TYPES[definition.trigger].includes(node.sourceEvent.type)) continue;
-        const binding = { ownerId: player.id, skill: definition };
-        if (!matchesSkillEvent(definition.trigger, binding, sourceEvent)) continue;
+        if (!accept(definition, node.sourceEvent.type)) continue;
+        if (!matchesSkillEvent(definition.trigger, { ownerId: player.id, skill: definition }, sourceEvent)) continue;
         if (!evaluateSkillConditions(definition.conditions, {
           state,
           ownerId: player.id,
@@ -145,6 +138,34 @@ export function listReactionCandidates(
     seatOrder,
     ...victimRefOf(sourceEvent),
   });
+}
+
+/** 这一枚定义听得懂这一声吗（唯一读那份事件表的地方，两条路同判据）。 */
+function listenedBy(definition: DataSkillDefinition, nodeType: GameEventType): boolean {
+  return eventsHeardBy(definition.trigger).includes(nodeType);
+}
+
+/**
+ * 要停下来问人的那一类（＝既有 `listReactionCandidates` 的逐字判据）：分流开关
+ * 把它搬进了问答路（受击／受伤两型、不强制、不择一），且听得懂这一声。
+ */
+function askAccepted(definition: DataSkillDefinition, nodeType: GameEventType): boolean {
+  return defersToReactionQueue(definition) && listenedBy(definition, nodeType);
+}
+
+/**
+ * 某一格的**全部**可响应候选（要问人的那一类），已按比较器排好序（不过滤台账）。
+ * 与触发链同一条判定链：编译→时机对得上→身份（`matchesSkillEvent` 单点）→
+ * 门槛（`evaluateSkillConditions`）→比较器。
+ *
+ * 一条免费得来的规则：`onDeath`/阵亡者不算候选——离场的将领不在
+ * `fieldGenerals` 里，压根不参评（§H9 第七轮"阵亡者不结算受伤类"）。
+ */
+export function listReactionCandidates(
+  state: EngineState,
+  node: ReactionNode,
+): RankedReactionCandidate[] {
+  return collectListeners(state, node, askAccepted);
 }
 
 /** 这一格还剩没表态的候选吗（收格判据＝`orderReactionCandidates` 的整个输出
@@ -246,18 +267,26 @@ export function isReactionSourceEvent(event: GameEvent): boolean {
 }
 
 /**
- * 决斗开局层的**探针**（v2.8.24 决斗刀 2）：这一场决斗开局那一刻，场上还有没有
- * 人有得说？派生点（`core/eventProcessors/duelEvents.ts`）拿它决定"先把逐轮打
- * 完、还是停下来问一句"，用的就是扫描器同一个候选函数——所以"有没有候选"这件事
- * 全库只有一个推导点，不可能派生侧说有、扫描侧说没有。
+ * 决斗开局层的**探针**（v2.8.24 决斗刀 2；v2.8.25 强制发动执法刀扩到两类听众）：
+ * 这一场决斗开局那一刻，场上还有没有**任何**东西要在这层响？
+ *  - 要停下来问人的那一类（"受到／成为"两型里不强制的定义）；
+ *  - 到点自己响的那一类（打了「强制发动」的，以及择一类——它开自己的选择账）。
+ *
+ * 派生点（`core/eventProcessors/duelEvents.ts`）拿它决定"先把逐轮打完、还是停下
+ * 来把这一层走完"，用的就是扫描器同一份候选遍历＋同一个身份判定＋同一个门槛判定
+ * ⇒"有没有听众"这件事全库只有一个推导点，不可能派生侧说有、扫描侧说没有。
+ *
+ * 为什么两类都要算（本刀的实质）：只算问答类时，场上只有强制监听的那一格会被标
+ * `settled`、逐轮紧跟着就打完⇒那一声压根没喂给自动路，强制发动在这层**结构性
+ * 不可达**（§12-55 那个"记录在案、结算侧零消费"的缺口，最后就剩这一处）。
  */
-export function hasReactionCandidates(state: EngineState, sourceEvent: GameEvent): boolean {
+export function hasReactionListeners(state: EngineState, sourceEvent: GameEvent): boolean {
   const node: ReactionNode = {
     key: 'probe',
     sourceEvent: { type: sourceEvent.type, data: sourceEvent.data },
     answered: [],
   };
-  return listReactionCandidates(state, node).length > 0;
+  return collectListeners(state, node, listenedBy).length > 0;
 }
 
 function openingDuelKeyOf(event: GameEvent): string | null {

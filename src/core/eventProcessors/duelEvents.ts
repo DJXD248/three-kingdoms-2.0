@@ -3,7 +3,7 @@ import type { GameEvent } from '../Event';
 import { getAttackValue } from '../attackValue';
 import { applyArmorDamage } from '../armorDamage';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
-import { hasReactionCandidates } from '../../skills/reactionChain';
+import { hasReactionListeners } from '../../skills/reactionChain';
 
 /** 双方各三轮＝最多六次计算（§H9 第六轮①），交替进行、先手恒为技能发起方。 */
 const DUEL_MAX_ROUNDS = 6;
@@ -44,9 +44,10 @@ function findDuelParticipant(state: EngineState, generalId: unknown): DuelPartic
  *
  * 三层的分工（§H9 第七轮，用户口径逐字）：
  *  1. **开局**＝成为技能目标那一声（`BEFORE_DAMAGE`＋`damageType:'skill'`，所以
- *     只喂"成为**技能**目标"的监听、绝不喂"成为攻击目标"那一档）。当场有人有得
- *     说⇒这一块**只有**这一条通知，逐轮延到问完之后（`duelStage:'opening'`）；
- *     没人说⇒通知标 `settled`、逐轮紧跟（与扩面前"逐轮紧挨"逐字同形）。
+ *     只喂"成为**技能**目标"的监听、绝不喂"成为攻击目标"那一档）。当场有**任何**
+ *     听众（要问人的那一类＋打了「强制发动」自己响的那一类）⇒这一块**只有**这一条
+ *     通知，逐轮延到这一层走完（`duelStage:'opening'`）；压根没听众⇒通知标
+ *     `settled`、逐轮紧跟（与扩面前"逐轮紧挨"逐字同形）。
  *  2. **逐轮**＝真实扣血，块内绝不唤监听（每"打"带 `duelRound`，扫描器显式排除）。
  *  3. **收官**＝受伤类读**该角色这一场实际掉掉的体力总额**（起点体力−终局体力），
  *     合并成一笔 `DUEL_INJURY` 只结算一次：它不扣血、零状态位移（默认处理器恒等）。
@@ -71,8 +72,26 @@ export function deriveDuelFlow(state: EngineState, event: GameEvent): GameEvent[
   if (data.duelStage === 'answered') return duelBody(state, event, duelKey);
 
   const notice = openingNotice(data, duelKey, 'opening');
-  if (hasReactionCandidates(state, notice)) return [notice];
+  if (hasReactionListeners(state, notice)) return [notice];
   return [openingNotice(data, duelKey, 'settled'), ...duelBody(state, event, duelKey)];
+}
+
+/**
+ * 决斗三层里**有听众的那两层**（v2.8.25 强制发动执法刀）：开局那一声
+ * `BEFORE_DAMAGE{duelStage}` 与收官那笔 `DUEL_INJURY`。它们是队列内派生出来的，
+ * 压根没经过 dispatch 前的触发链，所以`core/TransitionCore` 的有界重入必须把
+ * 这两层喂给触发链——否则打了「强制发动」的受击／受伤技在决斗里结构性听不到
+ * 这两声（§12-55 那个"记录在案、结算侧零消费"缺口的最后一处）。
+ *
+ * 逐轮那些"打"（带 `duelRound`）**绝不**在这一判据里：§H9 第七轮"连续完成、
+ * 中间不插入任何流程"。开局的 `settled` 通知在这里算作听众层——那是诚实的：
+ * 派生点已经用同一份探针问过"有没有人听"，答"没有"，触发链这一趟同样无人应。
+ */
+export function isDuelListenerEvent(event: GameEvent): boolean {
+  if (event.type === 'DUEL_INJURY') return true;
+  if (event.type !== 'BEFORE_DAMAGE') return false;
+  const payload = asData(event.data);
+  return typeof payload.duelStage === 'string' && typeof payload.duelRound !== 'number';
 }
 
 /** 开局那一层的通知：决斗载荷原样带着（双方四个键＝受邀者是谁、发起者是谁），

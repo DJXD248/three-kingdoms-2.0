@@ -11,7 +11,7 @@
  *     trigger kinds (modify*, onBase*, passive, active*, untilExpire, …) are
  *     skipped with an explicit reason. onTurnEnd (2.3.1) is the exception
  *     that proves the rule: it compiles, but NEVER auto-fires — TURN_END is
- *     deliberately absent from TRIGGER_EVENT_MAP, and its sole activation
+ *     deliberately absent from TRIGGER_EVENTS, and its sole activation
  *     path is the canonical ACTIVATE_SKILL action (ask-window driven).
  *   - HEAL / GAIN_ARMOR settle in EventProcessor as hp restore (capped at
  *     maxHp) and armor points; DISCARD (2.5.0) settles as a hand-card move
@@ -71,7 +71,7 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   onCardLost: 'onCardLost',
   onCardGained: 'onCardGained',
   // 2.3.1: compiles for the ACTIVATE_SKILL path only — deliberately NOT in
-  // TRIGGER_EVENT_MAP, so TURN_END never auto-fires it (single activation
+  // TRIGGER_EVENTS, so TURN_END never auto-fires it (single activation
   // path, double-fire ban).
   onTurnEnd: 'onTurnEnd',
 };

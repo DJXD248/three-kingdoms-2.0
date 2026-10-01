@@ -117,7 +117,7 @@ describe('ACTIVATE_SKILL · resolver verdicts (2.3.1)', () => {
     expect(engine.state.consumedSkills).toHaveLength(2);
   });
 
-  it('TURN_END never auto-fires onTurnEnd (no TRIGGER_EVENT_MAP entry — double-fire ban)', () => {
+  it('TURN_END never auto-fires onTurnEnd (no TRIGGER_EVENTS entry — double-fire ban)', () => {
     const engine = freshEngine(makeState());
     const events = engine.dispatch(createAction('END_TURN', 1));
     expect(events.some(e => e.type === 'TURN_END')).toBe(true);

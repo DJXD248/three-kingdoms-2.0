@@ -21,6 +21,7 @@ import type { General, Skill } from '../data/generals';
 import { syncPlayerSkills } from './skillCompiler';
 import {
   getReactionAsk,
+  hasReactionListeners,
   listReactionCandidates,
   reactionAnsweredOf,
   reactionSubjectKey,
@@ -28,6 +29,7 @@ import {
   syncReactionQueue,
   reactionQueueFingerprint,
 } from './reactionChain';
+import { REACTION_EVENT_TYPES, REACTION_TRIGGERS, eventsHeardBy } from './reactionTriggers';
 import { defersToReactionQueue } from './SkillTriggerBridge';
 
 function makeGeneral(id: string, skills: Skill[]): General {
@@ -502,5 +504,79 @@ describe('响应链 · 冻结世界四方一致（校验器／合法动作／解
     expect(engine.state.players.find(p => p.id === 2)!.hand).toHaveLength(0);
     expect(getReactionAsk(engine.state)).toBeNull();
     expect(engine.dispatch(createAction('END_TURN', 1))[0].type).not.toBe('ACTION_REJECTED');
+  });
+});
+
+/**
+ * v2.8.25 强制发动执法刀（#72）——`forced` 从此是全链路**唯一**的"自动响还是停下来问"
+ * 开关，而"这一型听哪几一声"全库只有一份表（`skills/reactionTriggers.ts`）。
+ * 这里钉的是这张表在两条路上的一致面；决斗那一层的结算证据在
+ * `core/transitionEquivalence.test.ts` 的刀 25 专测里（四路对账）。
+ */
+describe('强制发动执法刀 · 两条路同读一份事件表', () => {
+  function listenerState(skill: Skill): EngineState {
+    const state = createInitialEngineState();
+    state.players = [
+      makePlayer(1, { fieldGenerals: [] }) as EnginePlayer,
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(makeGeneral('gX', [skill]), 2)] }) as EnginePlayer,
+    ];
+    state.currentPlayerId = 1;
+    return state;
+  }
+
+  /** 决斗收官那一声＝受伤型的第二声（累计值、零状态位移）。 */
+  const duelInjury = (): GameEvent => ({
+    type: 'DUEL_INJURY',
+    data: {
+      sourcePlayerId: 1, sourceGeneralId: 'gDuel', targetPlayerId: 2, targetId: 'gX',
+      damageType: 'skill', value: 2, duelStage: 'injury', duelKey: 'k|gDuel>gX',
+    },
+  });
+
+  it('一张表：一型几声就注册几枚监听，第一枚的 id 逐字不变（旧录像/日志寻址零扰动）', () => {
+    const engine = attackOnce([{ ...hurtDraw('刚毅'), forced: true }]);
+    const triggers = engine.triggers.getByOwner(2);
+    expect(triggers.map(t => t.eventType)).toEqual(['DAMAGE', 'DUEL_INJURY']);
+    expect(triggers.map(t => t.id)).toEqual([
+      'skill:2:g2:刚毅:e1',
+      'skill:2:g2:刚毅:e1#DUEL_INJURY',
+    ]);
+  });
+
+  it('问答路的两型事件维由那张表派生，不存在第二份写法', () => {
+    expect(eventsHeardBy('onDamageTaken')).toEqual(['DAMAGE', 'DUEL_INJURY']);
+    expect(eventsHeardBy('onBecomingTarget')).toEqual(['BEFORE_DAMAGE']);
+    // 2.3.1 单发动路：回合结束技能压根不在触发面上。
+    expect(eventsHeardBy('onTurnEnd')).toEqual([]);
+    for (const trigger of REACTION_TRIGGERS) {
+      expect(REACTION_EVENT_TYPES[trigger]).toEqual(eventsHeardBy(trigger));
+    }
+  });
+
+  it('探针与候选枚举同判据：问答路能开格的那一声，探针必说有听众', () => {
+    const asked = listenerState(hurtDraw('奸雄'));
+    const injury = duelInjury();
+    expect(hasReactionListeners(asked, injury)).toBe(true);
+    expect(syncReactionQueue(asked, [injury]).queue?.nodes).toHaveLength(1);
+  });
+
+  it('只有 forced 听众的那一声：探针说有听众（决斗因此等这一层走完），问答路却零候选（绝不开第二发动路）', () => {
+    const forcedOnly = listenerState({ ...hurtDraw('刚毅'), forced: true });
+    const injury = duelInjury();
+    expect(hasReactionListeners(forcedOnly, injury)).toBe(true);
+    expect(listReactionCandidates(forcedOnly, {
+      key: 'probe', sourceEvent: { type: injury.type, data: injury.data }, answered: [],
+    })).toHaveLength(0);
+    // 零候选⇒零格：世界不冻结，也没有第二次表态机会。
+    expect(syncReactionQueue(forcedOnly, [injury]).queue).toBeNull();
+  });
+
+  it('同一格里两条路各走各的：forced 那枚当场落账，问窗只列非 forced 那枚', () => {
+    const engine = attackOnce([{ ...hurtDraw('刚毅'), forced: true }, hurtDraw('奸雄')]);
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    // 自动路：刚毅那一摸在派发当场就落了账，不用任何人点头。
+    expect(p2.hand ?? []).toHaveLength(1);
+    const ask = getReactionAsk(engine.state);
+    expect(ask?.options.map(o => o.skillId)).toEqual(['g2:奸雄:e1']);
   });
 });

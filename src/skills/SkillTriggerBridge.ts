@@ -1,45 +1,26 @@
 
 import type { DataSkillDefinition, DataSkillTrigger, SkillEffectData } from './dataTypes';
 import type { EngineState, PendingChoiceOption } from '../core/GameState';
-import type { GameEvent, GameEventType } from '../core/Event';
+import type { GameEvent } from '../core/Event';
 import type { TriggerEngine } from '../triggers/TriggerEngine';
 import type { TriggerContext } from '../triggers/types';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { evaluateSkillConditions } from './skillConditions';
 import { gateConditionsToText } from './skillGateText';
 import { matchesSkillEvent } from './skillEventMatch';
-import { isReactionTrigger } from './reactionTriggers';
+import { eventsHeardBy, isReactionTrigger } from './reactionTriggers';
 import {
   enumerateHandCardCandidates,
   enumerateTargetCandidates,
   type ChoiceCandidate,
 } from './choiceCandidates';
 
-const TRIGGER_EVENT_MAP: Partial<Record<DataSkillTrigger, GameEventType>> = {
-  onDeploy: 'GENERAL_DEPLOYED',
-  onTurnStart: 'TURN_START',
-  onDamageTaken: 'DAMAGE',
-  onDamageDealt: 'AFTER_DAMAGE',
-  onKill: 'DEATH',
-  onDeath: 'DEATH',
-  // 2.3.0: BEFORE_DAMAGE is a pure notification (no EventProcessor case, no
-  // state change) emitted by AttackResolver right before damage settlement.
-  // Derived effects queue at the trigger-chain tail, so a counter hit from
-  // this trigger settles AFTER the source DAMAGE within one dispatch —
-  // frozen semantics, see PROJECT_ARCH_MAP "Trigger 契约表".
-  onBecomingTarget: 'BEFORE_DAMAGE',
-  // 2.5.3: card-loss/gain triggers listen to the pure notification events
-  // derived by the GIVE settlement (chainedConsequences). CARD_* carries no
-  // EventProcessor case and changes no state by itself — same "pure
-  // notification in the map" shape as BEFORE_DAMAGE (2.3.0).
-  onCardLost: 'CARD_LOST',
-  onCardGained: 'CARD_GAINED'
-  // onTurnEnd is DELIBERATELY absent (2.3.1, single-activation-path /
-  // double-fire ban): TURN_END must never auto-fire the skill. Its only
-  // activation path is the canonical ACTIVATE_SKILL action → the resolver,
-  // which reuses the static createSkillEvents below — the same
-  // effect-translation code, never a second one.
-};
+/**
+ * 「这一型听哪几一声」不在这里写第二份——唯一一份表在
+ * `skills/reactionTriggers.ts` 的 `TRIGGER_EVENTS`，问答路与自动路同读它
+ * （v2.8.25 强制发动执法刀：两处各写一份时，打了「强制发动」的受伤技听不到
+ * 决斗收官那一声，而不强制的照常被问到）。
+ */
 
 /** 档位表（只给档，同档内先后由 `triggers/reactionOrder.ts` 决定）。导出是给
  * 响应链候选枚举用同一份档——两处各写一份迟早分叉。 */
@@ -70,7 +51,7 @@ function asRecord(value: unknown): Record<string, unknown> {
  * true＝这枚定义**不进触发链**：它听的那一声（受击／受伤）改成走响应链问答
  * 队列——候选由 `skills/reactionChain.ts` 从 EngineState 枚举，发动经 canonical
  * `ACTIVATE_SKILL`、不发动经 canonical `SKIP_REACTION`。形态与 `onTurnEnd`
- * 故意缺席 `TRIGGER_EVENT_MAP` 一模一样（**同一枚技能绝不允许既自动响又问**）。
+ * 故意缺席 `TRIGGER_EVENTS` 一模一样（**同一枚技能绝不允许既自动响又问**）。
  *
  * `forced`（强制发动）＝"满足触发条件与代价后直接响、不用玩家点头"（§H9 用户
  * 更正 c 条），所以它留在自动路上；该字段此前只活在录入面、结算侧零消费
@@ -136,34 +117,45 @@ export class SkillTriggerBridge {
   registerSkill(binding: SkillOwnerBinding) {
     // v2.8.22 响应链执法刀：受击／受伤两型的非 forced 定义**根本不注册**到触发
     // 链上——它们改走响应链问答（`skills/reactionChain.ts`），发动经 canonical
-    // `ACTIVATE_SKILL`。不注册的形态与 `onTurnEnd` 故意缺席 `TRIGGER_EVENT_MAP`
+    // `ACTIVATE_SKILL`。不注册的形态与 `onTurnEnd` 故意缺席 `TRIGGER_EVENTS`
     // 同一条纪律：同一枚技能绝不允许既自动响又停下来问。
     if (defersToReactionQueue(binding.skill)) return [];
-    const eventType = TRIGGER_EVENT_MAP[binding.skill.trigger];
-    if (!eventType) return [];
-
-    const triggerId = `skill:${binding.ownerId}:${binding.skill.id}`;
-    const unregister = this.triggerEngine.register({
-      id: triggerId,
-      eventType,
-      priority: PRIORITY[binding.skill.trigger] ?? 0,
-      enabled: binding.enabled !== false,
-      ownerId: binding.ownerId,
-      skillId: binding.skill.id,
-      // 顺序比较器要按"这一员"分组（同席位内挨打的那一员先表态），故把将领实例
-      // id 一并带到 trigger 上；读法与 `generalMatches` 用的同一个键。
-      generalId: binding.skill.sourceGeneralId,
-      condition: buildCondition(binding.skill.trigger, binding),
-      createEvents: (context) =>
-        SkillTriggerBridge.createSkillEvents(binding, context.state, context.event)
-    });
+    // v2.8.25 强制发动执法刀：一型可以听好几声（「受到伤害后」＝普通伤害＋决斗
+    // 收官那笔累计受伤），所以逐个事件各注册一次。第一枚的 id 保持原样
+    // （`skill:<席>:<定义>`）⇒既有单事件技能在触发链／事件流里的读数逐字不变，
+    // 只有真需要多听一声的定义才多出带事件名后缀的那一枚。
+    const eventTypes = eventsHeardBy(binding.skill.trigger);
+    if (eventTypes.length === 0) return [];
 
     const ownerKey = String(binding.ownerId);
+    const unregisters: Array<() => void> = [];
     const ids = this.registrations.get(ownerKey) ?? [];
-    ids.push(triggerId);
+
+    eventTypes.forEach((eventType, index) => {
+      const triggerId = index === 0
+        ? `skill:${binding.ownerId}:${binding.skill.id}`
+        : `skill:${binding.ownerId}:${binding.skill.id}#${eventType}`;
+      const unregister = this.triggerEngine.register({
+        id: triggerId,
+        eventType,
+        priority: PRIORITY[binding.skill.trigger] ?? 0,
+        enabled: binding.enabled !== false,
+        ownerId: binding.ownerId,
+        skillId: binding.skill.id,
+        // 顺序比较器要按"这一员"分组（同席位内挨打的那一员先表态），故把将领实例
+        // id 一并带到 trigger 上；读法与 `generalMatches` 用的同一个键。
+        generalId: binding.skill.sourceGeneralId,
+        condition: buildCondition(binding.skill.trigger, binding),
+        createEvents: (context) =>
+          SkillTriggerBridge.createSkillEvents(binding, context.state, context.event)
+      });
+      unregisters.push(unregister);
+      ids.push(triggerId);
+    });
+
     this.registrations.set(ownerKey, ids);
 
-    return [unregister];
+    return unregisters;
   }
 
   registerSkills(ownerId: number | string, skills: DataSkillDefinition[]) {

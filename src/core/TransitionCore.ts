@@ -6,7 +6,7 @@ import type { RuleEngine } from '../rules/RuleEngine';
 import type { EngineState } from './GameState';
 import type { GameEvent, RandomOutcomeData } from './Event';
 import { resolveTriggerChain } from './EngineDispatchFlow';
-import { echoDuelRounds } from './eventProcessors/duelEvents';
+import { echoDuelRounds, isDuelListenerEvent } from './eventProcessors/duelEvents';
 import {
   findResumedDuels,
   isReactionSourceEvent,
@@ -201,15 +201,30 @@ export function transition(
 }
 
 /** 要重入触发链的衍生事件（名字里的 "reaction"＝"重入"，不是响应链问答）。
- *  决斗刀 2 的收官通知 `DUEL_INJURY` **不**在这一列：它是纯观察面（默认处理器
- *  恒等），它的听众走响应链问答（候选由状态现算）。把它塞进触发链等于给同一枚
- *  技能开第二条发动路（§H9 绝不一技能两响）。 */
+ *  决斗刀 2 的收官通知 `DUEL_INJURY` 走的是另一条路（`isDuelListenerEvent`），
+ *  不写在这一列里，因为它按**层**认（开局的 `duelStage` 那一声明＋收官那一笔），
+ *  而逐轮那些"打"绝不重入——把这一维压进类型集合就等于把"逐轮不响"写丢了。 */
 const TRIGGER_REENTRY_TYPES: ReadonlySet<GameEvent['type']> = new Set(['DEATH', 'CARD_LOST', 'CARD_GAINED']);
 
 /**
+ * 这一条派生事件要不要过一遍触发链（v2.8.25 强制发动执法刀）。
+ *
+ * `DUEL_INJURY` 与决斗开局那一声**以前故意不在**这一判据里（§12-55 的口径是
+ * "它的听众走响应链问答"）。那句话只到 v2.8.24 为止：问答路的听众是**不强制**的
+ * 那一类，而「强制发动」的受击／受伤技压根不进问答队列——两声都不喂给它，
+ * 它就在决斗里结构性失聪。分流开关（`defersToReactionQueue`）从此是**唯一**
+ * 判据：不强制⇒问人；强制⇒自己响，而"自己响"必须有路喂到它耳边。
+ * 绝不一技能两响仍然成立：一枚定义只走一条路，两条路读同一份事件表。
+ */
+function reentersTriggerChain(event: GameEvent): boolean {
+  return TRIGGER_REENTRY_TYPES.has(event.type) || isDuelListenerEvent(event);
+}
+
+/**
  * 有界触发链重入（主路与决斗续跑路**共用这一份**）：队列里派生出来的 DEATH／
- * CARD_* 已经在派生点结算过状态，这里只让它们过一遍触发链（onKill／onDeath／
- * 手牌监听），并且只结算**新造出来**的事件，绝不把派生事件本身再结算一遍。
+ * CARD_*／决斗那两层已经在派生点结算过状态，这里只让它们过一遍触发链（onKill／
+ * onDeath／手牌监听／决斗的受击与受伤），并且只结算**新造出来**的事件，绝不把
+ * 派生事件本身再结算一遍。
  */
 function runTriggerReentry(
   state: EngineState,
@@ -219,14 +234,16 @@ function runTriggerReentry(
   flow: DrawOutcomeFlow,
 ): EngineState {
   let next = state;
-  let pendingReactions = derived.filter(event => TRIGGER_REENTRY_TYPES.has(event.type));
+  let pendingReactions = derived.filter(reentersTriggerChain);
   for (let round = 0; pendingReactions.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
     const expanded = resolveTriggerChain(next, ctx.triggers, pendingReactions);
-    events.push(...expanded);
-    const generated = expanded.filter(event => !TRIGGER_REENTRY_TYPES.has(event.type) && event.type !== 'TRIGGERED');
+    // 决斗那两层已经在 `echoDuelRounds` 里写进事件流了（同一批对象），这里绝不再
+    // 写第二遍；DEATH／CARD_* 反过来——它们唯一的入流处就是这一行，行为逐字不变。
+    events.push(...expanded.filter(event => !events.includes(event)));
+    const generated = expanded.filter(event => !reentersTriggerChain(event) && event.type !== 'TRIGGERED');
     const nextDerived: GameEvent[] = [];
     next = ctx.processor.process(next, generated, nextDerived, flow);
-    pendingReactions = nextDerived.filter(event => TRIGGER_REENTRY_TYPES.has(event.type));
+    pendingReactions = nextDerived.filter(reentersTriggerChain);
   }
   if (pendingReactions.length > 0) {
     events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingReactions: pendingReactions.length } });
