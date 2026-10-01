@@ -2,7 +2,7 @@ import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getTurnStartDrawCount } from '../turnRules';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
-import { deriveDuelRounds } from './duelEvents';
+import { deriveDuelFlow } from './duelEvents';
 
 /**
  * Some domain outcomes (player defeat, game over, compensation draw) are
@@ -24,10 +24,15 @@ export function enqueueDerivedConsequences(
   next: EngineState,
 ): GameEvent[] | null {
   if (event.type === 'DUEL') {
-    // 决斗本体不改状态（applyDuelEvent 恒等），全部后果＝逐轮预解的伤害块。
-    // 块内只含本原语派生的 DAMAGE，整块前置＝"决斗连续完成、中间不插入任何
-    // 流程"（§H5-6）＋"决斗先、同技能后序效果接着走完"（§H9 第六轮②）。
-    return deriveDuelRounds(next, event);
+    // 决斗本体不改状态（applyDuelEvent 恒等），全部后果＝这一场决斗派生的那块。
+    // 块内只含本原语派生的通知与逐轮伤害，整块前置＝"决斗连续完成、中间不插入
+    // 任何流程"（§H5-6）＋"决斗先、同技能后序效果接着走完"（§H9 第六轮②）。
+    // v2.8.24 决斗刀 2：块的内容可以是三种——
+    //  - 只有开局那一声（有人要表态，逐轮延到问完之后＝§H9 第七轮"这一层全部
+    //    响完决斗才开始"）；
+    //  - 开局那一声（标着当场没人说）＋逐轮＋收官那笔累计受伤（一次成形）；
+    //  - 续跑令上来：逐轮＋收官那笔累计受伤（起点体力已含答复里回复的那几点）。
+    return deriveDuelFlow(next, event);
   }
 
   if (event.type === 'DAMAGE') {

@@ -8,6 +8,7 @@ import type { GameEvent, RandomOutcomeData } from './Event';
 import { resolveTriggerChain } from './EngineDispatchFlow';
 import { echoDuelRounds } from './eventProcessors/duelEvents';
 import {
+  findResumedDuels,
   isReactionSourceEvent,
   reactionQueueFingerprint,
   syncReactionQueue,
@@ -60,6 +61,9 @@ export interface TransitionResult {
 }
 
 const MAX_TRIGGER_REENTRY_ROUNDS = 8;
+/** 决斗续跑的波数上限（跑飞防护，与上面同源思路）：一局里一场决斗最多两层问
+ *  答（开局＋收官），4 波已是富余；真到上限就在事件流里留一条如实欠账。 */
+const MAX_DUEL_RESUME_WAVES = 4;
 
 export function transition(
   state: EngineState,
@@ -138,20 +142,8 @@ export function transition(
   // for onCardLost/onCardGained listeners within the same dispatch. The
   // bounded rounds above already cap any give→gain→give pile-up.
   // 注意这个名字里的 "reaction"＝"要重入触发链的衍生事件"，与 v2.8.22 的**响应链**
-  // （受击/受伤问答，见下面的 `syncReactionState`）是两回事，别混。
-  const REACTION_EVENT_TYPES: ReadonlySet<GameEvent['type']> = new Set(['DEATH', 'CARD_LOST', 'CARD_GAINED']);
-  let pendingReactions = derived.filter(event => REACTION_EVENT_TYPES.has(event.type));
-  for (let round = 0; pendingReactions.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
-    const expanded = resolveTriggerChain(next, ctx.triggers, pendingReactions);
-    events.push(...expanded);
-    const generated = expanded.filter(event => !REACTION_EVENT_TYPES.has(event.type) && event.type !== 'TRIGGERED');
-    const nextDerived: GameEvent[] = [];
-    next = ctx.processor.process(next, generated, nextDerived, flow);
-    pendingReactions = nextDerived.filter(event => REACTION_EVENT_TYPES.has(event.type));
-  }
-  if (pendingReactions.length > 0) {
-    events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingReactions: pendingReactions.length } });
-  }
+  // （受击/受伤问答，见下面的 `scanReaction`）是两回事，别混。
+  next = runTriggerReentry(next, derived, events, ctx, flow);
 
   // v2.8.22 响应链执法刀（#71）·结算后扫描：把"这一声要不要有人表态"从触发链的
   // 自动发动搬出来，落成状态里的一个问答队列（乙案＝搬出结算链、同一个窗问答）。
@@ -170,13 +162,102 @@ export function transition(
 
   // 位置在所有结算与触发链重入之后：响应链问的是"这一趟结算完的事实"，不参与
   // 触发链本身，也绝不插到 RANDOM_OUTCOME 之前去改动既有事件流的次序。
-  next = syncReactionState(next, events, ctx);
+  let scan = scanReaction(next, events, events, ctx);
+  next = scan.state;
+  let windowStart = events.length;
+
+  // v2.8.24 决斗刀 2（§H9 第七轮开局格）：开局那一层问完了⇒这一场决斗接着往下
+  // 打。每一波都是"结算⇒重入⇒再扫描"，所以答复里回复的体力进了决斗起点、决斗
+  // 收官问出来的新格也走同一条扫描（不插队：新格永远排在既有格之后）。
+  // 每波之后只把**新增的那一段**事件交给下一次扫描（`windowStart`）：同一段事件
+  // 扫两遍会把已经立过格的受击／受伤再开一次格——那是第二个推导点，不是这里。
+  const duelKeys = new Set<string>();
+  for (let wave = 0; wave < MAX_DUEL_RESUME_WAVES; wave += 1) {
+    const pending = scan.resumedDuels.filter(duel => {
+      const key = String((duel.data as { duelKey?: unknown } | undefined)?.duelKey ?? '');
+      if (!key || duelKeys.has(key)) return false;
+      duelKeys.add(key);
+      return true;
+    });
+    if (pending.length === 0) break;
+    for (const duelEvent of pending) {
+      next = settleDeferredDuel(next, duelEvent, events, ctx, flow);
+    }
+    scan = scanReaction(next, events.slice(windowStart), events, ctx);
+    next = scan.state;
+    windowStart = events.length;
+  }
+  // 如实欠账（与 TRIGGER_REENTRY_LIMIT 同一手法，只记观察标记、不进状态）：
+  // 波数用尽还有决斗没续上。真实牌局走不到这里（一层开局＋一层收官＝两波）。
+  const stranded = scan.resumedDuels.filter(duel => {
+    const key = String((duel.data as { duelKey?: unknown } | undefined)?.duelKey ?? '');
+    return key && !duelKeys.has(key);
+  });
+  if (stranded.length > 0) {
+    events.push({ type: 'CUSTOM', data: { kind: 'DUEL_RESUME_LIMIT', pending: stranded.length } });
+  }
 
   return { state: next, events, accepted: true, overrideFailures: flow.diagnostics ?? [] };
 }
 
+/** 要重入触发链的衍生事件（名字里的 "reaction"＝"重入"，不是响应链问答）。
+ *  决斗刀 2 的收官通知 `DUEL_INJURY` **不**在这一列：它是纯观察面（默认处理器
+ *  恒等），它的听众走响应链问答（候选由状态现算）。把它塞进触发链等于给同一枚
+ *  技能开第二条发动路（§H9 绝不一技能两响）。 */
+const TRIGGER_REENTRY_TYPES: ReadonlySet<GameEvent['type']> = new Set(['DEATH', 'CARD_LOST', 'CARD_GAINED']);
+
 /**
- * 结算后的响应链扫描（#71 的唯一调用点）。
+ * 有界触发链重入（主路与决斗续跑路**共用这一份**）：队列里派生出来的 DEATH／
+ * CARD_* 已经在派生点结算过状态，这里只让它们过一遍触发链（onKill／onDeath／
+ * 手牌监听），并且只结算**新造出来**的事件，绝不把派生事件本身再结算一遍。
+ */
+function runTriggerReentry(
+  state: EngineState,
+  derived: readonly GameEvent[],
+  events: GameEvent[],
+  ctx: TransitionContext,
+  flow: DrawOutcomeFlow,
+): EngineState {
+  let next = state;
+  let pendingReactions = derived.filter(event => TRIGGER_REENTRY_TYPES.has(event.type));
+  for (let round = 0; pendingReactions.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
+    const expanded = resolveTriggerChain(next, ctx.triggers, pendingReactions);
+    events.push(...expanded);
+    const generated = expanded.filter(event => !TRIGGER_REENTRY_TYPES.has(event.type) && event.type !== 'TRIGGERED');
+    const nextDerived: GameEvent[] = [];
+    next = ctx.processor.process(next, generated, nextDerived, flow);
+    pendingReactions = nextDerived.filter(event => TRIGGER_REENTRY_TYPES.has(event.type));
+  }
+  if (pendingReactions.length > 0) {
+    events.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_REENTRY_LIMIT', pendingReactions: pendingReactions.length } });
+  }
+  return next;
+}
+
+/**
+ * 一场被开局问答延后的决斗的续跑（§H9 第七轮"这一层全部响完，决斗才开始"）。
+ *
+ * 令＝那条 `DUEL{duelStage:'answered'}`；它的逐轮与收官那笔由**同一个派生点**
+ * （`eventProcessors/duelEvents.ts`）在**答复落账之后**的状态上再算一次，整块前置
+ * 结算，随后走与主路同一份重入（阵亡者的遗言与击破补偿抽照旧同一条 FIFO）。
+ * 这里不造任何游戏事实，只决定"什么时候把令交下去"。
+ */
+function settleDeferredDuel(
+  state: EngineState,
+  duelEvent: GameEvent,
+  events: GameEvent[],
+  ctx: TransitionContext,
+  flow: DrawOutcomeFlow,
+): EngineState {
+  events.push(duelEvent);
+  const derived: GameEvent[] = [];
+  const settled = ctx.processor.process(state, [duelEvent], derived, flow);
+  echoDuelRounds(events, derived);
+  return runTriggerReentry(settled, derived, events, ctx, flow);
+}
+
+/**
+ * 结算后的响应链扫描（#71 的唯一调用点，决斗刀 2 起它同时报告"哪些决斗该续跑"）。
  *
  * 触发条件先做免费闸：这一趟既没有可响应的一声（受击／受伤，且非决斗逐轮）、
  * 状态里也没有待答队列 ⇒ 原样返回，事件流一个字都不动。这条闸是"旧对局零扰动"
@@ -187,22 +268,26 @@ export function transition(
  * 如实账：与 `TRIGGER_REENTRY_LIMIT` 同一手法，只往事件流里记一条 CUSTOM 观察
  * 标记，不进状态。
  */
-function syncReactionState(
+function scanReaction(
   state: EngineState,
+  dispatchEvents: readonly GameEvent[],
   events: GameEvent[],
   ctx: TransitionContext,
-): EngineState {
-  const hasSource = events.some(event => isReactionSourceEvent(event));
-  const current = state.pendingReaction ?? null;
-  if (!hasSource && !current) return state;
-
-  const { queue, overflow } = syncReactionQueue(state, events);
-  const changed = reactionQueueFingerprint(current) !== reactionQueueFingerprint(queue);
-  if (!changed) {
-    if (overflow > 0) events.push({ type: 'CUSTOM', data: { kind: 'REACTION_QUEUE_LIMIT', overflow } });
-    return state;
+): { state: EngineState; resumedDuels: GameEvent[] } {
+  const before = state.pendingReaction ?? null;
+  const hasSource = dispatchEvents.some(event => isReactionSourceEvent(event));
+  let next = state;
+  let after = before;
+  if (hasSource || before) {
+    const { queue, overflow } = syncReactionQueue(state, dispatchEvents);
+    after = queue;
+    if (reactionQueueFingerprint(before) !== reactionQueueFingerprint(queue)) {
+      const syncEvent: GameEvent = { type: 'REACTION_QUEUE_SYNCED', data: { queue, overflow } };
+      events.push(syncEvent);
+      next = ctx.processor.process(state, [syncEvent]);
+    } else if (overflow > 0) {
+      events.push({ type: 'CUSTOM', data: { kind: 'REACTION_QUEUE_LIMIT', overflow } });
+    }
   }
-  const syncEvent: GameEvent = { type: 'REACTION_QUEUE_SYNCED', data: { queue, overflow } };
-  events.push(syncEvent);
-  return ctx.processor.process(state, [syncEvent]);
+  return { state: next, resumedDuels: findResumedDuels(dispatchEvents, before, after) };
 }

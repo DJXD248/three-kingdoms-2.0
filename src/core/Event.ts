@@ -16,6 +16,11 @@ export type GameEventType =
   | 'REVEAL'
   | 'DECK_PLACE'
   | 'DUEL'
+  // v2.8.24 决斗刀 2（§H9 第七轮收官格）：决斗打完那一笔**累计**受伤的通知。
+  // 它不扣血、零状态位移（默认处理器恒等返回），只把"这员将在这一场决斗里实际
+  // 掉掉的体力总额"记成一声"受到伤害后"，让受伤型监听从里面听**一次**（逐轮那
+  // 些不响）。`value`＝累计值，不是任何单轮的数值。
+  | 'DUEL_INJURY'
   | 'CHOICE_REQUIRED'
   | 'CHOICE_RESOLVED'
   | 'CARD_LOST'

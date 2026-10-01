@@ -24,16 +24,22 @@ export function isReactionTrigger(trigger: DataSkillTrigger): trigger is Reactio
  * 每一型可响应监听听的是哪一声事件（与 `SkillTriggerBridge` 的
  * `TRIGGER_EVENT_MAP` 逐字同读法：成为目标时听 `BEFORE_DAMAGE`、受到伤害后听
  * `DAMAGE` 本体——第九轮 d) 更正过的那条事实）。
+ *
+ * v2.8.24 决斗刀 2（§H9 第七轮收官格）：「受到伤害后」多听一声 `DUEL_INJURY`。
+ * 那一一声＝决斗打完后**按角色累计**的那笔受伤（一场决斗只记一笔、只结算一次），
+ * 逐轮的那些"打"仍不响（`isReactionSourceEvent` 那条显式排除）。成为目标时不扩：
+ * 决斗开局喂的是"成为**技能**目标"，仍走同一声 `BEFORE_DAMAGE`，由载荷里的
+ * `damageType:'skill'` 与 `targetSource` 那一维分档（第五轮⑤：不喂"成为攻击目标"）。
  */
-export const REACTION_EVENT_TYPE: Record<ReactionTrigger, GameEventType> = {
-  onBecomingTarget: 'BEFORE_DAMAGE',
-  onDamageTaken: 'DAMAGE',
+export const REACTION_EVENT_TYPES: Record<ReactionTrigger, readonly GameEventType[]> = {
+  onBecomingTarget: ['BEFORE_DAMAGE'],
+  onDamageTaken: ['DAMAGE', 'DUEL_INJURY'],
 };
 
 /** 反查：这一声事件是哪种可响应节点（不是⇒undefined，扫描器据此跳过）。 */
 export function reactionTriggerOfEvent(type: GameEventType): ReactionTrigger | undefined {
   for (const trigger of REACTION_TRIGGERS) {
-    if (REACTION_EVENT_TYPE[trigger] === type) return trigger;
+    if (REACTION_EVENT_TYPES[trigger].includes(type)) return trigger;
   }
   return undefined;
 }

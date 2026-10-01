@@ -956,10 +956,9 @@ describe('EventProcessor', () => {
       expect(armorResult.discardPile).toHaveLength(0);
     });
 
-    it('诚实空转：自己对自己／任一侧不在场／缺载荷 ⇒ 零轮次零状态位移（§H9 第五轮③）', () => {
+    it('诚实空转两档：任一侧不在场／缺载荷⇒零痕迹；自己对自己⇒只喂开局那一声（§H9 第五轮③＋第九轮⑧）', () => {
       const make = () => build(duelist('du_a', 1, 5, 2), duelist('du_b', 2, 5, 2));
       for (const event of [
-        duel({ targetId: 'du_a' }),
         duel({ targetId: 'du_ghost' }),
         duel({ sourceGeneralId: 'du_ghost' }),
         { type: 'DUEL' as const, data: {} },
@@ -970,6 +969,16 @@ describe('EventProcessor', () => {
         expect(collected).toEqual([]);
         expect(after).toEqual(before);
       }
+
+      // 自己对自己：决斗本身仍零轮次零位移（"自己不能和自己决斗"），但"成为技能
+      // 目标"那一声照喂——开局通知是这条流程里唯一留下的痕迹。这里当场没人有得说
+      // （合成将不带技能）⇒ 标 `settled`，与"停下来问过"那一档（`opening`）分得开。
+      const selfBefore = make();
+      const selfCollected: GameEvent[] = [];
+      const selfAfter = processor.process(structuredClone(selfBefore), [duel({ targetId: 'du_a' })], selfCollected);
+      expect(selfCollected.map(e => e.type)).toEqual(['BEFORE_DAMAGE']);
+      expect(selfCollected[0].data).toMatchObject({ duelStage: 'settled', targetId: 'du_a', damageType: 'skill' });
+      expect(selfAfter).toEqual(selfBefore);
     });
   });
 

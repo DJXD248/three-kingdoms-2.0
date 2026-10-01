@@ -34,7 +34,7 @@ import { evaluateSkillConditions } from './skillConditions';
 import { matchesSkillEvent } from './skillEventMatch';
 import { PRIORITY, SkillTriggerBridge } from './SkillTriggerBridge';
 import type { DataSkillDefinition } from './dataTypes';
-import { REACTION_EVENT_TYPE, isReactionTrigger, reactionTriggerOfEvent } from './reactionTriggers';
+import { REACTION_EVENT_TYPES, isReactionTrigger, reactionTriggerOfEvent } from './reactionTriggers';
 import { orderReactionCandidates, victimRefOf, type ReactionCandidate } from '../triggers/reactionOrder';
 
 /**
@@ -122,7 +122,7 @@ export function listReactionCandidates(
         if (!isReactionTrigger(definition.trigger) || definition.forced === true) continue;
         // choiceMode 技能不进反应队列，直接开选择账
         if ((definition as unknown as Record<string, unknown>).choiceMode === true) continue;
-        if (REACTION_EVENT_TYPE[definition.trigger] !== node.sourceEvent.type) continue;
+        if (!REACTION_EVENT_TYPES[definition.trigger].includes(node.sourceEvent.type)) continue;
         const binding = { ownerId: player.id, skill: definition };
         if (!matchesSkillEvent(definition.trigger, binding, sourceEvent)) continue;
         if (!evaluateSkillConditions(definition.conditions, {
@@ -227,14 +227,88 @@ export function reactionAnsweredOf(ask: ReactionAsk, option: ReactionOption | nu
   };
 }
 
-/** 这一声是不是响应链的候选源（受击／受伤两型），并且**不是**决斗的逐轮伤害。 */
+/**
+ * 这一声是不是响应链的候选源（受击／受伤两型，`DUEL_INJURY` 也算受伤）。
+ *
+ * 两条显式排除，都来自决斗（§H9 第七轮＋第九轮 d) 的点名要求）：
+ *  - 决斗**逐轮**那些"打"（带 `duelRound`）不唤任何监听：那一整块在队列里一次
+ *    结算完，中间绝不停下来问人（"决斗连续完成、中间不插入任何流程"）。
+ *  - 决斗开局的**通知**在"当场没人有得说"时标 `duelStage:'settled'`：那一声已经
+ *    由派生点（`core/eventProcessors/duelEvents.ts`）问过一遍候选并得到"没有"，
+ *    扫描器认同一个标记就不再问第二遍——两档读的是同一条事实，不开第二条推导。
+ */
 export function isReactionSourceEvent(event: GameEvent): boolean {
   if (!reactionTriggerOfEvent(event.type)) return false;
-  // 决斗逐轮不唤监听（§H5-6"决斗连续完成、中间不插入任何流程"＋§H9 第七轮
-  // "逐轮不响"）：那一声的每"打"带 `duelRound`，整块在队列里一次结算完，中间
-  // 绝不停下来问人。#70 决斗刀 2 会把这条显式重钉一遍。
-  const payload = event.data as { duelRound?: unknown } | undefined;
-  return typeof payload?.duelRound !== 'number';
+  const payload = event.data as { duelRound?: unknown; duelStage?: unknown } | undefined;
+  if (typeof payload?.duelRound === 'number') return false;
+  if (event.type === 'BEFORE_DAMAGE' && payload?.duelStage === 'settled') return false;
+  return true;
+}
+
+/**
+ * 决斗开局层的**探针**（v2.8.24 决斗刀 2）：这一场决斗开局那一刻，场上还有没有
+ * 人有得说？派生点（`core/eventProcessors/duelEvents.ts`）拿它决定"先把逐轮打
+ * 完、还是停下来问一句"，用的就是扫描器同一个候选函数——所以"有没有候选"这件事
+ * 全库只有一个推导点，不可能派生侧说有、扫描侧说没有。
+ */
+export function hasReactionCandidates(state: EngineState, sourceEvent: GameEvent): boolean {
+  const node: ReactionNode = {
+    key: 'probe',
+    sourceEvent: { type: sourceEvent.type, data: sourceEvent.data },
+    answered: [],
+  };
+  return listReactionCandidates(state, node).length > 0;
+}
+
+function openingDuelKeyOf(event: GameEvent): string | null {
+  const payload = event.data as { duelStage?: unknown; duelKey?: unknown } | undefined;
+  if (payload?.duelStage !== 'opening') return null;
+  return typeof payload.duelKey === 'string' && payload.duelKey ? payload.duelKey : null;
+}
+
+function openingDuelKeyOfNode(node: ReactionNode): string | null {
+  if (node.sourceEvent.type !== 'BEFORE_DAMAGE') return null;
+  return openingDuelKeyOf(node.sourceEvent);
+}
+
+/**
+ * 决斗续跑清单（§H9 第七轮开局格："这一层全部响完，决斗才开始"）。
+ *
+ * 一句话：**开局那一格不再挂着了 ⇒ 这一场决斗该往下打了**。判据纯 from
+ * （本次 dispatch 的事件序列，扫描前的队列，扫描后的队列），三路同果：
+ *  - 本次刚立的通知（`duelStage:'opening'`）在队列里没有活着的格＝当场没人要说／
+ *    刚问完；
+ *  - 扫描前挂着、扫描后消失的开局格＝这一句刚刚被答完。
+ * 每一场只回一条 `DUEL{duelStage:'answered'}`：逐轮伤害与收官那笔累计受伤由派生点
+ * 在这一条上再算（它读的是**答复落账之后**的状态⇒响应里回复的体力算进决斗起点）。
+ */
+export function findResumedDuels(
+  dispatchEvents: readonly GameEvent[],
+  before: PendingReaction | null,
+  after: PendingReaction | null,
+): GameEvent[] {
+  const live = new Set<string>();
+  for (const node of after?.nodes ?? []) {
+    const key = openingDuelKeyOfNode(node);
+    if (key) live.add(key);
+  }
+
+  const resumed: GameEvent[] = [];
+  const seen = new Set<string>();
+  const collect = (data: Record<string, unknown> | undefined, key: string | null) => {
+    if (!key || live.has(key) || seen.has(key)) return;
+    seen.add(key);
+    resumed.push({ type: 'DUEL', data: { ...data, duelKey: key, duelStage: 'answered' } });
+  };
+  for (const event of dispatchEvents) {
+    if (event.type !== 'BEFORE_DAMAGE') continue;
+    collect(event.data as Record<string, unknown> | undefined, openingDuelKeyOf(event));
+  }
+  for (const node of before?.nodes ?? []) {
+    if (openingDuelKeyOfNode(node) === null) continue;
+    collect(node.sourceEvent.data as Record<string, unknown> | undefined, openingDuelKeyOfNode(node));
+  }
+  return resumed;
 }
 
 /**
