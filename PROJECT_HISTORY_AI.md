@@ -2765,3 +2765,40 @@ a) **恒等要有单元钉**——它落 `EventProcessor` 的 `default: return s
 - **还欠的**：徽章 `tags` 那一列的结算语义（锁定技"不可无效／不可改变"、限定技"一局一次"）＝#43 徽章刀 2；逐效果粒度的 `forced` 录入栏（今日开关在技能级）；链式"若则"与 #25–#29 内容刀照旧待口令；决斗问窗与 forced 自动响的真机证人＝#81。
 
 - **CI**：见交接文档 §9 本轮条（远端 run 读数唯一落点＝§9；本章不复制 run id／sha）。
+
+## 2026-10-01 决斗问窗真机取证轮（#81）：**v2.8.24／v2.8.25 连续两版欠的那半句"交互式决斗问窗没有浏览器证人"，今天用真实点击补上了**——本刀的正文不是"又验了一遍"，是**"为一个只有口令才看似能凑出来的活体场景，造出第三条不碰任何既有数据的路"**（**纯取证轮：`src/`／`package.json`／测试／数据／词汇表 md 与 xlsx 全部零改动 ⇒ 不占版本号、不打标签**；模型标记：本轮由 Qoder 主会话施工）
+
+- **用户的裁决原话（本刀的规格）**："两条备选路线不能组合做吗，我觉得 A 的挂两个势力的主面挺好，但是要随机摇到才行，浪费时间，B 这个要用排除法枚举种子，也浪费时间，虽然只做一次。**把所有势力都挂上有决斗技能的将，再控一下分发的卡池，同时把所有玩家都抽到了决斗技能将领的种子钉住，应该是最好的选择了**"⇒A 路（随机摇）与 B 路（排除法枚举）各带一个"浪费时间"，组合后＝**主面必发把概率抬到 1，种子把随机钉成常数**，只剩"扫一次种子"这一笔一次性成本。
+
+- **场景配方（可逐字复跑）**：
+  1. **内容面**：编辑器 DIY 入口建 10 张 `D-*` 将＝五势力各一对。`W81Duel<势力>`＝`onDamageDealt → DUEL(CHALLENGE)`（造成攻击伤害后开决斗）；`W81Reply<势力>`＝**同一条**「成为技能目标时」上挂**两条**定义——`REPLY_ASK`（非 forced，摸 1 张）与 `REPLY_FORCED`（`forced:true`，摸 1 张）。把"问"与"不问"两臂放在**同一个人、同一个触发节点**上，是这一刀最要紧的设计（判据 §12-90④）。
+  2. **卡池面**：**不禁用任何官方将**（禁用官方将才需要开发者口令，v2.8.6 代决②那条 `effectiveDisabledGenerals()` 过滤本轮结构上碰不到）⇒DIY 走 `addAuthoredGeneral`，`D-*` 命名空间、零口令。这正是 §12-88③ 当年判成"需要口令"的地方被绕开的地方。
+  3. **种子面**：`createRoom` 之前 `store.setState(s=>({engineState:{...s.engineState, rngState: createRngState(7)}}))`；离线先按同一套分发规则扫 400 颗种子（页面里挂 `window.__W81.scan(30)` 分批跑，单批不越浏览器 15 s 超时），预测"两家都抽到决斗将"的种子＝**7**；真机钉 7 之后 `rollDice→assignFactions→confirmDraft` 全程照玩家那条链走，实到发放名单与预测**逐字命中**（seat1 魏主面含 W81DuelWei＋W81ReplyWei，seat0 晋主面含 W81DuelJin＋W81ReplyJin）。
+  4. **反证**：开工前先在页面跑 `compileGeneralSkills` 确认 `skipped:[]`⇒决斗技能的编译门槛**没有**被跳过，弹出是真弹、不是夹具凑出来的空转。
+
+- **证据一·问窗原文（两次弹出，逐字抄录）**：
+  - 回合 5（玩家2 的 W81DuelJin 用「🏹远程(-1牌)」打玩家1 的 W81ReplyWei，1 点、4/4→3/4 未致死）：`🔔 响应询问 · 玩家1（W81ReplyWei），成为目标时是否发动技能？` ＋节点号 `rn:5:0` ＋**唯一技能选项** `⚡ W81ReplyWei【REPLY_ASK】`／`becoming skill target then draw` ＋ `🚫 跳过` ＋出口说明行 `跳过＝这一格一个也不发动，继续问下一席`。
+  - 回合 6（玩家1 的 W81DuelWei 远程打玩家2 的 W81ReplyJin）：同一形态，`rn:6:0`，选项仍只列 `⚡ W81ReplyJin【REPLY_ASK】`＋`🚫 跳过`。
+  - 源事件两次同为 `BEFORE_DAMAGE{damageType:'skill', duelStage:'opening', skillName:'CHALLENGE', effectType:'DUEL', duelKey:'<发起者>:CHALLENGE:e1||<发起者>><受挑者>'}`（第二回合 6 的原始件＝`sourceGeneralId:'D-637c7273…inst_b'`、`targetId:'D-0fa4fe70…inst_1'`、`value:0`、`triggerDepth:4`）。
+  - **共同点**：同一张将身上明明有两条「成为技能目标时」定义，问窗**只列非 forced 那一条**。远程能跨主面打，用的是 `battlefieldRules` 的 ranged 档「front→front 且 `areaOwnerId` 不同」。
+
+- **证据二·`forced` 的自动发动（两次都成立，双证人）**：
+  - `ACTION: ATTACK` 的账＝`ACTION_ACCEPTED, BEFORE_DAMAGE, DAMAGE, ATTACK_RESOLVED, AFTER_DAMAGE, TRIGGERED, DUEL[CHALLENGE], BEFORE_DAMAGE[CHALLENGE/opening], TRIGGERED, DRAW[REPLY_FORCED], RANDOM_OUTCOME, REACTION_QUEUE_SYNCED, STATE_CHANGED`——`DRAW[REPLY_FORCED]` 落在问窗弹出**之前**；第二发的原始件＝`skillId:'D-0fa4fe70…inst_1:REPLY_FORCED:e1'`、`playerId:2`、`count:1`。
+  - 第二证人＝**手牌增量**：回合 5 玩家1 手牌 3→4（自动摸到「铁矿石」）；回合 6 玩家2 手牌 7→8（多出的正是「铁盾」）。UI 上从未出现"要不要摸牌"的询问。
+
+- **证据三·两条出口各一票**（本刀相对 v2.8.24 的净新增——那一版只有引擎级测试）：
+  - 点技能＝`ACTION: ACTIVATE_SKILL` → `REACTION_ANSWERED[REPLY_ASK]`, `DRAW[REPLY_ASK]`, `RANDOM_OUTCOME`, `REACTION_QUEUE_SYNCED`, `DUEL[CHALLENGE/answered]`, `DAMAGE[CHALLENGE]#r1`, `#r2`, `#r3`, `DUEL_INJURY[CHALLENGE/injury] {"injury":2}`, `DEATH`, `STATE_CHANGED`；被击破方随后走 `💔 击破补偿抽卡`。
+  - 点跳过＝`ACTION: SKIP_REACTION` → `REACTION_ANSWERED`（**不带技能号**）, `REACTION_QUEUE_SYNCED`, `DUEL[CHALLENGE/answered]`, `DAMAGE[CHALLENGE]#r1`, `DEATH`, `STATE_CHANGED`。跳过那笔**零效果跟单**（玩家2 手牌在 7→8 之后再没有涨＝那一笔只属于 forced），决斗照常开打、问窗关闭、操作权回到发起方。
+  - **逐轮与收官的差别要读准**：`DAMAGE[CHALLENGE]#rN` 全程**没有**再惊动监听链（无 `TRIGGERED`、无第二扇问窗）＝§H9「逐轮不响」的真机复证；第二发目标只剩 1 血，`#r1` 即致死⇒**没有收官 `DUEL_INJURY`**，这是 v2.8.23"致命击阵亡不响应"＋v2.8.24"收官累计判定值只在双方撑到收官才发"的**又一次实证**，不是回归（判据 §12-90⑤：取证前先把伤害表与血量算到底，"没看到那一枚事件"要能区分"没实现"与"这场场景里没有它的位置"）。
+
+- **本刀的净结论（账面状态翻转）**：`forced` 与「问窗两出口」今日**同时有真机证人**。ARCH_MAP §F 决斗格、§H9 第十二轮⑤、§H9 徽章表「强制发动」行三处"真机证人＝#81"的欠账已就地追记为"已出示"；HANDOFF **§12-88③** 那句"指定两张卡对坐这类活体场景需要口令"被第三条路推翻并加更正括注（**"绝不手改 `EngineState` 冒充热座"这半句照旧成立，本轮正是靠它成立的**——种子写进 `rngState` 之后走的还是 canonical `createRoom`）；新判据 **§12-90** 七条。
+
+- **现场还原（判据 §12-90⑦：还原账要写"删了什么"＋"什么没动"）**：10 张 `W81*` 经 `removeAuthoredGeneral` 删除；**先于本轮存在的 `D-cd9acc4f-20a4-412d-aca0-94609fc278d2`「E2E Duel Test」保留**；`poolGenerals().length` 由 106 回到 **96**（＝官方 95 将＋那 1 张样本）；`disabledGenerals`／`lockedGeneralIds` 回到 `[]`（localStorage 对应键长度 2＝空数组）；vite dev（PID 26436，:5175）已停、`netstat` 复查无 `LISTENING`。本轮没有改动任何仓库文件以外的持久数据。
+
+- **诚实边界三条**：① 装饰段（掷骰动画）受后台页签定时器限流（§12-23 已登记的环境事实，本轮现场又量到），改点同一条 store 链路的按钮直达装饰段，**结算面零旁路**；② browser-use 的 `take_screenshot`／`take_snapshot` 经 `mcp_call` 通道一律报 `params must NOT have additional properties`⇒**本刀无 PNG**，凭据＝问窗 DOM 原文＋两份 liveReplay 账，且不把替代凭据冒充原件；③ 本刀**没有重跑五闸与两锚**——树没变（零 `src/`／测试／数据改动），重跑不产生证据增量，读数继承 v2.8.25 定稿树；**后续会话若要拿这一轮当"验证过"的凭据，请按 commit SHA 查 CI，别在本章找五闸数字**。
+
+- **证据链固化指针（§12-88⑥ 要求"原始件放哪"＋"摘要写在哪"两句都落账）**：原始 DOM 原文与两份账本＝本地取证件 `D:\THREE_KINGDOMS\evidence-w81\witness-01-duel-ask-window.md`（两次问窗逐字、两条 ledger、`DUEL_INJURY` 原始 JSON 字段、还原清单、对照小表）；摘要＝本章＋HANDOFF §9 本轮条＋§3 索引行。
+
+- **还欠的**：#43 徽章刀 2（锁定技不可无效／限定技一局一次）照旧待口令，且它一落地就会换锚；逐效果粒度的 `forced` 录入栏（开关今日在技能级）；链式"若则"与 #25–#29 内容刀。**本刀之后，2.8 线不再欠"决斗问窗"这一类取证账。**
+
+- **CI**：见交接文档 §9 本轮条（远端 run 读数唯一落点＝§9；本章不复制 run id／sha）。

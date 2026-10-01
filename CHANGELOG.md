@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-10-01 — duel ask-window real-browser witness (#81): both exits of the window got a real vote, `forced` fired before it (no code change, no version, no tag)
+
+The half-sentence v2.8.24 and v2.8.25 both left on the books — "the interactive duel ask window has no browser
+witness" — is now closed. In a real hotseat room the opening window appeared twice and each exit was voted for real:
+**skill** (`ACTIVATE_SKILL` → rounds → `DUEL_INJURY{injury:2}` → `DEATH`) and **🚫 跳过** (`SKIP_REACTION` → one
+`REACTION_ANSWERED` carrying **no skill**, zero follow-up effects, duel proceeds and kills a 1-HP target in round 1).
+The same DIY general carried two definitions on the *same* 「成为技能目标时」 trigger, so the window listed only the
+non-forced one while `REPLY_FORCED` had already resolved as `TRIGGERED→DRAW` before it opened (event ledger + hand
+grew 7→8). Scene per the user's combined route: duel generals on all five faction surfaces + `rngState` pinned to
+seed 7 through the canonical `createRoom` chain — **no developer password, no official-pool edits, no hand-made
+`EngineState`**. `src/`/tests/data/glossary untouched ⇒ five gates and both anchors inherit v2.8.25's final tree.
+Full evidence in `PROJECT_HISTORY_AI.md` this chapter; CI readings only in HANDOFF §9; criteria §12-90 (+ §12-88③
+corrected in place); contract notes in ARCH_MAP §F duel row / §H9 round 12 ⑤ / the 「强制发动」 row.
+
 ## [2.8.25] - 2026-10-01 — forced-enforcement knife (#72): the 「强制发动」 switch now actually decides who speaks
 
 One skill definition is now either **asked** or **auto-fired**, never both: `SkillTriggerBridge.defersToReactionQueue` is the
