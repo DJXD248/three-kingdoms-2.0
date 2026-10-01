@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.24] - 2026-10-01 — duel knife 2 (#70): 「两端响、逐轮不响、收官累计判定值」 implemented verbatim per §H9 seventh round
+
+Duels now ask twice and stay silent in between: the opening (becoming-a-skill-target) offers each side one
+reaction, the ≤6 interleaved rounds never interrupt the table, and the closing injury is **one cumulative
+judging value** (`DUEL_INJURY` — real HP lost this duel, never re-subtracted), invitee first then initiator,
+skipped entirely for anyone who died in the flow. Full evidence (implementation, the double-insert bug found
+and fixed, 939 tests / 83 files, five gates, B13+B14 byte-identical vs the pre-knife baseline, the honest
+E2E boundary and why the interactive ask-window has no browser witness) in `PROJECT_HISTORY_AI.md` this
+chapter; CI readings only in HANDOFF §9; criteria in §12-88; contract text in ARCH_MAP §H9 round 11.
+
 ## [Unreleased] - 2026-10-01 — version audit correction: anchors re-established B12→B13, B11→B14 (docs + one metadata cell, no new version, no tag)
 
 A version audit on HEAD measured what two earlier registrations had asserted without measuring: the
