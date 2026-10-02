@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.26] - 2026-10-02 — stat-modifier pipeline knife (#25 = 2.8 knife 4): skills can now change a number, and the card face is still never rewritten
+
+The ledger is the feature. `EngineState.statModifiers` (optional array, class-A fact: it goes into replays, archives and
+reconstruction; top-level `version` stays 1, `store/gameStateAdapter.ts` carries it field by field) plus ONE canonical event
+`STAT_MODIFY{op:'ADD'|'REMOVE'}` — required by the `Event.ts:26-31` rule that every state-changing fact leaves its own trace,
+with ids derived purely from the ledger (`sm:<seq>`, zero new RNG). Nothing is written back to a unit: a general's printed
+`meleeAtk` stays 2 and the reading of 3 exists only in the instant of resolution, produced by the single attack read point
+`getAttackValue(attacker, ranged, {ledger, target})` (shared by attack, duel and the panel) and by `effectiveMaxHp` (four
+consumers, one view). `trigger.type:'passive'` enters the support table for the first time: it is NOT an activation, so it never
+opens an ask window, never reads `forced`, never spends a per-turn slot; deploy derives the entry, death/leaving-field closes it
+(including the half owed by somebody else's skill), re-entry is a brand-new sequence number. Max-HP shrink truncates current HP
+without counting as damage or lost HP, and truncation to 0 dies on the spot under a new death cause `MAX_HP_ZERO` (no kill
+record, no death-wisp, own draw compensation still paid, same corpse-handling path as damage death). Honest edges: only the
+three keys with a real read point are selectable in the editor/Excel (`WIRED_STAT_KEYS`), so `DAMAGE_TAKEN`/`DAMAGE_DEALT` stay
+registered-but-unwired for knife 5 — a key that "looks fireable but never fires" is the third lie this project forbids; four named
+compile-time skips were added instead of silent intake. **No official card changes and no card gains a new effect**, and because
+an empty ledger derives zero events, both anchors were predicted to be untouched and reproduced byte-identical: B13
+`{"1":104,"2":196}` and B14 `{"1":108,"2":192}`, two rounds each, **and byte-equal to the captures taken before this knife
+opened** ⇒ anchors not renamed. Tests 946→1008 (43 in three new files, 19 in existing ones), 83→86 files; five gates green
+(check 0 / coverage 63.65·55.57·54.44·68.76 above unchanged floors / lint 0 errors, 29 inherited warnings / build 2,075,317
+bytes = same as v2.8.25's final tree). Real-browser hotseat witness with zero developer passwords: the three editor cells →
+deploy → exactly one `STAT_MODIFY` `sm:1`, panel reads 3 while the card prints 2, the ledger-less official general still hits for
+2 in the same battlefield, the modified one hits for 3, and after death `statModifiers` is back to `undefined`. External review
+(GPT, four questions, archived outside the repo) judged all four "adopt" and its two pre-registration criteria are now in the
+contract: effective readings are a deterministic projection that must never enter a second persisted state, and knife 5 must hang
+`DAMAGE_TAKEN` on a NEW canonical read stage *before* armour rather than rewriting `core/armorDamage.ts`'s single exit. Also new:
+a cheap anchor-independent witness — a static entry-existence assertion that the official pool contains no `passive` trigger and
+no `MODIFY_STAT` effect, which separates "the engine can" from "the content does". What is NOT closed, said out loud: the engine
+still has no 【调离】 and no "return to hand" exit, so only death-type leaving is covered and the passive lifecycle loop is not
+claimed closed (registered as the hard TODO in ARCH_MAP §F). Full evidence in `PROJECT_HISTORY_AI.md` this chapter; CI readings
+only in HANDOFF §9 (PENDING — push awaits the user's explicit order); criteria §12-91; contract ARCH_MAP §F stat-modifier table.
+
 ## [Unreleased] - 2026-10-01 — duel ask-window real-browser witness (#81): both exits of the window got a real vote, `forced` fired before it (no code change, no version, no tag)
 
 The half-sentence v2.8.24 and v2.8.25 both left on the books — "the interactive duel ask window has no browser
