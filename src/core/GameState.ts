@@ -8,6 +8,7 @@
 
 import { createRngState, type RngState } from './rng';
 import type { GameEvent, GameEventType } from './Event';
+import type { StatModifier } from './statModifiers';
 
 export interface EngineStatusState {
   id: string;
@@ -88,6 +89,14 @@ export interface EngineState {
    * 旧存档照常读）。
    */
   pendingReaction?: PendingReaction | null;
+  /**
+   * 数值修正器账本（2.8 刀4＝#25，PROJECT_ARCH_MAP §F「数值修正器管线」）。
+   * 一条规则改一个数字＝这里的一笔账，卡面打印值一字不改（裁决第 3/4 条：在场即生效、
+   * 固定失效后增减恢复参与，都要求"改数"与"改卡"分开）。与 consumedSkills／pendingChoice／
+   * pendingReaction 同族的 A 类可回放事实：常驻／重建／回放四路都读同一份账算同一个读数，
+   * 缺省（旧存档、旧录像）＝没有账＝所有读数走卡面基础值。
+   */
+  statModifiers?: StatModifier[];
 }
 
 /** One frozen candidate branch of a pending choice: label for the HUD plus

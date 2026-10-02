@@ -105,6 +105,11 @@ export function matchesSkillEvent(
       return true;
     }
     case 'onDeath': {
+      // v2.8 刀4（#25）归零之死分流：体力上限被截到 0 那一类**不响遗言**（用户裁决
+      // 第 11 条后半）。同一条 DEATH 上"自家补抽 1"照走（那是派生侧的补偿抽，与本
+      // 判断无关）、"不记击杀"照走（那条事件的 `attackerPlayerId` 是 null，上面的
+      // `onKill` 分支永远键不上）。
+      if (data.deathCause === 'MAX_HP_ZERO') return false;
       if (!playerMatches(data.targetPlayerId)) return false;
       if (!generalMatches(data.targetId)) return false;
       return true;

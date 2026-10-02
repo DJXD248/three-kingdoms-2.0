@@ -77,7 +77,9 @@ describe('skillCompiler · compileSkill', () => {
   });
 
   it('skips triggers that have no engine event backing', () => {
-    for (const type of ['modifyAttack', 'modifyDefense', 'passive', 'activeSelf', 'untilExpire'] as const) {
+    // 「在场即生效」不在这个名单里：它是第二个"能编译、但不落事件面"的类型
+    // （第一个是 onTurnEnd），判据见下面的专用测试。
+    for (const type of ['modifyAttack', 'modifyDefense', 'activeSelf', 'untilExpire'] as const) {
       const { definitions, skipped } = compileSkill(
         general(),
         skill({ effects: [{ id: 'e1', trigger: { type }, runtime: { type: 'DRAW_CARD', value: 1 } }] }),
@@ -86,6 +88,94 @@ describe('skillCompiler · compileSkill', () => {
       expect(definitions, type).toHaveLength(0);
       expect(skipped[0].reason, type).toBe('TRIGGER_UNSUPPORTED');
     }
+  });
+
+  it('compiles 在场即生效 into a passive definition that hears no events', () => {
+    const { definitions, skipped } = compileSkill(
+      general(),
+      skill({
+        effects: [{
+          id: 'e1', trigger: { type: 'passive' },
+          runtime: { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'MELEE_ATK', modifyMode: 'delta' },
+        }],
+      }),
+      'g1',
+    );
+    expect(skipped).toEqual([]);
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0].passive).toBe(true);
+    // 它编译出来的 trigger 名不落在任何事件面上：matchesSkillEvent 对它是 default=false。
+    expect(definitions[0].trigger).toBe('passive');
+  });
+
+  it('names the three structures 在场即生效 cannot carry instead of silently accepting them', () => {
+    const modify = {
+      type: 'MODIFY_STAT' as const, value: 2, target: 'SELF' as const,
+      stat: 'MELEE_ATK' as const, modifyMode: 'delta' as const,
+    };
+    // ① 门槛：账只随"人在不在场"变化，今天没有中途重算的路。
+    const gated = compileSkill(general(), skill({
+      effects: [{ id: 'e1', trigger: { type: 'passive' }, runtime: modify }],
+      conditions: [{ metric: 'GENERAL_HP', op: 'GTE', value: 2 }],
+    }), 'g1');
+    expect(gated.definitions).toHaveLength(0);
+    expect(gated.skipped[0].reason).toBe('PASSIVE_CONDITION_UNSUPPORTED');
+    // ② 周期：周期是"发动笔"那一档的东西，与"在场期间"说相反的话。
+    const timed = compileSkill(general(), skill({
+      effects: [{ id: 'e1', trigger: { type: 'passive' }, runtime: { ...modify, duration: 'untilSelfTurnEnd' } }],
+    }), 'g1');
+    expect(timed.definitions).toHaveLength(0);
+    expect(timed.skipped[0].reason).toBe('PASSIVE_DURATION_CONFLICT');
+    // ③「选择其一」：passive 不进问窗，没人能替它择一——整组点名，绝不变成"全都要"。
+    const choice = compileSkill(general(), skill({
+      effectMode: 'choice',
+      effects: [
+        { id: 'e1', trigger: { type: 'passive' }, runtime: modify },
+        { id: 'e2', trigger: { type: 'passive' }, runtime: { ...modify, value: 3 } },
+      ],
+    }), 'g1');
+    expect(choice.definitions).toHaveLength(0);
+    expect(choice.skipped.map(s => s.reason)).toEqual(['PASSIVE_CHOICE_UNSUPPORTED', 'PASSIVE_CHOICE_UNSUPPORTED']);
+  });
+
+  it('carries the 锁定技 badge onto the ledger entry only when the definition actually books a 改数', () => {
+    const modify = {
+      id: 'e1', trigger: { type: 'onTurnStart' as const },
+      runtime: {
+        type: 'MODIFY_STAT' as const, value: 2, target: 'SELF' as const,
+        stat: 'MELEE_ATK' as const, modifyMode: 'delta' as const,
+      },
+    };
+    const withBadge = compileSkill(general(), skill({ tags: ['锁定技'], effects: [modify] }), 'g1');
+    expect(withBadge.definitions[0].locked).toBe(true);
+    const without = compileSkill(general(), skill({ effects: [modify] }), 'g1');
+    expect(without.definitions[0].locked).toBeUndefined();
+    // 徽章挂在一条摸牌效果上：账本上根本没有笔，`locked` 一个键都不多（既有编译产物逐字不变）。
+    const noBook = compileSkill(general(), skill({
+      tags: ['锁定技'],
+      effects: [{ id: 'e2', trigger: { type: 'onTurnStart' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+    }), 'g1');
+    expect(noBook.definitions[0].locked).toBeUndefined();
+    expect('locked' in noBook.definitions[0]).toBe(false);
+  });
+
+  it('skips an incomplete MODIFY_STAT instead of guessing a number', () => {
+    const { definitions, skipped } = compileSkill(general(), skill({
+      effects: [{
+        id: 'e1', trigger: { type: 'onTurnStart' },
+        runtime: { type: 'MODIFY_STAT', value: 2, target: 'SELF' },
+      }],
+    }), 'g1');
+    expect(definitions).toHaveLength(0);
+    expect(skipped[0].reason).toBe('MODIFY_STAT_INCOMPLETE');
+    // 跨将目标（"让别人的攻击+1"）＝今天没有目标选择器的那一格：点名，不猜。
+    const cross = compileSkill(general(), skill({
+      effects: [{
+        id: 'e2', trigger: { type: 'onTurnStart' },
+        runtime: { type: 'MODIFY_STAT', value: 2, target: 'TARGET', stat: 'MELEE_ATK', modifyMode: 'delta' },
+      }],
+    }), 'g1');
+    expect(cross.skipped[0].reason).toBe('MODIFY_STAT_INCOMPLETE');
   });
 
   it('skips onTurnStart otherTurn subtype (no event support yet)', () => {

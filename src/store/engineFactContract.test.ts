@@ -112,6 +112,13 @@ describe('storeStateToEngineState · 呈现词表不得写入事实字段 (2.7.1
   it('turn / rngState / consumedSkills / pendingChoice 逐字过镜', () => {
     const state = makeCanonical();
     state.pendingChoice = { key: 'ch:5:3:sk:choice', playerId: 2, options: [] };
+    // v2.8 刀4（#25）：账本没有 store 呈现字段（只有 EventProcessor 写它），第四遍
+    // 同一个教训——过镜必须原样带过去，否则重建＝把正在生效的改数当场抹掉。
+    state.statModifiers = [{
+      id: 'sm:1', seq: 1, key: 'MAX_HP', mode: 'delta', value: -1,
+      targetPlayerId: 1, targetId: 'g1', ownerPlayerId: 1, ownerGeneralId: 'g1',
+      ownerSkillId: 'sk:1', locked: false, passive: false, expire: 'untilSelfTurnEnd',
+    }];
     const rebuilt = storeStateToEngineState(displayOf(state, { currentRound: 99 }));
     // Re-deriving turn from currentRound would rewind the counter and shift
     // every once-per-turn / choice ledger key.
@@ -120,6 +127,7 @@ describe('storeStateToEngineState · 呈现词表不得写入事实字段 (2.7.1
     expect(rebuilt.rngState).toEqual({ s: 123456 });
     expect(rebuilt.consumedSkills).toEqual(state.consumedSkills);
     expect(rebuilt.pendingChoice).toEqual(state.pendingChoice);
+    expect(rebuilt.statModifiers).toEqual(state.statModifiers);
   });
 });
 

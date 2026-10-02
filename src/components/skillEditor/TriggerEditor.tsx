@@ -175,6 +175,17 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
         </div>
       )}
 
+      {/* v2.8 刀4（#25）：这一型按定义不是"发动"，所以三样东西没有落点。写在这儿
+          是因为编译器会点名跳过它们——录入面不提前说，用户就只会在对局里发现"没生效"。 */}
+      {currentType === 'passive' && (
+        <p className="text-[9px] text-cyan-300/70 leading-snug pl-4">
+          「在场即生效」不是发动：登场那一刻落一笔账、离场当场结束，全程不问玩家、也不看「强制发动」那一格。
+          所以它<b>不认三样东西</b>——门槛（情况一变就该改口，今天没有重算的路）、有效周期（人在的整段时间都算数）、
+          「选择其一」（没人能替它择一）。写了会被点名跳过，不会悄悄变成"全都要"。
+          它要配合的效果类型是<b>「修改数值」</b>（改哪个数／怎么改／留空＝在场期间）。
+        </p>
+      )}
+
       {/* v2.8.21 监听扩面刀：「我听谁」＝与触发时机正交的第二轴，只在认这一栏的时机上出现。 */}
       {currentType && supportsListenerScope(currentType as SkillTriggerType) && (
         <div className="pl-4 space-y-1">

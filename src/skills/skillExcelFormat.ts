@@ -34,6 +34,9 @@ import type {
   TargetSubType,
   ListenerScope,
   ExpireCondition,
+  StatModifierKeyType,
+  StatModifyModeType,
+  StatModifierDurationType,
 } from '../data/generals';
 import {
   allTriggerTypes,
@@ -48,6 +51,9 @@ import {
   targetSubLabels,
   listenerScopeLabels,
   expireLabels,
+  statModifierKeyLabels,
+  statModifyModeLabels,
+  statModifierDurationLabels,
 } from '../data/generals';
 import { parseGateText, gateConditionsToText } from './skillGateText';
 
@@ -116,6 +122,9 @@ const LEGACY_CARD_SUB_LABELS: Record<string, CardSubType> = { 失去装备牌: '
  */
 const LEGACY_TRIGGER_CELL_ALIASES: Record<string, string> = {
   成为攻击目标时: `${triggerTypeLabels.onBecomingTarget}→${targetSubLabels.attackTarget}`,
+  // v2.8 刀4（#25）：「在场即生效」的旧主名。旧文件那一格写的就是它，不认的话
+  // 这一型会读成"没看懂"——技能照进、照显示、只是那笔在场账再也不落。
+  '全局生效（在场时持续）': triggerTypeLabels.passive,
 };
 
 /** 把 cell 里的旧细分词换成现行写法；不认识的一律原样交回。 */
@@ -219,6 +228,7 @@ export const runtimeEffectTypeLabels: Record<SkillRuntimeEffect['type'], string>
   REVEAL: '看牌堆顶',
   DECK_PLACE: '放回牌堆',
   DUEL: '决斗',
+  MODIFY_STAT: '修改数值',
 };
 
 /**
@@ -235,7 +245,7 @@ const LEGACY_TARGET_LABELS: Record<string, NonNullable<SkillRuntimeEffect['targe
 };
 
 /** Types the compiler can settle today (see skillCompiler SUPPORTED_EFFECT_TYPES). */
-export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE', 'DUEL'];
+export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE', 'DUEL', 'MODIFY_STAT'];
 
 /**
  * 2.8 刀9：**根本不读「数值」格的类型**。决斗的轮数是规则常量（双方各三轮＝
@@ -330,7 +340,12 @@ export interface ValueCellRead {
  * 看牌堆顶更狠：它的 0 不夹，就真的看 0 张）。那种"看着像填了、实际是另一个数"
  * 正是 §12-67 的静默失真，所以按没填处理**并点名**。
  */
-export function readValueCell(raw: unknown, type?: SkillRuntimeEffect['type']): ValueCellRead {
+export function readValueCell(
+  raw: unknown,
+  type?: SkillRuntimeEffect['type'],
+  /** v2.8 刀4：只有「修改数值」用到——增减与固定两档对 0/负数的态度不同。 */
+  modifyMode?: StatModifyModeType,
+): ValueCellRead {
   const cell = cleanCell(raw);
   if (!cell) return {};
 
@@ -342,6 +357,33 @@ export function readValueCell(raw: unknown, type?: SkillRuntimeEffect['type']): 
       note: `「${runtimeEffectTypeLabels[type]}」没有数量可填（决斗的轮数由规则定死：双方各三轮、最多六次），`
         + `这一格按没填处理`,
     };
+  }
+
+  if (type === 'MODIFY_STAT') {
+    // 改数这一档的数值格是全库唯一允许负数的地方（增减 −1＝往下调 1）。
+    const n = parseStatValue(cell);
+    if (n == null) {
+      if (WHOLE_HAND_VALUE_ALIASES.includes(cell)) {
+        return {
+          note: `「${cell}」＝整只手，只有 ${WHOLE_HAND_TYPE_NAMES} 认这个词；`
+            + `「修改数值」的数值不认它，这一格按没填处理`,
+        };
+      }
+      return {};
+    }
+    if (modifyMode === 'delta' && n === 0) {
+      return {
+        note: '「增加或减少」填 0＝这笔账什么也没改，这一格按没填处理'
+          + '（要把这个数摁成 0，请用「固定为」）',
+      };
+    }
+    if (modifyMode === 'set' && n < 0) {
+      return {
+        note: '「固定为」不认负数：把这个数摁成负数与摁成 0 在引擎里同果（上限 0＝不许存活），'
+          + '往下调请用「增加或减少」',
+      };
+    }
+    return { value: n };
   }
 
   if (WHOLE_HAND_VALUE_ALIASES.includes(cell)) {
@@ -369,9 +411,75 @@ export function readValueCell(raw: unknown, type?: SkillRuntimeEffect['type']): 
   };
 }
 
+// ── 「改哪个数 / 怎么改 / 有效周期」（v2.8 刀4 #25：三列一组，只服务「修改数值」）──
+
+/** 三个固定列名（效果组里写成 `效果N改哪个数` 等）。与「我听谁」同一族做法：
+ *  正交的维度各占一列，不挤进「触发」那句话里。 */
+export const STAT_KEY_HEADER = '改哪个数';
+export const STAT_MODE_HEADER = '怎么改';
+export const STAT_DURATION_HEADER = '有效周期';
+
+export const STAT_KEY_LIST = [EMPTY, ...Object.values(statModifierKeyLabels)].join(',');
+export const STAT_MODE_LIST = [EMPTY, ...Object.values(statModifyModeLabels)].join(',');
+export const STAT_DURATION_LIST = [EMPTY, ...Object.values(statModifierDurationLabels)].join(',');
+
+/** 贴在「有效周期」表头批注上的一句话（缺省那一档必须写明白，不然用户以为留空＝没生效）。 */
+export const STAT_DURATION_HINT =
+  '「有效周期」＝这笔改数的账管到什么时候。留空＝在场上就一直有效、离场当场结束'
+  + '（离场打断一切，与周期怎么写无关，所以词表里故意没有"直到被击杀前"这一档：它与留空同义）。'
+  + '只有「效果类型＝修改数值」时这一栏才有意义，别的类型填了会按没填处理并在导入报告里点名。';
+
+/** 词表读法（枚举名与大写法都认）：读不出⇒原文交回，由导入面逐条点名，绝不静默丢。 */
+function readLabeledEnum<T extends string>(
+  raw: unknown,
+  labels: Readonly<Record<T, string>>,
+): { value?: T; unknown?: string } {
+  const cell = cleanCell(raw);
+  if (!cell) return {};
+  const keys = Object.keys(labels) as T[];
+  const upper = cell.toUpperCase();
+  const byEnum = keys.find(k => k === cell || k.toUpperCase() === upper);
+  if (byEnum) return { value: byEnum };
+  const byLabel = keys.find(k => labels[k] === cell);
+  return byLabel ? { value: byLabel } : { unknown: cell };
+}
+
+export const readStatKeyCell = (raw: unknown) =>
+  readLabeledEnum<StatModifierKeyType>(raw, statModifierKeyLabels);
+export const readStatModeCell = (raw: unknown) =>
+  readLabeledEnum<StatModifyModeType>(raw, statModifyModeLabels);
+
+/** 周期格多一条等价读法：「直到将领被击杀前」／「直到将领离开场上前」＝留空。 */
+export function readStatDurationCell(raw: unknown): { duration?: StatModifierDurationType; unknown?: string } {
+  const cell = cleanCell(raw);
+  if (!cell) return {};
+  if (cell === expireLabels.untilDeath || cell === expireLabels.untilLeaveField) return {};
+  const read = readLabeledEnum<StatModifierDurationType>(cell, statModifierDurationLabels);
+  return { duration: read.value, ...(read.unknown ? { unknown: read.unknown } : {}) };
+}
+
+export function statKeyToStr(key?: StatModifierKeyType): string {
+  return key ? statModifierKeyLabels[key] : EMPTY;
+}
+export function statModeToStr(mode?: StatModifyModeType): string {
+  return mode ? statModifyModeLabels[mode] : EMPTY;
+}
+export function statDurationToStr(duration?: StatModifierDurationType): string {
+  return duration ? statModifierDurationLabels[duration] : EMPTY;
+}
+
+/** 「修改数值」的数值格是全库**唯一**允许负数的地方（增减 −1 就是 −1）。 */
+export function parseStatValue(s: unknown): number | undefined {
+  const v = cleanCell(s);
+  if (!v) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.trunc(n);
+}
+
 // ── Effect column groups (Excel) ────────────────────────────────────
 
-export type EffectGroupWidth = 3 | 6 | 7 | 8;
+export type EffectGroupWidth = 3 | 6 | 7 | 8 | 11;
 
 export const EFFECT_GROUP_COLS_V1 = ['标注', '触发', '描述'] as const;
 export const EFFECT_GROUP_COLS_V2 = ['标注', '触发', '效果类型', '数值', '目标', '描述'] as const;
@@ -379,15 +487,22 @@ export const EFFECT_GROUP_COLS_V2 = ['标注', '触发', '效果类型', '数值
 export const EFFECT_GROUP_COLS_V3 = [...EFFECT_GROUP_COLS_V2, '门槛'] as const;
 /** v2.8.21（监听扩面刀）：第 8 列「我听谁」——三档词表见 listenerScopeLabels。 */
 export const EFFECT_GROUP_COLS_V4 = [...EFFECT_GROUP_COLS_V3, LISTENER_SCOPE_HEADER] as const;
+/** v2.8 刀4（#25）：第 9–11 列「改哪个数／怎么改／有效周期」——三格只服务
+ *  「效果类型＝修改数值」，与「我听谁」同一族做法：正交维度各占一列，绝不挤进
+ *  「触发」那句话，也绝不并进「数值」那一格。 */
+export const EFFECT_GROUP_COLS_V5 = [
+  ...EFFECT_GROUP_COLS_V4, STAT_KEY_HEADER, STAT_MODE_HEADER, STAT_DURATION_HEADER,
+] as const;
 
-/** Header cells for effect group n (1-based), current (8-col) format. */
+/** Header cells for effect group n (1-based), current (11-col) format. */
 export function effectGroupHeaders(n: number): string[] {
-  return EFFECT_GROUP_COLS_V4.map(c => `效果${n}${c}`);
+  return EFFECT_GROUP_COLS_V5.map(c => `效果${n}${c}`);
 }
 
 /** Detect the effect-group width of a sheet from its header row. */
 export function detectEffectGroupWidth(header: unknown[]): EffectGroupWidth {
   const cells = header.map(h => String(h ?? '').trim());
+  if (cells.some(h => /^效果\d+有效周期$/.test(h))) return 11;
   if (cells.some(h => /^效果\d+我听谁$/.test(h))) return 8;
   if (cells.some(h => /^效果\d+门槛$/.test(h))) return 7;
   return cells.some(h => /^效果\d+效果类型$/.test(h)) ? 6 : 3;
@@ -443,6 +558,10 @@ export interface ParsedEffectGroup {
   /** 「我听谁」格认出来了，但这一组的触发时机不认这一栏（v2.8.21）：
    *  **不静默收下**——填了却没人读，就是下一轮的"显示与生效分叉"（§12-55 同族）。 */
   scopeIgnored?: string;
+  /** 「改哪个数／怎么改／有效周期」三格的账（v2.8 刀4 #25）：词表认不出、这一条
+   *  根本不是「修改数值」、或是「修改数值」却缺了必需的一格——**全部已成句**交回
+   *  导入面逐条点名。拦在导入面而不是只拦在编译器，是因为编译器的跳过用户看不见。 */
+  statIssues: string[];
 }
 
 /**
@@ -461,18 +580,27 @@ export function parseEffectGroup(
   let desc: string;
   let gateStr = '';
   let scopeStr = '';
+  let statKeyStr = '';
+  let statModeStr = '';
+  let statDurationStr = '';
   if (width === 3) {
     desc = get(2);
   } else {
     runtimeStr = { type: get(2), value: get(3), target: get(4) };
     desc = get(5);
-    if (width === 7) gateStr = get(6);
-    if (width === 8) { gateStr = get(6); scopeStr = get(7); }
+    if (width >= 7) gateStr = get(6);
+    if (width >= 8) scopeStr = get(7);
+    if (width === 11) {
+      statKeyStr = get(8);
+      statModeStr = get(9);
+      statDurationStr = get(10);
+    }
   }
   const hasEffectBody = !!(label || desc || runtimeStr.type);
   const triggerRead = readTriggerCell(triggerStr);
   const canFormEffect = hasEffectBody || !!triggerRead.trigger;
-  if (!canFormEffect && !gateStr && !scopeStr && !triggerRead.unreadable) return null;
+  const hasStatCells = !!(statKeyStr || statModeStr || statDurationStr);
+  if (!canFormEffect && !gateStr && !scopeStr && !hasStatCells && !triggerRead.unreadable) return null;
   if (!canFormEffect) {
     // 这一组里没有一个"站得住的效果"（只写了门槛/只听谁，或触发写法没看懂）：
     // 不凭空造一个空效果占位（那会挤占效果编号并显示成"纯描述"），
@@ -482,22 +610,70 @@ export function parseEffectGroup(
       gateUnknown: [],
       orphanGate: gateStr,
       triggerUnreadable: triggerRead.unreadable,
+      statIssues: hasStatCells
+        ? [`「${STAT_KEY_HEADER}／${STAT_MODE_HEADER}／${STAT_DURATION_HEADER}」这三格得挂在某个效果上，`
+          + '可这一组没有效果（没写效果类型／描述），所以按没填处理']
+        : [],
       ...(scopeStr ? { scopeIgnored: scopeStr } : {}),
     };
   }
 
   const type = parseRuntimeType(runtimeStr.type);
   const target = parseRuntimeTarget(runtimeStr.target);
-  const valueRead = readValueCell(runtimeStr.value, type);
+  const statKeyRead = readStatKeyCell(statKeyStr);
+  const statModeRead = readStatModeCell(statModeStr);
+  const statDurationRead = readStatDurationCell(statDurationStr);
+  const valueRead = readValueCell(runtimeStr.value, type, statModeRead.value);
 
   const fields: ParsedEffectFields = {};
   if (label) fields.label = label;
   if (triggerRead.trigger) fields.trigger = triggerRead.trigger;
   if (desc) fields.description = desc;
+
+  // 三格改数栏的账：只有「修改数值」读它们，其余类型填了必须点名（同「我听谁」纪律）。
+  const statIssues: string[] = [];
+  if (hasStatCells && type !== 'MODIFY_STAT') {
+    const who = type ? `「${runtimeEffectTypeLabels[type]}」` : '这一条（没写效果类型）';
+    for (const [header, cell] of [
+      [STAT_KEY_HEADER, statKeyStr], [STAT_MODE_HEADER, statModeStr], [STAT_DURATION_HEADER, statDurationStr],
+    ] as const) {
+      if (cell) statIssues.push(`${who}不读「${header}」这一栏，「${cell}」按没填处理`);
+    }
+  }
+  if (type === 'MODIFY_STAT') {
+    if (statKeyRead.unknown) {
+      statIssues.push(`「${STAT_KEY_HEADER}」这个词我不认识，所以没记下 → ${statKeyRead.unknown}`);
+    }
+    if (statModeRead.unknown) {
+      statIssues.push(`「${STAT_MODE_HEADER}」这个词我不认识，所以没记下 → ${statModeRead.unknown}`);
+    }
+    if (statDurationRead.unknown) {
+      statIssues.push(`「${STAT_DURATION_HEADER}」这个词我不认识，所以没记下 → ${statDurationRead.unknown}`);
+    }
+    if (!statKeyRead.value || !statModeRead.value) {
+      const missing = [
+        !statKeyRead.value && `「${STAT_KEY_HEADER}」`,
+        !statModeRead.value && `「${STAT_MODE_HEADER}」`,
+      ].filter(Boolean).join('和');
+      statIssues.push(`「修改数值」缺了${missing}：改哪个数、怎么改，两样少一样这笔账就落不进账本，编译时会点名跳过`);
+    }
+    if (target && target !== 'SELF') {
+      statIssues.push(`「修改数值」的目标只能是${runtimeTargetLabels.SELF}（改别人的数是另一把刀的内容，今天没有目标选择器），`
+        + `「${runtimeTargetLabels[target]}」按没填处理，编译时会点名跳过`);
+    }
+  }
+
   if (type) {
     fields.runtime = { type };
     if (valueRead.value != null) fields.runtime.value = valueRead.value;
     if (target) fields.runtime.target = target;
+    if (type === 'MODIFY_STAT') {
+      if (statKeyRead.value) fields.runtime.stat = statKeyRead.value;
+      if (statModeRead.value) fields.runtime.modifyMode = statModeRead.value;
+      if (statDurationRead.duration) fields.runtime.duration = statDurationRead.duration;
+      // 目标写死自己：与编译器、运行时修正器账本同一口径（改别人的数今天没有入口）。
+      fields.runtime.target = 'SELF';
+    }
   }
   const gate = parseGateText(gateStr);
   if (gate.conditions.length > 0) fields.conditions = gate.conditions;
@@ -524,6 +700,7 @@ export function parseEffectGroup(
     valueNote: valueRead.note,
     scopeUnknown,
     scopeIgnored,
+    statIssues,
   };
 }
 
@@ -533,6 +710,7 @@ export function serializeEffectGroup(
   width: EffectGroupWidth,
 ): (string | number)[] {
   if (!eff) {
+    if (width === 11) return EFFECT_GROUP_COLS_V5.map(() => EMPTY);
     if (width === 8) return [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY];
     if (width === 7) return [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY];
     return width === 6
@@ -554,6 +732,14 @@ export function serializeEffectGroup(
     eff.description || EMPTY,
   ];
   if (width >= 7) cells.push(gateConditionsToText(eff.conditions));
-  if (width === 8) cells.push(listenerScopeToStr(eff.trigger?.listenerScope));
+  if (width >= 8) cells.push(listenerScopeToStr(eff.trigger?.listenerScope));
+  if (width === 11) {
+    const isModify = rt?.type === 'MODIFY_STAT';
+    cells.push(
+      statKeyToStr(isModify ? rt.stat : undefined),
+      statModeToStr(isModify ? rt.modifyMode : undefined),
+      statDurationToStr(isModify ? rt.duration : undefined),
+    );
+  }
   return cells;
 }

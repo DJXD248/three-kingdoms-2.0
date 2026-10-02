@@ -3,6 +3,7 @@ import type { GameAction } from '../ActionTypes';
 import type { EngineState } from '../../core/GameState';
 import type { GameEvent } from '../../core/Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
+import { effectiveMaxHp } from '../../core/statModifiers';
 
 export interface SupplyActionPayload {
   generalId: string;
@@ -38,7 +39,7 @@ export class SupplyResolver implements ActionResolver {
     }
 
     const currentHp = Number(target?.currentHp ?? 0);
-    const maxHp = Number(target?.maxHp ?? target?.general?.hp ?? 0);
+    const maxHp = effectiveMaxHp(state.statModifiers, { playerId: action.playerId, generalId: String(payload.generalId) }, target);
     const missingHp = Math.max(0, maxHp - currentHp);
     if (missingHp <= 0) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'GENERAL_ALREADY_FULL_HP' } }];

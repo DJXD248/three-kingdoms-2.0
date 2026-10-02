@@ -18,6 +18,7 @@
  *   discard entries that never existed elsewhere → excluded from the ledger.
  */
 import type { EngineState } from '../core/GameState';
+import { effectiveMaxHp } from '../core/statModifiers';
 
 export interface Violation {
   code: string;
@@ -120,7 +121,8 @@ export function checkStateInvariants(state: EngineState, step: number): Violatio
     for (const fg of field as AnyObj[]) {
       const gid = runtimeId(fg?.general) || '?';
       const cur = Number(fg?.currentHp);
-      const max = Number(fg?.maxHp);
+      // 上限读数走账本（刀4）：+上限的账把体力抬过卡面打印值时，这条不变量不能误报。
+      const max = effectiveMaxHp(state.statModifiers, { playerId: Number(player.id), generalId: runtimeId(fg?.general) }, { maxHp: fg?.maxHp });
       if (!Number.isFinite(cur) || !Number.isFinite(max) || cur < 1 || cur > max) {
         push('FIELD_HP_OUT_OF_RANGE', `general ${gid} of player ${player.id}: currentHp=${fg?.currentHp} maxHp=${fg?.maxHp}`);
       }

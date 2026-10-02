@@ -108,6 +108,11 @@ function buildCondition(
  *                               settlement returns state unchanged, zero rngState)
  *   DECK_PLACE  → DECK_PLACE   { playerId, dest, count } (2.6.1, hand→deck mirror of GIVE;
  *                               dest defaults to BOTTOM, head-of-hand deterministic slice)
+ *   MODIFY_STAT → STAT_MODIFY  { op:'ADD', modifier } (v2.8 刀4 #25, writes the stat
+ *                               ledger — no card moves, no hp moves; the entry's own
+ *                               id/seq are minted by the processor from the ledger)
+ * `passive`-triggered definitions never come through this class at all: they are not
+ * in TRIGGER_EVENTS, and skills/passiveModifiers.ts is their only writer.
  */
 export class SkillTriggerBridge {
   private registrations = new Map<string, string[]>();
@@ -378,6 +383,41 @@ export class SkillTriggerBridge {
             sourceGeneralId: binding.skill.sourceGeneralId,
             targetPlayerId: targetRef?.player.id,
             targetId: targetId ?? data.targetId,
+          },
+        };
+      }
+
+      if (effect.type === 'MODIFY_STAT' && effect.stat && effect.modifyMode) {
+        // MODIFY_STAT (v2.8 刀4 #25)：既不改卡面也不扣血，只往**修正器账本**上落一笔
+        // （读数点在别处现算：近战/远程攻击力与体力上限）。编译器已经把三样
+        // （改哪个数、哪种形态、数值）验齐才让走到这里，缺一样就落到下面那条
+        // CUSTOM（"响过但无可结算"，与所有未支持类型同一口径）。
+        // 目标角色被编译器强制为 SELF ⇒ "被改的那一位"就是技能拥有者自己这一员：
+        // 账本的两个键（座次＋将领实例）一律从 binding 取，绝不从触发事件里猜
+        // （跨将目标是 #28 刀7 的口径，今天没有那条路）。
+        const ownerGeneralId = String(binding.skill.sourceGeneralId ?? targetId ?? sourceId);
+        return {
+          type: 'STAT_MODIFY',
+          data: {
+            ...data,
+            op: 'ADD' as const,
+            modifier: {
+              key: effect.stat,
+              mode: effect.modifyMode,
+              value: Number(effect.value ?? 0),
+              targetPlayerId: Number(sourceId),
+              targetId: ownerGeneralId,
+              ownerPlayerId: Number(sourceId),
+              ownerGeneralId,
+              ownerSkillId: binding.skill.id,
+              ownerSkillName: binding.skill.name,
+              // 锁定技徽章（编译面只在真有 MODIFY_STAT 时才落这个键）。
+              locked: binding.skill.locked === true,
+              // 这一路是**发动**落笔（登场/回合开始/受击……），不是在场持续：
+              // 在场那半由 skills/passiveModifiers.ts 单点来写，周期＝在场本身。
+              passive: false,
+              expire: effect.duration,
+            },
           },
         };
       }

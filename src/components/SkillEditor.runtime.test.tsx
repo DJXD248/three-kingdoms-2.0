@@ -111,6 +111,63 @@ describe('SkillEditor: structured runtime entry', () => {
     expect(saved[0].effects?.[0].runtime)
       .toEqual({ type: 'DECK_PLACE', value: 1, target: 'TARGET', dest: 'TOP' });
   });
+
+  it('v2.8 刀4 #25：「修改数值」的三格（改哪个数／怎么改／有效周期）录入并进了存档，编译器照收', () => {
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
+    render(<SkillEditor onClose={() => {}} />);
+    const listBtn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name));
+    fireEvent.click(listBtn!);
+    fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
+
+    const findStatSelect = (labelText: string) =>
+      (Array.from(document.querySelectorAll('label'))
+        .find(l => l.textContent?.includes(labelText))
+        ?.parentElement?.querySelector('select') as HTMLSelectElement | undefined);
+
+    fireEvent.change(findRuntimeSelect(), { target: { value: 'MODIFY_STAT' } });
+    const stat = findStatSelect('改哪个数');
+    const mode = findStatSelect('怎么改');
+    const duration = findStatSelect('有效周期');
+    expect(stat && mode && duration).toBeTruthy();
+    // 三道缺省：钥匙默认近战、形态默认增减、周期默认那一档（留空＝在场即结束，不是"永久"）。
+    expect(stat!.value).toBe('MELEE_ATK');
+    expect(mode!.value).toBe('delta');
+    expect(duration!.value).toBe('');
+    // 目标这一格由录入面直接钉死在「自身」（跨将目标是 #28 刀7，今天选了就是"看着能
+    // 响其实不响"），下面存档那行 `target:'SELF'` 就是它的实证。
+
+    fireEvent.change(stat!, { target: { value: 'MAX_HP' } });
+    fireEvent.change(mode!, { target: { value: 'set' } });
+    fireEvent.change(duration!, { target: { value: 'untilSelfTurnEnd' } });
+    const num = Array.from(document.querySelectorAll('input[type="number"]')).pop() as HTMLInputElement;
+    fireEvent.change(num, { target: { value: '3' } });
+
+    fireEvent.click(screen.getByText('💾 保存修改'));
+    const saved = useGameStore.getState().skillEdits[target.id];
+    expect(saved[0].effects?.[0].runtime).toEqual({
+      type: 'MODIFY_STAT', value: 3, target: 'SELF',
+      stat: 'MAX_HP', modifyMode: 'set', duration: 'untilSelfTurnEnd',
+    });
+
+    // 存档形状直接进编译器：带触发即成一条定义，三格逐字搬到运行时（不带触发则诚实
+    // 跳过，但绝不因"改数不完整"被拒）。
+    const firstSkill = saved[0]!;
+    const withTrigger = {
+      ...target,
+      skills: [{
+        ...firstSkill,
+        trigger: { type: 'onTurnStart' as const },
+        effects: firstSkill.effects!.map(e => ({ ...e, trigger: { type: 'onTurnStart' as const } })),
+      }],
+    } as unknown as typeof target;
+    const compiled = compileGeneralSkills(withTrigger);
+    expect(compiled.skipped.filter(s => s.reason === 'MODIFY_STAT_INCOMPLETE')).toHaveLength(0);
+    expect(compiled.definitions).toHaveLength(1);
+    expect(compiled.definitions[0].effects[0]).toMatchObject({
+      type: 'MODIFY_STAT', stat: 'MAX_HP', modifyMode: 'set', duration: 'untilSelfTurnEnd', target: 'SELF',
+    });
+  });
 });
 
 // v2.8.3 刀 B：发动门槛的录入面接线——打字即翻译成结构化条件，看不懂就地说明。

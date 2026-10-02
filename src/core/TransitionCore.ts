@@ -207,6 +207,26 @@ export function transition(
 const TRIGGER_REENTRY_TYPES: ReadonlySet<GameEvent['type']> = new Set(['DEATH', 'CARD_LOST', 'CARD_GAINED']);
 
 /**
+ * v2.8 刀4（#25）：账本落笔／销笔的**留痕**。
+ *
+ * `STAT_MODIFY` 由派生点（chainedConsequences／在场落笔）内联追加，处境与决斗那两层
+ * 相同：状态已经在派生点结算完了，但它到不了 `events`——因为它**故意不进触发链**
+ * （契约表 §F「Reentrancy / 监听」格：账本读写不许被监听，否则一笔账会响两遍），
+ * 所以既不在 `TRIGGER_REENTRY_TYPES` 里，也就不会被重入环那一行 push 回来。
+ * 而"引擎里每一条会改状态的事实都是一条事件"这条地基规矩（`Event.ts:26-31`）要求它
+ * 必须留痕⇒ 单独补一次入流，位置在所有结算与重入之后、观察层（RANDOM_OUTCOME／响应链）
+ * 之前。
+ *
+ * 身份过滤与决斗回显同源：发动那一支 `STAT_MODIFY` 本来就走触发链、已经在流里，这里
+ * 绝不补第二遍。没有在场改数技时 `derived` 里一条都没有⇒事件流逐字不变（两锚的前提）。
+ */
+function echoStatTraces(events: GameEvent[], derived: readonly GameEvent[]): void {
+  for (const event of derived) {
+    if (event.type === 'STAT_MODIFY' && !events.includes(event)) events.push(event);
+  }
+}
+
+/**
  * 这一条派生事件要不要过一遍触发链（v2.8.25 强制发动执法刀）。
  *
  * `DUEL_INJURY` 与决斗开局那一声**以前故意不在**这一判据里（§12-55 的口径是
@@ -234,6 +254,7 @@ function runTriggerReentry(
   flow: DrawOutcomeFlow,
 ): EngineState {
   let next = state;
+  echoStatTraces(events, derived);
   let pendingReactions = derived.filter(reentersTriggerChain);
   for (let round = 0; pendingReactions.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
     const expanded = resolveTriggerChain(next, ctx.triggers, pendingReactions);
@@ -243,6 +264,7 @@ function runTriggerReentry(
     const generated = expanded.filter(event => !reentersTriggerChain(event) && event.type !== 'TRIGGERED');
     const nextDerived: GameEvent[] = [];
     next = ctx.processor.process(next, generated, nextDerived, flow);
+    echoStatTraces(events, nextDerived);
     pendingReactions = nextDerived.filter(reentersTriggerChain);
   }
   if (pendingReactions.length > 0) {

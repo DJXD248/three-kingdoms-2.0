@@ -8,11 +8,15 @@
  *     Built-in generals keep descriptive text only, so nothing fires until a
  *     designer attaches real numbers — the compiler never invents gameplay.
  *   - Only the event-backed triggers are supported; the remaining
- *     trigger kinds (modify*, onBase*, passive, active*, untilExpire, …) are
+ *     trigger kinds (modify*, onBase*, active*, untilExpire, …) are
  *     skipped with an explicit reason. onTurnEnd (2.3.1) is the exception
  *     that proves the rule: it compiles, but NEVER auto-fires — TURN_END is
  *     deliberately absent from TRIGGER_EVENTS, and its sole activation
  *     path is the canonical ACTIVATE_SKILL action (ask-window driven).
+ *     `passive` (v2.8 刀4 #25) is the second exception: it compiles into a
+ *     `passive:true` definition that is deliberately NOT in the event-hearing
+ *     map (matchesSkillEvent default=false ⇒ structurally cannot "fire"), and
+ *     its sole consumer is skills/passiveModifiers.ts.
  *   - HEAL / GAIN_ARMOR settle in EventProcessor as hp restore (capped at
  *     maxHp) and armor points; DISCARD (2.5.0) settles as a hand-card move
  *     (resources to the discard pile, general cards back to the owner's
@@ -20,8 +24,12 @@
  *     derives the CARD_LOST/CARD_GAINED notification events its new triggers
  *     listen to; EQUIP_STRIP (2.6.0) settles as a deterministic detach from a
  *     field general's armorCards (the project's only equipment surface) with
- *     one armor point deducted per detached card; effect types beyond the
- *     seven supported ones are still skipped rather than emitting no-op
+ *     one armor point deducted per detached card; MODIFY_STAT (v2.8 刀4 #25)
+ *     settles as a write into the canonical stat ledger
+ *     (core/statModifiers.ts) — it moves no card and deals no damage, and the
+ *     three keys wired today (近战攻击/远程攻击/体力上限) resolve on SELF only.
+ *     effect types beyond the eight supported ones are still skipped rather
+ *     than emitting no-op
  *     events.
  *   - effectMode 'choice' (2.6.3): effects sharing one trigger signature
  *     compile into a SINGLE choiceMode definition — the bridge translates it
@@ -42,6 +50,7 @@
 
 import type { General, Skill, SkillCondition, SkillEffect, SkillTriggerType } from '../data/generals';
 import { supportsListenerScope } from '../data/generals';
+import { tagsOf } from '../domain/skillTags';
 import type {
   DataSkillDefinition,
   DataSkillEffectType,
@@ -74,6 +83,11 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   // TRIGGER_EVENTS, so TURN_END never auto-fires it (single activation
   // path, double-fire ban).
   onTurnEnd: 'onTurnEnd',
+  // v2.8 刀4（#25）在场即生效：**能编译、但不在事件面上**。它编译成一条
+  // `passive:true` 的定义，唯一的消费方是 skills/passiveModifiers.ts（登场落笔、
+  // 离场销笔），触发链那一侧 `matchesSkillEvent` 对它 default=false ⇒ 结构上
+  // 不可能"响一次"，也就永远不会被误当成一次发动。
+  passive: 'passive',
 };
 
 /** Effect types EventProcessor can actually settle today. */
@@ -88,6 +102,7 @@ const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>([
   'REVEAL',
   'DECK_PLACE',
   'DUEL',
+  'MODIFY_STAT',
 ]);
 
 export interface SkillSkip {
@@ -98,7 +113,17 @@ export interface SkillSkip {
     | 'TRIGGER_UNSUPPORTED'
     | 'TRIGGER_SUBTYPE_UNSUPPORTED'
     | 'NO_RUNTIME_PAYLOAD'
-    | 'EFFECT_TYPE_UNSUPPORTED';
+    | 'EFFECT_TYPE_UNSUPPORTED'
+    /** MODIFY_STAT 少了三样里任何一样（改哪个数／哪种形态／数值）——点名，不猜。 */
+    | 'MODIFY_STAT_INCOMPLETE'
+    /** 「在场即生效」与「选择其一」在结构上互斥：passive 按定义不进问窗，
+     *  那就没人能替它择一。整组点名跳过，绝不让它悄悄变成"全都要"。 */
+    | 'PASSIVE_CHOICE_UNSUPPORTED'
+    /** passive 的账只随"人在不在场"变化；门槛（体力/手牌一变就该改口）今天
+     *  没有任何重算路径，悄悄收下＝"记录而未消费"。 */
+    | 'PASSIVE_CONDITION_UNSUPPORTED'
+    /** passive 又填了周期＝两条规则说相反的话（周期是"发动笔"那一档的东西）。 */
+    | 'PASSIVE_DURATION_CONFLICT';
 }
 
 export interface CompileResult {
@@ -124,13 +149,27 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
       reason: 'EFFECT_TYPE_UNSUPPORTED',
     };
   }
+  // MODIFY_STAT 的三样缺一即点名跳过：编译器绝不把"改数"猜成某个具体数字，
+  // 也不允许一条没填钥匙的账悄悄落进账本（§H5-2 第 4 条双形态＋注册表纪律）。
+  // 目标只能是本人：跨将目标（"让别人的攻击+1"）是 #28 刀7 的那一格，今天没有
+  // 目标选择器，选了就是"看起来能响其实不响"——宁可点名跳过。
+  if (runtime.type === 'MODIFY_STAT') {
+    if (!runtime.stat || !runtime.modifyMode || typeof runtime.value !== 'number'
+      || (runtime.target !== undefined && runtime.target !== 'SELF')) {
+      return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_INCOMPLETE' };
+    }
+  }
   return {
     type: runtime.type,
     value: runtime.value,
-    target: runtime.target ?? 'TARGET',
+    target: runtime.target ?? (runtime.type === 'MODIFY_STAT' ? 'SELF' : 'TARGET'),
     dest: runtime.dest,
     // choice option label source (2.6.3) — display-only, never matched on.
     description: effect.description,
+    // v2.8 刀4（#25）：改数三格透传（缺省＝非 MODIFY_STAT，键不出现）。
+    ...(runtime.type === 'MODIFY_STAT'
+      ? { stat: runtime.stat, modifyMode: runtime.modifyMode, duration: runtime.duration }
+      : {}),
   };
 }
 
@@ -175,6 +214,8 @@ export function compileSkill(
   const definitions: DataSkillDefinition[] = [];
   const skipped: SkillSkip[] = [];
   const ownerKey = runtimeGeneralId ?? general.id;
+  // v2.8 刀4（#25）：锁定技徽章＝账本上那一笔"移不走"。技能级属性，choice 组同样继承。
+  const lockedTag = tagsOf(skill).includes('锁定技');
 
   const consider = (effect: SkillEffect | undefined, fallbackTrigger: Skill['trigger']): CompiledEffect | null => {
     // A skill without effect entries can never carry structured payloads.
@@ -193,6 +234,29 @@ export function compileSkill(
     if (!mapped) {
       skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_UNSUPPORTED' });
       return null;
+    }
+
+    if (mapped === 'passive') {
+      // 「在场即生效」这笔账的**唯一**变化条件是人在不在场。门槛（体力/手牌数一变
+      // 就该改口）与周期（在场期间又到期）都要有"中途重算/再落笔"的发射器才谈得上，
+      // 今天两者都不存在（调离区＝另立的一刀）⇒ 悄悄收下就是 §12-55 那种"记录而未
+      // 消费"，所以宁可点名跳过。
+      if (skill.conditions?.length || effect?.conditions?.length) {
+        skipped.push({
+          skillName: skill.name,
+          effectId: effect?.id,
+          reason: 'PASSIVE_CONDITION_UNSUPPORTED',
+        });
+        return null;
+      }
+      if (effect?.runtime?.duration) {
+        skipped.push({
+          skillName: skill.name,
+          effectId: effect.id,
+          reason: 'PASSIVE_DURATION_CONFLICT',
+        });
+        return null;
+      }
     }
 
     let damageTypeFilter: DataSkillDefinition['damageTypeFilter'];
@@ -300,6 +364,10 @@ export function compileSkill(
     // v2.8.22 响应链执法刀：录入面的「强制发动」透传到编译模型。
     // 只在真为 true 时落键——缺省定义的键集合与 v2.8.21 逐字一致。
     ...(skill.forced === true ? { forced: true } : {}),
+    // v2.8 刀4（#25）在场即生效：passive 型编译成一条**不落事件面**的定义，
+    // 由 skills/passiveModifiers.ts 单独消费。同样"只在真为 true 时落键"。
+    ...(c.mapped === 'passive' ? { passive: true } : {}),
+    ...(lockedTag && c.data.type === 'MODIFY_STAT' ? { locked: true } : {}),
   });
 
   const candidates: CompiledEffect[] = [];
@@ -327,6 +395,18 @@ export function compileSkill(
         definitions.push(singleDefinition(group[0]));
         continue;
       }
+      if (group[0].mapped === 'passive') {
+        // 「在场即生效」按定义不进问窗 ⇒ 没有任何路径能替这组择一。整组点名
+        // 跳过，绝不悄悄把它读成"全部生效"（那是另一种玩法）。
+        for (const c of group) {
+          skipped.push({
+            skillName: skill.name,
+            effectId: c.effect.id,
+            reason: 'PASSIVE_CHOICE_UNSUPPORTED',
+          });
+        }
+        continue;
+      }
       definitions.push({
         id: `${ownerKey}:${skill.name}:choice`,
         name: skill.name,
@@ -347,6 +427,9 @@ export function compileSkill(
         // 「强制发动」是技能级录入，choice 组同样继承（整组自动发动，组内择一
         // 仍由既有的抉择窗负责——那是 CHOICE_REQUIRED 的路，不另开一条）。
         ...(skill.forced === true ? { forced: true } : {}),
+        // 锁定技同理继承，但只在组里**真有**写账本的效果时落键（择一之后落的那
+        // 一笔才需要"移不走"位）。
+        ...(lockedTag && group.some(c => c.data.type === 'MODIFY_STAT') ? { locked: true } : {}),
       });
     }
   } else {

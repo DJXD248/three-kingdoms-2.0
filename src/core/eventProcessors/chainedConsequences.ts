@@ -3,6 +3,12 @@ import type { GameEvent } from '../Event';
 import { getTurnStartDrawCount } from '../turnRules';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { deriveDuelFlow } from './duelEvents';
+import { passiveEventsForDeploy } from '../../skills/passiveModifiers';
+import {
+  modifierIdsExpiredAtTurnBoundary,
+  modifierIdsTouchingGeneral,
+  modifierIdsTouchingPlayer,
+} from '../statModifiers';
 
 /**
  * Some domain outcomes (player defeat, game over, compensation draw) are
@@ -152,6 +158,22 @@ export function enqueueDerivedConsequences(
     }
   }
 
+  if (event.type === 'GENERAL_DEPLOYED') {
+    // v2.8 刀4（#25）「在场即生效」的**唯一落笔点**：登场＝这一员将的在场账开始。
+    // 它不是一次发动（不进问窗、不耗"回合限 1 次"、不依赖「强制发动」），所以走
+    // 派生、不走触发链——`passive` 故意缺席 `TRIGGER_EVENTS`，两边不可能都响。
+    // 没有在场技⇒`passiveEventsForDeploy` 返回空⇒事件流一字不多。
+    const data = event.data as { playerId?: number; general?: any } | undefined;
+    const general = data?.general;
+    const playerId = typeof data?.playerId === 'number' ? data.playerId : null;
+    if (general && playerId !== null) {
+      const runtimeId = getRuntimeCardId(general as never) || String(general.id ?? '');
+      if (runtimeId) {
+        queue.push(...passiveEventsForDeploy(general, runtimeId, playerId));
+      }
+    }
+  }
+
   if (event.type === 'DEATH') {
     const data = event.data as any;
     const targetPlayerId = typeof data?.targetPlayerId === 'number' ? data.targetPlayerId : null;
@@ -170,6 +192,61 @@ export function enqueueDerivedConsequences(
           cause: 'GENERAL_DEFEATED',
         },
       });
+      // v2.8 刀4（#25）离场打断一切：这一员将名下的、与落在它身上的账**当场结束**，
+      // 与那笔账怎么写周期（`untilDeath`／`untilLeaveField`／没写）无关（用户裁决第 2
+      // 条）。空账＝派生零事件⇒今日对局逐字不变。
+      const stale = modifierIdsTouchingGeneral(next.statModifiers, {
+        playerId: targetPlayerId,
+        generalId: String(data?.targetId ?? ''),
+      });
+      if (stale.length > 0) {
+        queue.push({ type: 'STAT_MODIFY', data: { op: 'REMOVE', ids: stale, cause: 'DEATH' } });
+      }
+    }
+  }
+
+  // v2.8 刀4（#25）到期收账。派生一律先读账本、空账即返回——「今天没有任何一笔改数
+  // 账」是这个预测能逐字不换锚的唯一理由，所以这条闸门留在派生点，不留给读数点。
+  if (event.type === 'TURN_START' || event.type === 'TURN_END') {
+    const data = event.data as any;
+    const playerId = typeof data?.playerId === 'number' ? data.playerId : null;
+    if (playerId !== null) {
+      const stale = modifierIdsExpiredAtTurnBoundary(next.statModifiers, {
+        edge: event.type === 'TURN_START' ? 'start' : 'end',
+        playerId,
+      });
+      if (stale.length > 0) {
+        queue.push({
+          type: 'STAT_MODIFY',
+          data: { op: 'REMOVE', ids: stale, cause: event.type === 'TURN_START' ? 'TURN_START' : 'TURN_END' },
+        });
+      }
+    }
+  }
+
+  // v2.8 刀4（#25）上限截断致死：账本一变，处理器把"当前体力高于现上限"的几位截回来，
+  // 截到 0 及以下＝不许存活⇒人已经在处理器里离场了，这里只补那一声死（契约表第 11 条：
+  // 截断**不是伤害**，所以它不走 DAMAGE，也就没有击杀者⇒`不记击杀`、`不响遗言`两半
+  // 各自落地：`attackerPlayerId:null` 让 onKill 永远键不上；`deathCause` 让 onDeath 拒响）。
+  if (event.type === 'STAT_MODIFY') {
+    for (const player of next.players) {
+      const beforeField = (before.players.find(p => p.id === player.id)?.fieldGenerals as any[] | undefined) ?? [];
+      const afterField = (player.fieldGenerals as any[] | undefined) ?? [];
+      for (const fg of beforeField) {
+        const generalId = String(getRuntimeCardId(fg?.general as never) ?? '');
+        if (!generalId) continue;
+        if (afterField.some(item => getRuntimeCardId(item?.general as never) === generalId)) continue;
+        queue.push({
+          type: 'DEATH',
+          data: {
+            targetPlayerId: player.id,
+            targetId: generalId,
+            attackerPlayerId: null,
+            attackerId: undefined,
+            deathCause: 'MAX_HP_ZERO',
+          },
+        });
+      }
     }
   }
 
@@ -190,6 +267,11 @@ export function enqueueDerivedConsequences(
     const data = event.data as any;
     const defeatedId = typeof data?.playerId === 'number' ? data.playerId : null;
     if (defeatedId !== null) {
+      // v2.8 刀4（#25）席位阵亡＝这个人名下与落在这个人身上的账一律当场结束。
+      const stale = modifierIdsTouchingPlayer(next.statModifiers, defeatedId);
+      if (stale.length > 0) {
+        queue.push({ type: 'STAT_MODIFY', data: { op: 'REMOVE', ids: stale, cause: 'PLAYER_DEFEATED' } });
+      }
       const survivors = next.players.filter(player => player.id !== defeatedId && player.isAlive !== false);
       if (survivors.length <= 1) {
         queue.push({

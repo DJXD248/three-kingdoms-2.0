@@ -10,6 +10,8 @@ import { GameCard } from '../data/cards';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { getReactionAsk } from '../skills/reactionChain';
 import { getGeneralCardVisual } from '../utils/generalCardVisual';
+import { effectiveMaxHp } from '../core/statModifiers';
+import { getAttackValue } from '../core/attackValue';
 import { clearLocalGameSnapshot, saveLocalGameSnapshot } from '../store/localGameSnapshot';
 import Rules from './Rules';
 import Settings from './Settings';
@@ -51,6 +53,13 @@ export default function GameBoard(){
   // v2.8.22 响应链执法刀：HUD 与校验器/合法动作表/store/AI 共用同一个派生点。
   // engineState 只在落新事实时换引用 ⇒ 每个动作重算一次，而非每帧。
   const reactionAsk=useMemo(()=>getReactionAsk(engineState),[engineState]);
+  // v2.8 刀4（#25）：账本可能改过体力上限与攻击力，界面这几个数字一律**现算**，绝不
+  // 直接读卡面打印值——"结算已按新数字、界面仍显示旧数字"就是用户裁决第 1 条要防的
+  // 那种分叉。用的还是结算侧那同一个函数（core/statModifiers / core/attackValue），
+  // 不是界面自己再算一套。空账本时读数＝打印值，今日所有对局的显示逐字不变。
+  const ledgerTargetOf=(fg:FieldGeneral)=>({playerId:Number(fg.ownerId),generalId:String(getRuntimeCardId(fg.general) ?? '')});
+  const maxHpOf=(fg?:FieldGeneral|null)=>fg?effectiveMaxHp(engineState.statModifiers,ledgerTargetOf(fg),fg):0;
+  const atkOf=(fg:FieldGeneral|undefined,ranged:boolean)=>fg?getAttackValue(fg,ranged,{ledger:engineState.statModifiers,target:ledgerTargetOf(fg)}):0;
 
   const [vm,setVm]=useState<ViewMode>('board');
   const [ins,setIns]=useState<InspectTarget|null>(null);
@@ -309,7 +318,7 @@ export default function GameBoard(){
   const toggleSup=(c:General|GameCard)=>{
     if(!supGen)return;
     const inE=isInEnemyTerritory(supGen);const extra=inE?1:0;
-    const mx=supGen.maxHp-supGen.currentHp+extra; // max cards = heal amount + extra cost
+    const mx=maxHpOf(supGen)-supGen.currentHp+extra; // max cards = heal amount + extra cost
     if(supCards.some(x=>getRuntimeCardId(x)===getRuntimeCardId(c))){setSupCards(p=>p.filter(x=>getRuntimeCardId(x)!==getRuntimeCardId(c)));return;}
     if(supCards.length<mx)setSupCards(p=>[...p,c]);
   };
@@ -318,7 +327,7 @@ export default function GameBoard(){
 
   // Armor actions
   const startArm=(fg:FieldGeneral)=>{const armorInHand=cp.hand.filter(c=>!isGen(c)&&(c as GameCard).type==='军备') as GameCard[];if(armorInHand.length===0)return;setArmGen(fg);setArmCards([]);setIns(null);setVm('selectArmorCards');};
-  const toggleArm=(c:GameCard)=>{if(!armGen)return;const mx=armGen.maxHp-armGen.currentArmor;if(armCards.some(x=>getRuntimeCardId(x)===getRuntimeCardId(c))){setArmCards(p=>p.filter(x=>getRuntimeCardId(x)!==getRuntimeCardId(c)));return;}if(armCards.length<mx)setArmCards(p=>[...p,c]);};
+  const toggleArm=(c:GameCard)=>{if(!armGen)return;const mx=maxHpOf(armGen)-armGen.currentArmor;if(armCards.some(x=>getRuntimeCardId(x)===getRuntimeCardId(c))){setArmCards(p=>p.filter(x=>getRuntimeCardId(x)!==getRuntimeCardId(c)));return;}if(armCards.length<mx)setArmCards(p=>[...p,c]);};
   const confirmArm=()=>{if(armGen&&armCards.length>0){const ok=armGeneral(getRuntimeCardId(armGen.general),armCards);if(ok){setArmGen(null);setArmCards([]);setVm('board');}}};
   const cancelArm=()=>{setArmGen(null);setArmCards([]);setVm('board');};
 
@@ -386,7 +395,7 @@ export default function GameBoard(){
         borderColor: moveTarget ? '#22d3ee' : atkFg ? (atkFgFriendly ? '#facc15' : '#ef4444') : fg ? (generalVisual?.borderColor ?? fgColor) : canDep ? '#22c55e' : `${bc}55`,
         ...(fg ? {} : { background: canDep ? 'rgba(34,197,94,0.12)' : moveTarget ? 'rgba(34,211,238,0.12)' : 'rgba(0,0,0,0.28)' }),
       }}>
-      {fg?(<div className="px-0.5 text-center"><div className="text-xl">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[9px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p>{fg.currentArmor>0&&<p className="text-[8px] text-blue-300">🛡️{fg.currentArmor}</p>}<p className={`text-[9px] ${generalHit?'text-red-300 animate-number-pop':generalHeal?'text-green-300 animate-number-pop-heal':'text-red-400'}`}>❤️{fg.currentHp}/{fg.maxHp}</p></div>):(<span className="text-[9px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地':'前线'}</span>)}
+      {fg?(<div className="px-0.5 text-center"><div className="text-xl">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[9px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p>{fg.currentArmor>0&&<p className="text-[8px] text-blue-300">🛡️{fg.currentArmor}</p>}<p className={`text-[9px] ${generalHit?'text-red-300 animate-number-pop':generalHeal?'text-green-300 animate-number-pop-heal':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className="text-[9px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地':'前线'}</span>)}
     </button>);
   };
 
@@ -410,7 +419,7 @@ export default function GameBoard(){
         borderColor: moveTarget ? '#22d3ee' : atkOk ? (atkFriendly ? '#facc15' : '#ef4444') : fg ? (generalVisual?.borderColor ?? c) : '#333',
         ...(fg ? {} : { background: moveTarget ? 'rgba(34,211,238,0.12)' : 'rgba(0,0,0,0.4)' }),
       }}>
-      {fg?(<div className="text-center"><div className="text-xl">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="text-[9px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p>{fg.currentArmor>0&&<p className="text-[8px] text-blue-300">🛡️{fg.currentArmor}</p>}<p className={`text-[9px] ${generalHit?'text-red-300 animate-number-pop':generalHeal?'text-green-300 animate-number-pop-heal':'text-red-400'}`}>❤️{fg.currentHp}/{fg.maxHp}</p></div>):(<span className={`text-[9px] ${moveTarget?'text-cyan-300':'text-amber-700/20'}`}>{moveTarget?'可前进':'战场'}</span>)}
+      {fg?(<div className="text-center"><div className="text-xl">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="text-[9px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p>{fg.currentArmor>0&&<p className="text-[8px] text-blue-300">🛡️{fg.currentArmor}</p>}<p className={`text-[9px] ${generalHit?'text-red-300 animate-number-pop':generalHeal?'text-green-300 animate-number-pop-heal':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className={`text-[9px] ${moveTarget?'text-cyan-300':'text-amber-700/20'}`}>{moveTarget?'可前进':'战场'}</span>)}
     </button>);
   };
 
@@ -615,12 +624,12 @@ export default function GameBoard(){
       {vm==='selectMoveCard'&&<Bar><span className="text-sm font-bold text-blue-300">选择一张手牌作为移动消耗</span><Btn onClick={cancelMov}>取消</Btn></Bar>}
       {vm==='selectSupplyCards'&&supGen&&(()=>{
         const inE=isInEnemyTerritory(supGen);const extra=inE?1:0;
-        const maxH=supGen.maxHp-supGen.currentHp;
+        const maxH=maxHpOf(supGen)-supGen.currentHp;
         const actualHeal=Math.max(0,supCards.length-extra);
         return <Bar><span className="text-sm text-green-300">选择补给手牌(已选{supCards.length}张{inE?`，含额外消耗1张`:``}，实际补给{Math.min(actualHeal,maxH)}点，最多{maxH}点)</span><Btn ok={supCards.length>extra} onClick={confirmSup}>确认补给</Btn><Btn onClick={cancelSup}>取消</Btn></Bar>;
       })()}
       {vm==='selectArmorCards'&&armGen&&(()=>{
-        const maxAdd=armGen.maxHp-armGen.currentArmor;
+        const maxAdd=maxHpOf(armGen)-armGen.currentArmor;
         return <Bar><span className="text-sm text-sky-300">选择军备牌叠甲(已选{armCards.length}张，最多{maxAdd}张，叠甲后进入整备状态)</span><Btn ok={armCards.length>0} onClick={confirmArm}>确认叠甲</Btn><Btn onClick={cancelArm}>取消</Btn></Bar>;
       })()}
       {/* hand */}
@@ -682,10 +691,10 @@ export default function GameBoard(){
             const inEnemy=fg?isInEnemyTerritory(fg):false;
             const supExtraCost=inEnemy?1:0;
             const supNeedCards=fg?(1+supExtraCost):1;
-            const canSup=!!(fg&&own&&!fg.hasSupplied&&fg.currentHp<fg.maxHp&&cp.hand.length>=supNeedCards);
-            // Armor: need armor cards in hand, armor < maxHp
+            const canSup=!!(fg&&own&&!fg.hasSupplied&&fg.currentHp<maxHpOf(fg)&&cp.hand.length>=supNeedCards);
+            // Armor: need armor cards in hand, armor < 现上限
             const armorInHand=cp.hand.filter(c=>!isGen(c)&&(c as GameCard).type==='军备').length;
-            const canArm=!!(fg&&own&&!fg.isArming&&fg.currentArmor<fg.maxHp&&armorInHand>0);
+            const canArm=!!(fg&&own&&!fg.isArming&&fg.currentArmor<maxHpOf(fg)&&armorInHand>0);
             // Deploy: check camp has free slot
             const campFree=hasFreeCampSlot(cp.id,players);
             const canDeploy=!fg&&ins.type==='general'&&campFree&&cp.hand.length>1;
@@ -694,17 +703,17 @@ export default function GameBoard(){
             let atkReason='';if(fg&&own&&!canAtk){if(fg.isArming)atkReason='整备中：本回合无法攻击';else if(fg.hasAttacked)atkReason='本回合已攻击过';else if(isSch&&fg.justDeployed&&fg.hasMoved)atkReason='文将登场回合只能移动或攻击其一，已移动';else if(cp.hand.length===0)atkReason='攻击消耗1张手牌：当前无手牌';}
             const meleeReason=atkReason||(meleeN===0?'近战范围内没有可攻击的敌军':'');
             const rangeReason=atkReason||(rangeN===0?'远程射程内没有可攻击的敌军':'');
-            let supReason='';if(fg&&own&&!canSup){if(fg.hasSupplied)supReason='本回合已补给过';else if(fg.currentHp>=fg.maxHp)supReason='体力已满，无需补给';else if(cp.hand.length<supNeedCards)supReason=`补给消耗${supNeedCards}张手牌：手牌不足${inEnemy?'（敌方区域额外+1）':''}`;}
-            let armReason='';if(fg&&own&&!canArm){if(fg.isArming)armReason='已在整备中，无法再次叠甲';else if(fg.currentArmor>=fg.maxHp)armReason='护甲已达体力上限';else if(armorInHand===0)armReason='手牌中没有军备卡';}
+            let supReason='';if(fg&&own&&!canSup){if(fg.hasSupplied)supReason='本回合已补给过';else if(fg.currentHp>=maxHpOf(fg))supReason='体力已满，无需补给';else if(cp.hand.length<supNeedCards)supReason=`补给消耗${supNeedCards}张手牌：手牌不足${inEnemy?'（敌方区域额外+1）':''}`;}
+            let armReason='';if(fg&&own&&!canArm){if(fg.isArming)armReason='已在整备中，无法再次叠甲';else if(fg.currentArmor>=maxHpOf(fg))armReason='护甲已达体力上限';else if(armorInHand===0)armReason='手牌中没有军备卡';}
             return(<>
               <div className="mb-3 flex items-center gap-2"><div className="h-3 w-3 rounded-full" style={{backgroundColor:factionColors[g.faction]}}/><span className="rounded px-2 py-0.5 text-sm font-bold" style={{backgroundColor:`${factionColors[g.faction]}25`,color:factionColors[g.faction]}}>{g.faction}</span><span className="text-sm text-amber-400/70">{g.type}</span>{fg&&fg.isArming&&<span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/30">整备中</span>}{fg&&<span className="ml-auto text-xs text-green-400/60">场上</span>}</div>
               <h2 className="mb-0.5 text-3xl font-black text-amber-100">{g.name}</h2>
               {g.title&&<p className="mb-4 text-sm text-amber-500/60">{g.title}</p>}
               <div className="mb-4 grid grid-cols-5 gap-2">
-                <SC l="❤️体力" v={fg?`${fg.currentHp}/${fg.maxHp}`:`${g.hp}`} c="text-red-400"/>
-                <SC l="🛡️护甲" v={fg?`${fg.currentArmor}/${fg.maxHp}`:'0'} c="text-blue-300" tip="每 2 点护甲抵消 1 点伤害；单数护甲挡不下这一刀，会原样留在身上"/>
-                <SC l="⚔️近战" v={`${fg?.meleeAtk??g.meleeAtk}`} c="text-orange-300"/>
-                <SC l="🏹远程" v={`${fg?.rangedAtk??g.rangedAtk}`} c="text-cyan-300"/>
+                <SC l="❤️体力" v={fg?`${fg.currentHp}/${maxHpOf(fg)}`:`${g.hp}`} c="text-red-400"/>
+                <SC l="🛡️护甲" v={fg?`${fg.currentArmor}/${maxHpOf(fg)}`:'0'} c="text-blue-300" tip="每 2 点护甲抵消 1 点伤害；单数护甲挡不下这一刀，会原样留在身上"/>
+                <SC l="⚔️近战" v={`${fg?atkOf(fg,false):g.meleeAtk}`} c="text-orange-300"/>
+                <SC l="🏹远程" v={`${fg?atkOf(fg,true):g.rangedAtk}`} c="text-cyan-300"/>
                 <SC l="🛡️基础" v={`${fg?.armor??g.armor}`} c="text-gray-400"/>
               </div>
               {fg&&own&&fg.isArming&&<p className="mb-2 text-center text-xs text-blue-400/70">🛡️ 整备状态：本回合无法移动和攻击</p>}

@@ -63,7 +63,7 @@ export type SkillTriggerType =
   | 'onOtherSkillActivated' // 其他将领技能发动时
   | 'activeSelf'         // 己方回合任意发动
   | 'activeOther'        // 其他玩家回合任意发动
-  | 'passive'            // 全局生效（在场时持续）
+  | 'passive'            // 在场即生效（不用发动，人在就算）
   | 'untilExpire';       // 直到X前生效
 
 // 各触发时机的细分子选项
@@ -127,7 +127,10 @@ export const triggerTypeLabels: Record<SkillTriggerType, string> = {
   onOtherSkillActivated: '其他将领技能发动时',
   activeSelf: '己方回合任意发动',
   activeOther: '其他玩家回合任意发动',
-  passive: '全局生效（在场时持续）',
+  // v2.8 刀4（#25）改名：旧名「全局生效（在场时持续）」容易被读成"影响全场所有人"，
+  // 而它管的恰恰只有站在场上的这一员将。旧写法在读入侧仍认（`LEGACY_TRIGGER_CELL_ALIASES`），
+  // 写出侧只出现新名——与「成为攻击目标时」→「成为目标时」同一族规矩。
+  passive: '在场即生效（不用发动，人在就算）',
   untilExpire: '直到X前生效',
 };
 
@@ -251,13 +254,63 @@ export interface SkillEffect {
   runtime?: SkillRuntimeEffect;
 }
 
+/**
+ * v2.8 刀4（#25）「改一个数字」的两样东西：改**哪个数**、按**哪种形态**改。
+ *
+ * 这一档钥匙是**注册表**（ARCH_MAP §F 可改量注册表），不是形容词：录入面只放本刀
+ * 真的接了读数点的三把（近战攻击力／远程攻击力／体力上限）。其余钥匙（当前体力、
+ * 本次伤害、行动次数……）在注册表里有名有坐标，但录入面此刻选不到——选了就是
+ * "看起来能响其实不响"，那是本项目明令禁止的第三种谎。
+ */
+export type StatModifierKeyType = 'MELEE_ATK' | 'RANGED_ATK' | 'MAX_HP';
+/** 增减＝在基础值上累加（可负数）；固定＝把这一个数摁成该值。固定优先于增减。 */
+export type StatModifyModeType = 'delta' | 'set';
+
+export const statModifierKeyLabels: Record<StatModifierKeyType, string> = {
+  MELEE_ATK: '近战攻击力',
+  RANGED_ATK: '远程攻击力',
+  MAX_HP: '体力上限',
+};
+
+export const statModifyModeLabels: Record<StatModifyModeType, string> = {
+  delta: '增加或减少（可填负数）',
+  set: '固定为（覆盖卡面值）',
+};
+
+/**
+ * 一笔"改数"账的有效周期。
+ *
+ * 词表里**只有这四档**：`untilDeath`／`untilLeaveField` 与用户裁决第 2 条那条
+ * 总闸（离场打断一切）同义——写出来与不写是同一个意思，所以不给它们位置，免得
+ * 卡上写"直到被击杀前"、引擎按"在场期间"记，两处各一种读法。
+ */
+export type StatModifierDurationType = Exclude<ExpireCondition, 'untilDeath' | 'untilLeaveField'>;
+export const statModifierDurationLabels: Record<StatModifierDurationType, string> = {
+  untilSelfTurnStart: expireLabels.untilSelfTurnStart,
+  untilSelfTurnEnd: expireLabels.untilSelfTurnEnd,
+  untilOtherTurnStart: expireLabels.untilOtherTurnStart,
+  untilOtherTurnEnd: expireLabels.untilOtherTurnEnd,
+};
+/** 周期那一格的大白话缺省值（＝不填＝这笔账在"人在场"期间一直有效）。 */
+export const STAT_DURATION_DEFAULT_LABEL = '在场期间一直有效（离场即结束）';
+
 /** 效果的结构化运行时载荷：类型 + 数值 + 目标角色 */
 export interface SkillRuntimeEffect {
-  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE' | 'EQUIP_STRIP' | 'REVEAL' | 'DECK_PLACE' | 'DUEL';
+  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE' | 'EQUIP_STRIP' | 'REVEAL' | 'DECK_PLACE' | 'DUEL' | 'MODIFY_STAT';
   value?: number;
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
   /** 仅 DECK_PLACE 使用：手牌移到牌堆顶还是底（默认 BOTTOM） */
   dest?: 'TOP' | 'BOTTOM';
+  /** 仅 MODIFY_STAT：改哪一个数字（缺省＝没填＝编译器点名跳过，绝不猜） */
+  stat?: StatModifierKeyType;
+  /** 仅 MODIFY_STAT：增减还是固定（缺省同上） */
+  modifyMode?: StatModifyModeType;
+  /**
+   * 仅 MODIFY_STAT：这笔账的有效周期。缺省（不填）＝**在场期间一直有效**，
+   * 离场即当场结束（用户裁决第 2 条：离场打断一切，与周期写法无关）。
+   * `untilDeath` 与不填同义，所以不在这里重复列。
+   */
+  duration?: StatModifierDurationType;
 }
 
 /**

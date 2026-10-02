@@ -2306,3 +2306,115 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
   });
 });
 
+// ── v2.8 刀4（#25）活例⑫：改数账本身走四路对账 ──
+// 这一档钉的不是算术（那是 statModifierPipeline.test.ts 的活），是**留痕**：账本落笔
+// 那一刻发出的 `STAT_MODIFY` 必须与其余 A 类事实一样进录像、被四路逐字重算。账本在
+// 状态里、事件也在流里，两样都对得上，才谈得上"回放与实况同果"。
+describe('修正器账本 · 四路对账（v2.8 刀4 #25 活例⑫）', () => {
+  const COSTS = [1, 2, 3, 4].map(i => ({ id: `st_cost_${i}`, name: '粮草', type: '粮草' }));
+
+  function hpOf(state: EngineState, playerId: number, generalId: string) {
+    const fg = (state.players.find(p => p.id === playerId)?.fieldGenerals as unknown as
+      Array<{ general: General; currentHp: number }> | undefined)?.find(f => f.general.id === generalId);
+    return fg?.currentHp;
+  }
+
+  /** 带「在场即生效＋近战攻击力+1」的那一员，与不带技能的那一员（同一副卡面）。 */
+  function smith(withSkill: boolean): General {
+    return makeGeneral('st_smith', 4, withSkill ? [{
+      name: '砺刃',
+      trigger: { type: 'passive' },
+      effects: [{
+        id: 'e1',
+        trigger: { type: 'passive' },
+        runtime: { type: 'MODIFY_STAT', stat: 'MELEE_ATK', modifyMode: 'delta', value: 1, target: 'SELF' },
+      }],
+    }] : []);
+  }
+
+  const scriptOf = (general: General): GameAction[] => [
+    createAction('DEPLOY_GENERAL', 1, { general, slot: 0, consumeCards: [{ ...COSTS[0] }] }),
+    createAction('ATTACK', 1, {
+      attackerId: 'st_smith', targetId: 'st_dummy', ranged: false, consumeCard: { ...COSTS[1] },
+    }),
+  ];
+
+  const build = (general: General) => makeState([
+    makePlayer(1, { hand: [general, ...COSTS.slice(0, 3).map(c => ({ ...c }))] }),
+    makePlayer(2, { fieldGenerals: [makeFieldGeneral(makeGeneral('st_dummy', 6, []), 2)] }),
+  ]);
+
+  it('登场落一笔在场账、下一刀读那笔账：四路逐事件一致，账号也是同一个', () => {
+    const smithCard = smith(true);
+    const script = scriptOf(smithCard);
+
+    const engine = new GameEngine(build(smithCard));
+    const steps = playResidentAll(engine, script);
+    const flat = steps.flat().map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+
+    // ① 落笔排在**登场那一步**、攻击那一步之前（不是攻击时才记账）。
+    const traces = flat.filter(e => e.type === 'STAT_MODIFY');
+    expect(traces).toHaveLength(1);
+    expect(traces[0].data).toMatchObject({
+      op: 'ADD',
+      modifier: {
+        key: 'MELEE_ATK', mode: 'delta', value: 1, passive: true, locked: false,
+        targetPlayerId: 1, targetId: 'st_smith', ownerGeneralId: 'st_smith', ownerSkillName: '砺刃',
+      },
+    });
+    // 在场笔不进问窗：这一趟没有任何一格等人点头。
+    expect(getReactionAsk(engine.state)).toBeNull();
+
+    // ② 读数点真的算了那笔账：卡面近战 2 ＋账 1 ⇒ 6 点靶掉到 3。
+    const ledger = engine.state.statModifiers ?? [];
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({ id: 'sm:1', seq: 1, key: 'MELEE_ATK', passive: true });
+    expect(hpOf(engine.state, 2, 'st_dummy')).toBe(3);
+
+    const residentFlat = steps.flat();
+    const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    const bridged = playViaStore(build(smithCard), script, dispatchStoreAction);
+    expect(bridged.steps.flat()).toEqual(residentFlat);
+    expect(JSON.stringify(normalize(bridged.final as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const reconciled = playViaStore(build(smithCard), script, dispatchStoreActionReconcile);
+    expect(reconciled.steps.flat()).toEqual(residentFlat);
+    expect(JSON.stringify(normalize(reconciled.final as unknown as Record<string, unknown>))).toBe(residentFinal);
+
+    const document = engine.replay.getDocument();
+    expect(document).not.toBeNull();
+    const playback = new ReplayPlayer().play(document!);
+    expect(playback.events.flatMap(entry => rawEvents(entry.events))).toEqual(residentFlat);
+    expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
+    // 回放重建出来的账与实况逐字同一本（号、归属、在场位全对上）。
+    expect(playback.state.statModifiers ?? []).toEqual(engine.state.statModifiers ?? []);
+
+    // ③ 同配置两跑逐字节一致：落笔编号纯派生自账本，零新增随机面。
+    const again = new GameEngine(build(smithCard));
+    expect(playResidentAll(again, script).flat()).toEqual(residentFlat);
+  });
+
+  it('反例（两锚不换名的结构保证）：同一副卡没有在场改数技⇒事件流一条 STAT_MODIFY 都不多，伤害回到卡面算术', () => {
+    const plain = smith(false);
+    const script = scriptOf(plain);
+
+    const engine = new GameEngine(build(plain));
+    const steps = playResidentAll(engine, script);
+    expect(steps.flat().map(raw => JSON.parse(raw) as { type: string }).filter(e => e.type === 'STAT_MODIFY')).toHaveLength(0);
+    expect(engine.state.statModifiers ?? []).toEqual([]);
+    expect(hpOf(engine.state, 2, 'st_dummy')).toBe(4); // 卡面 2 点＝刀前逐字行为
+
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+    const bridged = playViaStore(build(plain), script, dispatchStoreAction);
+    expect(bridged.steps.flat()).toEqual(steps.flat());
+    const reconciled = playViaStore(build(plain), script, dispatchStoreActionReconcile);
+    expect(reconciled.steps.flat()).toEqual(steps.flat());
+    const playback = new ReplayPlayer().play(engine.replay.getDocument()!);
+    expect(playback.events.flatMap(entry => rawEvents(entry.events))).toEqual(steps.flat());
+  });
+});
+

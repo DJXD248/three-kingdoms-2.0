@@ -22,6 +22,20 @@ import {
   SKILL_GATE_HEADER,
   serializeSkillGate,
   parseSkillGate,
+  STAT_KEY_HEADER,
+  STAT_MODE_HEADER,
+  STAT_DURATION_HEADER,
+  STAT_KEY_LIST,
+  STAT_MODE_LIST,
+  STAT_DURATION_LIST,
+  STAT_DURATION_HINT,
+  readStatKeyCell,
+  readStatModeCell,
+  readStatDurationCell,
+  statKeyToStr,
+  statModeToStr,
+  statDurationToStr,
+  parseStatValue,
   effectGroupHeaders,
   parseEffectGroup,
   serializeEffectGroup,
@@ -32,7 +46,15 @@ import {
   SETTLEABLE_RUNTIME_TYPE_LIST,
 } from './skillExcelFormat';
 import type { SkillCondition, SkillEffect, SkillTriggerConfig } from '../data/generals';
-import { allGenerals, listenerScopeLabels } from '../data/generals';
+import {
+  allGenerals,
+  listenerScopeLabels,
+  expireLabels,
+  statModifierKeyLabels,
+  statModifyModeLabels,
+  statModifierDurationLabels,
+  STAT_DURATION_DEFAULT_LABEL,
+} from '../data/generals';
 import { compileSkill } from './skillCompiler';
 
 describe('skillExcelFormat: cell cleaning', () => {
@@ -286,9 +308,10 @@ describe('skillExcelFormat: effect column groups', () => {
     expect(detectEffectGroupWidth(v3Header)).toBe(7);
   });
 
-  it('builds v4 header cells for group n（v2.8.21 起第 8 列＝我听谁）', () => {
+  it('builds v5 header cells for group n（v2.8 刀4 起第 9–11 列＝改哪个数／怎么改／有效周期）', () => {
     expect(effectGroupHeaders(2)).toEqual([
-      '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述', '效果2门槛', '效果2我听谁',
+      '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述',
+      '效果2门槛', '效果2我听谁', '效果2改哪个数', '效果2怎么改', '效果2有效周期',
     ]);
   });
 
@@ -372,6 +395,7 @@ describe('skillExcelFormat: effect column groups', () => {
         runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
       },
       gateUnknown: [],
+      statIssues: [],
     });
   });
 
@@ -519,11 +543,14 @@ describe('skillExcelFormat: 监听扩面（v2.8.21 「我听谁」＋「成为�
     expect(LISTENER_SCOPE_LIST.split(',')).toHaveLength(4);
   });
 
-  it('表头认出 8 列组；旧档 3/6/7 列照常认（新列只在自己导出里出现）', () => {
-    const v4Header = ['x', ...effectGroupHeaders(1), ...effectGroupHeaders(2)];
-    expect(detectEffectGroupWidth(v4Header)).toBe(8);
-    expect(effectGroupHeaders(1)).toHaveLength(8);
+  it('表头认出 11 列组；旧档 3/6/7/8 列照常认（新列只在自己导出里出现）', () => {
+    const v5Header = ['x', ...effectGroupHeaders(1), ...effectGroupHeaders(2)];
+    expect(detectEffectGroupWidth(v5Header)).toBe(11);
+    expect(effectGroupHeaders(1)).toHaveLength(11);
     expect(effectGroupHeaders(1)[7]).toBe('效果1' + LISTENER_SCOPE_HEADER);
+    expect(effectGroupHeaders(1)[10]).toBe('效果1有效周期');
+    // 旧档：v2.8.21 的 8 列组（没有改数三格）与 v2.8.3 的 7 列组都要照旧认出来。
+    expect(detectEffectGroupWidth(['x', '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛', '效果1我听谁'])).toBe(8);
     expect(detectEffectGroupWidth(['x', '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛'])).toBe(7);
   });
 
@@ -567,5 +594,255 @@ describe('skillExcelFormat: 监听扩面（v2.8.21 「我听谁」＋「成为�
     expect(parsed.scopeIgnored).toBe('听场上（所有玩家）');
     expect(parseEffectGroup(['无', '无', '无', '无', '无', '无', '无', '无'], 0, 8)).toBeNull();
     expect(serializeEffectGroup(undefined, 8)).toEqual(['无', '无', '无', '无', '无', '无', '无', '无']);
+  });
+});
+
+// v2.8 刀4（#25）：Excel 第 9–11 列「改哪个数／怎么改／有效周期」。
+describe('skillExcelFormat — 「改哪个数／怎么改／有效周期」三格（v2.8 刀4 #25）', () => {
+  const DELTA = statModifyModeLabels.delta;
+  const SET = statModifyModeLabels.set;
+  const MELEE = statModifierKeyLabels.MELEE_ATK;
+  const DURATION = statModifierDurationLabels.untilSelfTurnEnd;
+
+  /** 一行 11 格：默认就是一枚**完整的「修改数值」**，各用例只覆盖自己要的那一格。 */
+  const modifyRow = (over: Partial<{
+    label: string; trigger: string; type: string; value: string; target: string;
+    desc: string; gate: string; scope: string; stat: string; mode: string; duration: string;
+  }>): string[] => {
+    const cells = {
+      label: '改数', trigger: '无', type: runtimeEffectTypeLabels.MODIFY_STAT, value: '1',
+      target: '自身', desc: '改一个数', gate: '无', scope: '无', stat: '无', mode: '无', duration: '无',
+    };
+    const merged = { ...cells, ...over };
+    return [merged.label, merged.trigger, merged.type, merged.value, merged.target, merged.desc,
+      merged.gate, merged.scope, merged.stat, merged.mode, merged.duration];
+  };
+
+  it('三列的列名、下拉词表与表头批注各就各位', () => {
+    expect(STAT_KEY_HEADER).toBe('改哪个数');
+    expect(STAT_MODE_HEADER).toBe('怎么改');
+    expect(STAT_DURATION_HEADER).toBe('有效周期');
+    // 下拉第一项永远是「无」＝留空：三格都得能空着（旧档与不填的场合）。
+    expect(STAT_KEY_LIST.split(',')).toHaveLength(1 + Object.keys(statModifierKeyLabels).length);
+    expect(STAT_MODE_LIST.split(',')).toHaveLength(1 + Object.keys(statModifyModeLabels).length);
+    expect(STAT_DURATION_LIST.split(',')).toHaveLength(1 + Object.keys(statModifierDurationLabels).length);
+    expect(STAT_KEY_LIST.split(',')).toContain(MELEE);
+    expect(STAT_MODE_LIST.split(',')).toContain(DELTA);
+    expect(STAT_DURATION_LIST.split(',')).toContain(DURATION);
+    // 缺省那一档只作说明、不进下拉——下拉里出现两个"同义的档位"就是给用户埋歧义。
+    expect(STAT_DURATION_LIST.split(',')).not.toContain(STAT_DURATION_DEFAULT_LABEL);
+    expect(STAT_DURATION_HINT).toContain('留空');
+    expect(STAT_DURATION_HINT).toContain('直到被击杀前');
+    expect(STAT_DURATION_HINT).toContain('按没填处理');
+    expect(statKeyToStr('MAX_HP')).toBe(statModifierKeyLabels.MAX_HP);
+    expect(statModeToStr('set')).toBe(SET);
+    expect(statDurationToStr(undefined)).toBe('无');
+    expect(statKeyToStr(undefined)).toBe('无');
+    expect(effectGroupHeaders(1).slice(8)).toEqual([
+      '效果1改哪个数', '效果1怎么改', '效果1有效周期',
+    ]);
+  });
+
+  it('词表读法：大白话与原枚举名都认，认不出的交回原文（绝不静默丢）', () => {
+    expect(readStatKeyCell(MELEE).value).toBe('MELEE_ATK');
+    expect(readStatKeyCell('melee_atk').value).toBe('MELEE_ATK');
+    expect(readStatKeyCell('无')).toEqual({});
+    expect(readStatKeyCell('攻击力').unknown).toBe('攻击力');
+    expect(readStatModeCell(DELTA).value).toBe('delta');
+    expect(readStatModeCell('SET').value).toBe('set');
+    expect(readStatModeCell('加倍').unknown).toBe('加倍');
+    expect(readStatDurationCell(DURATION).duration).toBe('untilSelfTurnEnd');
+    expect(readStatDurationCell('untilOtherTurnStart').duration).toBe('untilOtherTurnStart');
+    expect(readStatDurationCell('下回合').unknown).toBe('下回合');
+  });
+
+  it('「直到将领被击杀前」／「直到将领离开场上前」＝留空，不点名、不落周期', () => {
+    // 裁决第 2 条：离场打断一切——写这两句与留空同义，所以词表里没有它们的位置。
+    for (const legacy of [expireLabels.untilDeath, expireLabels.untilLeaveField]) {
+      expect(readStatDurationCell(legacy)).toEqual({});
+      const parsed = parseEffectGroup(
+        modifyRow({ stat: statModifierKeyLabels.MAX_HP, mode: SET, value: '1', duration: legacy }),
+        0, 11,
+      )!;
+      expect(parsed.statIssues).toEqual([]);
+      expect(parsed.fields.runtime!.duration).toBeUndefined();
+      // 只进不出的单向门：写出面永远不再产生这两个旧词。
+      expect(STAT_DURATION_LIST).not.toContain(legacy);
+    }
+  });
+
+  it('三格完整的一行：严格往返（序列化→读回→再序列化逐字相同）', () => {
+    const original: SkillEffect = {
+      id: 'e1',
+      label: '雄狮',
+      trigger: { type: 'onTurnStart' },
+      description: '近战攻击力加一，管到下个己方回合结束前',
+      runtime: {
+        type: 'MODIFY_STAT', stat: 'MELEE_ATK', modifyMode: 'delta', value: 1,
+        target: 'SELF', duration: 'untilSelfTurnEnd',
+      },
+    };
+    const cells = serializeEffectGroup(original, 11);
+    expect(cells).toHaveLength(11);
+    expect(cells[2]).toBe(runtimeEffectTypeLabels.MODIFY_STAT);
+    expect(cells[3]).toBe(1);
+    expect(cells[4]).toBe(runtimeTargetLabels.SELF);
+    expect(cells.slice(8)).toEqual([MELEE, DELTA, DURATION]);
+
+    const back = parseEffectGroup(cells, 0, 11)!;
+    expect(back.statIssues).toEqual([]);
+    expect(back.valueNote).toBeUndefined();
+    expect(back.fields.runtime).toEqual(original.runtime);
+    expect(serializeEffectGroup({ ...original, ...back.fields } as SkillEffect, 11)).toEqual(cells);
+    // 旧档（8 列及更短）根本没有这三格：宽度 8 读入不报错、也不凭空长出改数账。
+    expect(serializeEffectGroup(original, 8)).toHaveLength(8);
+    const legacy = parseEffectGroup(serializeEffectGroup(original, 8), 0, 8)!;
+    // 旧档形状（8 列及更短）里根本放不进这三格：若有人在旧形状上手写「修改数值」，
+    // 必须点名"缺了哪一格"，而不是悄悄落一笔没有钥匙的账（与 §12-55 同一纪律）。
+    expect(legacy.statIssues).toEqual([expect.stringContaining('缺了「改哪个数」和「怎么改」')]);
+    expect(legacy.fields.runtime!.stat).toBeUndefined();
+  });
+
+  it('非「修改数值」的类型填了三格：逐格点名按没填处理', () => {
+    const withType = parseEffectGroup(
+      ['反击', '造成伤害后', runtimeEffectTypeLabels.DAMAGE, '2', '被作用者', '追加2点伤害', '无', '无', MELEE, DELTA, DURATION],
+      0, 11,
+    )!;
+    expect(withType.statIssues).toHaveLength(3);
+    for (const issue of withType.statIssues) {
+      expect(issue).toContain(`「${runtimeEffectTypeLabels.DAMAGE}」不读「`);
+      expect(issue).toContain('按没填处理');
+    }
+    expect(withType.fields.runtime).toEqual({ type: 'DAMAGE', value: 2, target: 'TARGET' });
+
+    // 没写效果类型的那一支：说法换成"这一条"，**填了的那几格**逐格点名（空着的不报）。
+    const noType = parseEffectGroup(modifyRow({ type: '无', stat: MELEE, mode: DELTA }), 0, 11)!;
+    expect(noType.statIssues).toHaveLength(2);
+    expect(noType.statIssues[0]).toContain('这一条（没写效果类型）不读「改哪个数」');
+    expect(noType.fields.runtime).toBeUndefined();
+  });
+
+  it('「修改数值」缺了必需的一格：点名说清少哪一格、为什么落不进账本', () => {
+    const noKey = parseEffectGroup(modifyRow({ type: runtimeEffectTypeLabels.MODIFY_STAT, mode: DELTA, value: '1' }), 0, 11)!;
+    expect(noKey.statIssues).toHaveLength(1);
+    expect(noKey.statIssues[0]).toContain('缺了「改哪个数」');
+    expect(noKey.statIssues[0]).toContain('编译时会点名跳过');
+    expect(noKey.fields.runtime).toEqual({ type: 'MODIFY_STAT', value: 1, target: 'SELF', modifyMode: 'delta' });
+
+    const noBoth = parseEffectGroup(modifyRow({ type: runtimeEffectTypeLabels.MODIFY_STAT, value: '1' }), 0, 11)!;
+    expect(noBoth.statIssues[0]).toContain('缺了「改哪个数」和「怎么改」');
+
+    // 词表认不出＝这一格等于没填，两笔账都要说（不认识 + 落不进账本），不合并成一句含糊话。
+    const badWord = parseEffectGroup(
+      modifyRow({ type: runtimeEffectTypeLabels.MODIFY_STAT, value: '1', stat: '攻击力', mode: DELTA, duration: '下回合' }),
+      0, 11,
+    )!;
+    expect(badWord.statIssues).toHaveLength(3);
+    expect(badWord.statIssues[0]).toContain('「改哪个数」这个词我不认识');
+    expect(badWord.statIssues[0]).toContain('攻击力');
+    expect(badWord.statIssues[1]).toContain('「有效周期」这个词我不认识');
+    expect(badWord.statIssues[2]).toContain('缺了「改哪个数」');
+    expect(badWord.fields.runtime!.stat).toBeUndefined();
+  });
+
+  it('「修改数值」的目标只能是自身：填了别人既点名、也强制按自身落笔', () => {
+    const parsed = parseEffectGroup(
+      modifyRow({ type: runtimeEffectTypeLabels.MODIFY_STAT, value: '1', stat: MELEE, mode: DELTA, target: '被作用者' }),
+      0, 11,
+    )!;
+    expect(parsed.statIssues).toHaveLength(1);
+    expect(parsed.statIssues[0]).toContain('目标只能是自身');
+    expect(parsed.statIssues[0]).toContain('编译时会点名跳过');
+    expect(parsed.fields.runtime!.target).toBe('SELF');
+    expect(parsed.fields.runtime!.stat).toBe('MELEE_ATK');
+  });
+
+  it('数值格四档：增减放行负数、增减 0 点名、固定为不认负数、修改数值不认「全部」', () => {
+    expect(readValueCell('-1', 'MODIFY_STAT', 'delta')).toEqual({ value: -1 });
+    const zeroDelta = readValueCell('0', 'MODIFY_STAT', 'delta');
+    expect(zeroDelta.value).toBeUndefined();
+    expect(zeroDelta.note).toContain('按没填处理');
+    expect(zeroDelta.note).toContain('固定为');
+    const negSet = readValueCell('-2', 'MODIFY_STAT', 'set');
+    expect(negSet.value).toBeUndefined();
+    expect(negSet.note).toContain('往下调请用「增加或减少」');
+    for (const alias of ['全部', WHOLE_HAND_LABEL]) {
+      const whole = readValueCell(alias, 'MODIFY_STAT', 'delta');
+      expect(whole.value).toBeUndefined();
+      expect(whole.note).toContain('按没填处理');
+    }
+    // 「固定为 0」是合法的一笔账（把上限摁成 0），不能和「增减 0」一起拦掉。
+    expect(readValueCell('0', 'MODIFY_STAT', 'set')).toEqual({ value: 0 });
+    // 负数这道口子只开给修改数值：别的类型照旧不当它是数。
+    expect(readValueCell('-1', 'DAMAGE')).toEqual({});
+
+    expect(parseStatValue('-1')).toBe(-1);
+    expect(parseStatValue('4')).toBe(4);
+    expect(parseStatValue('2.7')).toBe(2);
+    expect(parseStatValue('两')).toBeUndefined();
+    expect(parseStatValue('无')).toBeUndefined();
+  });
+
+  it('只写三格、没写是哪个效果：不凭空造效果，把话交回导入面', () => {
+    const parsed = parseEffectGroup(
+      modifyRow({ label: '无', type: '无', value: '无', target: '无', desc: '无', stat: MELEE, mode: DELTA }),
+      0, 11,
+    )!;
+    expect(parsed.fields).toEqual({});
+    expect(parsed.orphanGate).toBe('');
+    expect(parsed.statIssues).toHaveLength(1);
+    expect(parsed.statIssues[0]).toContain('这三格得挂在某个效果上');
+    expect(parsed.statIssues[0]).toContain('按没填处理');
+    // 三格全空的组仍然算空组（null），不影响旧行的判空。
+    expect(parseEffectGroup(['无', '无', '无', '无', '无', '无', '无', '无', '无', '无', '无'], 0, 11)).toBeNull();
+    expect(serializeEffectGroup(undefined, 11)).toEqual(Array.from({ length: 11 }, () => '无'));
+  });
+
+  it('只进不出：不是「修改数值」就不写三格，卡上留了旧键也不带出来', () => {
+    const stale = serializeEffectGroup(
+      { id: 'e1', label: '摸牌', runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF', stat: 'MELEE_ATK', modifyMode: 'delta' } },
+      11,
+    );
+    expect(stale.slice(8)).toEqual(['无', '无', '无']);
+  });
+
+  it('Excel 三格一路走到编译器：在场即生效的改数技编译成 passive 定义、跳过清单为空', () => {
+    const cells = [
+      '铁壁', '在场即生效（不用发动，人在就算）', runtimeEffectTypeLabels.MODIFY_STAT, '1', '自身',
+      '人在场时近战攻击力加一', '无', '无', MELEE, DELTA, '无',
+    ];
+    const parsed = parseEffectGroup(cells, 0, 11)!;
+    expect(parsed.statIssues).toEqual([]);
+    expect(parsed.fields.runtime).toEqual({
+      type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'MELEE_ATK', modifyMode: 'delta',
+    });
+
+    const { definitions, skipped } = compileSkill(
+      { id: 'g1', name: '测试将' },
+      { name: '铁壁', effectMode: 'all', effects: [{ id: 'e1', ...parsed.fields }] },
+      'g1_rt',
+    );
+    expect(skipped).toEqual([]);
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0].trigger).toBe('passive');
+    expect(definitions[0].passive).toBe(true);
+    expect(definitions[0].effects[0]).toEqual({
+      type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'MELEE_ATK', modifyMode: 'delta',
+      description: '人在场时近战攻击力加一',
+    });
+  });
+
+  it('Excel 三格读不全的账：导入面已点名，编译器再兜一次 MODIFY_STAT_INCOMPLETE', () => {
+    const parsed = parseEffectGroup(
+      modifyRow({ trigger: '回合开始时', value: '1', mode: DELTA }),
+      0, 11,
+    )!;
+    expect(parsed.statIssues).toHaveLength(1);
+    const { definitions, skipped } = compileSkill(
+      { id: 'g1', name: '测试将' },
+      { name: '半截改数', effectMode: 'all', effects: [{ id: 'e1', ...parsed.fields }] },
+    );
+    expect(definitions).toHaveLength(0);
+    expect(skipped[0].reason).toBe('MODIFY_STAT_INCOMPLETE');
   });
 });

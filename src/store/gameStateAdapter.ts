@@ -121,6 +121,10 @@ export function storeStateToEngineState(store: any): EngineState {
     // 把一场"正停在问答上"的棋交给世界、而且债被抹掉——D-1 的
     // "常驻===重建"结构性等价要求这一格必须原样带过去。
     pendingReaction: store?.engineState?.pendingReaction,
+    // v2.8 刀4（#25）数值修正器账本：同一个 A 类槽教训，第四遍。重建时把账本丢了，
+    // 等于把所有"正在生效的改数"当场抹掉——而被改过的那位此刻体力可能已经按新上限
+    // 截断过了，卡面打印值还是旧数，读数点会立刻算回老数字（界面与结算一起翻脸）。
+    statModifiers: store?.engineState?.statModifiers,
   };
 }
 

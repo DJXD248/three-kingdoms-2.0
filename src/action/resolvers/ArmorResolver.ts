@@ -3,6 +3,7 @@ import type { GameAction } from '../ActionTypes';
 import type { EngineState } from '../../core/GameState';
 import type { GameEvent } from '../../core/Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
+import { effectiveMaxHp } from '../../core/statModifiers';
 
 export interface ArmorActionPayload {
   generalId: string;
@@ -48,7 +49,8 @@ export class ArmorResolver implements ActionResolver {
     }
 
     const currentArmor = Math.max(0, Number(target.currentArmor ?? 0));
-    const maxArmor = Math.max(0, Number(target.maxHp ?? target.general?.hp ?? 0));
+    // 护甲容量那条规则写的是"体力上限"，所以它读现上限（账本改过就跟着改），不读卡面打印值。
+    const maxArmor = Math.max(0, effectiveMaxHp(state.statModifiers, { playerId: action.playerId, generalId: String(payload.generalId) }, { maxHp: target?.maxHp, general: target?.general }));
     const capacity = Math.max(0, maxArmor - currentArmor);
     if (selected.length > capacity) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'ARMOR_CAPACITY_EXCEEDED', capacity } }];

@@ -21,6 +21,10 @@ import {
   listenerScopeToStr,
   RUNTIME_TYPE_LIST,
   RUNTIME_TARGET_LIST,
+  STAT_DURATION_HINT,
+  STAT_KEY_LIST,
+  STAT_MODE_LIST,
+  STAT_DURATION_LIST,
 } from '../skills/skillExcelFormat';
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
 import {
@@ -599,6 +603,19 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           if (!eff.description) reasons.push(`${sk.name}/${eff.label||'效果'}:描述空`);
           if (!eff.trigger) reasons.push(`${sk.name}/${eff.label||'效果'}:触发未设`);
           if (eff.runtime && eff.runtime.value == null) reasons.push(`${sk.name}/${eff.label||'效果'}:结构化数值空`);
+          // v2.8 刀4（#25）：编译器会点名跳过的三种组合，导出备注里先催一遍——
+          // 等用户去对局里发现"我写了怎么不生效"就太晚了（显示与生效不许分叉）。
+          const isPassive = (eff.trigger ?? sk.trigger)?.type === 'passive';
+          if (eff.runtime?.type === 'MODIFY_STAT' && (!eff.runtime.stat || !eff.runtime.modifyMode)) {
+            reasons.push(`${sk.name}/${eff.label||'效果'}:改数三格缺一（要写「改哪个数」和「怎么改」）`);
+          }
+          if (isPassive && (sk.conditions?.length || eff.conditions?.length || eff.runtime?.duration)) {
+            reasons.push(`${sk.name}/${eff.label||'效果'}:在场即生效不认门槛与有效周期，编译时会点名跳过`);
+          }
+        }
+        const anyPassive = sk.effects.some(eff => (eff.trigger ?? sk.trigger)?.type === 'passive');
+        if (anyPassive && sk.effectMode === 'choice' && sk.effects.length > 1) {
+          reasons.push(`${sk.name}:在场即生效与「选择其一」互斥（没人能替它择一），整组会被点名跳过`);
         }
       }
     }
@@ -608,13 +625,16 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // ── Export to Excel using ExcelJS ──
   // Format: one row per SKILL (not per general). Each general occupies N rows (N = number of skills).
   // Multi-effect skills: sub-effects occupy additional columns within the skill row.
-  // Effect group (8 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 | 门槛 | 我听谁 — 只有填了效果类型(+数值)的效果
+  // Effect group (11 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 | 门槛 | 我听谁 | 改哪个数 | 怎么改 | 有效周期
+  // — 只有填了效果类型(+数值)的效果
   // 才会被技能编译器接入对局结算（见 skills/skillCompiler.ts）；门槛=该效果的发动条件（可空）。
   // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 技能门槛 | 我听谁 | 效果1标注 | 效果1触发 | ... | 设定备注
   // v2.8.11 刀2：新增固定列「技能门槛」＝整组门槛（技能级）；效果组第 7 列
   // 「效果N门槛」＝逐项门槛，两者是两级（先整组、再逐项）。
   // v2.8.21 监听扩面刀：再加一轴（技能级固定列「我听谁」＋效果组第 8 列「效果N我听谁」），
   // 与门槛同样是两级分工；旧文件没有这些列＝按没填读（＝只听自己）。
+  // v2.8 刀4（#25）：再加三列「改哪个数／怎么改／有效周期」，只有「效果类型＝修改数值」
+  // 读它们，别的类型填了会在导入报告里点名；旧文件没有这三列＝按没填读（＝在场期间一直有效）。
   const handleExport = useCallback(async () => {
     try {
       const factionOrder: Faction[] = ['魏', '蜀', '吴', '群', '晋'];
@@ -641,7 +661,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
 
         const ws = wb.addWorksheet(faction);
 
-        // Build header（13 个固定列＋每组 8 列＋设定备注；解析侧按表头认列，不按位置写死）
+        // Build header（13 个固定列＋每组 11 列＋设定备注；解析侧按表头认列，不按位置写死）
         const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述', '技能门槛', LISTENER_SCOPE_HEADER];
         for (let e = 0; e < maxEffects; e++) header.push(...effectGroupHeaders(e + 1));
         header.push('设定备注');
@@ -653,11 +673,15 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         });
         // 两个门槛列（整组「技能门槛」＋逐效果「效果N门槛」）读的是同一个解析器，
         // 写法提示就同一句——只挑第一列贴会把逐效果那列的批注挤掉（v2.8.11 复算查出）。
-        // 「我听谁」两列同理（v2.8.21）。
+        // 「我听谁」两列同理（v2.8.21）；「有效周期」必须把"留空＝在场期间"写进批注，
+        // 否则空着那一格会被读成"这条没生效"（v2.8 刀4 #25）。
         header.forEach((h, i) => {
           if (h.endsWith('门槛')) hdr.getCell(i + 1).note = { texts: [{ text: GATE_SYNTAX_HINT }] };
           if (h === LISTENER_SCOPE_HEADER || /^效果\d+我听谁$/.test(h)) {
             hdr.getCell(i + 1).note = { texts: [{ text: LISTENER_SCOPE_HINT }] };
+          }
+          if (/^效果\d+有效周期$/.test(h)) {
+            hdr.getCell(i + 1).note = { texts: [{ text: STAT_DURATION_HINT }] };
           }
         });
 
@@ -692,9 +716,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               listenerScopeToStr(sk.trigger?.listenerScope),
             );
 
-            // Sub-effects (8-col groups: runtime fields + 发动门槛 + 我听谁)
+            // Sub-effects (11-col groups: runtime fields + 发动门槛 + 我听谁 + 改数三格)
             for (let e = 0; e < maxEffects; e++) {
-              row.push(...serializeEffectGroup(sk.effects?.[e], 8));
+              row.push(...serializeEffectGroup(sk.effects?.[e], 11));
             }
 
             // Note (only on first skill row)
@@ -725,19 +749,23 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             ws.getCell(r, 10).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${modeList}"`] };
             ws.getCell(r, 13).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${LISTENER_SCOPE_LIST}"`] };
             for (let ei = 0; ei < maxEffects; ei++) {
-              // v4 group layout (1-based, 13 个固定列后): 标注=14+8n | 触发=15+8n |
-              // 类型=16+8n | 数值=17+8n | 目标=18+8n | 描述=19+8n | 门槛=20+8n | 我听谁=21+8n
-              ws.getCell(r, 15 + ei * 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
-              ws.getCell(r, 16 + ei * 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
-              ws.getCell(r, 18 + ei * 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
-              ws.getCell(r, 21 + ei * 8).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${LISTENER_SCOPE_LIST}"`] };
+              // v5 group layout (1-based, 13 个固定列后): 标注=14+11n | 触发=15+11n |
+              // 类型=16+11n | 数值=17+11n | 目标=18+11n | 描述=19+11n | 门槛=20+11n |
+              // 我听谁=21+11n | 改哪个数=22+11n | 怎么改=23+11n | 有效周期=24+11n
+              ws.getCell(r, 15 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
+              ws.getCell(r, 16 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
+              ws.getCell(r, 18 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
+              ws.getCell(r, 21 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${LISTENER_SCOPE_LIST}"`] };
+              ws.getCell(r, 22 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_KEY_LIST}"`] };
+              ws.getCell(r, 23 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_MODE_LIST}"`] };
+              ws.getCell(r, 24 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_DURATION_LIST}"`] };
             }
           }
         }
 
         // Column widths
         const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40, 26, 18];
-        for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40, 26, 18);
+        for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40, 26, 18, 14, 18, 24);
         widths.push(30);
         widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       }
@@ -986,8 +1014,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           <div className="px-6 py-3 border-b border-purple-800/20 bg-purple-900/5 flex-shrink-0">
             <div className="mb-2 rounded-lg bg-black/30 border border-purple-800/20 p-3 text-xs text-purple-300/70 space-y-1">
               <p className="font-bold text-green-300">📤 导出格式（每行一个技能，可直接再导入）：</p>
-              <p>将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | <span className="text-emerald-300">技能门槛</span> | 效果1标注 | 效果1触发 | 效果1类型 | 效果1数值 | 效果1目标 | 效果1描述 | 效果1门槛 | ...</p>
-              <p>同一将领的多个技能占多行，将领属性仅第一行填写。<span className="text-green-400">含下拉菜单和设定备注。</span>旧版3列/6列效果组的文件仍兼容导入（旧文件没有门槛栏，导入后按「无门槛」处理；也没有「技能门槛」列时整组门槛＝无）。</p>
+              <p>将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | <span className="text-emerald-300">技能门槛</span> | 效果1标注 | 效果1触发 | 效果1类型 | 效果1数值 | 效果1目标 | 效果1描述 | 效果1门槛 | <span className="text-emerald-300">效果1改哪个数 | 效果1怎么改 | 效果1有效周期</span> | ...</p>
+              <p>同一将领的多个技能占多行，将领属性仅第一行填写。<span className="text-green-400">含下拉菜单和设定备注。</span>旧版3列/6列/7列/8列效果组的文件仍兼容导入（旧文件没有门槛栏，导入后按「无门槛」处理；也没有「技能门槛」列时整组门槛＝无；没有「我听谁」「改哪个数」这些后加的栏＝按没填处理）。</p>
               <p><span className="text-emerald-300">🚪 两级门槛：</span>「技能门槛」＝整组门槛（先判，不满足整条技能这一刻不响）；「效果N门槛」＝逐项门槛（后判，「选择其一」里不满足的选项会置灰并写明原因）。</p>
               <p><span className="text-emerald-300">⚡ 结构化效果：</span>效果组中填写<span className="text-emerald-300">效果类型（摸牌/伤害）+ 数值</span>后，该效果才会在对局中被引擎真实结算；不填＝纯描述。</p>
               <p><span className="text-amber-300">🖐 数值栏的「全部」：</span>只有<span className="text-emerald-300">弃牌 / 发放 / 放回牌堆</span>认「全部」或数字 0（＝整只手，导出时仍写 0）；其它类型填 0 会被当作没填并在导入总结里点名。</p>

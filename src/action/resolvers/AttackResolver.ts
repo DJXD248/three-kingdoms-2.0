@@ -100,7 +100,10 @@ export class AttackResolver implements ActionResolver {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'ATTACK_COST_CARD_NOT_IN_HAND' } }];
     }
 
-    const baseDamage = getAttackValue(attacker, payload.ranged);
+    const baseDamage = getAttackValue(attacker, payload.ranged, {
+      ledger: state.statModifiers,
+      target: { playerId: action.playerId, generalId: String(payload.attackerId) },
+    });
     const targetBaseMatch = /^base_(\d+)$/.exec(String(payload.targetId));
     if (targetBaseMatch) {
       const targetPlayerId = Number(targetBaseMatch[1]);

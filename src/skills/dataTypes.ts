@@ -19,7 +19,13 @@ export type DataSkillTrigger =
   | 'onDeath'
   | 'onBecomingTarget'
   | 'onCardLost'
-  | 'onCardGained';
+  | 'onCardGained'
+  /** v2.8 刀4（#25）在场即生效：它**不是发动**，所以不监听任何事件、不进问窗、
+   *  不耗"回合限 1 次"、也不依赖 `forced`。它的账由登场那一刻的
+   *  `skills/passiveModifiers.ts` 单点落笔、离场单点销笔（§H5-2 第 3 条）。
+   *  刻意不进 `SkillTriggerBridge` 的事件面——`matchesSkillEvent` 对它
+   *  `default: return false`，触发链结构上听不懂这一型。 */
+  | 'passive';
 
 export type DataSkillEffectType =
   | 'DRAW_CARD'
@@ -31,7 +37,9 @@ export type DataSkillEffectType =
   | 'EQUIP_STRIP'
   | 'REVEAL'
   | 'DECK_PLACE'
-  | 'DUEL';
+  | 'DUEL'
+  /** 改一个数字＝往账本落一笔（core/statModifiers.ts），**不改卡面**。 */
+  | 'MODIFY_STAT';
 
 /** v2.7.3 自定义条件门槛谓词（§G 建议书第 4 项，十二格表见 ARCH_MAP F 节）。
  * 条件不是事件也不是状态：它只决定"这条监听要不要响"，产零事件、写零状态。
@@ -64,6 +72,10 @@ export interface SkillEffectData {
    * 编译时单效果定义的 conditions 就是它自己的门槛。
    */
   conditions?: SkillCondition[];
+  /** 仅 MODIFY_STAT：改哪个数字／增减还是固定／有效周期。三者缺一即编译器点名跳过。 */
+  stat?: import('../data/generals').StatModifierKeyType;
+  modifyMode?: import('../data/generals').StatModifyModeType;
+  duration?: Exclude<import('../data/generals').ExpireCondition, 'untilDeath' | 'untilLeaveField'>;
 }
 
 export interface DataSkillDefinition {
@@ -122,6 +134,21 @@ export interface DataSkillDefinition {
    * 消费点单点=`skills/reactionChain.ts` 的 `isReactionTrigger`＋`autoFires`。
    */
   forced?: boolean;
+  /**
+   * v2.8 刀4（#25）在场即生效的那一型。只在 `trigger==='passive'` 时由编译器落
+   * `true`（缺省＝不写这个键，与 v2.8.25 之前的定义逐字同形——同一手"只在真为
+   * true 时落键"的写法，为的是不改动任何既有编译产物的键集合）。
+   */
+  passive?: boolean;
+  /**
+   * v2.8 刀4（#25）**锁定技徽章第一次被结算读到**：编译器从 `tagsOf(skill)` 里
+   * 认「锁定技」，且**只在这条定义真的会往账本上落笔时**（含 MODIFY_STAT 效果）
+   * 才落键——其余定义一个键都不多，既有编译产物逐字不变。唯一的消费方是修正器
+   * 账本：锁定技那笔 `locked:true`，别的技能移不走它（全库唯一的"移走别人的账"
+   * 入口 `statModifiers.revokeModifier` 拒掉）。徽章语义本身（"不能被无效、不能
+   * 被改变"）在其余结算路上今天仍然无人读——账本是目前唯一一处它管得着的地方。
+   */
+  locked?: boolean;
   /**
    * v2.7.2 choice 生产者面（GPT 三检 Q5 最小验证刀）：候选从哪里枚举。
    * 缺省（undefined）=v2.6.3 行为=逐效果预译分支，一字未动。

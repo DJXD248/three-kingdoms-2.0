@@ -1,6 +1,8 @@
 // v2.8.22 响应链执法刀：`ReactionQueueSyncedData` 引用状态侧的队列形状。纯类型
 // 导入（编译期擦除），与 GameState→Event 那条方向构成类型环，运行时不存在环。
+// v2.8 刀4 同理再引一条 `statModifiers`（账本笔的形状），运行时依旧不存在环。
 import type { PendingReaction } from './GameState';
+import type { StatModifier } from './statModifiers';
 
 export type GameEventType =
   | 'ACTION_ACCEPTED'
@@ -21,6 +23,12 @@ export type GameEventType =
   // 掉掉的体力总额"记成一声"受到伤害后"，让受伤型监听从里面听**一次**（逐轮那
   // 些不响）。`value`＝累计值，不是任何单轮的数值。
   | 'DUEL_INJURY'
+  // v2.8 刀4（#25 数值变化）：账本上落笔／销笔。引擎里**每一条会改状态的事实都是一
+  // 条事件**——修正器账本既然是 A 类可回放事实（常驻／重建／回放四路必须逐字同果），
+  // 它就不能只靠派生悬浮在状态里，必须自己留痕。`op:'ADD'` 落一笔（号由处理器从账本
+  // 纯派生，零 RNG）、`op:'REMOVE'` 销一笔（`ids`＝被销的 `modifierId`）。缺省（无此
+  // 事件）＝账本为空＝所有读数走卡面基础值⇒今日所有对局逐字不产生这一声。
+  | 'STAT_MODIFY'
   | 'CHOICE_REQUIRED'
   | 'CHOICE_RESOLVED'
   | 'CARD_LOST'
@@ -103,6 +111,27 @@ export interface SkillActivationEventData {
   generalId: string;
   playerId: number;
   stableId: string;
+}
+
+/**
+ * STAT_MODIFY（v2.8 刀4＝#25）：数值修正器账本上的一笔落/销。账本本身是 A 类事实
+ * （`EngineState.statModifiers`），所以它的每一次位移都必须留痕，否则回放会重新
+ * 派生一遍、四路同果的结构性等价就断了。
+ *
+ * `op:'ADD'` 带 `modifier`（此时 `id`/`seq` 由发射器从**当前账本**纯派生，零 RNG）；
+ * `op:'REMOVE'` 带 `ids`（被销的笔）。**生命周期收账（离场、到期）也走 REMOVE**——
+ * 那不是"无效化别人那笔账"，是"人在场／周期未到"这个前提本身没了，所以它不读
+ * `locked`（`revokeModifier` 那条外部入口才读）。
+ */
+export interface StatModifyEventData {
+  op: 'ADD' | 'REMOVE';
+  /** ADD 用：这笔账的内容。**不带 id/seq**——号由处理器从它落账那一刻的账本纯派生
+   *  （`sm:<seq>`），四路拿到的是同一份账⇒同一个号，发射器无需也未授权自己编号。 */
+  modifier?: Omit<StatModifier, 'id' | 'seq'>;
+  /** REMOVE 用：要销掉的笔 id 列表（不存在的 id 静默忽略，＝账本已自洽）。 */
+  ids?: string[];
+  /** 哪一声把这笔带出来的（记账用＋测试断言用，不参与判定）。 */
+  cause?: string;
 }
 
 /**

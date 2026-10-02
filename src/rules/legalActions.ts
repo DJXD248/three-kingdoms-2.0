@@ -28,6 +28,8 @@ import type { GameAction } from '../action/ActionTypes';
 import { createAction } from '../action/ActionTypes';
 import type { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
+import { effectiveMaxHp } from '../core/statModifiers';
+import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { listTurnEndSkillCandidates } from '../skills/turnEndSkills';
 import { getReactionAsk } from '../skills/reactionChain';
 
@@ -215,7 +217,10 @@ export function getLegalActions(engine: GameEngine, playerId: number): GameActio
   for (const fg of myField) {
     if (fg?.hasSupplied === true) continue;
     const generalId = runtimeId(fg?.general);
-    const missingHp = Number(fg?.maxHp ?? 0) - Number(fg?.currentHp ?? 0);
+    // 上限读数走账本（刀4）：键与结算侧同一个 getRuntimeCardId，不用本文件的本地简写，
+    // 免得"AI 以为还能补、结算说已满"这种两侧各算各的分叉。
+    const missingHp = effectiveMaxHp(state.statModifiers, { playerId, generalId: getRuntimeCardId(fg?.general as never) }, { maxHp: fg?.maxHp })
+      - Number(fg?.currentHp ?? 0);
     if (!generalId || missingHp <= 0) continue;
     for (let count = 1; count <= Math.min(2, resourceCards.length); count += 1) {
       tryPush('SUPPLY', { generalId, consumeCards: resourceCards.slice(0, count) });

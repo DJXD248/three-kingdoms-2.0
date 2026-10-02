@@ -9,6 +9,7 @@ import { skillTagMeanings, tagsOf } from '../domain/skillTags';
 import { getGeneralCardVisual } from '../utils/generalCardVisual';
 import { GameCard } from '../data/cards';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { effectiveMaxHp } from '../core/statModifiers';
 import { SC, Bar, Btn } from './testArena/compactPrimitives';
 
 type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'selectMoveCard'|'selectSupplyCards';
@@ -32,6 +33,12 @@ export default function TestArena(){
   const clearSkillActivation=useGameStore(s=>s.clearSkillActivation);
   const resetGame=useGameStore(s=>s.resetGame);
   const setCurrentPlayerIndex=useGameStore(s=>s.setCurrentPlayerIndex);
+  // v2.8 刀4（#25）：演练窗这几个数字也读现算值（与 GameBoard 同一把读数钥匙）。
+  // 下面的「上限+1／-1」两个按钮是**改卡面**的开发者工具，仍按打印值走——那正是它们的功能。
+  const engineState=useGameStore(s=>s.engineState);
+  const maxHpOf=(fg?:FieldGeneral|null)=>fg
+    ? effectiveMaxHp(engineState.statModifiers,{playerId:Number(fg.ownerId),generalId:String(getRuntimeCardId(fg.general) ?? '')},fg)
+    : 0;
 
   // Test-specific actions
   const testDrawCards=useGameStore(s=>s.testDrawCards);
@@ -180,7 +187,7 @@ export default function TestArena(){
   const cancelMov=()=>{setMovGen(null);setMovTgt(null);setMoveOptions([]);setVm('board');};
 
   const startSup=(fg:FieldGeneral)=>{if(cp.hand.length===0)return;setSupGen(fg);setSupCards([]);setIns(null);setVm('selectSupplyCards');};
-  const toggleSup=(c:General|GameCard)=>{if(!supGen)return;const inE=isInEnemyTerritory(supGen);const extra=inE?1:0;const mx=supGen.maxHp-supGen.currentHp+extra;if(supCards.some(x=>getRuntimeCardId(x)===getRuntimeCardId(c))){setSupCards(p=>p.filter(x=>getRuntimeCardId(x)!==getRuntimeCardId(c)));return;}if(supCards.length<mx)setSupCards(p=>[...p,c]);};
+  const toggleSup=(c:General|GameCard)=>{if(!supGen)return;const inE=isInEnemyTerritory(supGen);const extra=inE?1:0;const mx=maxHpOf(supGen)-supGen.currentHp+extra;if(supCards.some(x=>getRuntimeCardId(x)===getRuntimeCardId(c))){setSupCards(p=>p.filter(x=>getRuntimeCardId(x)!==getRuntimeCardId(c)));return;}if(supCards.length<mx)setSupCards(p=>[...p,c]);};
   const confirmSup=()=>{
     if(supGen&&supCards.length>0){
       trackAction(getRuntimeCardId(supGen.general),'sup');
@@ -228,7 +235,7 @@ export default function TestArena(){
     return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(canDep)doDeploy(slot===0?0:2);else if(moveTarget)chooseMoveTarget({zone,slot,areaOwnerId:areaOwner.id});}}
       className={`relative flex h-[76px] w-[62px] items-center justify-center rounded-lg border-2 transition-all ${(fg||canDep||moveTarget)?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkFg?`animate-pulse ring-2 ${atkFgFriendly?'ring-yellow-400':'ring-red-500'}`:''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
       style={{...(generalVisual??{}),borderColor:moveTarget?'#22d3ee':atkFg?(atkFgFriendly?'#facc15':'#ef4444'):fg?(generalVisual?.borderColor??fgColor):canDep?'#22c55e':`${bc}55`,...(fg?{}:{background:canDep?'rgba(34,197,94,0.12)':moveTarget?'rgba(34,211,238,0.12)':'rgba(0,0,0,0.28)'})}}>
-      {fg?(<div className="px-0.5 text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[8px] font-black leading-tight text-amber-200">{fg.general.name}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{fg.maxHp}</p></div>):(<span className="text-[8px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地':'前线'}</span>)}</button>);
+      {fg?(<div className="px-0.5 text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[8px] font-black leading-tight text-amber-200">{fg.general.name}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className="text-[8px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地':'前线'}</span>)}</button>);
   };
 
   const BSlot=({slot}:{slot:number})=>{
@@ -244,7 +251,7 @@ export default function TestArena(){
     return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(moveTarget)chooseMoveTarget({zone:'battle',slot,areaOwnerId:null});}}
       className={`flex h-[76px] w-[62px] items-center justify-center rounded-lg border-2 transition-all ${fg||moveTarget?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkOk?`animate-pulse ring-2 ${atkFriendly?'ring-yellow-400':'ring-red-500'}`:''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
       style={{...(generalVisual??{}),borderColor:moveTarget?'#22d3ee':atkOk?(atkFriendly?'#facc15':'#ef4444'):fg?(generalVisual?.borderColor??c):'#333',...(fg?{}:{background:moveTarget?'rgba(34,211,238,0.12)':'rgba(0,0,0,0.4)'})}}>
-      {fg?(<div className="text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="text-[8px] font-black leading-tight text-amber-200">{fg.general.name}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{fg.maxHp}</p></div>):(<span className={`text-[8px] ${moveTarget?'text-cyan-300':'text-amber-700/20'}`}>{moveTarget?'可前进':'战场'}</span>)}
+      {fg?(<div className="text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="text-[8px] font-black leading-tight text-amber-200">{fg.general.name}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className={`text-[8px] ${moveTarget?'text-cyan-300':'text-amber-700/20'}`}>{moveTarget?'可前进':'战场'}</span>)}
     </button>);
   };
 
@@ -358,7 +365,7 @@ export default function TestArena(){
                   <div key={getRuntimeCardId(fg.general)} className="rounded-lg border border-gray-800/40 bg-black/30 p-2.5">
                     <div className="flex items-center gap-2 mb-1.5"><div className="w-2 h-2 rounded-full" style={{backgroundColor:c}}/><span className="font-bold text-amber-200">{fg.general.name}</span><span className="text-[9px] text-gray-500">{o?.name}</span></div>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-red-400">❤️{fg.currentHp}/{fg.maxHp}</span>
+                      <span className="text-red-400">❤️{fg.currentHp}/{maxHpOf(fg)}</span>
                       <span className="text-[9px] text-gray-500">⚔{ac.atk} 🚶{ac.mov} 💊{ac.sup}</span>
                     </div>
                     <div className="space-y-1">
@@ -366,7 +373,7 @@ export default function TestArena(){
                       <div className="flex gap-1 items-center">
                         <span className="text-gray-500 w-8">体力</span>
                         <button onClick={()=>testHealGeneral(getRuntimeCardId(fg.general),1)} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 hover:bg-green-800/40">+1</button>
-                        <button onClick={()=>testSetGeneralHp(getRuntimeCardId(fg.general),fg.maxHp)} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 hover:bg-green-800/40">满</button>
+                        <button onClick={()=>testSetGeneralHp(getRuntimeCardId(fg.general),maxHpOf(fg))} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 hover:bg-green-800/40">满</button>
                         <button onClick={()=>testSetGeneralHp(getRuntimeCardId(fg.general),1)} className="px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 hover:bg-red-800/40">→1</button>
                       </div>
                       {/* Max HP controls */}
@@ -410,7 +417,7 @@ export default function TestArena(){
       {vm==='selectAttackCard'&&<Bar><span className="text-xs font-bold text-red-300">选择攻击消耗牌</span><Btn onClick={resetAtk}>取消</Btn></Bar>}
       {moveOptions.length>1&&movGen&&<Bar><span className="text-xs font-bold text-cyan-300">选择移动目标</span><Btn onClick={cancelMov}>取消</Btn></Bar>}
       {vm==='selectMoveCard'&&<Bar><span className="text-xs font-bold text-blue-300">选择移动消耗牌</span><Btn onClick={cancelMov}>取消</Btn></Bar>}
-      {vm==='selectSupplyCards'&&supGen&&(()=>{const inE=isInEnemyTerritory(supGen);const extra=inE?1:0;const actualHeal=Math.max(0,supCards.length-extra);return <Bar><span className="text-xs text-green-300">补给(已选{supCards.length}张，补{Math.min(actualHeal,supGen.maxHp-supGen.currentHp)}点)</span><Btn ok={supCards.length>extra} onClick={confirmSup}>确认</Btn><Btn onClick={cancelSup}>取消</Btn></Bar>;})()}
+      {vm==='selectSupplyCards'&&supGen&&(()=>{const inE=isInEnemyTerritory(supGen);const extra=inE?1:0;const actualHeal=Math.max(0,supCards.length-extra);return <Bar><span className="text-xs text-green-300">补给(已选{supCards.length}张，补{Math.min(actualHeal,maxHpOf(supGen)-supGen.currentHp)}点)</span><Btn ok={supCards.length>extra} onClick={confirmSup}>确认</Btn><Btn onClick={cancelSup}>取消</Btn></Bar>;})()}
 
       {/* hand */}
       <div className="z-20 flex-shrink-0 border-t border-amber-800/20 bg-black/70 px-3 py-1">
@@ -447,7 +454,7 @@ export default function TestArena(){
             const canMov=!!(fg&&own&&moveOk&&(isSch?cp.hand.length>0:true));
             const canAtk=!!(fg&&own&&cp.hand.length>0);
             const inEnemy=fg?isInEnemyTerritory(fg):false;const supNeedCards=fg?(1+(inEnemy?1:0)):1;
-            const canSup=!!(fg&&own&&fg.currentHp<fg.maxHp&&cp.hand.length>=supNeedCards);
+            const canSup=!!(fg&&own&&fg.currentHp<maxHpOf(fg)&&cp.hand.length>=supNeedCards);
             const campFree=hasFreeCampSlot(cp.id,players);
             const canDeploy=!fg&&ins.type==='general'&&campFree&&cp.hand.length>1;
             const ac=fg?actionCounts[getRuntimeCardId(fg.general)]||{atk:0,mov:0,sup:0}:null;
@@ -456,7 +463,7 @@ export default function TestArena(){
               <h2 className="mb-0.5 text-2xl font-black text-amber-100">{g.name}</h2>
               {g.title&&<p className="mb-3 text-sm text-amber-500/60">{g.title}</p>}
               <div className="mb-3 grid grid-cols-4 gap-1.5">
-                <SC l="❤️体力" v={fg?`${fg.currentHp}/${fg.maxHp}`:`${g.hp}`} c="text-red-400"/>
+                <SC l="❤️体力" v={fg?`${fg.currentHp}/${maxHpOf(fg)}`:`${g.hp}`} c="text-red-400"/>
                 <SC l="⚔️近战" v={`${fg?.meleeAtk??g.meleeAtk}`} c="text-orange-300"/>
                 <SC l="🏹远程" v={`${fg?.rangedAtk??g.rangedAtk}`} c="text-cyan-300"/>
                 <SC l="🛡️护甲" v={`${fg?.armor??g.armor}`} c="text-blue-300"/>

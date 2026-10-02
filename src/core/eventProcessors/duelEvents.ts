@@ -134,7 +134,12 @@ export function simulateDuel(
   for (let index = 0; index < DUEL_MAX_ROUNDS; index += 1) {
     const attacker = sides[index % 2];
     const defender = sides[(index + 1) % 2];
-    const rawDamage = getAttackValue(attacker.ref.general, false);
+    // 决斗逐轮的近战攻击力走的是与攻击同一个读数点（含账本）——#25 的"攻击力增减"
+    // 必须两边一起拿到，否则会出现"平A吃 buff、决斗不吃"这种最难查的分叉。
+    const rawDamage = getAttackValue(attacker.ref.general, false, {
+      ledger: state.statModifiers,
+      target: { playerId: attacker.ref.playerId, generalId: attacker.ref.generalId },
+    });
     const hit = applyArmorDamage(defender.hp, defender.armor, rawDamage);
     defender.hp = hit.hp;
     defender.armor = hit.armor;

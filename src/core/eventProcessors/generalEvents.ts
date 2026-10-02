@@ -2,6 +2,7 @@ import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { selectHandCards } from './handSelection';
+import { effectiveMaxHp } from '../statModifiers';
 
 const RESOURCE_TYPES = new Set(['粮草', '材料', '军备', 'SUPPLY', 'MATERIAL', 'ARMAMENT']);
 
@@ -156,7 +157,7 @@ export function applySupplyResolvedEvent(state: EngineState, event: GameEvent): 
     const consumedGenerals = actualConsumed.filter(card => !RESOURCE_TYPES.has(String(card?.type ?? '')));
     const target = fieldGenerals[targetIndex];
     const currentHp = Number(target?.currentHp ?? 0);
-    const maxHp = Number(target?.maxHp ?? target?.general?.hp ?? currentHp);
+    const maxHp = effectiveMaxHp(state.statModifiers, { playerId: player.id, generalId: String(data.generalId) }, target ?? {});
     const nextHp = Math.min(maxHp, currentHp + healAmount);
     const nextField = fieldGenerals.map((fg, index) => index === targetIndex
       ? { ...fg, currentHp: nextHp, hasSupplied: true }
@@ -195,7 +196,7 @@ export function applyHealEvent(state: EngineState, event: GameEvent): EngineStat
     if (index < 0) return player;
     const target = fieldGenerals[index];
     const currentHp = Number(target.currentHp ?? 0);
-    const maxHp = Number(target.maxHp ?? target.general?.hp ?? currentHp);
+    const maxHp = effectiveMaxHp(state.statModifiers, { playerId: player.id, generalId: String(data.targetId) }, target);
     const nextField = fieldGenerals.map((fg, i) => i === index
       ? { ...fg, currentHp: Math.min(maxHp, currentHp + amount) }
       : fg);

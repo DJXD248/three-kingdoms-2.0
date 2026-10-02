@@ -172,7 +172,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
   const header = rows[0] || [];
   const noteColIndex = header.findIndex(h => String(h || '').trim() === '设定备注');
   const effectEndExclusive = noteColIndex === -1 ? header.length : noteColIndex; // don't parse 备注列
-  const groupWidth = detectEffectGroupWidth(header); // 3 (legacy) | 6 (runtime) | 7 (+门槛) | 8 (+我听谁)
+  const groupWidth = detectEffectGroupWidth(header); // 3 (legacy) | 6 | 7 (+门槛) | 8 (+我听谁) | 11 (+改数三格)
   // v2.8.11 刀2：效果组起点从表头认（旧导出=11，含「技能门槛」列的新导出=12），
   // 「技能门槛」列按表头定位；旧文件没有这一列⇒整组门槛=无（逐字旧行为）。
   const groupStart = detectEffectGroupStart(header);
@@ -326,7 +326,8 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
     }
 
     // Parse sub-effects from the first group column onwards: 3 (legacy),
-    // 6 (标注/触发/效果类型/数值/目标/描述), 7 (v2 + 门槛) or 8 (v3 + 我听谁).
+    // 6 (标注/触发/效果类型/数值/目标/描述), 7 (v2 + 门槛), 8 (v3 + 我听谁)
+    // or 11 (v5 + 改哪个数/怎么改/有效周期，v2.8 刀4 #25).
     const effects: SkillEffect[] = [];
     let col = groupStart;
     while (col + groupWidth - 1 < effectEndExclusive) {
@@ -350,6 +351,11 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
         if (parsed.scopeIgnored) {
           const effTrigger = parsed.fields.trigger ? triggerToStr(parsed.fields.trigger) : '（这一组没有触发时机）';
           parseWarnings.push(`${rowName}·${sName} ${seq} 我听谁：触发时机「${effTrigger}」不听这一栏，「${parsed.scopeIgnored}」按没填处理`);
+        }
+        // 「改哪个数／怎么改／有效周期」这三格：话已经在格式层拼好，这里只负责挨条点名
+        // （填了没人读＝下一轮的"显示与生效分叉"；缺格＝编译器会跳过，先在这儿说清楚）。
+        for (const issue of parsed.statIssues) {
+          parseWarnings.push(`${rowName}·${sName} ${seq} ${issue}`);
         }
         if (Object.keys(parsed.fields).length > 0) {
           effects.push({ id: `e${Date.now()}_${effects.length}`, ...parsed.fields });

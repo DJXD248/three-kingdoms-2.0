@@ -27,6 +27,7 @@ import {
   applyDeckPlaceEvent,
 } from './eventProcessors/deckEvents';
 import { applyDuelEvent } from './eventProcessors/duelEvents';
+import { applyStatModifyEvent } from './eventProcessors/statModifierEvents';
 import {
   applyChoiceRequiredEvent,
   applyChoiceResolvedEvent,
@@ -128,6 +129,8 @@ export class EventProcessor {
         return applyDeckPlaceEvent(state, event);
       case 'DUEL':
         return applyDuelEvent(state, event);
+      case 'STAT_MODIFY':
+        return applyStatModifyEvent(state, event);
       case 'CHOICE_REQUIRED':
         return applyChoiceRequiredEvent(state, event);
       case 'CHOICE_RESOLVED':
