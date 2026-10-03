@@ -65,6 +65,32 @@ export function defersToReactionQueue(skill: DataSkillDefinition): boolean {
 }
 
 /**
+ * 发动那一刻的**在场资格**（用户 2026-10-03 裁决：「将领不在场上不能发动技能，被砍死了
+ * 不算在场上，能发动就是空发，就算是『强制发动』不能发动」）。
+ *
+ * 只补自动发动路这一边：问答路今天已经结构性成立（`reactionChain.collectListeners` 的候选
+ * 只扫在场将），两条路读的是同一句判据＝**发动那一刻主人还在不在场**。放在最前面（先于身份
+ * 与门槛）＝主人已离场时连"响了一声"那条事件都不发，账上绝不留下空发。
+ *
+ * **豁免＝「自身阵亡时」那一型**（`onDeath`＝遗言／遗计，官方账里四张将在用）：它按定义就在
+ * 主人离场那一刻响，掐掉它等于把一条既有裁决判成空发。
+ */
+export function ownerCanActivate(
+  skill: DataSkillDefinition,
+  state: EngineState,
+  ownerId: string | number,
+): boolean {
+  if (skill.trigger === 'onDeath') return true;
+  const generalId = skill.sourceGeneralId;
+  // 数据技能一律带主人 id（`skillCompiler.compileGeneralSkills` 落笔）；不带的那是引擎内部
+  // 触发，不属于本案，照旧放行。
+  if (!generalId) return true;
+  const owner = state.players.find(player => String(player.id) === String(ownerId));
+  return (owner?.fieldGenerals ?? []).some(fg =>
+    getRuntimeCardId((fg as { general?: unknown }).general as never) === String(generalId));
+}
+
+/**
  * Condition per trigger so a skill only reacts to events involving its owner
  * (and, when known, its owning general instance). Without this, every DAMAGE
  * event on the table would fire every registered skill.
@@ -78,7 +104,8 @@ function buildCondition(
   // 同意"这事是不是发生在我身上"，两处各写一份迟早分叉（一响一不响最难查）。
   // v2.7.3 gate conditions ride AFTER identity (先身份、再门槛). Pure predicate
   // over already-recorded facts, fail-closed, emits nothing by itself.
-  return (context) => matchesSkillEvent(trigger, binding, context.event) && evaluateSkillConditions(skill.conditions, {
+  return (context) => ownerCanActivate(skill, context.state, ownerId)
+    && matchesSkillEvent(trigger, binding, context.event) && evaluateSkillConditions(skill.conditions, {
     state: context.state,
     ownerId,
     sourceGeneralId: skill.sourceGeneralId,
@@ -215,7 +242,12 @@ export class SkillTriggerBridge {
         skillId: binding.skill.id,
         skillName: binding.skill.name,
         effectType: effect.type,
-        triggerEventId: event.id
+        triggerEventId: event.id,
+        // 结算侧的在场资格随事件同行（用户 2026-10-03 裁决「乙案」＝这一刀整个算完，
+        // 主人不在场⇒它 generated 的这一笔不落账、也不留在事件流里）。主人自身阵亡
+        // 那一型（`onDeath`＝遗言／遗计）按定义就在离场那一刻发动⇒标记为不需要。
+        ownerGeneralId: binding.skill.sourceGeneralId ?? '',
+        ownerPresenceRequired: binding.skill.trigger !== 'onDeath'
       };
       // A choice producer candidate names the exact hand cards to settle
       // (v2.7.2); every payload minted before this carries no cardKeys and

@@ -96,7 +96,10 @@ export function transition(
 
   const flow: DrawOutcomeFlow = { produced: [], overrides: ctx.outcomeOverrides ?? undefined, overridePos: 0 };
   const derived: GameEvent[] = [];
-  let next = ctx.processor.process(state, events, derived, flow);
+  // v2.8.30 在场资格执法：这一趟里被结算侧拒绝落账的那几笔（主人已离场）。
+  // 缓冲区一路共用，剪除只发生在"要问人"之前（见 `pruneCancelledEffects`）。
+  const cancelled: GameEvent[] = [];
+  let next = ctx.processor.process(state, events, derived, flow, cancelled);
 
   // 2.8 刀9: a duel's round block is derived inside the queue, so it never
   // reaches `events` by itself (dispatch 不返回内联追加事件). Echo it right
@@ -125,7 +128,7 @@ export function transition(
     const settleable = fresh.filter(event => event.type !== 'DEATH' && event.type !== 'TRIGGERED');
     if (settleable.length > 0) {
       const deployDerived: GameEvent[] = [];
-      next = ctx.processor.process(next, settleable, deployDerived, flow);
+      next = ctx.processor.process(next, settleable, deployDerived, flow, cancelled);
       derived.push(...deployDerived);
     }
   }
@@ -143,7 +146,13 @@ export function transition(
   // bounded rounds above already cap any give→gain→give pile-up.
   // 注意这个名字里的 "reaction"＝"要重入触发链的衍生事件"，与 v2.8.22 的**响应链**
   // （受击/受伤问答，见下面的 `scanReaction`）是两回事，别混。
-  next = runTriggerReentry(next, derived, events, ctx, flow);
+  next = runTriggerReentry(next, derived, events, ctx, flow, cancelled);
+
+  // v2.8.30：把"主人这一刀算完已经不在场上"的那几笔从事件流里剪掉，位置**必须在
+  // 问人之前**——响应链读的就是这份流，留着它等于替死者又开了一格。剪除按对象身份
+  // （同一批引用），不新增第二条状态转移路径：状态侧已经跳过了落账，这里只是让
+  // 账本与它一致，界面上与问答路同一形状＝"压根没发生"，不留观察标记。
+  pruneCancelledEffects(events, cancelled);
 
   // v2.8.22 响应链执法刀（#71）·结算后扫描：把"这一声要不要有人表态"从触发链的
   // 自动发动搬出来，落成状态里的一个问答队列（乙案＝搬出结算链、同一个窗问答）。
@@ -181,8 +190,9 @@ export function transition(
     });
     if (pending.length === 0) break;
     for (const duelEvent of pending) {
-      next = settleDeferredDuel(next, duelEvent, events, ctx, flow);
+      next = settleDeferredDuel(next, duelEvent, events, ctx, flow, cancelled);
     }
+    pruneCancelledEffects(events, cancelled);
     scan = scanReaction(next, events.slice(windowStart), events, ctx);
     next = scan.state;
     windowStart = events.length;
@@ -272,6 +282,7 @@ function runTriggerReentry(
   events: GameEvent[],
   ctx: TransitionContext,
   flow: DrawOutcomeFlow,
+  cancelled: GameEvent[],
 ): EngineState {
   let next = state;
   echoStatTraces(events, derived);
@@ -284,7 +295,7 @@ function runTriggerReentry(
     events.push(...expanded.filter(event => !events.includes(event)));
     const generated = expanded.filter(event => !reentersTriggerChain(event) && event.type !== 'TRIGGERED');
     const nextDerived: GameEvent[] = [];
-    next = ctx.processor.process(next, generated, nextDerived, flow);
+    next = ctx.processor.process(next, generated, nextDerived, flow, cancelled);
     echoStatTraces(events, nextDerived);
     echoInjuries(events, nextDerived);
     pendingReactions = nextDerived.filter(reentersTriggerChain);
@@ -309,12 +320,25 @@ function settleDeferredDuel(
   events: GameEvent[],
   ctx: TransitionContext,
   flow: DrawOutcomeFlow,
+  cancelled: GameEvent[],
 ): EngineState {
   events.push(duelEvent);
   const derived: GameEvent[] = [];
-  const settled = ctx.processor.process(state, [duelEvent], derived, flow);
+  const settled = ctx.processor.process(state, [duelEvent], derived, flow, cancelled);
   echoDuelRounds(events, derived);
-  return runTriggerReentry(settled, derived, events, ctx, flow);
+  return runTriggerReentry(settled, derived, events, ctx, flow, cancelled);
+}
+
+/**
+ * v2.8.30：把结算侧拒落的那几笔从事件流里按**对象身份**剪掉（同一批引用，不比对内容），
+ * 剪完清空缓冲——下一段还要再剪，绝不能把上一段已经剪过的再剪一次。
+ */
+function pruneCancelledEffects(events: GameEvent[], cancelled: GameEvent[]): void {
+  if (cancelled.length === 0) return;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (cancelled.includes(events[index])) events.splice(index, 1);
+  }
+  cancelled.length = 0;
 }
 
 /**

@@ -1,10 +1,15 @@
 /**
- * 既定规则（用户 2026-10-03 确认，裁决原文与判据＝`PROJECT_HANDOFF.md` §12-100）：
- * 将领被击杀的那一刀，它的「受到伤害后」与「成为目标时」两类技能**都不响应本次攻击／技能**。
- * 机制：响应链的问答是在整次结算之后才开的（`TransitionCore` 的结算后扫描），候选只扫在场的将
- * （`collectListeners`）⇒ 离场的将压根不在被问之列。两条时机同判据，不是漏一条补一条。
- * 范围边界（下面第二个 describe）＝这条只管**会停下来问人**的那些定义；勾了「强制发动」的走自动路、
- * 在结算链内当场响完，同一切换掐不到它——2026-10-03 现场量出来的，不是从名字推的。
+ * 既定规则（用户 2026-10-03 两次裁决，原文＝`PROJECT_HANDOFF.md` §12-100 与 §12-101）：
+ * 将领被击杀的那一刀，它的「受到伤害后」与「成为目标时」两类技能**都不响应本次攻击／技能**；
+ * 而且这条**不分问人还是强制发动**——"将领不在场上不能发动技能，被砍死了不算在场上，
+ * 能发动就是空发，就算是『强制发动』不能发动"，判断时刻＝**这一刀整个算完之后**。
+ *
+ * 机制上有两个执法点，因为两条路的形状不同：
+ *  ‧ 问答路：候选在整次结算之后才枚举，且只扫在场的将（`collectListeners`）⇒死者压根不在被问之列。
+ *  ‧ 自动路：效果在触发链展开时就生成（那一刻主人通常还在场）、落账却排在来源那一笔之后，
+ *    所以发射侧（`SkillTriggerBridge.ownerCanActivate`）与结算侧（`core/ownerOnFieldGate.ts`）
+ *    各掐一半；两半合起来才等于乙案。
+ * 豁口＝「死亡时发动」那一型（遗言／遗计）：它按定义就在主人离场那一刻发动，两边都放行。
  */
 import { describe, it, expect } from 'vitest';
 import { GameEngine } from '../core/GameEngine';
@@ -115,12 +120,12 @@ describe('致命那一刀：死者不响应本次攻击（§12-100 规则，非�
 });
 
 /**
- * 「强制发动」那一型**不在这条规则的覆盖范围内**（2026-10-03 现场量出来的边界，不是推论）：
- * 它压根不进问答队列，而是在结算链内当场响完⇒死者"离场"发生在它响过之后，掐不到它。
- * 下面两例钉的是**今日实际行为**：勾了强制发动的这两型，即使这一刀把它打死，效果照样落地。
- * 若今后要把同一条判据也加到自动路，这两例会当场变红⇒那是一次**玩法改判**，须用户先给话。
+ * v2.8.30 离场不发动执法刀：同一条判据现在也管「强制发动」那一型。
+ * 前两例钉"这一刀打死它"⇒效果不落地，形状与上面问答路那两例逐字相同（压根没发生）；
+ * 后两例钉**没打死**⇒效果照旧当场落、时刻一字不变——乙案只该改"主人不在场"这一种情形，
+ * 绝不许顺手把自动路搬进问答窗（那是第二种玩法，用户没给话）。
  */
-describe('边界：勾了「强制发动」的同一型，被致命这一刀打死也照样响', () => {
+describe('强制发动同一判据：这一刀打死它就不落账', () => {
   function forcedCounter(name: string): Skill {
     return {
       name, description: `${name}：成为目标时对来源造成 1 点伤害`, forced: true,
@@ -141,19 +146,56 @@ describe('边界：勾了「强制发动」的同一型，被致命这一刀打�
     } as Skill;
   }
 
-  it('受击那一型·打死：反伤那 1 点照样落到来时（问人那一型同局只掉 1 点＝上面第三例）', () => {
+  /** 「死亡时发动摸一张牌」——遗言／遗计那一型（`onDeath`），判据上的豁口。 */
+  function deathSpeak(name: string): Skill {
+    return {
+      name, description: `${name}：阵亡时摸一张牌`, forced: true,
+      effects: [{
+        id: 'e1', trigger: { type: 'onDeath' },
+        runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+      }],
+    } as Skill;
+  }
+
+  function attackerHp(engine: GameEngine): number | undefined {
+    const attackers = (engine.state.players[0]?.fieldGenerals ?? []) as { currentHp: number }[];
+    return attackers[0]?.currentHp;
+  }
+
+  it('受击那一型·打死：反伤那 1 点不再落到来时（与问人那一型同形＝上面第三例）', () => {
     const { engine, events } = attack([forcedCounter('刚·烈')], 1);
     expect(events.some(e => e.type === 'DEATH')).toBe(true);
     expect(getReactionAsk(engine.state)).toBeNull();
-    expect(events.filter(e => e.type === 'DAMAGE')).toHaveLength(2);
-    const attackers = (engine.state.players[0]?.fieldGenerals ?? []) as { currentHp: number }[];
-    expect(attackers[0]?.currentHp).toBe(3);
+    expect(events.filter(e => e.type === 'DAMAGE')).toHaveLength(1);
+    expect(attackerHp(engine)).toBe(4);
   });
 
-  it('受伤那一型·打死：牌照样摸进手（问人那一型同局手牌为 0＝上面第四例）', () => {
+  it('受伤那一型·打死：牌照样没摸进手（与问人那一型同形＝上面第四例）', () => {
     const { engine, events } = attack([forcedHurtDraw('奸·雄')], 1);
     expect(events.some(e => e.type === 'DEATH')).toBe(true);
     expect(getReactionAsk(engine.state)).toBeNull();
+    expect(engine.state.players[1].hand).toHaveLength(0);
+  });
+
+  it('受击那一型·没打死：反伤照旧当场落，且不进问答窗', () => {
+    const { engine, events } = attack([forcedCounter('刚·烈')], 4);
+    expect(events.some(e => e.type === 'DEATH')).toBe(false);
+    expect(events.filter(e => e.type === 'DAMAGE')).toHaveLength(2);
+    expect(getReactionAsk(engine.state)).toBeNull();
+    expect(attackerHp(engine)).toBe(3);
+  });
+
+  it('受伤那一型·没打死：牌照旧当场摸进手，且不进问答窗', () => {
+    const { engine, events } = attack([forcedHurtDraw('奸·雄')], 4);
+    expect(events.some(e => e.type === 'DEATH')).toBe(false);
+    expect(getReactionAsk(engine.state)).toBeNull();
+    expect(engine.state.players[1].hand).toHaveLength(1);
+  });
+
+  it('豁口：遗言那一型就在主人阵亡这一声上发动，牌照旧摸进手', () => {
+    const { engine, events } = attack([deathSpeak('遗计')], 1);
+    expect(events.some(e => e.type === 'DEATH')).toBe(true);
+    expect(engine.state.players[1].fieldGenerals).toHaveLength(0);
     expect(engine.state.players[1].hand).toHaveLength(1);
   });
 });

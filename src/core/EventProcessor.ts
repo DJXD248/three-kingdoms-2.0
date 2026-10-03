@@ -48,6 +48,7 @@ import {
 } from './eventProcessors/turnEvents';
 import { enqueueDerivedConsequences } from './eventProcessors/chainedConsequences';
 import { applySkillActivatedEvent } from './eventProcessors/skillEvents';
+import { effectOwnerLeftField } from './ownerOnFieldGate';
 
 /**
  * Applies emitted events to engine state.
@@ -67,14 +68,32 @@ import { applySkillActivatedEvent } from './eventProcessors/skillEvents';
  * The optional 4th `flow` (2.2.22, decision D-2a) threads the per-dispatch
  * RandomOutcome record/replay channel to the DRAW handler only; every other
  * event family stays untouched.
+ *
+ * The optional 5th `cancelled` array (v2.8.30 在场资格执法) collects the event
+ * objects this pass REFUSED to settle — the owner of a skill effect had left
+ * the field by the time the effect came up in the queue
+ * (`ownerOnFieldGate.effectOwnerLeftField`). Nothing is applied and nothing is
+ * derived from them; the caller (TransitionCore) removes those exact objects
+ * from the recorded stream, so both the ledger and the state end in the same
+ * observable shape as the 问答路 ("it never happened").
  */
 export class EventProcessor {
-  process(state: EngineState, events: GameEvent[], collected?: GameEvent[], flow?: DrawOutcomeFlow): EngineState {
+  process(
+    state: EngineState,
+    events: GameEvent[],
+    collected?: GameEvent[],
+    flow?: DrawOutcomeFlow,
+    cancelled?: GameEvent[],
+  ): EngineState {
     let next = cloneEngineState(state);
     const queue = [...events];
 
     while (queue.length > 0) {
       const event = queue.shift()!;
+      if (effectOwnerLeftField(next, event)) {
+        cancelled?.push(event);
+        continue;
+      }
       const before = next;
       next = this.apply(next, event, flow);
       const derivedStart = queue.length;
