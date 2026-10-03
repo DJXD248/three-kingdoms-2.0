@@ -330,6 +330,30 @@ describe('TransitionCore · 常驻 === 重建 (decision D-1)', () => {
     expect(playedSteps).toEqual(resident.steps);
     expect(JSON.stringify(playback.state)).toBe(JSON.stringify(resident.final));
   });
+
+  it('旧档里带着退役事件名回放＝逐字同果：重放吃的是动作，不是事件名（v2.8.27 刀5 更名 `DUEL_INJURY`→`INJURY`）', () => {
+    const resident = playResident(buildInitial());
+    const stale = structuredClone(resident.engine.replay.getDocument()!);
+
+    // 反空转：这一局确实产生了「受到伤害」那一声；没有它下面两句都是空话。
+    expect(resident.steps.flat().filter(raw => JSON.parse(raw).type === 'INJURY').length)
+      .toBeGreaterThan(0);
+
+    // 把它倒回更名前的旧名＝一份 v2.8.27 之前存下来的档该长的样子。
+    for (const entry of stale.entries) {
+      entry.events = entry.events.map(event =>
+        event.type === 'INJURY' ? ({ ...event, type: 'DUEL_INJURY' } as unknown as GameEvent) : event,
+      );
+    }
+    const staleTypes = stale.entries.flatMap(entry => entry.events.map(event => event.type));
+    expect(staleTypes).toContain('DUEL_INJURY');
+    expect(staleTypes).not.toContain('INJURY');
+
+    const playback = new ReplayPlayer().play(stale);
+    // 回放自己重新派生出来的仍是现名，且每一步事件流与终局逐字等于实况＝旧名对回放零影响。
+    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(resident.steps);
+    expect(JSON.stringify(playback.state)).toBe(JSON.stringify(resident.final));
+  });
 });
 
 describe('onBecomingTarget counter chain plays identically across all paths (2.3.0)', () => {

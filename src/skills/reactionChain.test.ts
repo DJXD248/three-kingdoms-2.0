@@ -290,6 +290,44 @@ describe('响应链 · 顺序（§H9 第十轮①工作例逐字）', () => {
     expect(listReactionCandidates(state, queue!.nodes[0]).map(c => c.generalId))
       .toEqual(['gA', 'gB', 'gC', 'gD']);
   });
+
+  it('真实形状的那一刀（每员将各一声、各点自己的名）＝开两格、每格按自己那一格的受击者排、格与格不插队', () => {
+    // 上面那两例喂的是 §H9 工作例的合成形状（一声带 `targetIds`）；引擎里从来没有那种
+    // 事件——`victimRefOf` 认 `targetIds`，但 `src/` 里没有任何一处生产它（如实登记见
+    // HANDOFF §12-96）。真实派生是一员将一声、只带 `targetId`，所以这里补的是**实况形状**。
+    const injuryFor = (seat: number, generalId: string): GameEvent => ({
+      type: 'INJURY',
+      data: {
+        sourcePlayerId: 1, targetPlayerId: seat, targetId: generalId,
+        damageType: 'attack', value: 1, hpLost: 1,
+      },
+    });
+
+    const state = buildWorkExample();
+    const { queue } = syncReactionQueue(state, [injuryFor(2, 'gA'), injuryFor(3, 'gC')]);
+    expect(queue?.nodes.map(node => node.key)).toEqual(['rn:0:0', 'rn:0:1']);
+    // 同一件"挨了两刀"的事在队列里是**两格**，每一格的分组轴只认自己那一声点名的受击者。
+    expect(listReactionCandidates(state, queue!.nodes[0]).map(c => c.generalId))
+      .toEqual(['gA', 'gC', 'gD', 'gB']);
+    expect(listReactionCandidates(state, queue!.nodes[1]).map(c => c.generalId))
+      .toEqual(['gC', 'gD', 'gA', 'gB']);
+
+    let current: EngineState = { ...state, pendingReaction: queue };
+    const seen: string[] = [];
+    for (let guard = 0; guard < 16; guard += 1) {
+      const ask = getReactionAsk(current);
+      if (!ask) break;
+      seen.push(`p${ask.playerId}:${ask.generalId}`);
+      current = applyReactionAnsweredEvent(current, {
+        type: 'REACTION_ANSWERED',
+        data: reactionAnsweredOf(ask, ask.options[0]),
+      });
+    }
+    // 第一格问完才进第二格（第九轮⑨不插队）；同一员将在两格里各被问一次＝台账按格记，不跨格抵。
+    expect(seen).toEqual(['p2:gA', 'p3:gC', 'p4:gD', 'p2:gB', 'p3:gC', 'p4:gD', 'p2:gA', 'p2:gB']);
+    // 槽不是"答完"清掉的，是结算后那一趟扫描收走的（第④件事）：两格台账都满⇒扫描收干净。
+    expect(syncReactionQueue(current, []).queue).toBeNull();
+  });
 });
 
 describe('响应链 · 队列规则', () => {
