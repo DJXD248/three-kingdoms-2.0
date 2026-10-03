@@ -77,8 +77,8 @@ export function applyDamageEvent(state: EngineState, event: GameEvent): EngineSt
       // 本营**不吃**「受到的伤害」那格修正（用户 2026-10-03 裁"问二＝不吃"）：那一格
       // 的钥匙键在（座次＋将领实例）上，本营根本不是任何一员将⇒账本里压根没有它那一笔。
       // 「本营单次最多 1 点」那条规则事实由**发射点**钉死（`AttackResolver` 的
-      // `Math.min(1, baseDamage)`）；这一侧照卡面数值结算，绝不偷偷改写技能打本营的
-      // 伤害（那是另一刀的量，已记进待裁）。
+      // `Math.min(1, baseDamage)`）；这一侧今日照卡面数值结算，**已裁这一路也要封顶 1 点**
+      // （用户 2026-10-03 晚裁"封"，见 HANDOFF §12-96），施工前本处理器一字不改行为。
       const amount = Math.max(0, Number(data?.hpLost ?? data?.value ?? 0));
       const newHp = Math.max(0, currentHp - amount);
       return {
