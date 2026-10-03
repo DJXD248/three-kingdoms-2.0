@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.8.27] - 2026-10-03 — damage-taken ledger knife (#26 = 2.8 knife 5): the correction sits BEFORE armour, and "being hurt" became one derived sound
+
+One ordering lives in one file: `core/damageTaken.ts` = 原始伤害 → 受到伤害修正 → 护甲抵扣 → 最终扣血, and all three feed points
+call that same pure function (normal attack pre-solves in `AttackResolver`, duel rounds pre-solve against a thread-local ledger in
+`duelEvents.ts`, skill damage reads at settlement in `damageEvents.ts`); `core/armorDamage.ts` — the single armour exit — was not
+touched by a byte, it now consumes the *result*. `DAMAGE_TAKEN` and the one-shot duration `thisDamage` entered the editor/Excel
+vocabulary only once a read point existed (`WIRED_STAT_KEYS` 3→4), with a new named compile-time skip
+`MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED` for a one-shot mounted on a key that has no "moment it gets used". The user's
+2026-10-03 re-ruling (只有掉血才算受到伤害) landed structurally rather than as a predicate: `INJURY` is derived from the real HP
+delta after each hit settles, so armour eating the whole hit — or damage ≤ 0 — means the sound does not exist at all;
+`DUEL_INJURY` was folded into that same `INJURY` and `onDamageTaken` now hears exactly one event (ask path and auto path can no
+longer disagree by construction). 本营 is immune by shape: the "≤1 per hit" rule lives at the emission point
+(`Math.min(1, baseDamage)`) and the base owns no ledger entry — while skill damage to the base stays uncapped, registered as 待裁.
+Anchors: **B13 {"1":104,"2":196} byte-identical** (four normalised `cmp`, including a cross-version comparison against the archived
+v2.8.26 capture) and the sample pool moved **108/192 → 107/193 ⇒ B14 retired, B15 established** — the two causes (semantic
+re-ruling vs. a 13th fixture card) were separated by a dedicated 12-card probe. Tests 1008→1037 / 86→87 files. Full evidence =
+PROJECT_HANDOFF §3 index line + §9 (single CI landing point) + §12-93, contract cells PROJECT_ARCH_MAP §F
+`DAMAGE_TAKEN`/`DAMAGE_DEALT` + §H10, and the chapter in PROJECT_HISTORY_AI.md.
+
 ## [2.8.26] - 2026-10-02 — stat-modifier pipeline knife (#25 = 2.8 knife 4): skills can now change a number, and the card face is still never rewritten
 
 The ledger is the feature. `EngineState.statModifiers` (optional array, class-A fact: it goes into replays, archives and
