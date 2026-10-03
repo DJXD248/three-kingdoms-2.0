@@ -77,6 +77,17 @@ describe('受到伤害那一格 · 读数', () => {
     expect(resolveDamageTaken(ledger, SUBJECT, 6).damage).toBe(1);
   });
 
+  it('赢家只认 seq、不认数组位置：同一对固定倒着放，读出来仍是后发那笔', () => {
+    const ascendant = [
+      entry({ id: 'sm:2', seq: 2, mode: 'set', value: 4 }),
+      entry({ id: 'sm:3', seq: 3, mode: 'set', value: 1 }),
+    ];
+    // 上一例两笔恰好按 seq 升序入数组＝顺序与位置同向，分不清比的到底是哪个。
+    // 这里把位置倒过来：赢家若跟着数组走就会读成 4。
+    expect(resolveDamageTaken(ascendant, SUBJECT, 6).damage).toBe(1);
+    expect(resolveDamageTaken([...ascendant].reverse(), SUBJECT, 6).damage).toBe(1);
+  });
+
   it('串键一律不读：账本上「近战攻击力」那笔固定压不住受到的伤害', () => {
     const ledger = [entry({ id: 'sm:1', seq: 1, mode: 'set', value: 0, key: 'MELEE_ATK' })];
     expect(resolveDamageTaken(ledger, SUBJECT, 2)).toEqual({ damage: 2, consumedIds: [] });

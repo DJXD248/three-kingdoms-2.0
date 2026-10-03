@@ -982,6 +982,50 @@ describe('EventProcessor', () => {
     });
   });
 
+  describe('旧录像里的退役事件名（v2.8.27 刀5 把 DUEL_INJURY 折进 INJURY）', () => {
+    /** 一个带血量、带护甲、账本上有笔的在场将——真被当伤害处理的话数字必然动。 */
+    function stateWithCasualty(): EngineState {
+      const general = {
+        general: { id: 'g1', hp: 4, meleeAtk: 2, rangedAtk: 1 },
+        currentHp: 4, maxHp: 4, meleeAtk: 2, rangedAtk: 1,
+        armor: 2, currentArmor: 2, armorCards: [],
+        isArming: false, hasMoved: false, hasAttacked: false, hasSupplied: false,
+        justDeployed: false, ownerId: 1,
+        position: { zone: 'front' as const, slot: 0, areaOwnerId: 1 },
+      };
+      const state = createTestState([createTestPlayer(1, { fieldGenerals: [general], baseHp: 6 })]);
+      (state as unknown as { statModifiers: unknown[] }).statModifiers = [];
+      return state;
+    }
+
+    function assertInert(eventType: string): void {
+      const before = stateWithCasualty();
+      const snapshot = JSON.stringify(before);
+      const collected: GameEvent[] = [];
+
+      const after = processor.process(
+        before,
+        [{ type: eventType, data: { targetPlayerId: 1, targetId: 'g1', value: 3, hpLost: 3, duelStage: 'injury' } } as unknown as GameEvent],
+        collected,
+      );
+
+      expect(JSON.stringify(after)).toBe(snapshot);
+      expect(collected).toEqual([]);
+    }
+
+    it('旧名 `DUEL_INJURY` 喂进来＝逐字不动：既不二次扣血，也不衍生任何事件', () => {
+      assertInert('DUEL_INJURY');
+    });
+
+    it('现名 `INJURY` 同样纯通知：这一声扣过的血由 `DAMAGE` 那一格负责，这里不再扣第二遍', () => {
+      assertInert('INJURY');
+    });
+
+    it('控制组：根本没登记过的事件名也一样静默穿过（旧录像永不因新增名字而崩）', () => {
+      assertInert('SOMETHING_RETIRED_EVER_SO');
+    });
+  });
+
   describe('immutability', () => {
     it('should not mutate the original state', () => {
       const player = createTestPlayer(1, { baseHp: 5 });
