@@ -4,6 +4,7 @@ import { getTurnStartDrawCount } from '../turnRules';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { deriveDuelFlow } from './duelEvents';
 import { passiveEventsForDeploy } from '../../skills/passiveModifiers';
+import { resolveDamageTaken } from '../damageTaken';
 import {
   modifierIdsExpiredAtTurnBoundary,
   modifierIdsTouchingGeneral,
@@ -48,6 +49,31 @@ export function enqueueDerivedConsequences(
     if (isBase && targetPlayerId !== null) {
       const beforePlayer = before.players.find(p => p.id === targetPlayerId);
       const afterPlayer = next.players.find(p => p.id === targetPlayerId);
+      const baseHpLost = Math.max(0,
+        (beforePlayer?.baseHp ?? 0) - (afterPlayer?.baseHp ?? 0));
+      // 本营掉血也算"这一席位受到了伤害"（刀5 前它就是靠那一声 `DAMAGE` 开格的：
+      // 响应链在指认不出将领时退到席位那一层，整席先答）。键法与将领那一声同一句：
+      // 只看真实下降的数值，伤害≤0 或压根没掉血⇒这一声不存在。
+      if (baseHpLost > 0) {
+        queue.push({
+          type: 'INJURY',
+          data: {
+            targetPlayerId,
+            targetId: data?.targetId ?? `base_${targetPlayerId}`,
+            sourcePlayerId: data?.sourcePlayerId ?? null,
+            sourceGeneralId: data?.sourceGeneralId,
+            damageType: data?.damageType ?? 'attack',
+            value: baseHpLost,
+            hpLost: baseHpLost,
+            armorLost: 0,
+            isBase: true,
+            ...(data?.skillId !== undefined ? { skillId: data.skillId } : {}),
+            ...(data?.skillName !== undefined ? { skillName: data.skillName } : {}),
+            ...(data?.effectType !== undefined ? { effectType: data.effectType } : {}),
+            ...(data?.triggerEventId !== undefined ? { triggerEventId: data.triggerEventId } : {}),
+          },
+        });
+      }
       if (beforePlayer?.isAlive !== false && afterPlayer?.isAlive === false) {
         queue.push({
           type: 'PLAYER_DEFEATED',
@@ -60,7 +86,64 @@ export function enqueueDerivedConsequences(
       }
     }
 
-    // Skill DAMAGE settles (and can remove the target) inside
+    // ── v2.8 刀5（#26）「受到伤害」这一身：判据＝**只有掉血才算受到了伤害**（用户
+    // 2026-10-03 重新裁定，推翻 2026-09-28 那条"只掉护甲也算挨到"）。这里不"判断"它，
+    // 只把这一刀实际掉掉的体力记成一声 `INJURY`：没掉血⇒这一声压根不存在⇒「受到伤害后」
+    // 听不到，护甲掉多少都不算，伤害≤0 也不算。三路（普攻／技能伤害／决斗逐轮）都从
+    // 同一处派生，读的是**结算前后血量差**这条已经落账的事实，绝不再算一遍伤害数学。
+    // 决斗逐轮（带 `duelRound`）显式排除＝那一整块只在收官时按角色累计成一笔（§H9 第七轮）。
+    if (!isBase && targetPlayerId !== null && data?.targetId !== undefined && typeof data?.duelRound !== 'number') {
+      const hpOf = (state: EngineState) => {
+        const list = (state.players.find(p => p.id === targetPlayerId)?.fieldGenerals as any[] | undefined) ?? [];
+        const fg = list.find(f => getRuntimeCardId(f?.general as never) === String(data.targetId));
+        return fg === undefined ? null : Number(fg.currentHp ?? 0);
+      };
+      const hpBefore = hpOf(before);
+      const hpAfter = hpOf(next);
+      // 人这一刀之后不在了＝掉的全部血量都算掉了（`hpAfter` 记 0）；压根不在场（诚实
+      // 空转的那一路，血量前后都取不到）⇒这一声不发。
+      if (hpBefore !== null) {
+        const hpLost = Math.max(0, hpBefore - (hpAfter ?? 0));
+        if (hpLost > 0) {
+          queue.push({
+            type: 'INJURY',
+            data: {
+              targetPlayerId,
+              targetId: data.targetId,
+              sourcePlayerId: data?.sourcePlayerId ?? null,
+              sourceGeneralId: data?.sourceGeneralId,
+              damageType: data?.damageType ?? 'attack',
+              // 与决斗收官那一笔同形：`value`＝这次真实掉掉的体力，不是任何单轮的数。
+              value: hpLost,
+              hpLost,
+              armorLost: Number(data?.armorLost ?? 0),
+              // 报告与操作日志把这一声归到那一枚技能上靠这三个键（逐轮那一路同理）。
+              ...(data?.skillId !== undefined ? { skillId: data.skillId } : {}),
+              ...(data?.skillName !== undefined ? { skillName: data.skillName } : {}),
+              ...(data?.effectType !== undefined ? { effectType: data.effectType } : {}),
+              ...(data?.triggerEventId !== undefined ? { triggerEventId: data.triggerEventId } : {}),
+            },
+          });
+        }
+      }
+
+      // 一次性「受到的伤害」账的消费清单：普攻与决斗逐轮在**发射点**就读过账本、也在那里
+      // 发了销账令；技能伤害那一路是结算时才读（同一技能连发两笔伤害时第二笔要看见第一笔
+      // 之后的血量），所以它的销账在这里补。判据与结算侧那一句完全同一句
+      // （`newHp===undefined && damageType==='skill'`），用的也是同一个纯函数＋同一本账
+      // （`before`＝结算前那一刻）⇒两边算出来的清单必然逐字相同，不存在第二种真相。
+      if (data?.damageType === 'skill' && data?.newHp === undefined) {
+        const spent = resolveDamageTaken(
+          before.statModifiers,
+          { playerId: targetPlayerId, generalId: String(data.targetId) },
+          Number(data?.value ?? 0),
+        ).consumedIds;
+        if (spent.length > 0) {
+          queue.push({ type: 'STAT_MODIFY', data: { op: 'REMOVE', ids: spent, cause: 'DAMAGE_TAKEN' } });
+        }
+      }
+    }
+
     // applyDamageEvent, and unlike attacks it has no resolver-side DEATH —
     // AttackResolver emits its own. Derive DEATH from the actual state
     // change so skill kills also grant the compensating draw and can reach

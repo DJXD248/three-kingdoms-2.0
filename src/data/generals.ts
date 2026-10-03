@@ -257,12 +257,12 @@ export interface SkillEffect {
 /**
  * v2.8 刀4（#25）「改一个数字」的两样东西：改**哪个数**、按**哪种形态**改。
  *
- * 这一档钥匙是**注册表**（ARCH_MAP §F 可改量注册表），不是形容词：录入面只放本刀
- * 真的接了读数点的三把（近战攻击力／远程攻击力／体力上限）。其余钥匙（当前体力、
- * 本次伤害、行动次数……）在注册表里有名有坐标，但录入面此刻选不到——选了就是
- * "看起来能响其实不响"，那是本项目明令禁止的第三种谎。
+ * 这一档钥匙是**注册表**（ARCH_MAP §F 可改量注册表），不是形容词：录入面只放**真的接了
+ * 读数点**的那四把（近战攻击力／远程攻击力／体力上限／受到的伤害——最后一把＝2.8 刀5）。
+ * 其余钥匙（当前体力、造成的伤害、行动次数……）在注册表里有名有坐标，但录入面此刻选不到——
+ * 选了就是"看起来能响其实不响"，那是本项目明令禁止的第三种谎。
  */
-export type StatModifierKeyType = 'MELEE_ATK' | 'RANGED_ATK' | 'MAX_HP';
+export type StatModifierKeyType = 'MELEE_ATK' | 'RANGED_ATK' | 'MAX_HP' | 'DAMAGE_TAKEN';
 /** 增减＝在基础值上累加（可负数）；固定＝把这一个数摁成该值。固定优先于增减。 */
 export type StatModifyModeType = 'delta' | 'set';
 
@@ -270,6 +270,7 @@ export const statModifierKeyLabels: Record<StatModifierKeyType, string> = {
   MELEE_ATK: '近战攻击力',
   RANGED_ATK: '远程攻击力',
   MAX_HP: '体力上限',
+  DAMAGE_TAKEN: '受到的伤害',
 };
 
 export const statModifyModeLabels: Record<StatModifyModeType, string> = {
@@ -280,16 +281,22 @@ export const statModifyModeLabels: Record<StatModifyModeType, string> = {
 /**
  * 一笔"改数"账的有效周期。
  *
- * 词表里**只有这四档**：`untilDeath`／`untilLeaveField` 与用户裁决第 2 条那条
+ * 词表里**只有这四＋一那一档**：`untilDeath`／`untilLeaveField` 与用户裁决第 2 条那条
  * 总闸（离场打断一切）同义——写出来与不写是同一个意思，所以不给它们位置，免得
  * 卡上写"直到被击杀前"、引擎按"在场期间"记，两处各一种读法。
+ * `thisDamage`＝2.8 刀5 的一次性账（「用掉就销」）：它不属于任何回合边界，只被消费它的
+ * 那一刀销掉，所以**不在 `ExpireCondition` 那张触发细分表里**（那里是"受到伤害后→本次伤害"
+ * 这种门槛用词，与改数周期是两回事，混进去会变成同一个词两种读法）。
  */
-export type StatModifierDurationType = Exclude<ExpireCondition, 'untilDeath' | 'untilLeaveField'>;
+export type StatModifierDurationType =
+  | Exclude<ExpireCondition, 'untilDeath' | 'untilLeaveField'>
+  | 'thisDamage';
 export const statModifierDurationLabels: Record<StatModifierDurationType, string> = {
   untilSelfTurnStart: expireLabels.untilSelfTurnStart,
   untilSelfTurnEnd: expireLabels.untilSelfTurnEnd,
   untilOtherTurnStart: expireLabels.untilOtherTurnStart,
   untilOtherTurnEnd: expireLabels.untilOtherTurnEnd,
+  thisDamage: '一次性（用掉就销）',
 };
 /** 周期那一格的大白话缺省值（＝不填＝这笔账在"人在场"期间一直有效）。 */
 export const STAT_DURATION_DEFAULT_LABEL = '在场期间一直有效（离场即结束）';

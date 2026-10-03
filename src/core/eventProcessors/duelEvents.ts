@@ -2,6 +2,7 @@ import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getAttackValue } from '../attackValue';
 import { applyArmorDamage } from '../armorDamage';
+import { pruneSpentModifiers, resolveDamageTaken } from '../damageTaken';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { hasReactionListeners } from '../../skills/reactionChain';
 
@@ -50,7 +51,7 @@ function findDuelParticipant(state: EngineState, generalId: unknown): DuelPartic
  *     `settled`、逐轮紧跟（与扩面前"逐轮紧挨"逐字同形）。
  *  2. **逐轮**＝真实扣血，块内绝不唤监听（每"打"带 `duelRound`，扫描器显式排除）。
  *  3. **收官**＝受伤类读**该角色这一场实际掉掉的体力总额**（起点体力−终局体力），
- *     合并成一笔 `DUEL_INJURY` 只结算一次：它不扣血、零状态位移（默认处理器恒等）。
+ *     合并成一笔 `INJURY` 只结算一次：它不扣血、零状态位移（默认处理器恒等）。
  *     顺序＝受邀者那笔在前、发起者那笔在后（双方都是受伤方⇒优先度最高，受邀者先
  *     受伤⇒优先度比发起者再高一档）；阵亡者那一笔整笔不结算（人不在场，受伤类
  *     不成立——他的遗言型技能与击破补偿抽走的是既有那条派生链，与这里无关）。
@@ -77,18 +78,19 @@ export function deriveDuelFlow(state: EngineState, event: GameEvent): GameEvent[
 }
 
 /**
- * 决斗三层里**有听众的那两层**（v2.8.25 强制发动执法刀）：开局那一声
- * `BEFORE_DAMAGE{duelStage}` 与收官那笔 `DUEL_INJURY`。它们是队列内派生出来的，
- * 压根没经过 dispatch 前的触发链，所以`core/TransitionCore` 的有界重入必须把
- * 这两层喂给触发链——否则打了「强制发动」的受击／受伤技在决斗里结构性听不到
- * 这两声（§12-55 那个"记录在案、结算侧零消费"缺口的最后一处）。
+ * 决斗三层里**有听众、但要靠这条判据才喂得到的那一层**（v2.8.25 强制发动执法刀）：
+ * 开局那一声 `BEFORE_DAMAGE{duelStage}`。它们是队列内派生出来的，压根没经过
+ * dispatch 前的触发链，所以`core/TransitionCore` 的有界重入必须把这一层喂给触发链
+ * ——否则打了「强制发动」的受击技在决斗里结构性听不到那一声（§12-55 那个"记录在
+ * 案、结算侧零消费"缺口的最后一处）。
+ * 收官那笔不在这里：刀5 起它改名 `INJURY`，而受伤这一身**不分路**地写在
+ * `TRIGGER_REENTRY_TYPES` 上（普攻／技能／决斗三路各派生一声，一律要喂）。
  *
  * 逐轮那些"打"（带 `duelRound`）**绝不**在这一判据里：§H9 第七轮"连续完成、
  * 中间不插入任何流程"。开局的 `settled` 通知在这里算作听众层——那是诚实的：
  * 派生点已经用同一份探针问过"有没有人听"，答"没有"，触发链这一趟同样无人应。
  */
 export function isDuelListenerEvent(event: GameEvent): boolean {
-  if (event.type === 'DUEL_INJURY') return true;
   if (event.type !== 'BEFORE_DAMAGE') return false;
   const payload = asData(event.data);
   return typeof payload.duelStage === 'string' && typeof payload.duelRound !== 'number';
@@ -131,16 +133,26 @@ export function simulateDuel(
   const startHp = [sides[0].hp, sides[1].hp];
 
   const rounds: GameEvent[] = [];
+  // 一次性「受到的伤害」账在决斗里的用法＝用户 2026-10-03 裁决："下 1 次受到伤害−1 每次
+  // 只算一轮，2 次算两轮"⇒这一条线程自己带账本，每一轮把用掉的那几笔记着销掉，下一轮
+  // 就读到销过的那本（事件流里每一轮各有一条 `STAT_MODIFY{REMOVE}`，账留痕在同一条路上）。
+  let ledger = state.statModifiers;
   for (let index = 0; index < DUEL_MAX_ROUNDS; index += 1) {
     const attacker = sides[index % 2];
     const defender = sides[(index + 1) % 2];
     // 决斗逐轮的近战攻击力走的是与攻击同一个读数点（含账本）——#25 的"攻击力增减"
     // 必须两边一起拿到，否则会出现"平A吃 buff、决斗不吃"这种最难查的分叉。
     const rawDamage = getAttackValue(attacker.ref.general, false, {
-      ledger: state.statModifiers,
+      ledger,
       target: { playerId: attacker.ref.playerId, generalId: attacker.ref.generalId },
     });
-    const hit = applyArmorDamage(defender.hp, defender.armor, rawDamage);
+    // 受到伤害那一格与普攻同一个函数（`core/damageTaken.ts`）：护甲之前、绝不自成一套。
+    const taken = resolveDamageTaken(
+      ledger,
+      { playerId: defender.ref.playerId, generalId: defender.ref.generalId },
+      rawDamage,
+    );
+    const hit = applyArmorDamage(defender.hp, defender.armor, taken.damage);
     defender.hp = hit.hp;
     defender.armor = hit.armor;
     rounds.push({
@@ -155,12 +167,20 @@ export function simulateDuel(
         // 0 及以下伤害照样占一轮并继续轮换（§H5-6）——刻意不随桥接层 DAMAGE 的
         // Math.max(1, …) 钳制，否则"打了但没掉血"会被写成掉了血。
         value: Math.max(0, rawDamage),
+        damageTaken: taken.damage,
         newHp: hit.hp,
         newArmor: hit.armor,
         duelRound: index + 1,
         duelKey,
       },
     });
+    if (taken.consumedIds.length > 0) {
+      rounds.push({
+        type: 'STAT_MODIFY',
+        data: { op: 'REMOVE', ids: taken.consumedIds, cause: 'DAMAGE_TAKEN' },
+      });
+      ledger = pruneSpentModifiers(ledger, taken.consumedIds);
+    }
     // 一旦有一方在计算受到的伤害后体力≤0，立刻终止（死者不再被轮换）。
     if (hit.hp <= 0) break;
   }
@@ -175,7 +195,7 @@ export function simulateDuel(
     if (victim.hp <= 0) continue;
     const opponent = sides[victimIndex === 0 ? 1 : 0];
     injuries.push({
-      type: 'DUEL_INJURY',
+      type: 'INJURY',
       data: {
         ...withoutParticipants(data),
         // 这笔账"是谁造成的"＝对手那一位（决斗里双方互有先手后手，逐轮的先后在此合并）。
@@ -184,7 +204,11 @@ export function simulateDuel(
         targetPlayerId: victim.ref.playerId,
         targetId: victim.ref.generalId,
         damageType: 'skill',
+        // 刀5 起这一身的统一形状：`value`＝这一场实际掉掉的体力，`hpLost`＝同一个数的
+        // 显式键（受伤那一身今天只可能因掉血而存在＝用户 2026-10-03 重新裁定）。
         value: loss,
+        hpLost: loss,
+        armorLost: 0,
         duelKey,
         duelStage: 'injury',
       },

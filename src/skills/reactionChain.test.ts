@@ -248,17 +248,18 @@ describe('响应链 · 顺序（§H9 第十轮①工作例逐字）', () => {
     return state;
   }
 
-  const twoVictimDamage = (): GameEvent => ({
-    type: 'DAMAGE',
+  // 刀5 起「受到伤害后」只听 `INJURY` 这一声（＝每一刀落账后按真实掉血派生的那一声）。
+  const twoVictimInjury = (): GameEvent => ({
+    type: 'INJURY',
     data: {
       sourcePlayerId: 1, targetPlayerId: 2, targetIds: ['gA', 'gC'],
-      damageType: 'attack', value: 1,
+      damageType: 'attack', value: 1, hpLost: 1,
     },
   });
 
   it('A→C→D→B：受击组整组先、组内座次升序、非受击组从受击组末席的后一席绕圈', () => {
     let state = buildWorkExample();
-    const { queue } = syncReactionQueue(state, [twoVictimDamage()]);
+    const { queue } = syncReactionQueue(state, [twoVictimInjury()]);
     expect(queue).not.toBeNull();
     state = { ...state, pendingReaction: queue };
 
@@ -278,8 +279,8 @@ describe('响应链 · 顺序（§H9 第十轮①工作例逐字）', () => {
   it('点名不到场上任何一员（打本营）⇒ 退到席位那一层：整席先答', () => {
     let state = buildWorkExample();
     const event: GameEvent = {
-      type: 'DAMAGE',
-      data: { sourcePlayerId: 1, targetPlayerId: 2, targetId: 'base_2', damageType: 'attack', value: 1 },
+      type: 'INJURY',
+      data: { sourcePlayerId: 1, targetPlayerId: 2, targetId: 'base_2', damageType: 'attack', value: 1, hpLost: 1 },
     };
     // base_2 不是任何一员将领⇒ 身份层按席位分：整席 2 属受击组。四员都「听场上」
     // ⇒ 候选是全部四员，这里钉的是**先后**，不是有无。
@@ -292,9 +293,14 @@ describe('响应链 · 顺序（§H9 第十轮①工作例逐字）', () => {
 });
 
 describe('响应链 · 队列规则', () => {
-  const damageOf = (generalId: string, seat: number): GameEvent => ({
-    type: 'DAMAGE',
-    data: { sourcePlayerId: 1, targetPlayerId: seat, targetId: generalId, damageType: 'attack', value: 1 },
+  const injuryOf = (generalId: string, seat: number, duelRound?: number): GameEvent => ({
+    type: 'INJURY',
+    data: {
+      sourcePlayerId: 1, targetPlayerId: seat, targetId: generalId, damageType: 'attack', value: 1, hpLost: 1,
+      // 普攻／技能那两路压根没有这一维；只有决斗里带 `duelRound` 的那几声才是"要显式
+      // 排除的那一类"⇒未定义时整键省略，绝不写成 `duelRound: undefined`。
+      ...(duelRound === undefined ? {} : { duelRound }),
+    },
   });
 
   function twoListeners(): EngineState {
@@ -310,9 +316,9 @@ describe('响应链 · 队列规则', () => {
 
   it('第九轮⑨：应答后又让别的技能可响应⇒不插当前链，新格只排队尾', () => {
     const state = twoListeners();
-    const first = syncReactionQueue(state, [damageOf('gX', 2)]);
+    const first = syncReactionQueue(state, [injuryOf('gX', 2)]);
     const withFirst: EngineState = { ...state, pendingReaction: first.queue };
-    const second = syncReactionQueue(withFirst, [damageOf('gY', 3)]);
+    const second = syncReactionQueue(withFirst, [injuryOf('gY', 3)]);
     const keys = second.queue!.nodes.map(node => node.key);
     expect(keys).toEqual(['rn:0:0', 'rn:0:1']);
 
@@ -322,7 +328,7 @@ describe('响应链 · 队列规则', () => {
 
   it('问完的格被扫描收掉；全部收完⇒槽清成 null（指纹归空）', () => {
     const state = twoListeners();
-    const opened = syncReactionQueue(state, [damageOf('gX', 2)]);
+    const opened = syncReactionQueue(state, [injuryOf('gX', 2)]);
     let current: EngineState = { ...state, pendingReaction: opened.queue };
     expect(reactionQueueFingerprint(current.pendingReaction ?? null)).not.toBe('');
 
@@ -338,16 +344,21 @@ describe('响应链 · 队列规则', () => {
   it('没有候选就不开格（门槛不过／场上没人听⇒世界不冻结）', () => {
     const state = twoListeners();
     // gZ 谁都不听：这一声场上没人有得响应。
-    const empty = syncReactionQueue(state, [damageOf('gZ', 2)]);
+    const empty = syncReactionQueue(state, [injuryOf('gZ', 2)]);
     expect(empty.queue).toBeNull();
     expect(empty.overflow).toBe(0);
   });
 
-  it('决斗逐轮伤害不唤监听（带 duelRound 的那一块整块结算，§H5-6＋第七轮）', () => {
-    expect(isReactionSourceEvent(damageOf('gX', 2))).toBe(true);
+  it('决斗逐轮不唤监听：那几声压根不是 `INJURY`（逐轮不派生受伤声，§H5-6＋第七轮）', () => {
+    // 刀5 起的结构性判据：「受到伤害后」只听 `INJURY`，而逐轮那些"打"是带
+    // `duelRound` 的 `DAMAGE`——**压根不进**那张表，所以"逐轮静默"不再是扫描器里的
+    // 一条特例，而是"这一声不存在"。带 `duelRound` 的显式排除仍留着，钉的是万一
+    // 有人手工喂一块进来也别开格（§H9 第七轮点名的那道保险）。
+    expect(isReactionSourceEvent(injuryOf('gX', 2))).toBe(true);
+    expect(isReactionSourceEvent(injuryOf('gX', 2, 1))).toBe(false);
     expect(isReactionSourceEvent({
       type: 'DAMAGE',
-      data: { targetPlayerId: 2, targetId: 'gX', duelRound: 1 },
+      data: { targetPlayerId: 2, targetId: 'gX', damageType: 'attack', value: 1 },
     })).toBe(false);
     const state = twoListeners();
     const duelOnly = syncReactionQueue(state, [{
@@ -359,7 +370,7 @@ describe('响应链 · 队列规则', () => {
 
   it('封顶如实记账：超限只丢真实该问的格，不开第二套账', () => {
     const state = twoListeners();
-    const events = Array.from({ length: 40 }, () => damageOf('gX', 2));
+    const events = Array.from({ length: 40 }, () => injuryOf('gX', 2));
     const { queue, overflow } = syncReactionQueue(state, events);
     expect(queue!.nodes).toHaveLength(32);
     expect(overflow).toBe(8);
@@ -375,7 +386,7 @@ describe('响应链 · 表态落账（唯一状态突变入口＝EventProcessor�
       makePlayer(2, { fieldGenerals: [makeFieldGeneral(makeGeneral('gX', [hurtDraw('奸雄')]), 2)] }) as EnginePlayer,
     ];
     const { queue } = syncReactionQueue(state, [{
-      type: 'DAMAGE', data: { targetPlayerId: 2, targetId: 'gX', damageType: 'attack', value: 1 },
+      type: 'INJURY', data: { targetPlayerId: 2, targetId: 'gX', damageType: 'attack', value: 1, hpLost: 1 },
     }]);
     return { ...state, pendingReaction: queue };
   }
@@ -396,7 +407,7 @@ describe('响应链 · 表态落账（唯一状态突变入口＝EventProcessor�
   it('跳过＝skillId/skillName 记 null（正身：一个也不做，§12-75①）', () => {
     const ask = {
       nodeKey: 'rn:5:0',
-      sourceEvent: { type: 'DAMAGE', data: {} } as GameEvent,
+      sourceEvent: { type: 'INJURY', data: {} } as GameEvent,
       playerId: 2, generalId: 'gX', generalName: '响应将gX', options: [],
     };
     const data = reactionAnsweredOf(ask, null);
@@ -524,27 +535,24 @@ describe('强制发动执法刀 · 两条路同读一份事件表', () => {
     return state;
   }
 
-  /** 决斗收官那一声＝受伤型的第二声（累计值、零状态位移）。 */
+  /** 决斗收官那一声＝受伤型（累计值、零状态位移；刀5 起与普攻派生的那一声同名）。 */
   const duelInjury = (): GameEvent => ({
-    type: 'DUEL_INJURY',
+    type: 'INJURY',
     data: {
       sourcePlayerId: 1, sourceGeneralId: 'gDuel', targetPlayerId: 2, targetId: 'gX',
       damageType: 'skill', value: 2, duelStage: 'injury', duelKey: 'k|gDuel>gX',
     },
   });
 
-  it('一张表：一型几声就注册几枚监听，第一枚的 id 逐字不变（旧录像/日志寻址零扰动）', () => {
+  it('一张表：一型几声就注册几枚监听（刀5 起「受到伤害后」只剩 `INJURY` 一声，第一枚 id 逐字不变）', () => {
     const engine = attackOnce([{ ...hurtDraw('刚毅'), forced: true }]);
     const triggers = engine.triggers.getByOwner(2);
-    expect(triggers.map(t => t.eventType)).toEqual(['DAMAGE', 'DUEL_INJURY']);
-    expect(triggers.map(t => t.id)).toEqual([
-      'skill:2:g2:刚毅:e1',
-      'skill:2:g2:刚毅:e1#DUEL_INJURY',
-    ]);
+    expect(triggers.map(t => t.eventType)).toEqual(['INJURY']);
+    expect(triggers.map(t => t.id)).toEqual(['skill:2:g2:刚毅:e1']);
   });
 
   it('问答路的两型事件维由那张表派生，不存在第二份写法', () => {
-    expect(eventsHeardBy('onDamageTaken')).toEqual(['DAMAGE', 'DUEL_INJURY']);
+    expect(eventsHeardBy('onDamageTaken')).toEqual(['INJURY']);
     expect(eventsHeardBy('onBecomingTarget')).toEqual(['BEFORE_DAMAGE']);
     // 2.3.1 单发动路：回合结束技能压根不在触发面上。
     expect(eventsHeardBy('onTurnEnd')).toEqual([]);

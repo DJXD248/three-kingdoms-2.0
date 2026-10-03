@@ -116,6 +116,9 @@ export interface SkillSkip {
     | 'EFFECT_TYPE_UNSUPPORTED'
     /** MODIFY_STAT 少了三样里任何一样（改哪个数／哪种形态／数值）——点名，不猜。 */
     | 'MODIFY_STAT_INCOMPLETE'
+    /** MODIFY_STAT 把「一次性（用掉就销）」挂到了没有"用掉"那一刻的钥匙上
+     *  （2.8 刀5：只有「受到的伤害」会被读一次销一次）。收下＝记录而未消费。 */
+    | 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED'
     /** 「在场即生效」与「选择其一」在结构上互斥：passive 按定义不进问窗，
      *  那就没人能替它择一。整组点名跳过，绝不让它悄悄变成"全都要"。 */
     | 'PASSIVE_CHOICE_UNSUPPORTED'
@@ -157,6 +160,11 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
     if (!runtime.stat || !runtime.modifyMode || typeof runtime.value !== 'number'
       || (runtime.target !== undefined && runtime.target !== 'SELF')) {
       return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_INCOMPLETE' };
+    }
+    // 一次性那档只有「受到的伤害」这把钥匙存在"用掉的那一刻"（刀5 的唯一读档点）。
+    // 挂到攻距/体力上限上＝一笔永远没人去销的账，那是另一种语义，点名跳过。
+    if (runtime.duration === 'thisDamage' && runtime.stat !== 'DAMAGE_TAKEN') {
+      return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED' };
     }
   }
   return {

@@ -1902,7 +1902,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       sourcePlayerId: 1, sourceGeneralId: 'du_elj', targetPlayerId: 2, targetId: 'du_vic', effectType: 'DUEL',
     });
     expect(flat.slice(duelIdx, duelIdx + 9).map(e => e.type))
-      .toEqual(['DUEL', 'BEFORE_DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DUEL_INJURY', 'GAIN_ARMOR']);
+      .toEqual(['DUEL', 'BEFORE_DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'INJURY', 'GAIN_ARMOR']);
     // 开局那一声＝"成为**技能**目标"：带 damageType:'skill'（所以"成为攻击目标"那一档听不到），
     // 这里当场没人有得说⇒标 `settled`、逐轮紧跟着就打了（第七轮开局格的另一档见刀2 专测）。
     expect(flat[duelIdx + 1].data).toMatchObject({
@@ -1922,9 +1922,11 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(rounds.every(r => r.damageType === 'skill' && String(r.skillId).includes('挑战:e1'))).toBe(true);
 
     // ②' 收官＝按角色累计的那一笔（第七轮）：阵亡的 du_vic 那一笔不结算，
-    // 活下来的 du_elj 这一场从 10 掉到 6＝实际掉了 4 点⇒一笔 `DUEL_INJURY`，
+    // 活下来的 du_elj 这一场从 10 掉到 6＝实际掉了 4 点⇒一笔 `INJURY`，
     // 值＝4（第 2、4 轮各挨 2），绝不再扣血。
-    const injuries = flat.filter(e => e.type === 'DUEL_INJURY');
+    // 刀5 起这一声是**三路共用**的那一身（普攻那一刀掉血也派生一声，就在 `DUEL`
+    // 之前），所以这里按决斗形状（`duelStage:'injury'`）认收官那一笔。
+    const injuries = flat.filter(e => e.type === 'INJURY' && e.data?.duelStage === 'injury');
     expect(injuries).toHaveLength(1);
     expect(injuries[0].data).toMatchObject({
       targetPlayerId: 1, targetId: 'du_elj', sourcePlayerId: 2, sourceGeneralId: 'du_vic',
@@ -2054,14 +2056,17 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     ]);
     // 收官两笔＝逐轮之外多出来的两声，顺序＝受邀者那笔在前、发起者那笔在后
     // （双方都是受伤方⇒优先度最高；受邀者先受伤⇒再高一档），各累计 6 点。
-    const injuries = flat.filter(e => e.type === 'DUEL_INJURY');
+    const injuries = flat.filter(e => e.type === 'INJURY');
     expect(injuries.map(e => [e.data!.targetId, e.data!.value])).toEqual([['du_tank', 6], ['du_long', 6]]);
     expect(fieldHp(engine.state, 1, 'du_long')).toEqual({ hp: 14, armor: 0 });
     expect(fieldHp(engine.state, 2, 'du_tank')).toEqual({ hp: 14, armor: 0 });
     expect(engine.state.drawState).toBeNull(); // 无人阵亡 ⇒ 无补偿抽
-    // 铁壁＝受到伤害后：开场普攻那一下响一次，决斗收官那一笔（累计 6 点）再响一次；
-    // 决斗中间挨的那三次一律静默（逐轮不唤监听）。问窗各答一次⇒摸牌两条。
-    expect(flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('铁壁:e1'))).toHaveLength(2);
+    // 铁壁＝受到伤害后（刀5 重裁后的口径）：开场普攻那一下**只吃掉了 4 点护甲、
+    // 体力一格没掉**⇒那一刀压根不派生 `INJURY`⇒这一声不响；决斗收官那一笔（累计 6 点）
+    // 才是它唯一听到的一声。问窗答一次⇒摸牌一条。
+    // （扩面前这里是两声：`DAMAGE` 本体也算"受到伤害"，护甲吃满也响。那正是本轮
+    // 用户重新裁定要改掉的行为，见 §12-93 与 ARCH_MAP 判据 9。）
+    expect(flat.filter(e => e.type === 'DRAW' && String(e.data?.skillId ?? '').includes('铁壁:e1'))).toHaveLength(1);
     // 自斗空转不产生任何伤害事件，收官也不立笔：全场 DAMAGE ＝ 普攻 1 条 ＋ 决斗 6 条
     expect(flat.filter(e => e.type === 'DAMAGE')).toHaveLength(7);
 
@@ -2120,7 +2125,11 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(first[duelIdx + 1].type).toBe('BEFORE_DAMAGE');
     expect(first[duelIdx + 1].data).toMatchObject({ duelStage: 'opening', damageType: 'skill' });
     expect(first.filter(e => typeof e.data?.duelRound === 'number')).toHaveLength(0);
-    expect(first.filter(e => e.type === 'DUEL_INJURY')).toHaveLength(0);
+    // 刀5：普攻那一刀真掉了 2 点体力⇒这一趟就带着那一声明（`INJURY`）。它不带
+    // `duelStage`＝不是决斗形状；逐轮还没打⇒决斗收官那一笔此刻还不存在。
+    const firstInjuries = first.filter(e => e.type === 'INJURY');
+    expect(firstInjuries.map(e => [e.data!.targetId, e.data!.value])).toEqual([['dl_tgt', 2]]);
+    expect(firstInjuries.every(e => e.data?.duelStage === undefined)).toBe(true);
     expect(fieldHp(engine.state, 2, 'dl_tgt')).toEqual({ hp: 5, armor: 0 });
     const openingNode = (engine.state.pendingReaction?.nodes ?? [])
       .find(node => node.sourceEvent.type === 'BEFORE_DAMAGE');
@@ -2143,7 +2152,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       [1, 'dl_tgt', 5], [2, 'dl_atk', 8], [3, 'dl_tgt', 3], [4, 'dl_atk', 6], [5, 'dl_tgt', 1], [6, 'dl_atk', 4],
     ]);
     // ③ 收官两笔：双方都活着⇒两笔都结算；顺序＝受邀者那笔在前、发起者那笔在后。
-    const injuries = rest.filter(e => e.type === 'DUEL_INJURY');
+    const injuries = rest.filter(e => e.type === 'INJURY');
     expect(injuries.map(e => [e.data!.targetId, e.data!.value])).toEqual([['dl_tgt', 6], ['dl_atk', 6]]);
     expect(fieldHp(engine.state, 2, 'dl_tgt')).toEqual({ hp: 1, armor: 0 });
     expect(fieldHp(engine.state, 1, 'dl_atk')).toEqual({ hp: 4, armor: 0 });
@@ -2210,7 +2219,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     .filter(e => typeof e.data?.duelRound === 'number')
     .map(e => [e.data!.duelRound, e.data!.targetId, e.data!.newHp]);
   const duelInjuryShape = (flat: Array<{ type: string; data?: Record<string, unknown> }>) => flat
-    .filter(e => e.type === 'DUEL_INJURY')
+    .filter(e => e.type === 'INJURY' && e.data?.duelStage === 'injury')
     .map(e => [e.data!.targetId, e.data!.value]);
 
   it('强制发动在决斗两层都听得到：开局那一声先响完才开打、收官那一笔只响一次、逐轮静默、全程不开问窗，四路逐事件一致 (2.8 刀25)', () => {
@@ -2244,6 +2253,10 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       [1, 'fz_tgt', 5], [2, 'fz_atk', 8], [3, 'fz_tgt', 3], [4, 'fz_atk', 6], [5, 'fz_tgt', 1], [6, 'fz_atk', 4],
     ]);
     expect(duelInjuryShape(flat)).toEqual([['fz_tgt', 6], ['fz_atk', 6]]);
+    // 刀5：普攻那一刀（真掉 2 点体力）也在同一趟里留下一声明，它不带 `duelStage`
+    // ⇒上面那个"决斗形状"筛子把它挡在外面，这里单独钉它在场。
+    expect(flat.filter(e => e.type === 'INJURY' && e.data?.duelStage === undefined)
+      .map(e => [e.data!.targetId, e.data!.value])).toEqual([['fz_tgt', 2]]);
 
     // ④ 刚毅（强制「受到伤害后」）在这一趟里只响两次：普攻那一声＋决斗收官那一声。
     //    逐轮挨的那三次一律静默——这一条从前在自动路上**结构上做不到**（收官那一声

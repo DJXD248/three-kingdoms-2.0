@@ -51,10 +51,11 @@ type FixtureSpec = {
 };
 
 /**
- * 12 张＝魏/蜀/吴 各 4 张。技能只用**编译器已结算的**触发时机与效果类型
+ * 13 张＝魏 5 张、蜀/吴 各 4 张。技能只用**编译器已结算的**触发时机与效果类型
  * （`skills/skillCompiler.ts` → `SkillTriggerBridge`），本刀不新增任何玩法语义。
  * 覆盖面：摸牌/伤害/回复/护甲/弃牌/赠牌/拆装备/看顶/放堆顶底/击杀后，外加一条
- * 带「发动门槛」的效果（v2.8.3 录入面产物）与一张双效果技能。
+ * 带「发动门槛」的效果（v2.8.3 录入面产物）、一张双效果技能，与一条「下一次受到
+ * 伤害−1」的一次性账（v2.8 刀5＝#26，`样·硬扛`）。
  */
 const FIXTURE_SPECS: FixtureSpec[] = [
   {
@@ -84,6 +85,18 @@ const FIXTURE_SPECS: FixtureSpec[] = [
         { type: 'DRAW_CARD', value: 1, target: 'SELF' },
         [{ metric: 'HAND_COUNT', subject: 'SELF', op: 'LTE', value: 1 }],
       ),
+    ])],
+  },
+  {
+    key: 'wei5', name: '试作·魏戊', faction: '魏', hp: 4,
+    // v2.8 刀5（#26）的一次性活例：账本上那把「受到的伤害」钥匙必须有一张真卡能写出来、
+    // 能在 AI 战场上被读到并销掉。它只能挂在**发动笔**上（passive 与周期互斥＝
+    // `PASSIVE_DURATION_CONFLICT`），所以走「回合开始时发动⇒下一刀受到伤害−1」这条路。
+    skills: [skill('样·硬扛', '回合开始时，你下一次受到的伤害−1。', [
+      effect('e1', { type: 'onTurnStart', turnSubType: 'selfTurn' }, {
+        type: 'MODIFY_STAT', value: -1, target: 'SELF',
+        stat: 'DAMAGE_TAKEN', modifyMode: 'delta', duration: 'thisDamage',
+      }),
     ])],
   },
   {

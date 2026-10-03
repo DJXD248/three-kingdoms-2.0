@@ -75,7 +75,7 @@ export interface SkillEffectData {
   /** 仅 MODIFY_STAT：改哪个数字／增减还是固定／有效周期。三者缺一即编译器点名跳过。 */
   stat?: import('../data/generals').StatModifierKeyType;
   modifyMode?: import('../data/generals').StatModifyModeType;
-  duration?: Exclude<import('../data/generals').ExpireCondition, 'untilDeath' | 'untilLeaveField'>;
+  duration?: import('../data/generals').StatModifierDurationType;
 }
 
 export interface DataSkillDefinition {

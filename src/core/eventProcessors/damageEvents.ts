@@ -2,6 +2,7 @@ import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { applyArmorDamage } from '../armorDamage';
+import { resolveDamageTaken } from '../damageTaken';
 
 export function applyBaseDamageEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as { playerId?: number; amount?: number } | undefined;
@@ -73,7 +74,13 @@ export function applyDamageEvent(state: EngineState, event: GameEvent): EngineSt
     const players = playersAfterCost.map(player => {
       if (player.id !== targetPlayerId) return player;
       const currentHp = typeof player.baseHp === 'number' ? player.baseHp : 0;
-      const newHp = Math.max(0, currentHp - Number(data?.hpLost ?? data?.value ?? 0));
+      // 本营**不吃**「受到的伤害」那格修正（用户 2026-10-03 裁"问二＝不吃"）：那一格
+      // 的钥匙键在（座次＋将领实例）上，本营根本不是任何一员将⇒账本里压根没有它那一笔。
+      // 「本营单次最多 1 点」那条规则事实由**发射点**钉死（`AttackResolver` 的
+      // `Math.min(1, baseDamage)`）；这一侧照卡面数值结算，绝不偷偷改写技能打本营的
+      // 伤害（那是另一刀的量，已记进待裁）。
+      const amount = Math.max(0, Number(data?.hpLost ?? data?.value ?? 0));
+      const newHp = Math.max(0, currentHp - amount);
       return {
         ...player,
         baseHp: newHp,
@@ -111,12 +118,21 @@ export function applyDamageEvent(state: EngineState, event: GameEvent): EngineSt
       : attachedArmor;
     // Attack resolvers pre-compute newHp/newArmor. Skill-triggered DAMAGE
     // events (damageType: 'skill') only carry a value, so settle the hit
-    // here with the same canonical armor rule attacks use.
+    // here with the same canonical armor rule attacks use — 先把"受到的伤害"
+    // 那一格过完（护甲**之前**，`core/damageTaken.ts`），再交给护甲出口。
+    // 这一路为什么在结算时读而不是发射时预解：同一技能连发两笔伤害时，第二笔必须
+    // 看见第一笔之后的血量。被用掉的一次性账不在这里销——它由派生点发一条
+    // canonical `STAT_MODIFY{REMOVE}`（读的是同一本账、同一个原始数⇒同一个清单）。
     if (data?.newHp === undefined && data?.damageType === 'skill') {
+      const taken = resolveDamageTaken(
+        state.statModifiers,
+        { playerId: Number(player.id), generalId: String(targetId) },
+        Number(data?.value ?? 0),
+      );
       const skillHit = applyArmorDamage(
         Number(target.currentHp ?? 0),
         Number(target.currentArmor ?? 0),
-        Number(data?.value ?? 0),
+        taken.damage,
       );
       target.currentHp = skillHit.hp;
       target.currentArmor = skillHit.armor;

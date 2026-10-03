@@ -76,8 +76,29 @@ describe('DIY 固定样本：进编译器真的会响（反空转）', () => {
       }
     }
     expect([...runtimeTypes].sort()).toEqual(
-      ['DAMAGE', 'DECK_PLACE', 'DISCARD', 'DRAW_CARD', 'EQUIP_STRIP', 'GAIN_ARMOR', 'GIVE', 'HEAL', 'REVEAL'],
+      ['DAMAGE', 'DECK_PLACE', 'DISCARD', 'DRAW_CARD', 'EQUIP_STRIP', 'GAIN_ARMOR', 'GIVE', 'HEAL', 'MODIFY_STAT', 'REVEAL'],
     );
+  });
+
+  it('一次性那把钥匙有活例：「下一次受到伤害−1」逐字活到编译产物里，且没被点名跳过', () => {
+    const oneshot = DIY_FIXTURE_GENERALS.filter(g =>
+      g.skills.some(s => (s.effects ?? []).some(e =>
+        e.runtime?.type === 'MODIFY_STAT' && e.runtime.duration === 'thisDamage')),
+    );
+    expect(oneshot.length, '样本里必须有一张一次性「受到的伤害」活例，否则刀5 那把钥匙在 AI 战场上是空转').toBeGreaterThan(0);
+    for (const g of oneshot) {
+      const { definitions, skipped } = compileGeneralSkills(g);
+      expect(skipped, `${g.name} 的一次性那笔被跳过了`).toEqual([]);
+      // 钥匙只有「受到的伤害」这一把（编译器纪律：挂到别的数上＝点名跳过），
+      // 而且它只能是发动笔（passive 与周期互斥）⇒那一档压根不产 passive 定义。
+      const carried = definitions.filter(d =>
+        d.effects.some(e => e.duration === 'thisDamage'));
+      expect(carried.length).toBe(1);
+      expect(carried[0].effects[0]).toMatchObject({
+        type: 'MODIFY_STAT', stat: 'DAMAGE_TAKEN', modifyMode: 'delta', value: -1,
+      });
+      expect(definitions.some(d => d.passive === true)).toBe(false);
+    }
   });
 });
 

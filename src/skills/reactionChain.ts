@@ -249,7 +249,8 @@ export function reactionAnsweredOf(ask: ReactionAsk, option: ReactionOption | nu
 }
 
 /**
- * 这一声是不是响应链的候选源（受击／受伤两型，`DUEL_INJURY` 也算受伤）。
+ * 这一声是不是响应链的候选源（受击＝`BEFORE_DAMAGE`／受伤＝`INJURY` 各一声；
+ * 2.8 刀5 起「受到伤害后」只听这一声，判据见 `core/Event.ts` 的 `INJURY` 注释）。
  *
  * 两条显式排除，都来自决斗（§H9 第七轮＋第九轮 d) 的点名要求）：
  *  - 决斗**逐轮**那些"打"（带 `duelRound`）不唤任何监听：那一整块在队列里一次

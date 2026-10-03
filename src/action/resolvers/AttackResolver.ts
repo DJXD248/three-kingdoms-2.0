@@ -4,6 +4,7 @@ import type { EngineState } from '../../core/GameState';
 import type { GameEvent } from '../../core/Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { applyArmorDamage } from '../../core/armorDamage';
+import { resolveDamageTaken } from '../../core/damageTaken';
 import { getAttackValue } from '../../core/attackValue';
 
 interface Position {
@@ -158,10 +159,17 @@ export class AttackResolver implements ActionResolver {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'TARGET_OUT_OF_RANGE' } }];
     }
 
+    // 2.8 刀5：护甲**之前**先过"受到的伤害"那一格（`core/damageTaken.ts`＝唯一算术）。
+    // 账本为空时它逐字返回原数⇒今日所有对局的事件流与接线前逐字相同。
+    const taken = resolveDamageTaken(
+      state.statModifiers,
+      { playerId: targetResult.player.id, generalId: String(payload.targetId) },
+      baseDamage,
+    );
     const armorResult = applyArmorDamage(
       Number(targetResult.general.currentHp ?? 0),
       Number(targetResult.general.currentArmor ?? 0),
-      baseDamage,
+      taken.damage,
     );
     const defeated = armorResult.hp <= 0;
     const attachedArmor = Array.isArray(targetResult.general.armorCards)
@@ -194,6 +202,8 @@ export class AttackResolver implements ActionResolver {
           targetId: payload.targetId,
           damageType: 'attack',
           value: baseDamage,
+          // 护甲之前那一格的读数（账本为空时＝`value`）：显示层/探针用它，算术不回头读它。
+          damageTaken: taken.damage,
           hpLost: armorResult.hpLost,
           armorLost: armorResult.armorLost,
           actualDamage: armorResult.actualDamage,
@@ -207,6 +217,16 @@ export class AttackResolver implements ActionResolver {
         },
       },
     ];
+
+    // 一次性「受到的伤害」账被这一刀用掉了⇒当场销账（canonical `STAT_MODIFY`，与在场
+    // 落笔／生命周期收账同一个入口；DAMAGE 处理器自己不碰账本）。位置紧跟这一"刀"，
+    // 因为决斗那一整块要逐轮线程同一本账——销账晚一轮＝同一笔账用两次。
+    if (taken.consumedIds.length > 0) {
+      events.push({
+        type: 'STAT_MODIFY',
+        data: { op: 'REMOVE', ids: taken.consumedIds, cause: 'DAMAGE_TAKEN' },
+      });
+    }
 
     if (defeated) {
       events.push({

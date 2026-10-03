@@ -22,17 +22,22 @@ export type StatModifierKey =
   | 'DAMAGE_TAKEN'
   | 'DAMAGE_DEALT';
 
-/** 接线档位＝本刀真的有读数点来读的键（其余键账本收得下，但还没人读）。 */
-export const WIRED_STAT_KEYS: StatModifierKey[] = ['MELEE_ATK', 'RANGED_ATK', 'MAX_HP'];
+/** 接线档位＝本刀真的有读数点来读的键（其余键账本收得下，但还没人读）。
+ *  `DAMAGE_TAKEN`＝2.8 刀5 接线（读数点=`core/damageTaken.ts`，护甲之前那一格）。
+ *  `DAMAGE_DEALT` 照旧只登记：用户 2026-10-03 裁"本刀不接"。 */
+export const WIRED_STAT_KEYS: StatModifierKey[] = ['MELEE_ATK', 'RANGED_ATK', 'MAX_HP', 'DAMAGE_TAKEN'];
 
 export type StatModifierMode = 'delta' | 'set';
 
-/** 周期（数据层已有的六值词汇，契约表第 2 条：`untilDeath` 与 `untilLeaveField` 同义，
- *  结算侧一律由"离场"这一条总闸负责，这里只保留回合边界那一档。 */
+/** 周期（数据层那六档回合／离场词汇，＋刀5 那一档一次性）。契约表第 2 条：`untilDeath`
+ *  与 `untilLeaveField` 同义，结算侧一律由"离场"这一条总闸负责，这里只保留回合边界那一档。
+ *  `thisDamage`＝刀5 的一次性账（本次／下一次受到伤害，用掉即销）：它**不跟回合边界走**
+ *  （`TURN_EXPIRES` 里没有它），只被那一刀的消费清单销掉，或随人离场被总闸收走。 */
 export type StatExpireCondition =
   | 'untilSelfTurnStart' | 'untilSelfTurnEnd'
   | 'untilOtherTurnStart' | 'untilOtherTurnEnd'
-  | 'untilDeath' | 'untilLeaveField';
+  | 'untilDeath' | 'untilLeaveField'
+  | 'thisDamage';
 
 export interface StatModifier {
   /** `sm:<seq>`——纯派生自账本自身的单调号，绝不碰引擎 RNG（零新增随机面）。 */

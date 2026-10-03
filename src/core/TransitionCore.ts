@@ -201,10 +201,16 @@ export function transition(
 }
 
 /** 要重入触发链的衍生事件（名字里的 "reaction"＝"重入"，不是响应链问答）。
- *  决斗刀 2 的收官通知 `DUEL_INJURY` 走的是另一条路（`isDuelListenerEvent`），
- *  不写在这一列里，因为它按**层**认（开局的 `duelStage` 那一声明＋收官那一笔），
- *  而逐轮那些"打"绝不重入——把这一维压进类型集合就等于把"逐轮不响"写丢了。 */
-const TRIGGER_REENTRY_TYPES: ReadonlySet<GameEvent['type']> = new Set(['DEATH', 'CARD_LOST', 'CARD_GAINED']);
+ *  决斗开局那一声（`BEFORE_DAMAGE{duelStage}`）走的是另一条路（`isDuelListenerEvent`），
+ *  因为它按**层**认，而逐轮那些"打"绝不重入——把这一维压进类型集合就等于把"逐轮不响"
+ *  写丢了。（刀5 起受伤那一身 `INJURY` 直接写在上面那一列：它不分工，每一声都要喂。） */
+const TRIGGER_REENTRY_TYPES: ReadonlySet<GameEvent['type']> = new Set([
+  'DEATH', 'CARD_LOST', 'CARD_GAINED',
+  // v2.8 刀5：受伤这一身是**每一刀落账之后**才派生出来的（`chainedConsequences`），
+  // 压根没经过 dispatch 前的触发链⇒必须重入，否则打了「强制发动」的受伤技听不到它。
+  // 问答路那一侧靠 `scanReaction` 读同一条回声（两条路读同一份事件表，绝不一技能两响）。
+  'INJURY',
+]);
 
 /**
  * v2.8 刀4（#25）：账本落笔／销笔的**留痕**。
@@ -229,11 +235,13 @@ function echoStatTraces(events: GameEvent[], derived: readonly GameEvent[]): voi
 /**
  * 这一条派生事件要不要过一遍触发链（v2.8.25 强制发动执法刀）。
  *
- * `DUEL_INJURY` 与决斗开局那一声**以前故意不在**这一判据里（§12-55 的口径是
- * "它的听众走响应链问答"）。那句话只到 v2.8.24 为止：问答路的听众是**不强制**的
- * 那一类，而「强制发动」的受击／受伤技压根不进问答队列——两声都不喂给它，
- * 它就在决斗里结构性失聪。分流开关（`defersToReactionQueue`）从此是**唯一**
- * 判据：不强制⇒问人；强制⇒自己响，而"自己响"必须有路喂到它耳边。
+ * 决斗收官那一声（旧名 `DUEL_INJURY`，刀5 起＝`INJURY`）与决斗开局那一声**以前故意
+ * 不在**这一判据里（§12-55 的口径是"它的听众走响应链问答"）。那句话只到 v2.8.24
+ * 为止：问答路的听众是**不强制**的那一类，而「强制发动」的受击／受伤技压根不进
+ * 问答队列——两声都不喂给它，它就在决斗里结构性失聪。分流开关
+ * （`defersToReactionQueue`）从此是**唯一**判据：不强制⇒问人；强制⇒自己响，而
+ * "自己响"必须有路喂到它耳边。刀5 起收官那一声改走上面的类型列（它不再分工，
+ * 三路派生的每一声都要喂），这一判据只剩决斗开局那一层。
  * 绝不一技能两响仍然成立：一枚定义只走一条路，两条路读同一份事件表。
  */
 function reentersTriggerChain(event: GameEvent): boolean {
@@ -246,6 +254,18 @@ function reentersTriggerChain(event: GameEvent): boolean {
  * onDeath／手牌监听／决斗的受击与受伤），并且只结算**新造出来**的事件，绝不把
  * 派生事件本身再结算一遍。
  */
+/**
+ * 刀5：每一刀落账后派生的那一声 `INJURY` 也要进事件流。派生点在**队列内**发它，
+ * 而队列不回写流（"dispatch 不返回内联追加事件"那条老规矩）⇒不回显就没有留痕，
+ * 响应链扫描也就看不见这一声。决斗收官那一笔已经在 `echoDuelRounds` 里随块回显过
+ * ⇒同一批对象用 `includes` 认，绝不写第二遍。
+ */
+function echoInjuries(events: GameEvent[], derived: readonly GameEvent[]): void {
+  for (const event of derived) {
+    if (event.type === 'INJURY' && !events.includes(event)) events.push(event);
+  }
+}
+
 function runTriggerReentry(
   state: EngineState,
   derived: readonly GameEvent[],
@@ -255,6 +275,7 @@ function runTriggerReentry(
 ): EngineState {
   let next = state;
   echoStatTraces(events, derived);
+  echoInjuries(events, derived);
   let pendingReactions = derived.filter(reentersTriggerChain);
   for (let round = 0; pendingReactions.length > 0 && round < MAX_TRIGGER_REENTRY_ROUNDS; round += 1) {
     const expanded = resolveTriggerChain(next, ctx.triggers, pendingReactions);
@@ -265,6 +286,7 @@ function runTriggerReentry(
     const nextDerived: GameEvent[] = [];
     next = ctx.processor.process(next, generated, nextDerived, flow);
     echoStatTraces(events, nextDerived);
+    echoInjuries(events, nextDerived);
     pendingReactions = nextDerived.filter(reentersTriggerChain);
   }
   if (pendingReactions.length > 0) {

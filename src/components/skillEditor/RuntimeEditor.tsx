@@ -28,8 +28,9 @@ const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number, rt?: Sk
   DUEL: () => '与目标将领决斗（双方各三轮，最多六次）',
   MODIFY_STAT: (v, rt) => {
     const key = statModifierKeyLabels[rt?.stat ?? 'MELEE_ATK'];
-    if (rt?.modifyMode === 'set') return `把${key}摁成 ${v}（覆盖卡面上的数）`;
-    return v < 0 ? `让${key}减少 ${-v}` : `让${key}增加 ${v}`;
+    const once = rt?.duration === 'thisDamage' ? '下一次' : '';
+    if (rt?.modifyMode === 'set') return `${once}把${key}摁成 ${v}（覆盖卡面上的数）`;
+    return v < 0 ? `${once}让${key}减少 ${-v}` : `${once}让${key}增加 ${v}`;
   },
 };
 
@@ -188,7 +189,13 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
           </div>
           <p className="text-[9px] text-emerald-300/40">
             留空那一档＝在场上就一直有效、离场当场结束；账本上「固定为」压过「增减」，同形态按发动先后累加。
+            「一次性（用掉就销）」＝只挡下下一次真正读到它的那一笔，用完当场销账，只有「受到的伤害」这一把钥匙有这一刻。
           </p>
+          {runtime.duration === 'thisDamage' && runtime.stat !== 'DAMAGE_TAKEN' && (
+            <p className="text-[9px] text-rose-400/80">
+              这一把钥匙没有"被用掉一次"的那一刻：一次性请配「受到的伤害」。这样填的效果保存后会被引擎逐条点名跳过，不会悄悄生效一半。
+            </p>
+          )}
         </div>
       )}
 

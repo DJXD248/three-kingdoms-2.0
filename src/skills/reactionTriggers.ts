@@ -24,10 +24,10 @@ export function isReactionTrigger(trigger: DataSkillTrigger): trigger is Reactio
  * **每一型监听听得懂的那几一声——全库唯一一份表**（v2.8.25 强制发动执法刀）。
  *
  * 为什么必须只有一份：自动发动路（`SkillTriggerBridge` 注册进触发链）与问答路
- * （`skills/reactionChain.ts` 现算候选）过去各写一份"这型听哪一声"，于是
- * 「受到伤害后」在问答路听两声（`DAMAGE`＋决斗收官的 `DUEL_INJURY`）、在自动路
- * 只听一声（`DAMAGE`）⇒打了「强制发动」的受伤技**结构上听不到决斗收官那一笔**，
- * 而不打的照常被问到。这正是本文件头注警告过的分叉族：一响一不响最难查。
+ * （`skills/reactionChain.ts` 现算候选）过去各写一份"这型听哪一声"，于是同一型在
+ * 两路边数不一样——v2.8.24 那一轮「受到伤害后」在问答路听两声、自动路只听一声，
+ * 打了「强制发动」的受伤技就结构上听不到决斗收官那一笔。一响一不响是最难查的那一族。
+ * 今天（v2.8 刀5）受伤只听一声 `INJURY`，两路边数天然相同。
  *
  * `onTurnEnd` **故意不在这一列**（2.3.1 单发动路／绝不一技能两响）：它的唯一发动
  * 路是 canonical `ACTIVATE_SKILL`，任何情况下都不自动响。
@@ -41,7 +41,12 @@ export const TRIGGER_EVENTS: Partial<Record<DataSkillTrigger, readonly GameEvent
   // this trigger settles AFTER the source DAMAGE within one dispatch —
   // frozen semantics, see PROJECT_ARCH_MAP "Trigger 契约表".
   onBecomingTarget: ['BEFORE_DAMAGE'],
-  onDamageTaken: ['DAMAGE', 'DUEL_INJURY'],
+  // v2.8 刀5：受伤这一身**只听 `INJURY`**。它是每一刀落账后派生出来的那一声明
+  // （"这一员将的体力真实下降了"），护甲全挡、伤害≤0 都压根不发⇒用户 2026-10-03
+  // 重新裁定的判据（只有掉血才算受到伤害）在这里是**结构性成立**的，没有任何一处
+  // 再判断一次"这次算不算受到了伤害"。决斗的收官那一笔也是这一声（带 `duelStage:
+  // 'injury'`），逐轮那些"打"不发这一声（`chainedConsequences` 显式排除 `duelRound`）。
+  onDamageTaken: ['INJURY'],
   onDamageDealt: ['AFTER_DAMAGE'],
   onKill: ['DEATH'],
   onDeath: ['DEATH'],
@@ -62,9 +67,9 @@ export function eventsHeardBy(trigger: DataSkillTrigger): readonly GameEventType
  * 可响应问答读的"哪一声开一格"——**从上面那张表派生，不再自己写一份**
  * （v2.8.25；§H9 第九轮 d) 与决斗刀 2 的那两条事实原样保留）。
  *
- * 「受到伤害后」听两声：`DAMAGE` 本体＋决斗打完**按角色累计**的那笔
- * `DUEL_INJURY`（一场决斗只记一笔、只结算一次；逐轮那些"打"仍不响，由
- * `isReactionSourceEvent` 显式排除）。「成为目标时」不扩：决斗开局喂的是"成为
+ * 「受到伤害后」听一声：`INJURY`＝每一刀实际掉血派生的那一声明（v2.8 刀5）。决斗打完
+ * **按角色累计**的那笔也是同一声（一场决斗只记一笔、只结算一次；逐轮那些"打"压根不发
+ * 这一声，派生点显式排除 `duelRound`）。「成为目标时」不扩：决斗开局喂的是"成为
  * **技能**目标"，仍走同一声 `BEFORE_DAMAGE`，由载荷里的 `damageType:'skill'` 与
  * `targetSource` 那一维分档（第五轮⑤：不喂"成为攻击目标"）。
  */
