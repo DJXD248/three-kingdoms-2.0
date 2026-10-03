@@ -575,8 +575,11 @@ describe('内置批量一 · 真实模板全路径对账 (v2.4.1)', () => {
     expect(p1.hand).toHaveLength(1);
     expect(engine.state.deck).toHaveLength(2);
     expect(p2.hand).toHaveLength(1); // 曹操奸雄摸的牌归曹操玩家
-    // 攻击伤害 5 + 刚烈反伤 1（第一次攻击，第二次致命击时夏侯惇已离场无法响应）+ 猛进迎击 1 = 全链共 7 个 DAMAGE
-    // #71 已知限制：致命击中阵亡将领无法响应 onDamageTaken（damageEvents 先移除再扫描队列）
+    // 攻击伤害 5 + 刚烈反伤 1（第一次攻击会响，第二次那一刀把人打死⇒死者不响）+ 猛进迎击 1 = 全链共 7 个 DAMAGE
+    // 既定规则（用户 2026-10-03 确认，裁决原文与判据＝PROJECT_HANDOFF §12-100）：将领被击杀的那一刀，
+    // 它的「受到伤害后」与「成为目标时」两类技能**都不响应本次攻击／技能**——机制上＝响应链的问答在整次
+    // 结算之后才开（`TransitionCore` 结算后扫描），候选只扫在场的将，于是离场那个压根不在被问之列。
+    // 单位证人＝`src/skills/fatalBlowReaction.test.ts`。这一格记的是**规则**，不是缺陷，别当欠账销。
     expect(damageCount).toBe(7);
   });
 });
@@ -879,7 +882,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     }
     const all = steps.flat().map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
     const feedback = all.filter(e => e.type === 'DISCARD' && String(e.data?.skillId ?? '').includes('反馈:e1'));
-    expect(feedback).toHaveLength(1); // 第一次受击反馈一次；第二次致命击时司马懿已离场无法响应（#71 已知限制）
+    expect(feedback).toHaveLength(1); // 第一次受击反馈一次；第二次那一刀致命⇒按既定规则死者不响应本次（§12-100，不是缺陷）
     expect(feedback[0].data).toMatchObject({ playerId: 1, count: 1, effectType: 'DISCARD' });
     const finalState = engine.state;
     const p1 = finalState.players.find(p => p.id === 1)!;
