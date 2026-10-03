@@ -80,10 +80,18 @@
 1. 先直推：`git push origin master`，随后 `git push origin vX.Y.Z` 推标签（标签只作锚点，**不触发 CI**，见 Step 3 触发面）。
 2. 连接超时 → 一次性借道本地代理：`git -c http.proxy=http://127.0.0.1:10808 push origin master`。
    **绝不**把代理写进仓库级/全局持久 git 配置（曾因此代理一关推送全挂）；每次推完回查 `--local`/`--global` 仍为空。
-3. 代理也不通（用户可能没开 v2rayN）→ 停止，保留全部本地提交与标签，如实向用户报告"待补推"，
+3. 10808 无监听（用户不在家、没开 v2rayN）→ **第三级＝一次性"钉 IP"本地改道**（2026-10-03 实测跑通，用户口令后方准入）：
+   - 先现场量，别照抄：`nslookup github.com` 取到 IP，再对候选 IP 逐个 `curl -s --max-time 6 --resolve github.com:443:<IP> https://github.com`。
+     当日＝本机 DNS 与阿里 223.5.5.5、Google 8.8.8.8 **给出同一个连不通的 `20.205.243.166`**（⇒换 DNS 无效），而 `140.82.113.3`＝200 可用。
+   - 落地＝仓库外起一个临时 Node 脚本（仓库内不留文件、不写配置）当本地 CONNECT 代理：只听 `127.0.0.1`、只放行 GitHub 域名、只接 `CONNECT …:443`，
+     TLS 与证书校验照常、**不经手任何凭据**；再 `git -c http.proxy=http://127.0.0.1:<临时端口> push origin master`（一次性，同样回查配置为空）。
+   - 收工三查：`kill` 之后 **`pkill -f 脚本名` 杀不掉上一次 Bash 起的后台**⇒按 PID `taskkill //PID <pid> //F`，并 `netstat` 确认端口无监听、`--local`/`--global` 的 `http.proxy` 仍为空。
+   - 这条**不稳定、不是永久修复**：同日主批八笔一次过，紧接着的小回填连吃 3 次 `schannel: server closed abruptly`／`400`，退避重试（20/40/60/80 s）第 4 次才过⇒每次都要重量，别当常规通道。
+   - 另记一条诊断分界：**`api.github.com` 与 `github.com` 是两条独立的路**（当日前者 200、后者不通）⇒"推送失败"与"查 CI 失败"分开判，公开库查 CI 走匿名 REST、不需要凭据。
+4. 三级都不通 → 停止，保留全部本地提交与标签，如实向用户报告"待补推"，
    等用户口令（如"补推"）后一次性推送并补 CI 回填。用户明示暂缓时（如 2.2.10 当晚），整条链连同 CI 一起暂缓，§9 中 CI 标 PENDING。
-4. 快速自检：`curl -sI --max-time 10 https://github.com` 返回 200 即直连可用；否则探测 10808 端口是否开。
-5. **一次推送装多笔提交优先于分次推送**：`feat` + `docs`（登记）+ 标签属同一版，攒齐再推，
+5. 快速自检：`curl -sI --max-time 10 https://github.com` 返回 200 即直连可用；否则探测 10808 端口是否开。
+6. **一次推送装多笔提交优先于分次推送**：`feat` + `docs`（登记）+ 标签属同一版，攒齐再推，
    别为"先推代码、再推文档"制造第二轮 CI 等待。
 
 ## Step 3 — CI 核验（browser-use，本机无 gh CLI）
