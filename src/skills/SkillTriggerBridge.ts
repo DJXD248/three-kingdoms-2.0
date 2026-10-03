@@ -5,6 +5,7 @@ import type { GameEvent } from '../core/Event';
 import type { TriggerEngine } from '../triggers/TriggerEngine';
 import type { TriggerContext } from '../triggers/types';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { capDamageToBase } from '../core/baseDamage';
 import { evaluateSkillConditions } from './skillConditions';
 import { gateConditionsToText } from './skillGateText';
 import { matchesSkillEvent } from './skillEventMatch';
@@ -235,6 +236,11 @@ export class SkillTriggerBridge {
 
       if (effect.type === 'DAMAGE') {
         const targetRef = SkillTriggerBridge.findGeneralRef(state, targetId);
+        // 指不出将领、却能解出席位 ⇒ 这一笔打的是本营（`base_<座次>`）。
+        const baseTargetPlayerId = targetRef
+          ? undefined
+          : SkillTriggerBridge.playerIdFromBase(targetId);
+        const rawValue = Math.max(1, Number(effect.value ?? 1));
         return {
           type: 'DAMAGE',
           data: {
@@ -243,10 +249,14 @@ export class SkillTriggerBridge {
             sourceGeneralId: binding.skill.sourceGeneralId,
             targetPlayerId: targetRef
               ? targetRef.player.id
-              : SkillTriggerBridge.playerIdFromBase(targetId),
+              : baseTargetPlayerId,
             targetId: targetId ?? data.targetId,
             damageType: 'skill',
-            value: Math.max(1, Number(effect.value ?? 1))
+            // 「封」（§12-96）：技能伤害打本营同样单次最多 1 点，与普攻取的是
+            // 同一个发射点常量。打将领那一支照卡面数值，不受影响。
+            value: baseTargetPlayerId === undefined
+              ? rawValue
+              : capDamageToBase(rawValue),
           }
         };
       }

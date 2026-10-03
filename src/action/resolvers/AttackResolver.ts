@@ -4,6 +4,7 @@ import type { EngineState } from '../../core/GameState';
 import type { GameEvent } from '../../core/Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { applyArmorDamage } from '../../core/armorDamage';
+import { capDamageToBase } from '../../core/baseDamage';
 import { resolveDamageTaken } from '../../core/damageTaken';
 import { getAttackValue } from '../../core/attackValue';
 
@@ -113,7 +114,9 @@ export class AttackResolver implements ActionResolver {
         return [{ type: 'ACTION_REJECTED', data: { action, reason: 'INVALID_ATTACK_TARGET' } }];
       }
 
-      const damage = Math.min(1, baseDamage);
+      // 本营单次最多 1 点＝发射点的规则常量（`core/baseDamage.ts`），技能伤害那条
+      // 发射路（`SkillTriggerBridge`）取的是同一个数。
+      const damage = capDamageToBase(baseDamage);
       return [
         {
           type: 'BEFORE_DAMAGE',
