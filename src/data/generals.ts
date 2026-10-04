@@ -506,7 +506,7 @@ const SK_ROULIN: Skill = {
 };
 const SK_BENGHUAI: Skill = {
   name: '崩坏',
-  description: '成为攻击目标时惊惶失据：弃置自己的一张军备卡（伤害结算后落账，不减当次伤害）。',
+  description: '成为攻击目标时惊惶失据：弃置自己的一张军备卡。',
   effects: [{
     id: 'e1',
     trigger: { type: 'onBecomingTarget' },
