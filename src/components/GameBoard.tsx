@@ -12,6 +12,7 @@ import { getReactionAsk } from '../skills/reactionChain';
 import { getGeneralCardVisual } from '../utils/generalCardVisual';
 import { effectiveMaxHp } from '../core/statModifiers';
 import { getAttackValue } from '../core/attackValue';
+import { predictAttack, type AttackPrediction } from '../core/attackPreview';
 import { clearLocalGameSnapshot, saveLocalGameSnapshot } from '../store/localGameSnapshot';
 import Rules from './Rules';
 import Settings from './Settings';
@@ -61,6 +62,7 @@ export default function GameBoard(){
   const maxHpOf=(fg?:FieldGeneral|null)=>fg?effectiveMaxHp(engineState.statModifiers,ledgerTargetOf(fg),fg):0;
   const atkOf=(fg:FieldGeneral|undefined,ranged:boolean)=>fg?getAttackValue(fg,ranged,{ledger:engineState.statModifiers,target:ledgerTargetOf(fg)}):0;
 
+
   const [vm,setVm]=useState<ViewMode>('board');
   const [ins,setIns]=useState<InspectTarget|null>(null);
   const [depGen,setDepGen]=useState<General|null>(null);
@@ -96,6 +98,25 @@ export default function GameBoard(){
   const boardViewportRef=useRef<HTMLDivElement | null>(null);
   const boardContentRef=useRef<HTMLDivElement | null>(null);
   const [boardScale,setBoardScale]=useState(1);
+  // v2.8.34 attack preview: hovered target prediction during attack targeting.
+  const [atkPreviewKey,setAtkPreviewKey]=useState<string|null>(null);
+  const [_atkPrevMap,_setAtkPrevMap]=useState<Record<string,AttackPrediction>>({});
+  // Preview helpers — available once atkCard/atGen are declared above.
+  const _atkPreview=(atkCard&&atkGen)?_atkPrevMap:null as Record<string,AttackPrediction>|null;
+  const _previewFor=(tid:string)=>(_atkPreview&&(tid in _atkPreview))?_atkPreview[tid]:null;
+  const _onTargetHover=(tid:string,fu?:FieldGeneral,isBaseTarget?:boolean)=>{
+    if(!atkCard||!atkGen){_setAtkPrevMap({});setAtkPreviewKey(null);return;}
+    let pred:AttackPrediction|undefined;
+    if(isBaseTarget){
+      const dmg=getAttackValue(atkGen,atkRanged,{ledger:engineState.statModifiers,target:ledgerTargetOf(atkGen)});
+      pred={baseDamage:dmg,takenDamage:dmg,hpLost:dmg,armorLost:0,newHp:0,newArmor:0,isBase:true as const};
+    }else if(fu){
+      const dmg=getAttackValue(atkGen,atkRanged,{ledger:engineState.statModifiers,target:ledgerTargetOf(atkGen)});
+      pred=predictAttack(dmg,fu.currentHp,fu.currentArmor,engineState.statModifiers,Number(fu.ownerId),String(getRuntimeCardId(fu.general)),maxHpOf(fu));
+    }
+    if(pred){_setAtkPrevMap(p=>({...p,[tid]:pred!}));setAtkPreviewKey(tid);}else{setAtkPreviewKey(null);}
+  };
+  const _clearPreview=()=>{const tid=atkPreviewKey;if(tid){_setAtkPrevMap(p=>{const n={...p};delete n[tid];return n;});setAtkPreviewKey(null);}};
 
   // 回合边界守卫（纯展示层）：移动选格横幅浮起时"结束回合"仍可点，旧的
   // 高亮/横幅会漏进下一回合（HANDOFF §12-0 P5 残留）。采用 React 官方的
@@ -268,7 +289,7 @@ export default function GameBoard(){
     if(cp.hand.length===0)return;
     setAtkGen(fg);setAtkRanged(ranged);setAtkCard(null);setIns(null);setVm('selectAttackCard');
   };
-  const resetAtk=()=>{setAtkGen(null);setAtkRanged(false);setAtkCard(null);setVm('board');};
+  const resetAtk=()=>{setAtkGen(null);setAtkRanged(false);setAtkCard(null);_setAtkPrevMap({});setAtkPreviewKey(null);setVm('board');};
   const pickAtkCard=(c:General|GameCard)=>{setAtkCard(c);setVm('board');};
   const doAtk=(tid:string)=>{if(atkGen&&atkCard){attackTarget(getRuntimeCardId(atkGen.general),tid,atkRanged,atkCard);resetAtk();}};
 
@@ -369,7 +390,7 @@ export default function GameBoard(){
     if(isBase){
       const fl=Math.min(5,areaOwner.baseHp);
       const baseHit = hitBaseIds.includes(areaOwner.id);
-      return(<button type="button" onClick={()=>atkBase&&clickBase(areaOwner.id)}
+      return(<button type="button" onClick={()=>atkBase&&clickBase(areaOwner.id)} onMouseEnter={()=>_onTargetHover(`base_${areaOwner.id}`,undefined,true)} onMouseLeave={_clearPreview}
         className={`relative flex h-[88px] w-[72px] flex-col items-center justify-center rounded-lg border-2 transition-all ${atkBase?'animate-pulse ring-2 ring-red-500':''} ${baseHit?'animate-base-hit animate-pulse-glow ring-2 ring-red-400':''}`}
         style={{borderColor:atkBase?'#ef4444':baseHit?'#f87171':bc,background:`linear-gradient(180deg,${bc}30 0%,${bc}10 100%)`}}>
         <div className="absolute -top-3 left-0 right-0 flex justify-center gap-0.5">{[0,1,2,3,4].map(i=><span key={i} className="text-[8px]" style={{opacity:i<fl?1:0.15}}>🚩</span>)}</div>
@@ -389,6 +410,8 @@ export default function GameBoard(){
     ) : null;
     return(<button type="button"
       onClick={()=>{if(fg)clickFg(fg);else if(canDep)doDeploy(slot===0?0:2);else if(moveTarget)chooseMoveTarget({zone,slot,areaOwnerId:areaOwner.id});}}
+      onMouseEnter={()=>fg&&_onTargetHover(getRuntimeCardId(fg.general),fg)}
+      onMouseLeave={_clearPreview}
       className={`relative flex h-[88px] w-[72px] items-center justify-center rounded-lg border-2 transition-all ${(fg||canDep||moveTarget)?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkFg?`animate-pulse ring-2 ${atkFgFriendly?'ring-yellow-400':'ring-red-500'}`:''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
       style={{
         ...(generalVisual ?? {}),
@@ -412,7 +435,7 @@ export default function GameBoard(){
       o?.faction,
       generalHit || generalHeal ? 'rgba(0,0,0,0.46)' : 'rgba(0,0,0,0.40)'
     ) : null;
-    return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(moveTarget)chooseMoveTarget({zone:'battle',slot,areaOwnerId:null});}}
+    return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(moveTarget)chooseMoveTarget({zone:'battle',slot,areaOwnerId:null});}} onMouseEnter={()=>fg&&_onTargetHover(getRuntimeCardId(fg.general),fg)} onMouseLeave={_clearPreview}
       className={`flex h-[88px] w-[72px] items-center justify-center rounded-lg border-2 transition-all ${fg||moveTarget?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkOk?`animate-pulse ring-2 ${atkFriendly?'ring-yellow-400':'ring-red-500'}`:''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
       style={{
         ...(generalVisual ?? {}),
@@ -611,6 +634,22 @@ export default function GameBoard(){
           </div>
         </div>}
         {atkCard&&atkGen&&<div className="absolute left-1/2 top-2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-red-500 bg-red-900/90 px-5 py-2 animate-fadeIn"><span className="text-sm font-bold text-red-200">⚔️{atkRanged?'远程':'近战'}攻击 - 点击高亮目标</span><button onClick={resetAtk} className="rounded bg-gray-700 px-3 py-1 text-xs text-white">取消</button></div>}
+        {/* v2.8.34 attack preview tooltip */}
+        {atkCard&&atkGen&&atkPreviewKey&&(_previewFor(atkPreviewKey))&&(()=>{
+          const p=_previewFor(atkPreviewKey)!;const pred=p.isBase!==true&&p.newHp>=0;
+          return(<div className="pointer-events-none absolute left-1/2 top-[44px] z-30 -translate-x-1/2">
+            <div className={`rounded-lg border px-2.5 py-1 text-xs font-bold shadow-lg ${pred?(p.hpLost>0?'border-red-500/70 bg-black/85 text-red-200':'border-blue-500/70 bg-black/85 text-blue-200'):'border-yellow-500/70 bg-black/85 text-yellow-200'}`} style={{whiteSpace:'nowrap'}}>
+              {pred?p.hpLost>0?(<>
+                <span className="text-red-300">{p.baseDamage}伤</span>
+                <span className="mx-0.5 text-amber-100/50">|</span>
+                <span className="text-blue-300">{p.armorLost>0?`${p.armorLost}甲`:'无甲'}</span>
+                <span className="mx-0.5 text-amber-100/50">|</span>
+                <span className={p.newHp<=0?'text-orange-300':'text-red-300'}>{p.maxHp!=null?`${p.newHp}/${p.maxHp}`:''}</span>
+              </>):(<>HP: <span className={p.newHp>0?'text-green-300':'text-orange-300'}>{p.newHp}</span></>):null}
+              {!pred&&<span>本营 -{p.baseDamage}</span>}
+            </div>
+          </div>);
+        })()}
         {(vm==='board'||vm==='inspect')&&!atkCard&&<div className="absolute right-3 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-2">
           <button onClick={endTurn} className="rounded-lg border border-red-700/50 bg-red-900/60 px-3 py-2.5 text-xs font-bold text-red-200">⏭️结束回合</button>
           <button onClick={()=>setSurConf(true)} className="rounded-lg border border-gray-700/40 bg-gray-900/60 px-3 py-2 text-xs font-bold text-gray-400">🏳️投降</button>
