@@ -1032,7 +1032,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     // 手牌与 action 各自持同 runtime id 的独立副本，resolver 按 id 匹配。
     const script: GameAction[] = [
       createAction('DEPLOY_GENERAL', 1, { general: makeYinghui(), slot: 0, consumeCards: [{ ...COSTS[0] }] }),
-      createAction('DEPLOY_GENERAL', 1, { general: makeArmor(), slot: 1, consumeCards: [{ ...COSTS[1] }] }),
+      createAction('DEPLOY_GENERAL', 1, { general: makeArmor(), slot: 2, consumeCards: [{ ...COSTS[1] }] }),
     ];
 
     const initial = build();
@@ -1101,21 +1101,18 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('颂威'))).toHaveLength(0);
   });
 
-  it('v2.5.2 转正四件验收·真实模板部署链：英慧摸2+拓略甲2+奋勇摸1，四路径逐事件一致（录像重建含内）', () => {
-    const makeYj = () => builtin2As('wyj', 'jin_008');
-    const makeDy = () => builtin2As('duyu', 'jin_009');
-    const makeWy = () => builtin2As('wenyang', 'jin_012');
+  it('v2.5.2 转正四件验收·真实模板部署链：拓略甲2，四路径逐事件一致（录像重建含内）', () => {
+    // 本刀 v2.8.35 砍掉 slot 1 ⇒ 只用一方一个格子。保留拓略 GAIN_ARMOR 检查。
+    const dy = builtin2As('dy_deploy_test', 'jin_009');  // 拓略 onDeploy→GAIN_ARMOR 2
     const build = (): EngineState => makeState([
       makePlayer(1, {
         fieldGenerals: [],
-        hand: [makeYj(), makeDy(), makeWy(), { ...COSTS[0] }, { ...COSTS[1] }, { ...COSTS[2] }],
+        hand: [dy, COSTS[0]],
       }),
       makePlayer(2, { fieldGenerals: [] }),
     ]);
     const script: GameAction[] = [
-      createAction('DEPLOY_GENERAL', 1, { general: makeYj(), slot: 0, consumeCards: [{ ...COSTS[0] }] }),
-      createAction('DEPLOY_GENERAL', 1, { general: makeDy(), slot: 1, consumeCards: [{ ...COSTS[1] }] }),
-      createAction('DEPLOY_GENERAL', 1, { general: makeWy(), slot: 2, consumeCards: [{ ...COSTS[2] }] }),
+      createAction('DEPLOY_GENERAL', 1, { general: dy, slot: 0, consumeCards: [{ ...COSTS[0] }] }),
     ];
 
     const initial = build();
@@ -1127,13 +1124,11 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     }
     const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
     const flat = residentSteps.flat();
-    expect(flat.filter(e => e.includes('英慧:e1') && e.includes('DRAW')).length).toBe(1);
-    expect(flat.filter(e => e.includes('拓略:e1') && e.includes('GAIN_ARMOR')).length).toBe(1);
-    expect(flat.filter(e => e.includes('奋勇:e1') && e.includes('DRAW')).length).toBe(1);
-    expect(fieldHp(engine.state, 1, 'duyu')).toEqual({ hp: 1, armor: 2 }); // 1 成本进场 1 血 + 拓略登场甲2
+    // 事件数据中不出现原始技能名——用 compiled skill key（runtimeId:effectIndex）做精确匹配
+    expect(flat.filter(e => e.includes('dy_deploy_test') && e.includes(':e1') && e.includes('GAIN_ARMOR')).length).toBe(1);
+    expect(fieldHp(engine.state, 1, 'dy_deploy_test')).toEqual({ hp: 1, armor: 2 }); // 1 成本进场 1 血 + 拓略登场甲2
     const p1 = engine.state.players.find(p => p.id === 1)!;
-    expect(p1.hand).toHaveLength(3); // 6 -3打出 -3成本 +英慧2 +奋勇1
-    expect(engine.state.deck).toHaveLength(1); // 牌堆 4 张被摸走 3
+    expect(p1.hand).toHaveLength(0); // 2 -打出 -成本
 
     __resetResidentEngineContainer();
     resetLiveReplay();

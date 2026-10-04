@@ -154,11 +154,12 @@ export function getLegalActions(engine: GameEngine, playerId: number): GameActio
   // RESOLVE_BASE_LOSS: pending base-loss settlement (validator decides ownership).
   tryPush('RESOLVE_BASE_LOSS');
 
-  // DEPLOY_GENERAL: hand general × own camp slot 0..2 × first (hp) other hand cards.
+  // DEPLOY_GENERAL: hand general × own camp slots [0, 2] × first (hp) other hand cards.
+  // Slot 1 = base/backline cell (渲染层固定显示"本营") — not a deployable camp slot.
   for (const generalCard of generalCards) {
     const costCount = Math.max(1, Math.min(Number(generalCard.hp) || 1, Math.max(0, hand.length - 1)));
     const consumeCards = hand.filter(card => runtimeId(card) !== runtimeId(generalCard)).slice(0, costCount);
-    for (const slot of [0, 1, 2]) {
+    for (const slot of [0, 2]) {
       tryPush('DEPLOY_GENERAL', { general: generalCard, slot, consumeCards });
     }
   }

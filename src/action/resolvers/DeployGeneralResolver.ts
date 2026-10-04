@@ -56,7 +56,7 @@ export class DeployGeneralResolver implements ActionResolver {
     if (fieldGenerals.some((fg: any) => getRuntimeCardId(fg?.general) === selectedGeneralRuntimeId)) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'GENERAL_ALREADY_DEPLOYED' } }];
     }
-    if (!Number.isInteger(payload.slot) || payload.slot < 0 || payload.slot > 2) {
+    if (!Number.isInteger(payload.slot) || payload.slot < 0 || payload.slot > 2 || payload.slot === 1) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'INVALID_CAMP_SLOT' } }];
     }
     // Camp occupancy is per AREA, not per player record: an enemy general that

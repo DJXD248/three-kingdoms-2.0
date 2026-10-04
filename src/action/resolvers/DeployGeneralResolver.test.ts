@@ -181,10 +181,10 @@ describe('DeployGeneralResolver', () => {
       expect(events[0].type).toBe('ACTION_REJECTED');
       expect((events[0].data as any).reason).toBe('CAMP_SLOT_OCCUPIED');
 
-      // A free slot in the same camp still deploys fine.
+      // A free slot in the same camp still deploys fine (slot 2, not 1 = base).
       const otherSlot = createAction('DEPLOY_GENERAL', 1, {
         general: generalCard,
-        slot: 1,
+        slot: 2,
         consumeCards: [consumeCard],
       });
       expect(resolver.resolve(state, otherSlot as any)[0].type).toBe('GENERAL_DEPLOYED');
@@ -285,7 +285,7 @@ describe('DeployGeneralResolver', () => {
       const state = createTestState([player]);
       const action = createAction('DEPLOY_GENERAL', 1, {
         general: generalCard,
-        slot: 1,
+        slot: 2,
         consumeCards,
       });
 
@@ -294,7 +294,7 @@ describe('DeployGeneralResolver', () => {
       expect((events[0].data as any).consumeCards).toHaveLength(3);
     });
 
-    it('should accept different valid slots (0, 1, 2)', () => {
+    it('should accept valid slots (0, 2) but reject slot 1 (base cell)', () => {
       const generalCard = { id: 'g1', hp: 2 };
       const consumeCard = { id: 'c1' };
       const player = createTestPlayer(1, {
@@ -302,7 +302,7 @@ describe('DeployGeneralResolver', () => {
       });
       const state = createTestState([player]);
 
-      for (let slot = 0; slot <= 2; slot++) {
+      for (const slot of [0, 2]) {
         const action = createAction('DEPLOY_GENERAL', 1, {
           general: generalCard,
           slot,
@@ -313,6 +313,16 @@ describe('DeployGeneralResolver', () => {
         expect(events[0].type).toBe('GENERAL_DEPLOYED');
         expect((events[0].data as any).slot).toBe(slot);
       }
+
+      // Slot 1 = base cell, never deployable.
+      const slot1Action = createAction('DEPLOY_GENERAL', 1, {
+        general: generalCard,
+        slot: 1,
+        consumeCards: [consumeCard],
+      });
+      const slot1Events = resolver.resolve(state, slot1Action as any);
+      expect(slot1Events[0].type).toBe('ACTION_REJECTED');
+      expect((slot1Events[0].data as any).reason).toBe('INVALID_CAMP_SLOT');
     });
   });
 });
