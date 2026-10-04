@@ -102,11 +102,18 @@ export interface RandomOutcomeData {
 
 /**
  * SKILL_ACTIVATED (2.3.1, decision D-3 content era): the A-class record that
- * an explicit ACTIVATE_SKILL action ran. Currently only the ask-before-END_TURN
- * turn-end path (turnEndSkills/TurnEndSkillResolver) mints it. Its `stableId`
- * (`<turn>:<skillId>`) is what consumption tracking stores in
+ * an explicit activation of a skill happened. Since v2.8.32 all three
+ * activation paths (turn-end ask / reaction answer / automatic trigger) mint it
+ * through the SINGLE producer `skills/skillQuota.ts`, but the two non-turn-end
+ * paths only do so for definitions carrying a once-per-game quota (`limitKey`).
+ * Its `stableId` (`<turn>:<skillId>`) is what consumption tracking stores in
  * EngineState.consumedSkills, making "once per turn" a replayable game fact
  * rather than container timing.
+ *
+ * v2.8.32 限定技额度刀更正那一句"only"：**三条发动路共用这一个记账形状**（唯一
+ * 生产点＝`skills/skillQuota.ts` 的 `skillActivatedEvent`），但自动触发路与响应问
+ * 答路只在定义**带一局一次额度**时才落这一笔——台账唯一的消费者就是这个额度，与其
+ * 他定义多落一条事件＝凭空改事件流而没人读，两个锚池也会白漂。
  */
 export interface SkillActivationEventData {
   skillId: string;
@@ -115,6 +122,9 @@ export interface SkillActivationEventData {
   generalId: string;
   playerId: number;
   stableId: string;
+  /** v2.8.32：带「一局一次」额度的定义才落这一键＝这枚技能的额度身份。见
+   *  `EngineState.consumedSkills` 上的同名键。 */
+  limitKey?: string;
 }
 
 /**

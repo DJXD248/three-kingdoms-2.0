@@ -9,6 +9,7 @@ import { capDamageToBase } from '../core/baseDamage';
 import { evaluateSkillConditions } from './skillConditions';
 import { gateConditionsToText } from './skillGateText';
 import { matchesSkillEvent } from './skillEventMatch';
+import { limitedActivationEvent, limitedQuotaAvailable } from './skillQuota';
 import { eventsHeardBy, isReactionTrigger } from './reactionTriggers';
 import {
   enumerateHandCardCandidates,
@@ -110,7 +111,10 @@ function buildCondition(
   // v2.7.3 gate conditions ride AFTER identity (先身份、再门槛). Pure predicate
   // over already-recorded facts, fail-closed, emits nothing by itself.
   return (context) => ownerCanActivate(skill, context.state, ownerId)
-    && matchesSkillEvent(trigger, binding, context.event) && evaluateSkillConditions(skill.conditions, {
+    && matchesSkillEvent(trigger, binding, context.event)
+    // v2.8.32 限定技额度：额度是**账本事实**，与门槛（战场事实）分列两处判，读同一
+    // 个判定函数＝三条路加界面四处同判据。fail-closed、自身不发事件。
+    && limitedQuotaAvailable(context.state, skill, context.quotaSpent) && evaluateSkillConditions(skill.conditions, {
     state: context.state,
     ownerId,
     sourceGeneralId: skill.sourceGeneralId,
@@ -184,8 +188,21 @@ export class SkillTriggerBridge {
         // id 一并带到 trigger 上；读法与 `generalMatches` 用的同一个键。
         generalId: binding.skill.sourceGeneralId,
         condition: buildCondition(binding.skill.trigger, binding),
-        createEvents: (context) =>
-          SkillTriggerBridge.createSkillEvents(binding, context.state, context.event)
+        createEvents: (context) => {
+          const effectEvents = SkillTriggerBridge.createSkillEvents(binding, context.state, context.event);
+          // v2.8.32 限定技额度刀·自动路的发动账。只有带额度的定义才多落这一笔
+          // （`limitedActivationEvent` 里两条不落账的场合见该文件），并且当场把额度
+          // 键记进这条链的已用集合——整条展开读的是落账前的同一个 state，不记这一笔
+          // 就有"一条链上两声命中、技能结两遍而台账只扣一次"的洞。
+          const activation = limitedActivationEvent(binding.skill, {
+            playerId: binding.ownerId,
+            generalId: binding.skill.sourceGeneralId ?? '',
+            turn: context.state.turn ?? 0,
+          }, effectEvents.length);
+          if (!activation) return effectEvents;
+          if (binding.skill.limitKey) context.quotaSpent?.add(binding.skill.limitKey);
+          return [activation, ...effectEvents];
+        },
       });
       unregisters.push(unregister);
       ids.push(triggerId);

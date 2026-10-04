@@ -166,6 +166,12 @@ export interface ConsumedSkill {
   skillId: string;
   turn: number;
   playerId: number;
+  /**
+   * v2.8.32 限定技额度刀：这一笔消耗的是哪一枚**技能**的一局一次额度（编译器给的
+   * `<将领实例>:<技能名>`，同一枚技能编出好几个定义也共用这一个键）。只有带额度
+   * 的定义落账时才写这一键；既有条目一律没有＝旧局没有额度可消耗，如实成立。
+   */
+  limitKey?: string;
 }
 
 export function createInitialEngineState(): EngineState {

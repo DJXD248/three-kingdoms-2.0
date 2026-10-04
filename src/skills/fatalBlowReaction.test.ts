@@ -124,6 +124,8 @@ const fieldOf = (engine: GameEngine, playerId: number) =>
   engine.state.players.find(p => p.id === playerId)?.fieldGenerals ?? [];
 const hpOf = (engine: GameEngine, playerId: number): number | undefined =>
   (fieldOf(engine, playerId)[0] as { currentHp?: number } | undefined)?.currentHp;
+const armorOf = (engine: GameEngine, playerId: number): number | undefined =>
+  (fieldOf(engine, playerId)[0] as { currentArmor?: number } | undefined)?.currentArmor;
 
 describe('受击那一型：在被这一刀打死之前就已经发动完了（§12-102）', () => {
   it('问人路·致命一刀：格照样开，而且开在伤害落下**之前**', () => {
@@ -160,6 +162,7 @@ describe('受击那一型：在被这一刀打死之前就已经发动完了（�
     expect(hpOf(engine, 1)).toBe(4);
     expect(events.some(e => e.type === 'DEATH')).toBe(true);
     expect(engine.state.players[1].fieldGenerals).toHaveLength(0);
+    expect(getReactionAsk(engine.state)).toBeNull();
   });
 
   it('自动路（强制发动）·致命一刀：反伤当场落，与手动路同一条判据', () => {
@@ -202,6 +205,8 @@ describe('甲案：受击那一拍把出手的那位扎死了⇒那一刀跟着�
     // 取消＝整笔不留痕迹：没有落账、没有"攻击完成"、也没有后序那一声。
     expect(typesOf(events)).not.toContain('ATTACK_RESOLVED');
     expect(typesOf(events)).not.toContain('AFTER_DAMAGE');
+    // 「零事件」这句判据的证人（闸③复算补）：连"这一下被拒了"那类事件都不产生。
+    expect(typesOf(events)).not.toContain('ACTION_REJECTED');
     // 这一刀的粮草从未被吃掉（出手的那位已经不在场）。
     expect(engine.state.players[0].hand).toHaveLength(1);
     expect(getReactionAsk(engine.state)).toBeNull();
@@ -215,6 +220,8 @@ describe('甲案：受击那一拍把出手的那位扎死了⇒那一刀跟着�
     expect(hpOf(engine, 2)).toBe(1);
     expect(engine.state.players[1].fieldGenerals).toHaveLength(1);
     expect(typesOf(events)).not.toContain('ATTACK_RESOLVED');
+    expect(typesOf(events)).not.toContain('AFTER_DAMAGE');
+    expect(typesOf(events)).not.toContain('ACTION_REJECTED');
     expect(engine.state.players[0].hand).toHaveLength(1);
   });
 
@@ -225,6 +232,7 @@ describe('甲案：受击那一拍把出手的那位扎死了⇒那一刀跟着�
     expect(hpOf(engine, 1)).toBe(1);
     expect(events.some(e => e.type === 'DEATH')).toBe(true);
     expect(engine.state.players[1].fieldGenerals).toHaveLength(0);
+    expect(getReactionAsk(engine.state)).toBeNull();
   });
 });
 
@@ -272,5 +280,78 @@ describe('受伤那一型：必须真的掉血，所以它在这一刀之后—�
       'INJURY', 'STATE_CHANGED',
     ]);
     expect((events[1].data as { attackStage?: unknown }).attackStage).toBeUndefined();
+  });
+});
+
+/** 「成为目标时获得 1 点护甲」——受击那一型，但它改的是**这一刀落账时要读的数**。 */
+function armorSkill(name: string): Skill {
+  return {
+    name, description: `${name}：成为目标时获得 1 点护甲`,
+    effects: [{
+      id: 'e1', trigger: { type: 'onBecomingTarget' },
+      runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' },
+    }],
+  } as Skill;
+}
+
+/**
+ * 真搬／假搬的分界钉子（闸③独立复算补，2026-10-04）：延后的那一拍必须**对着受击那一层
+ * 走完之后的状态**重算数字。护甲那条算式是"2 点挡 1 点"（`core/armorDamage.ts:15`），
+ * 所以给一位已有 1 点护甲的将领在受击那一拍再补 1 点，两种形状的可观察结果**不同**：
+ *  ‧ 真搬＝落账时护甲已是 2⇒`armorLost:2 / hpLost:1`（2 点伤害被挡掉 1 点）；
+ *  ‧ 假搬＝数字烤在宣告那一拍、护甲事后才到⇒`armorLost:0 / hpLost:2`。
+ * 摘掉本刀的延后机制（或把重核算术换成宣告时那份）⇒这两例当场变红。
+ */
+describe('延后的那一拍重核算数：受击那一层改的数进了最终伤害（§12-102）', () => {
+  function setup(skills: Skill[], forced: boolean) {
+    const owned = forced ? skills.map(s => ({ ...s, forced: true }) as Skill) : skills;
+    const victim = makeFieldGeneral(makeGeneral('g2', owned), 2, 5);
+    victim.currentArmor = 1;
+    const state = makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g1', []), 1, 4)], hand: [COST] }),
+      makePlayer(2, { fieldGenerals: [victim] }),
+    ]);
+    const engine = new GameEngine(state);
+    syncPlayerSkills(engine, state);
+    const events = engine.dispatch(createAction('ATTACK', 1, {
+      attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: COST,
+    }));
+    return { engine, events };
+  }
+
+  const attackDamage = (events: GameEvent[]) => events.find(e =>
+    e.type === 'DAMAGE' && (e.data as { damageType?: string }).damageType === 'attack')!;
+
+  it('问人路：受击那一拍补的那 1 点护甲，真的进了这一刀的减伤', () => {
+    const { engine, events } = setup([armorSkill('固守')], false);
+    // 宣告那一拍不落账⇒问窗之前护甲还没补上，这一刀的数字也还没定。
+    expect(damageCount(events)).toBe(0);
+    expect(getReactionAsk(engine.state)?.sourceEvent.type).toBe('BEFORE_DAMAGE');
+
+    const answered = answer(engine, 'activate');
+    const blow = attackDamage(answered);
+    expect((blow.data as { armorLost?: number }).armorLost).toBe(2);
+    expect((blow.data as { hpLost?: number }).hpLost).toBe(1);
+    expect(hpOf(engine, 2)).toBe(4);
+    expect(armorOf(engine, 2)).toBe(0);
+    expect(getReactionAsk(engine.state)).toBeNull();
+  });
+
+  it('自动路（强制发动）：同一判据、同一个重核后的数字', () => {
+    const { engine, events } = setup([armorSkill('刚·固守')], true);
+    expect(getReactionAsk(engine.state)).toBeNull();
+    const blow = attackDamage(events);
+    expect((blow.data as { armorLost?: number }).armorLost).toBe(2);
+    expect((blow.data as { hpLost?: number }).hpLost).toBe(1);
+    expect(hpOf(engine, 2)).toBe(4);
+    expect(armorOf(engine, 2)).toBe(0);
+  });
+
+  it('对照组：同样起手 1 点护甲、但受击那一层没人补⇒挡不住（1 点不够挡 1 点）', () => {
+    const { engine, events } = setup([], false);
+    const blow = attackDamage(events);
+    expect((blow.data as { armorLost?: number }).armorLost).toBe(0);
+    expect((blow.data as { hpLost?: number }).hpLost).toBe(2);
+    expect(hpOf(engine, 2)).toBe(3);
   });
 });

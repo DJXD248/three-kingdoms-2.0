@@ -32,6 +32,7 @@ import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { compileGeneralSkills } from './skillCompiler';
 import { evaluateSkillConditions } from './skillConditions';
 import { matchesSkillEvent } from './skillEventMatch';
+import { limitedQuotaAvailable } from './skillQuota';
 import { PRIORITY, SkillTriggerBridge, defersToReactionQueue } from './SkillTriggerBridge';
 import type { DataSkillDefinition } from './dataTypes';
 import { eventsHeardBy, reactionTriggerOfEvent } from './reactionTriggers';
@@ -124,6 +125,10 @@ function collectListeners(
           sourceGeneralId: definition.sourceGeneralId,
           event: sourceEvent,
         })) continue;
+        // v2.8.32 限定技额度：额度用尽＝这一枚不再是候选（与上面门槛不过同一处置：
+        // 问答路没有"置灰列出"的形状，能列的就是能答的）。这一路不需要触发链那份
+        // 链内集合——每一次表态都是一次独立 dispatch，两次之间账已经落了。
+        if (!limitedQuotaAvailable(state, definition)) continue;
         candidates.push({
           ownerId: player.id,
           generalId: definition.sourceGeneralId === undefined ? '' : String(definition.sourceGeneralId),

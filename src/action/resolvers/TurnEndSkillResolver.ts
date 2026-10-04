@@ -1,9 +1,14 @@
 import type { ActionResolver } from './ResolverTypes';
 import type { GameAction } from '../ActionTypes';
 import type { EngineState } from '../../core/GameState';
-import type { GameEvent, ReactionAnsweredData, SkillActivationEventData } from '../../core/Event';
+import type { GameEvent, ReactionAnsweredData } from '../../core/Event';
 import { SkillTriggerBridge } from '../../skills/SkillTriggerBridge';
 import { evaluateSkillConditions } from '../../skills/skillConditions';
+import {
+  limitedActivationEvent,
+  limitedQuotaAvailable,
+  skillActivatedEvent,
+} from '../../skills/skillQuota';
 import { listAllTurnEndDefinitions } from '../../skills/turnEndSkills';
 import {
   getReactionAsk,
@@ -39,10 +44,12 @@ interface ActivateSkillPayload {
  * `ResolverRegistry.getResolver` 取第一个 `canResolve` 命中的，而 `canResolve`
  * 看不见状态。
  *
- * 两条路的记账**刻意不同**：回合结束那次记 `SKILL_ACTIVATED`（每回合一次的台账
- * 由它落账），响应那次只记 `REACTION_ANSWERED`。理由＝自动触发路也不记这条，
- * 把"到点自动响"换成"停下来问"绝不能顺手改台账；效果事件照样带 skillId/
- * skillName，所以日志与频次统计口径不变。
+ * 两条路的记账（v2.8.32 限定技额度刀更正）：过去这里写着"响应那次只记
+ * `REACTION_ANSWERED`、与自动路逐字同一套账"，本刀起**带「一局一次」额度的定义三条
+ * 路都记同一笔 `SKILL_ACTIVATED`**——额度要跨回合、跨发动路查，账不落就管不住。
+ * 不带额度的定义一字未变（两条路仍只记各自那一句），所以既有对局的事件流逐字节不动。
+ * `stableId` 的形状也统一由 `skills/skillQuota.ts` 单点生产；回合结束那一路的每回合
+ * 一次门查的仍是同一个键。
  */
 export class TurnEndSkillResolver implements ActionResolver {
   canResolve(action: GameAction): boolean {
@@ -77,6 +84,11 @@ export class TurnEndSkillResolver implements ActionResolver {
     if ((state.consumedSkills ?? []).some(c => c.stableId === `${turn}:${skillId}`)) {
       return [rejected(action, 'SKILL_ALREADY_ACTIVATED')];
     }
+    // v2.8.32 限定技额度：同一句判据，第四条消费路（解析器复核）。放在"本回合已经
+    // 用过"之后＝既有拒绝理由逐字不变，只有跨回合再用同一枚限定技才新报这一条。
+    if (!limitedQuotaAvailable(state, definition)) {
+      return [rejected(action, 'SKILL_LIMIT_EXHAUSTED')];
+    }
     // v2.7.3 threshold gate: re-derived here independently of the candidate
     // filter, so an activation that raced a state change is honestly refused
     // instead of settling as a silent no-op skill.
@@ -88,16 +100,9 @@ export class TurnEndSkillResolver implements ActionResolver {
       return [rejected(action, 'SKILL_CONDITION_UNMET')];
     }
 
-    const stableId = `${turn}:${definition.id}`;
-    const activationData: SkillActivationEventData = {
-      skillId: definition.id,
-      skillName: definition.name,
-      effectId: definition.effectId ?? definition.id,
-      generalId,
-      playerId: action.playerId,
-      stableId,
-    };
-    const activationEvent: GameEvent = { type: 'SKILL_ACTIVATED', data: activationData };
+    // 载荷形状的唯一生产点（v2.8.32）：键序与 v2.8.31 逐字一致，不带额度的定义
+    // 连键都不多——三条路因此记的是同一份账。
+    const activationEvent = skillActivatedEvent(definition, { playerId: action.playerId, generalId, turn });
     const effectEvents = SkillTriggerBridge.createSkillEvents(
       { ownerId: action.playerId, skill: definition },
       state,
@@ -138,6 +143,11 @@ function resolveReactionActivation(
 
   const option: ReactionOption | undefined = ask.options.find(entry => entry.skillId === skillId);
   if (!option) return [rejected(action, 'REACTION_SKILL_NOT_FOUND')];
+  // v2.8.32：候选过滤器已经扣过额度，这一句是解析器侧的独立复核（与上面回合结束
+  // 那条同一口径：合法性从 EngineState 重推，绝不信载荷或窗口的陈旧快照）。
+  if (!limitedQuotaAvailable(state, option.definition)) {
+    return [rejected(action, 'SKILL_LIMIT_EXHAUSTED')];
+  }
 
   const answeredData: ReactionAnsweredData = reactionAnsweredOf(ask, option);
   const answeredEvent: GameEvent = { type: 'REACTION_ANSWERED', data: answeredData };
@@ -146,5 +156,13 @@ function resolveReactionActivation(
   if (option.definition.choiceMode && effectEvents.length === 0) {
     return [rejected(action, 'SKILL_CONDITION_UNMET')];
   }
-  return [answeredEvent, ...effectEvents];
+  // v2.8.32 限定技额度刀：问答路的这一次点头**也是一次发动**，所以带额度的定义
+  // 在这里落同一笔账（形状仍走唯一生产点）。不带额度的定义一字未变——只多出来的
+  // 那一笔才是本刀的账，其余定义的事件流逐字节不动。
+  const activation = limitedActivationEvent(option.definition, {
+    playerId: action.playerId,
+    generalId: ask.generalId,
+    turn: state.turn ?? 0,
+  }, effectEvents.length);
+  return [...(activation ? [activation] : []), answeredEvent, ...effectEvents];
 }

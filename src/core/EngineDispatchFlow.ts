@@ -19,6 +19,10 @@ export function resolveTriggerChain(
   const queue = [...initialEvents];
   let depth = 0;
   let generatedCount = 0;
+  // v2.8.32 限定技额度：整条展开读的是同一个（落账前的）state，所以"这条链里已经
+  // 响过的那一枚一局一次"必须在这里记一笔，否则一条链上两声命中＝技能结两遍、台账
+  // 只扣一次。跨调用不共享——每次调用之间已经落过账，账本才是真相。
+  const quotaSpent = new Set<string>();
 
   while (queue.length > 0 && depth < MAX_TRIGGER_DEPTH && generatedCount < MAX_EVENTS_PER_CHAIN) {
     const next = queue.shift();
@@ -26,7 +30,7 @@ export function resolveTriggerChain(
 
     result.push(next);
 
-    const triggerResult = triggers.process(state, next, depth, next.id);
+    const triggerResult = triggers.process(state, next, depth, next.id, quotaSpent);
     if (triggerResult.truncated) {
       result.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_CHAIN_LIMIT', sourceEvent: next } });
     }

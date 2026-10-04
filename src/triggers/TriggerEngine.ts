@@ -48,7 +48,9 @@ export class TriggerEngine {
     state: EngineState,
     event: GameEvent,
     depth = 0,
-    rootEventId = event.id ?? `${event.type}:${event.timestamp ?? Date.now()}`
+    rootEventId = event.id ?? `${event.type}:${event.timestamp ?? Date.now()}`,
+    /** v2.8.32：同一条展开链里已落账的「一局一次」额度键（见 `TriggerContext.quotaSpent`）。 */
+    quotaSpent?: Set<string>,
   ): TriggerProcessResult {
     if (depth >= MAX_TRIGGER_DEPTH) {
       return { events: [], depth, truncated: true };
@@ -80,7 +82,8 @@ export class TriggerEngine {
         depth,
         rootEventId,
         ownerId: trigger.ownerId,
-        skillId: trigger.skillId
+        skillId: trigger.skillId,
+        quotaSpent,
       };
 
       if (trigger.condition && !trigger.condition(context)) continue;

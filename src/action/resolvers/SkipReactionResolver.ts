@@ -10,8 +10,9 @@ import { getReactionAsk, reactionAnsweredOf } from '../../skills/reactionChain';
  * 它和 `ACTIVATE_SKILL` 的响应分支是同一句问答的两个出口（§12-61：问窗必须有出
  * 口），形状照 `ChooseOptionResolver`：只把已经冻结在状态里的那一句问话翻译成
  * 一条事实（`REACTION_ANSWERED`，`skillId===null`），不碰任何效果机制、不产生
- * `SKILL_ACTIVATED`（响应不是"发动一次技能"进台账的那条路——自动触发路也不进，
- * 两边逐字一致）。
+ * `SKILL_ACTIVATED`——**这一条到今天仍然成立**：不发动就不是"发动了一次技能"，
+ * 一局一次的额度因此不会被一次跳过扣掉（v2.8.32 更正的是发动那两条路也进台账，
+ * 跳过这一条始终不进）。
  *
  * 合法性全部从 EngineState 现算：问句由 `getReactionAsk` 派生，载荷里的 `nodeKey`
  * 只用来核对"答的是不是当前这一格"，绝不反过来决定问谁。

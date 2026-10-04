@@ -226,6 +226,11 @@ export function compileSkill(
   const ownerKey = runtimeGeneralId ?? general.id;
   // v2.8 刀4（#25）：锁定技徽章＝账本上那一笔"移不走"。技能级属性，choice 组同样继承。
   const lockedTag = tagsOf(skill).includes('锁定技');
+  // v2.8.32 限定技额度刀：限定技徽章＝这枚技能有一局一次的额度。**按技能给键**
+  // （`<将领实例>:<技能名>`），因为裁决说的是"每枚技能各一局一次"，而一枚技能可能
+  // 编出多个定义（多效果／不同时机）——键按定义走会让第二次发动合法。
+  const limitedTag = tagsOf(skill).includes('限定技');
+  const limitKey = `${ownerKey}:${skill.name}`;
 
   const consider = (effect: SkillEffect | undefined, fallbackTrigger: Skill['trigger']): CompiledEffect | null => {
     // A skill without effect entries can never carry structured payloads.
@@ -378,6 +383,9 @@ export function compileSkill(
     // 由 skills/passiveModifiers.ts 单独消费。同样"只在真为 true 时落键"。
     ...(c.mapped === 'passive' ? { passive: true } : {}),
     ...(lockedTag && c.data.type === 'MODIFY_STAT' ? { locked: true } : {}),
+    // 「一局一次」额度按技能给键；passive 型不落键——持续生效没有"发动一次"的时刻，
+    // 落键只会假装管住了它（如实账见 dataTypes 的 limitKey 注释）。
+    ...(limitedTag && c.mapped !== 'passive' ? { limitKey } : {}),
   });
 
   const candidates: CompiledEffect[] = [];
@@ -440,6 +448,8 @@ export function compileSkill(
         // 锁定技同理继承，但只在组里**真有**写账本的效果时落键（择一之后落的那
         // 一笔才需要"移不走"位）。
         ...(lockedTag && group.some(c => c.data.type === 'MODIFY_STAT') ? { locked: true } : {}),
+        // 限定技同理继承：整组择一＝一次发动＝一次额度（键与单效果定义同形）。
+        ...(limitedTag ? { limitKey } : {}),
       });
     }
   } else {
