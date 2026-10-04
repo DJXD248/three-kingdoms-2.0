@@ -72,6 +72,11 @@ export function defersToReactionQueue(skill: DataSkillDefinition): boolean {
  * 只扫在场将），两条路读的是同一句判据＝**发动那一刻主人还在不在场**。放在最前面（先于身份
  * 与门槛）＝主人已离场时连"响了一声"那条事件都不发，账上绝不留下空发。
  *
+ * 这里是**唯一的**执法点（v2.8.31 定义封口刀把 v2.8.30 那半把结算侧的闸拆了）：用户
+ * 2026-10-04 把两型定义封死后，"这一刀整个算完之后再看主人在不在场"对**受击**那一型是
+ * 错的——它按定义在伤害计算之前就发动完了，和这一刀打死谁无关。拆开之后判据反而更简单：
+ * 每一型只在**它自己该响的那一刻**问一次"主人还在不在场"，而发射点天然就在那一刻。
+ *
  * **豁免＝「自身阵亡时」那一型**（`onDeath`＝遗言／遗计，官方账里四张将在用）：它按定义就在
  * 主人离场那一刻响，掐掉它等于把一条既有裁决判成空发。
  */
@@ -243,11 +248,6 @@ export class SkillTriggerBridge {
         skillName: binding.skill.name,
         effectType: effect.type,
         triggerEventId: event.id,
-        // 结算侧的在场资格随事件同行（用户 2026-10-03 裁决「乙案」＝这一刀整个算完，
-        // 主人不在场⇒它 generated 的这一笔不落账、也不留在事件流里）。主人自身阵亡
-        // 那一型（`onDeath`＝遗言／遗计）按定义就在离场那一刻发动⇒标记为不需要。
-        ownerGeneralId: binding.skill.sourceGeneralId ?? '',
-        ownerPresenceRequired: binding.skill.trigger !== 'onDeath'
       };
       // A choice producer candidate names the exact hand cards to settle
       // (v2.7.2); every payload minted before this carries no cardKeys and

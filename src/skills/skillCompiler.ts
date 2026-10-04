@@ -62,10 +62,12 @@ import type { EngineState } from '../core/GameState';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 
 /** Skill triggers that map 1:1 onto real engine events.
- * onBecomingTarget maps to BEFORE_DAMAGE (2.3.0): a pure notification emitted
- * by AttackResolver right before damage settlement — no new event type, no
- * state change. Base-targeted BEFORE_DAMAGE carries no targetPlayerId, so a
- * general skill legitimately never fires on base attacks. */
+ * onBecomingTarget maps to BEFORE_DAMAGE: a pure notification — no new event
+ * type, no state change. Since v2.8.31 (§12-102) it is emitted by the attack's
+ * FIRST beat (`core/attackBlow.ts`, reached through AttackResolver) and the
+ * damage itself is computed only after that layer resolved, so this trigger
+ * genuinely means "成为目标时". Base-targeted BEFORE_DAMAGE carries no
+ * targetPlayerId, so a general skill legitimately never fires on base attacks. */
 const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>> = {
   onDeploy: 'onDeploy',
   onTurnStart: 'onTurnStart',

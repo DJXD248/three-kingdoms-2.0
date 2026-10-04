@@ -302,6 +302,71 @@ function openingDuelKeyOfNode(node: ReactionNode): string | null {
 }
 
 /**
+ * 延后那一拍的普攻（v2.8.31 定义封口刀）：认法只有一处——`attackStage:'declare'`
+ * 那一身带 `attackKey` 的通知（发信侧 `core/attackBlow.ts` 是唯一写它的地方）。
+ * 续跑环的去重也读这里，"哪一刀是同一刀"因此没有第二个推导点。
+ */
+export function attackResumeKeyOf(event: GameEvent): string | null {
+  const payload = event.data as { attackStage?: unknown; attackKey?: unknown } | undefined;
+  if (payload?.attackStage !== 'declare') return null;
+  return typeof payload.attackKey === 'string' && payload.attackKey ? payload.attackKey : null;
+}
+
+function declaredAttackKeyOfNode(node: ReactionNode): string | null {
+  if (node.sourceEvent.type !== 'BEFORE_DAMAGE') return null;
+  return attackResumeKeyOf(node.sourceEvent);
+}
+
+/**
+ * 普攻续跑清单（§12-102 两拍形状："受击那一层走完 ⇒ 这一刀的 `damage` 那一拍该落了"）。
+ *
+ * 判据与上面那份决斗续跑**同源、同两条**（纯 from 本次 dispatch 的事件序列＋扫描前后的
+ * 队列，故常驻/重建/回放三路同果）：
+ *  - 本次刚发的declare 通知在队列里没有活着的格＝当场没人要说（只有自动路的听众）／
+ *    刚问完；
+ *  - 扫描前挂着、扫描后消失的 declare 格＝这一格刚刚被答完。
+ * 每一刀只回一条，回的是那条**通知本身**（载荷原样带着 `action`＝续跑重瞄的原料）；
+ * 它是已经记过账的事实，`core/TransitionCore` 的续跑只读它、绝不把它再写进事件流第二遍。
+ *
+ * 与决斗那份的唯一差别（第二条判据上的 `turn` 闸）：队列在换回合时整格丢弃，而一条
+ * 丢弃的格若被认成"刚答完"，就会在**若干个回合之后**把那一刀重新落一次——决斗那层
+ * 掉的是自己的逐轮，普攻这一刀掉的是一次真实的伤害与 possibly 一次阵亡，所以这里
+ * 只认"还属于本回合的那副队列"。真实牌局走不到这条闸（响应格挂着时世界是冻结的）。
+ */
+export function findResumedAttacks(
+  turn: number,
+  dispatchEvents: readonly GameEvent[],
+  before: PendingReaction | null,
+  after: PendingReaction | null,
+): GameEvent[] {
+  const live = new Set<string>();
+  for (const node of after?.nodes ?? []) {
+    const key = declaredAttackKeyOfNode(node);
+    if (key) live.add(key);
+  }
+
+  const resumed: GameEvent[] = [];
+  const seen = new Set<string>();
+  const collect = (sourceEvent: GameEvent, key: string | null): void => {
+    if (!key || live.has(key) || seen.has(key)) return;
+    seen.add(key);
+    resumed.push({ type: 'BEFORE_DAMAGE', data: sourceEvent.data });
+  };
+  for (const event of dispatchEvents) {
+    if (event.type !== 'BEFORE_DAMAGE') continue;
+    collect(event, attackResumeKeyOf(event));
+  }
+  if (before?.turn === turn) {
+    for (const node of before.nodes) {
+      const key = declaredAttackKeyOfNode(node);
+      if (key === null) continue;
+      collect(node.sourceEvent, key);
+    }
+  }
+  return resumed;
+}
+
+/**
  * 决斗续跑清单（§H9 第七轮开局格："这一层全部响完，决斗才开始"）。
  *
  * 一句话：**开局那一格不再挂着了 ⇒ 这一场决斗该往下打了**。判据纯 from

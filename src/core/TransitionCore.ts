@@ -7,7 +7,10 @@ import type { EngineState } from './GameState';
 import type { GameEvent, RandomOutcomeData } from './Event';
 import { resolveTriggerChain } from './EngineDispatchFlow';
 import { echoDuelRounds, isDuelListenerEvent } from './eventProcessors/duelEvents';
+import { resumeAttackBlow } from './attackBlow';
 import {
+  attackResumeKeyOf,
+  findResumedAttacks,
   findResumedDuels,
   isReactionSourceEvent,
   reactionQueueFingerprint,
@@ -61,9 +64,10 @@ export interface TransitionResult {
 }
 
 const MAX_TRIGGER_REENTRY_ROUNDS = 8;
-/** 决斗续跑的波数上限（跑飞防护，与上面同源思路）：一局里一场决斗最多两层问
- *  答（开局＋收官），4 波已是富余；真到上限就在事件流里留一条如实欠账。 */
-const MAX_DUEL_RESUME_WAVES = 4;
+/** 延后那一拍（决斗的逐轮、普攻的伤害）续跑的波数上限（跑飞防护，与上面同源思路）：
+ *  一局里一场决斗最多两层问答（开局＋收官）、一次攻击最多两层（受击＋受伤），
+ *  4 波已是富余；真到上限就在事件流里留一条如实欠账。 */
+const MAX_DEFERRED_RESUME_WAVES = 4;
 
 export function transition(
   state: EngineState,
@@ -96,10 +100,7 @@ export function transition(
 
   const flow: DrawOutcomeFlow = { produced: [], overrides: ctx.outcomeOverrides ?? undefined, overridePos: 0 };
   const derived: GameEvent[] = [];
-  // v2.8.30 在场资格执法：这一趟里被结算侧拒绝落账的那几笔（主人已离场）。
-  // 缓冲区一路共用，剪除只发生在"要问人"之前（见 `pruneCancelledEffects`）。
-  const cancelled: GameEvent[] = [];
-  let next = ctx.processor.process(state, events, derived, flow, cancelled);
+  let next = ctx.processor.process(state, events, derived, flow);
 
   // 2.8 刀9: a duel's round block is derived inside the queue, so it never
   // reaches `events` by itself (dispatch 不返回内联追加事件). Echo it right
@@ -128,7 +129,7 @@ export function transition(
     const settleable = fresh.filter(event => event.type !== 'DEATH' && event.type !== 'TRIGGERED');
     if (settleable.length > 0) {
       const deployDerived: GameEvent[] = [];
-      next = ctx.processor.process(next, settleable, deployDerived, flow, cancelled);
+      next = ctx.processor.process(next, settleable, deployDerived, flow);
       derived.push(...deployDerived);
     }
   }
@@ -146,13 +147,7 @@ export function transition(
   // bounded rounds above already cap any give→gain→give pile-up.
   // 注意这个名字里的 "reaction"＝"要重入触发链的衍生事件"，与 v2.8.22 的**响应链**
   // （受击/受伤问答，见下面的 `scanReaction`）是两回事，别混。
-  next = runTriggerReentry(next, derived, events, ctx, flow, cancelled);
-
-  // v2.8.30：把"主人这一刀算完已经不在场上"的那几笔从事件流里剪掉，位置**必须在
-  // 问人之前**——响应链读的就是这份流，留着它等于替死者又开了一格。剪除按对象身份
-  // （同一批引用），不新增第二条状态转移路径：状态侧已经跳过了落账，这里只是让
-  // 账本与它一致，界面上与问答路同一形状＝"压根没发生"，不留观察标记。
-  pruneCancelledEffects(events, cancelled);
+  next = runTriggerReentry(next, derived, events, ctx, flow);
 
   // v2.8.22 响应链执法刀（#71）·结算后扫描：把"这一声要不要有人表态"从触发链的
   // 自动发动搬出来，落成状态里的一个问答队列（乙案＝搬出结算链、同一个窗问答）。
@@ -175,36 +170,57 @@ export function transition(
   next = scan.state;
   let windowStart = events.length;
 
-  // v2.8.24 决斗刀 2（§H9 第七轮开局格）：开局那一层问完了⇒这一场决斗接着往下
-  // 打。每一波都是"结算⇒重入⇒再扫描"，所以答复里回复的体力进了决斗起点、决斗
-  // 收官问出来的新格也走同一条扫描（不插队：新格永远排在既有格之后）。
+  // v2.8.24 决斗刀 2（§H9 第七轮开局格）＋ v2.8.31 定义封口刀（§12-102 两拍普攻）：
+  // 压住的那一层走完了⇒被它压住的那一拍接着走。两类共用同一个环、共用同一条"每波只
+  // 扫新增那一段"的纪律：‧ 决斗＝开局那一层的问答；‧ 普攻＝受击那一层（自动路当场响、
+  // 问人路答完）。每一波都是"结算⇒重入⇒再扫描"，所以答复里回复的体力进了决斗起点、
+  // 受击那一拍落下的护甲与增减也进了这一刀的伤害数学（不插队：新格永远排在既有格之后）。
   // 每波之后只把**新增的那一段**事件交给下一次扫描（`windowStart`）：同一段事件
   // 扫两遍会把已经立过格的受击／受伤再开一次格——那是第二个推导点，不是这里。
+  // 顺序＝先攻后决斗：一问列先开先问（FIFO），而"先开"在这里就是"那一刀先被宣布"，
+  // 于是它压着的那一拍也先走。真实牌局里两者不会同波相遇（一次表态只收掉一格），
+  // 这一条只是把"万一相遇"写成一个确定答案，绝不留成隐含的非确定性。
   const duelKeys = new Set<string>();
-  for (let wave = 0; wave < MAX_DUEL_RESUME_WAVES; wave += 1) {
-    const pending = scan.resumedDuels.filter(duel => {
+  const attackKeys = new Set<string>();
+  for (let wave = 0; wave < MAX_DEFERRED_RESUME_WAVES; wave += 1) {
+    const pendingAttacks = scan.resumedAttacks.filter(notice => {
+      const key = attackResumeKeyOf(notice) ?? '';
+      if (!key || attackKeys.has(key)) return false;
+      attackKeys.add(key);
+      return true;
+    });
+    const pendingDuels = scan.resumedDuels.filter(duel => {
       const key = String((duel.data as { duelKey?: unknown } | undefined)?.duelKey ?? '');
       if (!key || duelKeys.has(key)) return false;
       duelKeys.add(key);
       return true;
     });
-    if (pending.length === 0) break;
-    for (const duelEvent of pending) {
-      next = settleDeferredDuel(next, duelEvent, events, ctx, flow, cancelled);
+    if (pendingAttacks.length + pendingDuels.length === 0) break;
+    for (const notice of pendingAttacks) {
+      next = settleDeferredAttack(next, notice, events, ctx, flow);
     }
-    pruneCancelledEffects(events, cancelled);
+    for (const duelEvent of pendingDuels) {
+      next = settleDeferredDuel(next, duelEvent, events, ctx, flow);
+    }
     scan = scanReaction(next, events.slice(windowStart), events, ctx);
     next = scan.state;
     windowStart = events.length;
   }
   // 如实欠账（与 TRIGGER_REENTRY_LIMIT 同一手法，只记观察标记、不进状态）：
-  // 波数用尽还有决斗没续上。真实牌局走不到这里（一层开局＋一层收官＝两波）。
-  const stranded = scan.resumedDuels.filter(duel => {
+  // 波数用尽还有延后的那一拍没续上。真实牌局走不到这里（一层开局＋一层收官＝两波）。
+  const strandedDuels = scan.resumedDuels.filter(duel => {
     const key = String((duel.data as { duelKey?: unknown } | undefined)?.duelKey ?? '');
     return key && !duelKeys.has(key);
   });
-  if (stranded.length > 0) {
-    events.push({ type: 'CUSTOM', data: { kind: 'DUEL_RESUME_LIMIT', pending: stranded.length } });
+  if (strandedDuels.length > 0) {
+    events.push({ type: 'CUSTOM', data: { kind: 'DUEL_RESUME_LIMIT', pending: strandedDuels.length } });
+  }
+  const strandedAttacks = scan.resumedAttacks.filter(notice => {
+    const key = attackResumeKeyOf(notice);
+    return key !== null && !attackKeys.has(key);
+  });
+  if (strandedAttacks.length > 0) {
+    events.push({ type: 'CUSTOM', data: { kind: 'ATTACK_RESUME_LIMIT', pending: strandedAttacks.length } });
   }
 
   return { state: next, events, accepted: true, overrideFailures: flow.diagnostics ?? [] };
@@ -282,7 +298,6 @@ function runTriggerReentry(
   events: GameEvent[],
   ctx: TransitionContext,
   flow: DrawOutcomeFlow,
-  cancelled: GameEvent[],
 ): EngineState {
   let next = state;
   echoStatTraces(events, derived);
@@ -295,7 +310,7 @@ function runTriggerReentry(
     events.push(...expanded.filter(event => !events.includes(event)));
     const generated = expanded.filter(event => !reentersTriggerChain(event) && event.type !== 'TRIGGERED');
     const nextDerived: GameEvent[] = [];
-    next = ctx.processor.process(next, generated, nextDerived, flow, cancelled);
+    next = ctx.processor.process(next, generated, nextDerived, flow);
     echoStatTraces(events, nextDerived);
     echoInjuries(events, nextDerived);
     pendingReactions = nextDerived.filter(reentersTriggerChain);
@@ -320,29 +335,45 @@ function settleDeferredDuel(
   events: GameEvent[],
   ctx: TransitionContext,
   flow: DrawOutcomeFlow,
-  cancelled: GameEvent[],
 ): EngineState {
   events.push(duelEvent);
   const derived: GameEvent[] = [];
-  const settled = ctx.processor.process(state, [duelEvent], derived, flow, cancelled);
+  const settled = ctx.processor.process(state, [duelEvent], derived, flow);
   echoDuelRounds(events, derived);
-  return runTriggerReentry(settled, derived, events, ctx, flow, cancelled);
+  return runTriggerReentry(settled, derived, events, ctx, flow);
 }
 
 /**
- * v2.8.30：把结算侧拒落的那几笔从事件流里按**对象身份**剪掉（同一批引用，不比对内容），
- * 剪完清空缓冲——下一段还要再剪，绝不能把上一段已经剪过的再剪一次。
+ * 一次被受击那一层延后的普攻的续跑（§12-102 两拍形状里的第二拍）。
+ *
+ * 令＝那条 `BEFORE_DAMAGE{attackStage:'declare'}` 通知本身：它已经在事件流里记过账，
+ * 这里只读它、绝不写第二遍。载荷带着 canonical `ATTACK` 动作，所以续跑要做的只有一件事
+ * ——**对着此刻的状态把瞄准重走一遍**（`core/attackBlow.resumeAttackBlow`）。它要么交出
+ * 这一刀的 `DAMAGE→DEATH→ATTACK_RESOLVED→AFTER_DAMAGE`，要么交出一张白单子＝这一刀
+ * 已经不成立（出手的那位被自己的受击反伤扎死／挨打的那位不在场），按甲案整笔取消、
+ * 一个事件都不造。这里不造任何游戏事实，也不自己做"取消"的判断，只决定什么时候把令交下去。
  */
-function pruneCancelledEffects(events: GameEvent[], cancelled: GameEvent[]): void {
-  if (cancelled.length === 0) return;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (cancelled.includes(events[index])) events.splice(index, 1);
-  }
-  cancelled.length = 0;
+function settleDeferredAttack(
+  state: EngineState,
+  notice: GameEvent,
+  events: GameEvent[],
+  ctx: TransitionContext,
+  flow: DrawOutcomeFlow,
+): EngineState {
+  const action = (notice.data as { action?: GameAction } | undefined)?.action;
+  if (!action) return state;
+  const damage = resumeAttackBlow(state, action);
+  if (damage.length === 0) return state;
+  const expanded = resolveTriggerChain(state, ctx.triggers, damage);
+  events.push(...expanded);
+  const derived: GameEvent[] = [];
+  const settled = ctx.processor.process(state, expanded, derived, flow);
+  return runTriggerReentry(settled, derived, events, ctx, flow);
 }
 
 /**
- * 结算后的响应链扫描（#71 的唯一调用点，决斗刀 2 起它同时报告"哪些决斗该续跑"）。
+ * 结算后的响应链扫描（#71 的唯一调用点，决斗刀 2 起它同时报告"哪些决斗该续跑"，
+ * v2.8.31 两拍刀起再加上"哪些延后的一刀该落"）。
  *
  * 触发条件先做免费闸：这一趟既没有可响应的一声（受击／受伤，且非决斗逐轮）、
  * 状态里也没有待答队列 ⇒ 原样返回，事件流一个字都不动。这条闸是"旧对局零扰动"
@@ -358,7 +389,11 @@ function scanReaction(
   dispatchEvents: readonly GameEvent[],
   events: GameEvent[],
   ctx: TransitionContext,
-): { state: EngineState; resumedDuels: GameEvent[] } {
+): {
+  state: EngineState;
+  resumedDuels: GameEvent[];
+  resumedAttacks: GameEvent[];
+} {
   const before = state.pendingReaction ?? null;
   const hasSource = dispatchEvents.some(event => isReactionSourceEvent(event));
   let next = state;
@@ -374,5 +409,10 @@ function scanReaction(
       events.push({ type: 'CUSTOM', data: { kind: 'REACTION_QUEUE_LIMIT', overflow } });
     }
   }
-  return { state: next, resumedDuels: findResumedDuels(dispatchEvents, before, after) };
+  const turn = state.turn ?? 0;
+  return {
+    state: next,
+    resumedDuels: findResumedDuels(dispatchEvents, before, after),
+    resumedAttacks: findResumedAttacks(turn, dispatchEvents, before, after),
+  };
 }

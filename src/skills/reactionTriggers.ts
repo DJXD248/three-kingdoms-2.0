@@ -36,10 +36,10 @@ export const TRIGGER_EVENTS: Partial<Record<DataSkillTrigger, readonly GameEvent
   onDeploy: ['GENERAL_DEPLOYED'],
   onTurnStart: ['TURN_START'],
   // 2.3.0: BEFORE_DAMAGE is a pure notification (no EventProcessor case, no
-  // state change) emitted by AttackResolver right before damage settlement.
-  // Derived effects queue at the trigger-chain tail, so a counter hit from
-  // this trigger settles AFTER the source DAMAGE within one dispatch —
-  // frozen semantics, see PROJECT_ARCH_MAP "Trigger 契约表".
+  // state change). v2.8.31 (§12-102): the attack now has two beats — the
+  // becoming-target layer fully resolves (auto road fires, ask road opens a
+  // cell) BEFORE the blow's damage math is computed against the post-layer
+  // state, so a counter hit from this trigger always lands first.
   onBecomingTarget: ['BEFORE_DAMAGE'],
   // v2.8 刀5：受伤这一身**只听 `INJURY`**。它是每一刀落账后派生出来的那一声明
   // （"这一员将的体力真实下降了"），护甲全挡、伤害≤0 都压根不发⇒用户 2026-10-03

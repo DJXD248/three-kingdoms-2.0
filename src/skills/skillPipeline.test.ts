@@ -456,7 +456,7 @@ describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () 
     expect((p1.fieldGenerals as any[])[0].currentHp).toBe(4);
   });
 
-  it('当场被打死的将领不再被问——旧「死了也照样反伤」的冻结时序按第七轮口径翻转', () => {
+  it('被这一刀打死也照样问——受击那一型问在伤害落下之前（§12-102 更正 §12-100 的那一半）', () => {
     const attacker = makeGeneral('g1', []);
     const victim = { ...makeGeneral('g2', [huici()]), hp: 2 };
     const engine = buildEngine([
@@ -468,16 +468,19 @@ describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () 
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
     );
 
-    const deaths = events.filter(e => e.type === 'DEATH');
-    expect(deaths).toHaveLength(1);
-    // 扫描排在整块结算之后：这一格还没开口问，人已经离场⇒没有候选⇒不开格。
-    // 于是旧事实"来源伤害把目标打死，反伤照样落地"翻转为"当场死就不问"。
-    expect(getReactionAsk(engine.state)).toBeNull();
-    expect(answerReactions(engine)).toHaveLength(0);
+    // 「成为目标时」按定义在伤害计算之前发动⇒这一刀最终打死谁与它无关：格开着、
+    // 伤害还悬着、人还在场（v2.8.22 那两条路都在整块结算之后才问，所以那时问不到）。
+    expect(events.filter(e => e.type === 'DEATH')).toHaveLength(0);
+    expect(getReactionAsk(engine.state)?.sourceEvent.type).toBe('BEFORE_DAMAGE');
+
+    // 点头之后才轮到这一刀落下：反伤先落、这一刀随后打死主人。
+    const answered = answerReactions(engine);
+    expect(answered.filter(e => e.type === 'DEATH')).toHaveLength(1);
+    expect(answered.some(e => e.type === 'ATTACK_RESOLVED')).toBe(true);
 
     const p1 = engine.state.players.find(p => p.id === 1)!;
     const p2 = engine.state.players.find(p => p.id === 2)!;
-    expect((p1.fieldGenerals as any[])[0].currentHp).toBe(4); // 无反伤
+    expect((p1.fieldGenerals as any[])[0].currentHp).toBe(3); // 反伤那 1 点
     expect(p2.fieldGenerals).toHaveLength(0);
     expect((p2.graveyard as any[]).map((c: any) => c.id)).toContain('g2');
   });

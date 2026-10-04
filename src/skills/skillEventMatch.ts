@@ -57,9 +57,9 @@ export function matchesSkillEvent(
     scope !== 'self' || !generalId || idEq(generalId, generalKey);
 
   /** 「这事是谁引起的」（v2.8.21 第二维）：读通知事件**已经记下**的那个字段，
-   *  不在这里重新推断伤害数学。缺 `damageType`＝攻击结算那一条路（今日
-   *  `BEFORE_DAMAGE` 的唯一生产者=`AttackResolver`，它不带这个字段）⇒ 记为攻击
-   *  引起。技能指定目标的那一档由 #70/#71 的发射器显式带 `damageType:'skill'`。 */
+   *  不在这里重新推断伤害数学。缺 `damageType`＝普攻那一刀（`core/attackBlow.ts`
+   *  的 declare 那一拍是唯一不带这个字段的生产者）⇒ 记为攻击引起。
+   *  技能指定目标的那一档由 #70/#71 的发射器显式带 `damageType:'skill'`。 */
   const sourceMatches = (data: Record<string, unknown>): boolean => {
     if (targetSource === 'any') return true;
     const kind = data.damageType === 'skill' ? 'skill' : 'attack';
