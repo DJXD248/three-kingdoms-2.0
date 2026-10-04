@@ -105,6 +105,7 @@ export default function AiBattleWindow() {
           skillInjection: params.skill,
           seatConfigs,
           identityLock: params.identityLock ?? undefined,
+          poolSource: params.poolSource,
         });
         let result;
         try {

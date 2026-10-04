@@ -36,6 +36,7 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
   const [pool, setPool] = useState(8);
   const [deck, setDeck] = useState(60);
   const [skill, setSkill] = useState(0); // percent — 0 = 不给将池塞演练技能（v2.8.16 起默认）
+  const [poolSource, setPoolSource] = useState<'official' | 'diy-fixture'>('official');
   const [maxSteps, setMaxSteps] = useState(3000);
   const [policies, setPolicies] = useState<string[]>(['aggressive', 'random', 'random', 'random']);
   const [seats, setSeats] = useState<AiBattleSeat[]>(EMPTY_SEATS);
@@ -61,6 +62,7 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
       pool: String(Math.max(1, Math.min(30, pool | 0))),
       deck: String(Math.max(10, Math.min(400, deck | 0))),
       skill: String(Math.max(0, Math.min(100, skill | 0)) / 100),
+      poolSource,
       maxSteps: String(Math.max(50, maxSteps | 0)),
       policies: policies.slice(0, players).join(','),
     });
@@ -256,6 +258,18 @@ export default function AiBattleConfig({ onClose }: { onClose: () => void }) {
             {numField('每人将池', pool, setPool, '1 - 30')}
             {numField('公共抽牌堆', deck, setDeck, '10 - 400')}
             {numField('技能注入 %', skill, setSkill, '默认 0＝不给将池塞演练技能，想要才调高')}
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-amber-300/80">将领来源</span>
+              <select
+                value={poolSource}
+                onChange={e => setPoolSource(e.target.value as 'official' | 'diy-fixture')}
+                className="bg-black/40 border border-amber-700/40 rounded px-2 py-1 text-amber-100 focus:outline-none focus:border-amber-400/70"
+              >
+                <option value="official">仅官方池（95 将）</option>
+                <option value="diy-fixture">仓库固定 DIY 样本</option>
+              </select>
+              <span className="text-[11px] text-amber-500/40">DIY 样本为仓库内置测试卡，不来自玩家编辑器</span>
+            </label>
           </div>
         )}
         {blockedUrl && (

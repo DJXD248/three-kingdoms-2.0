@@ -26,6 +26,11 @@ export interface AiBattleParams {
   skill: number;
   maxSteps: number;
   /**
+   * v2.8.x: which repository-fixed file supplies generals (official / diy-fixture).
+   * Absent = 'official' for backward compat with existing hashes.
+   */
+  poolSource: 'official' | 'diy-fixture';
+  /**
    * Per-seat policy keys (random/conservative/balanced/aggressive). Length is
    * clamped to `players` (missing seats fall back to 'random'); the dev window
    * feeds these straight into runMatch's seatPolicies so one side can be an
@@ -81,7 +86,7 @@ export function parseAiBattleHash(hash: string): AiBattleParams | null {
     const v = raw === null ? NaN : Number(raw);
     return Number.isFinite(v) ? Math.max(min, Math.min(max, Math.floor(v))) : fallback;
   };
-  const parsed = {
+  const parsed: AiBattleParams = {
     games: num('games', 10, 1, 5000),
     seed: num('seed', 1, 0, 2 ** 30),
     players: num('players', 2, 2, 4),
@@ -95,6 +100,12 @@ export function parseAiBattleHash(hash: string): AiBattleParams | null {
       return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
     })(),
     maxSteps: num('maxSteps', 3000, 50, 20000),
+    poolSource: (() => {
+      const raw = q.get('poolSource');
+      // absent = 'official' for backward compat with existing hashes.
+      if (raw === null || raw === '') return 'official';
+      return raw === 'diy-fixture' ? 'diy-fixture' : 'official';
+    })(),
     policies: (q.get('policies') ?? '')
       .split(',')
       .map(s => s.trim().toLowerCase())

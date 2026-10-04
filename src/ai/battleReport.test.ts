@@ -201,6 +201,7 @@ describe('parseAiBattleHash', () => {
     const p = parseAiBattleHash('#ai-battle?games=99999&seed=abc&players=9&pool=1&deck=1&skill=2&maxSteps=1');
     expect(p).toEqual({
       games: 5000, seed: 1, players: 4, pool: 1, deck: 10, skill: 1, maxSteps: 50,
+      poolSource: 'official',
       policies: ['random', 'random', 'random', 'random'],
       seats: [0, 1, 2, 3].map(() => ({ faction: '', generals: [] })),
       identityLock: null,
@@ -244,6 +245,7 @@ describe('parseAiBattleHash', () => {
       deck: 60,
       skill: 0,
       maxSteps: 3000,
+      poolSource: 'official',
       policies: ['random', 'random'],
       seats: [
         { faction: '', generals: [] },
