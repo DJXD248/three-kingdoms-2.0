@@ -647,7 +647,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       const wb = new ExcelJS.Workbook();
 
       for (const faction of factionOrder) {
-        const generals = allGenerals.filter(g => getEditedGeneral(g).faction === faction);
+        const generals = [...allGenerals, ...authoredGenerals].filter(g => getEditedGeneral(g).faction === faction);
         if (generals.length === 0) continue;
 
         // Find max effects count across all skills
@@ -779,7 +779,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       setImportResult('❌ 导出失败: ' + String(err));
       setTimeout(() => setImportResult(''), 5000);
     }
-  }, [getEditedGeneral, isIncompleteForExport]);
+  }, [getEditedGeneral, isIncompleteForExport, authoredGenerals]);
 
   // Multi-select actions
   const toggleMultiSelect = () => {
