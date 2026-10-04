@@ -172,6 +172,11 @@ export interface DataSkillDefinition {
   choiceSource?: 'TARGET' | 'HAND_CARD';
   /** choiceSource='TARGET' 的候选域，缺省 ENEMY_FIELD（以技能拥有者为轴）。 */
   choiceTargetScope?: 'ENEMY_FIELD' | 'ALL_FIELD' | 'SELF_FIELD';
+  /**
+   * v2.8 链式刀·「若…则」：effects 按定义顺序执行，**前一个效果产出了有效事件（有真实目标且不为空操作）
+   * 时，后续效果才翻译；前一个失败 ⇒ 从这一位开始全部丢弃**。
+   * 缺省 (=undefined) = 逐字不变——所有效果同时翻译、互不干扰。只在编译面落 true 才生效。 */
+  effectChain?: boolean;
 }
 
 /**

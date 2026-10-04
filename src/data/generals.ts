@@ -325,11 +325,12 @@ export interface SkillRuntimeEffect {
  *   'all'    — 所有效果独立生效（各自按触发时机生效）
  *   'choice' — 同一触发时刻只能选择其一执行
  */
-export type SkillEffectMode = 'all' | 'choice';
+export type SkillEffectMode = 'all' | 'choice' | 'chain';
 
 export const effectModeLabels: Record<SkillEffectMode, string> = {
   all: '全部生效（各效果独立触发）',
   choice: '选择其一（同时触发时选择一项）',
+  chain: '链式若-则（前一成功才执行下一项）',
 };
 
 export interface Skill {

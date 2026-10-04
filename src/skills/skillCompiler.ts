@@ -124,6 +124,9 @@ export interface SkillSkip {
     /** 「在场即生效」与「选择其一」在结构上互斥：passive 按定义不进问窗，
      *  那就没人能替它择一。整组点名跳过，绝不让它悄悄变成"全都要"。 */
     | 'PASSIVE_CHOICE_UNSUPPORTED'
+    /** 「在场即生效」与链式若-则在结构上互斥：passive 持续生效没有"发动一次"的时刻，
+     *  链式的成败判定需要"这一声响完才知道下一声要不要响"的发射器，今天不存在。 */
+    | 'PASSIVE_CHAIN_UNSUPPORTED'
     /** passive 的账只随"人在不在场"变化；门槛（体力/手牌一变就该改口）今天
      *  没有任何重算路径，悄悄收下＝"记录而未消费"。 */
     | 'PASSIVE_CONDITION_UNSUPPORTED'
@@ -449,6 +452,50 @@ export function compileSkill(
         // 一笔才需要"移不走"位）。
         ...(lockedTag && group.some(c => c.data.type === 'MODIFY_STAT') ? { locked: true } : {}),
         // 限定技同理继承：整组择一＝一次发动＝一次额度（键与单效果定义同形）。
+        ...(limitedTag ? { limitKey } : {}),
+      });
+    }
+    // v2.8.x 链式若-则刀：effectMode==='chain' 时，同一触发签名的多个效果编入一条
+    // 定义、挂 effectChain=true ⇒ SkillTriggerBridge 顺序翻译、前败后弃。
+    // 跨签名（不同 trigger / damageTypeFilter）仍拆成独立定义——链只在"同时响"的
+    // 效果之间生效。passive 按定义没有"发动一次"的时刻，链式成败判定找不到发射器⇒点名跳过。
+  } else if (skill.effectMode === 'chain') {
+    const groups = new Map<string, CompiledEffect[]>();
+    for (const c of candidates) {
+      const group = groups.get(c.signature);
+      if (group) group.push(c);
+      else groups.set(c.signature, [c]);
+    }
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        definitions.push(singleDefinition(group[0]));
+        continue;
+      }
+      if (group[0].mapped === 'passive') {
+        for (const c of group) {
+          skipped.push({
+            skillName: skill.name,
+            effectId: c.effect.id,
+            reason: 'PASSIVE_CHAIN_UNSUPPORTED',
+          });
+        }
+        continue;
+      }
+      definitions.push({
+        id: `${ownerKey}:${skill.name}:chain`,
+        name: skill.name,
+        trigger: group[0].mapped,
+        description: skill.description ?? '',
+        effects: group.map(c => (c.conditions ? { ...c.data, conditions: c.conditions } : c.data)),
+        sourceGeneralId: runtimeGeneralId,
+        damageTypeFilter: group[0].damageTypeFilter,
+        cardFilter: group[0].cardFilter,
+        targetSource: group[0].targetSource,
+        listenerScope: group[0].listenerScope,
+        turnSubType: group[0].turnSubType,
+        effectChain: true,
+        ...(skill.forced === true ? { forced: true } : {}),
+        ...(lockedTag && group.some(c => c.data.type === 'MODIFY_STAT') ? { locked: true } : {}),
         ...(limitedTag ? { limitKey } : {}),
       });
     }

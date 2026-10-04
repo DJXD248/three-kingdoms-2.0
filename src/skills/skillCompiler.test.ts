@@ -750,3 +750,94 @@ describe('skillCompiler · 发动门槛透传', () => {
     expect(definitions.find(d => d.id.endsWith(':a'))!.conditions).toHaveLength(1);
   });
 });
+
+describe('skillCompiler · 链式若-则（effectMode: chain）', () => {
+  it('effectMode=chain：同触发签名编译成一条带 effectChain 的定义', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'chain',
+        effects: [
+          { id: 'e1', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' } },
+          { id: 'e2', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' } },
+        ],
+      }),
+      'g1',
+    );
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0].effectChain).toBe(true);
+    expect(definitions[0].effects).toHaveLength(2);
+    const defId = definitions[0].id;
+    expect(defId).toContain(':chain');
+  });
+
+  it('effectMode=chain：跨触发签名拆成独立定义（链只在"同时响"的效果间生效）', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'chain',
+        effects: [
+          { id: 'e1', trigger: { type: 'onTurnStart' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } },
+          { id: 'e2', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DAMAGE', value: 1, target: 'TARGET' } },
+        ],
+      }),
+      'g1',
+    );
+    expect(definitions).toHaveLength(2);
+    // 不同签名各成一个独立定义，都不挂 effectChain。
+    const ids = definitions.map(d => d.id);
+    expect(ids.some(id => id.includes(':chain'))).toBeFalsy();
+  });
+
+  it('effectMode=chain：孤立效果走 singleDefinition 路径（不带 effectChain），但仍能正确编译', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'chain',
+        effects: [
+          { id: 'e1', trigger: { type: 'onKill' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } },
+        ],
+      }),
+      'g1',
+    );
+    // 一组一个 → singleDefinition 路径，无 :chain 后缀、无 effectChain。
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0].effectChain).toBeUndefined();
+  });
+
+  it('effectMode=chain + passive：跳过并注明 PASSIVE_CHAIN_UNSUPPORTED', () => {
+    const { definitions, skipped } = compileSkill(
+      general(),
+      skill({
+        effectMode: 'chain',
+        trigger: { type: 'passive' as never },
+        effects: [
+          { id: 'e1', runtime: { type: 'MODIFY_STAT', stat: 'MELEE_ATK', modifyMode: 'delta', value: 1, target: 'SELF' } },
+          { id: 'e2', runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } },
+        ],
+      }),
+      'g1',
+    );
+    expect(definitions).toHaveLength(0);
+    expect(skipped).toHaveLength(2);
+    expect(skipped.every(s => s.reason === 'PASSIVE_CHAIN_UNSUPPORTED')).toBe(true);
+  });
+
+  it('chain + limited：限定技徽章照常继承到链定义上', () => {
+    const { definitions } = compileSkill(
+      general(),
+      skill({
+        tags: ['限定技'] as never[],
+        effectMode: 'chain',
+        effects: [
+          { id: 'e1', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DAMAGE', value: 1, target: 'ATTACKER' } },
+          { id: 'e2', trigger: { type: 'onDamageTaken' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } },
+        ],
+      }),
+      'g1',
+    );
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0].effectChain).toBe(true);
+    expect(definitions[0].limitKey).toBe('g1:测试技能');
+  });
+});

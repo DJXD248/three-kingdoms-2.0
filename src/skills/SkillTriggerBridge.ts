@@ -507,6 +507,42 @@ export class SkillTriggerBridge {
       return [{ type: 'CHOICE_REQUIRED', data: choiceData }];
     }
 
+    // v2.8.x 链式若-则：effects 顺序翻译，前一个失败 ⇒ 后续全部丢弃。
+    // "失败"定义为：该效果的 translateEffect 产出的事件引用了不存在的目标（
+    // targetRef=null 且不是本营/玩家级操作）或纯只读事件（REVEAL/DECK_PLACE/GIVE 等
+    // 在目标不存在时仍产出事件但下游结算为空操作）。我们用 findGeneralRef 检查通用目标——
+    // 找不到 ≠ 本营/玩家操作即视为空操作候选，链在此断裂。
+    if (binding.skill.effectChain) {
+      const result: GameEvent[] = [];
+      let chainBroken = false;
+      for (let i = 0; i < binding.skill.effects.length; i++) {
+        if (chainBroken) break;
+        const testEvent = translateEffect(binding.skill.effects[i]);
+        // REVEAL 和 DECK_PLACE 是纯观察/无状态操作——永远成功、不折断链。
+        if (testEvent.type === 'REVEAL' || testEvent.type === 'DECK_PLACE') {
+          result.push(testEvent);
+          continue;
+        }
+        // GIVE / DISCARD 是玩家级操作、不需要将领参照——只要 player id 合法就成立。
+        if (testEvent.type === 'GIVE' || testEvent.type === 'DISCARD') {
+          result.push(testEvent);
+          continue;
+        }
+        // 其余类型（DAMAGE / HEAL / GAIN_ARMOR / EQUIP_STRIP / DUEL / STAT_MODIFY / CUSTOM）
+        // 需要目标存在才为有效。指不出目标 ⇒ 空操作 ⇒ 链断。
+        const targetId = (testEvent.data as Record<string, unknown>).targetId as string | undefined;
+        const targetRef = SkillTriggerBridge.findGeneralRef(state, targetId);
+        const isBaseTarget = targetId?.startsWith('base_');
+        if (targetRef || isBaseTarget) {
+          result.push(testEvent);
+        } else {
+          // 找不到目标也不是本营⇒这一效果是空操作，链断开，后续效果不翻译。
+          chainBroken = true;
+        }
+      }
+      return result;
+    }
+
     return binding.skill.effects.map(effect => translateEffect(effect));
   }
 
