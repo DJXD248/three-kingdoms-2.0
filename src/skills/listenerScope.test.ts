@@ -249,9 +249,9 @@ describe('监听扩面 · 桥接消费（真实对局事件）', () => {
     expect(counterEvents(counterWhenTargeted('skillTarget'))).toBe(4); // 只认技能⇒今日无声可响
   });
 
-  it('听场上也不会被"打大本营"的那一声误触发（事件里没有受击方键，判不出参与者就不响）', () => {
+  it('听场上也不会被"打大营地"的那一声误触发（事件里没有受击方键，判不出参与者就不响）', () => {
     const attackerField = makeFieldGeneral(makeGeneral('g1', []), 1);
-    attackerField.position = { zone: 'front', slot: 0, areaOwnerId: 2 }; // 近战规则：站进对面区域打其大本营
+    attackerField.position = { zone: 'front', slot: 0, areaOwnerId: 2 }; // 近战规则：站进对面区域打其大营地
     const engine = buildEngine([
       makePlayer(1, { fieldGenerals: [attackerField], hand: [ATTACK_COST] }),
       makePlayer(2, { fieldGenerals: [makeFieldGeneral(makeGeneral('g2', [counterWhenTargeted('anyTarget')]), 2)] }),

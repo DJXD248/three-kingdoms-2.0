@@ -183,7 +183,7 @@ describe('legalActions · 枚举器与引擎裁判一致性', () => {
     expect(types.has('EQUIP_ARMOR')).toBe(true);      // 手上有军备卡
     expect(types.has('END_TURN')).toBe(true);
     expect(types.has('SURRENDER')).toBe(true);
-    // 战斗区可远程射本营（引擎实测接受）→ 清单里应出现 base 攻击候选
+    // 战斗区可远程射营地（引擎实测接受）→ 清单里应出现 base 攻击候选
     expect(actions.filter(a => a.type === 'ATTACK' && (a.payload as any).targetId === 'base_2').length).toBeGreaterThan(0);
   });
 

@@ -444,14 +444,14 @@ describe('受到伤害那一格 · 真链路（2.8 刀5＝#26）', () => {
     expect(armorOf(engine, 2, 'g2')).toBe(1);
   });
 
-  it('本营那一格压根不吃修正：「受到的伤害固定为 0」压不到本营，普攻照旧封顶 1 点', () => {
+  it('营地那一格压根不吃修正：「受到的伤害固定为 0」压不到营地，普攻照旧封顶 1 点', () => {
     const engine = buildEngine([
       makePlayer(1, { fieldGenerals: [makeFieldGeneral({ ...makeGeneral('g1', []), meleeAtk: 7 } as any, 1, 0, 'front')], hand: [ATTACK_COST] }),
-      // 守方场上无人（前线空了才够得着本营），账却记在"该席位上那员不在场的将"身上：
-      // 本营不是任何一员将，那一格永远轮不到它——这正是"问二＝不吃"的结构写法。
+      // 守方场上无人（前线空了才够得着营地），账却记在"该席位上那员不在场的将"身上：
+      // 营地不是任何一员将，那一格永远轮不到它——这正是"问二＝不吃"的结构写法。
       makePlayer(2, { fieldGenerals: [] }),
     ], [dtEntry('DAMAGE_TAKEN', 'set', 0)]);
-    // 攻方踩进守方那片区域才够得着本营（`canTargetBase`：front/camp 且 areaOwnerId＝守方座次）。
+    // 攻方踩进守方那片区域才够得着营地（`canTargetBase`：front/camp 且 areaOwnerId＝守方座次）。
     const attacker = (engine.state.players[0].fieldGenerals as any[])[0];
     attacker.position = { zone: 'front', slot: 0, areaOwnerId: 2 };
     const events = engine.dispatch(createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'base_2', ranged: false, consumeCard: ATTACK_COST }));
@@ -459,7 +459,7 @@ describe('受到伤害那一格 · 真链路（2.8 刀5＝#26）', () => {
     const base = engine.state.players.find(p => p.id === 2)!;
     expect(base.baseHp).toBe(9);
     expect(engine.state.statModifiers ?? []).toHaveLength(1);
-    // 本营掉血也照样派生一声（那一席位的「受到伤害后」听众走席位层，不是将领层）。
+    // 营地掉血也照样派生一声（那一席位的「受到伤害后」听众走席位层，不是将领层）。
     expect(events.filter(e => e.type === 'INJURY').map(e => [(e.data as any)?.targetId, (e.data as any)?.value, (e.data as any)?.isBase]))
       .toEqual([['base_2', 1, true]]);
   });
@@ -569,7 +569,7 @@ describe('受到伤害那一格 · 真链路（2.8 刀5＝#26）', () => {
     expect(events.filter(e => e.type === 'INJURY')).toHaveLength(0);
   });
 
-  it('本营那一格压根不吃修正，也不吃结算：普攻封顶 1 点，账本逐字不动', () => {
+  it('营地那一格压根不吃修正，也不吃结算：普攻封顶 1 点，账本逐字不动', () => {
     const engine = buildEngine([
       makePlayer(1, { fieldGenerals: [makeFieldGeneral({ ...makeGeneral('g1', []), meleeAtk: 7 } as any, 1)], hand: [ATTACK_COST] }),
       makePlayer(2, { fieldGenerals: [] }),

@@ -10,6 +10,7 @@ import { getGeneralCardVisual } from '../utils/generalCardVisual';
 import { GameCard } from '../data/cards';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { effectiveMaxHp } from '../core/statModifiers';
+import { INITIAL_BASE_HP } from '../domain/constants';
 import { SC, Bar, Btn } from './testArena/compactPrimitives';
 
 type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'selectMoveCard'|'selectSupplyCards';
@@ -224,7 +225,7 @@ export default function TestArena(){
         className={`relative flex h-[76px] w-[62px] flex-col items-center justify-center rounded-lg border-2 transition-all ${atkBase?'animate-pulse ring-2 ring-red-500':''} ${baseHit?'animate-base-hit animate-pulse-glow ring-2 ring-red-400':''}`}
         style={{borderColor:atkBase?'#ef4444':baseHit?'#f87171':bc,background:`linear-gradient(180deg,${bc}30 0%,${bc}10 100%)`}}>
         <div className="absolute -top-2 left-0 right-0 flex justify-center gap-0.5">{[0,1,2,3,4].map(i=><span key={i} className="text-[7px]" style={{opacity:i<fl?1:0.15}}>🚩</span>)}</div>
-        <div className="text-lg">🏯</div><p className="text-[9px] font-black" style={{color:bc}}>本营</p><p className={`text-[10px] font-black ${baseHit?'text-red-300 animate-number-pop':'text-red-400'}`}>❤️{areaOwner.baseHp}</p>
+        <div className="text-lg">🏯</div><p className="text-[9px] font-black" style={{color:bc}}>营地</p><p className={`text-[10px] font-black ${baseHit?'text-red-300 animate-number-pop':'text-red-400'}`}>❤️{areaOwner.baseHp}</p>
       </button>);
     }
 
@@ -333,14 +334,14 @@ export default function TestArena(){
                       </div>
                     </div>
                     <div className="flex gap-1 mb-1.5">
-                      <span className="text-red-400">🏯{p.baseHp}/{p.baseMaxHp}</span><span className="text-amber-300">🃏{p.hand.length}</span><span className="text-green-400">👤{p.generalPool.length}</span>
+                      <span className="text-red-400">🏯{p.baseHp}</span><span className="text-amber-300">🃏{p.hand.length}</span><span className="text-green-400">👤{p.generalPool.length}</span>
                     </div>
                     {/* Base HP controls: mirror the general HP test tools. */}
                     <div className="space-y-1 mb-1.5">
                       <div className="flex gap-1 items-center flex-wrap">
-                        <span className="text-gray-500 w-8">本营</span>
+                        <span className="text-gray-500 w-8">营地</span>
                         <button onClick={()=>testHealBase(p.id,1)} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 hover:bg-green-800/40">+1</button>
-                        <button onClick={()=>testSetBaseHp(p.id,p.baseMaxHp)} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 hover:bg-green-800/40">满</button>
+                        <button onClick={()=>testSetBaseHp(p.id,INITIAL_BASE_HP)} className="px-1.5 py-0.5 rounded bg-green-900/40 text-green-300 hover:bg-green-800/40">回6</button>
                         <button onClick={()=>testSetBaseHp(p.id,1)} className="px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 hover:bg-red-800/40">→1</button>
                       </div>
                       <div className="flex gap-1 items-center flex-wrap">
@@ -413,7 +414,7 @@ export default function TestArena(){
 
       {/* Overlays for deploy/attack/move/supply */}
       {vm==='deploy'&&<Bar><span className="text-xs text-amber-200">登场：<b>{depGen?.name}</b> (消耗{depCards.length}/{depGen?.hp})</span><Btn ok={depCards.length>0} onClick={confirmDep}>确认</Btn><Btn onClick={cancelDep} red>取消</Btn></Bar>}
-      {vm==='deployTarget'&&<Bar><span className="text-xs font-bold text-green-300 animate-pulse">📍点击营地空格放置</span><Btn onClick={cancelDep} red>取消</Btn></Bar>}
+      {vm==='deployTarget'&&<Bar><span className="text-xs font-bold text-green-300 animate-pulse">📍点击营地区域空格放置</span><Btn onClick={cancelDep} red>取消</Btn></Bar>}
       {vm==='selectAttackCard'&&<Bar><span className="text-xs font-bold text-red-300">选择攻击消耗牌</span><Btn onClick={resetAtk}>取消</Btn></Bar>}
       {moveOptions.length>1&&movGen&&<Bar><span className="text-xs font-bold text-cyan-300">选择移动目标</span><Btn onClick={cancelMov}>取消</Btn></Bar>}
       {vm==='selectMoveCard'&&<Bar><span className="text-xs font-bold text-blue-300">选择移动消耗牌</span><Btn onClick={cancelMov}>取消</Btn></Bar>}

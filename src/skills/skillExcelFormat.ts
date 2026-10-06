@@ -125,6 +125,12 @@ const LEGACY_TRIGGER_CELL_ALIASES: Record<string, string> = {
   // v2.8 刀4（#25）：「在场即生效」的旧主名。旧文件那一格写的就是它，不认的话
   // 这一型会读成"没看懂"——技能照进、照显示、只是那笔在场账再也不落。
   '全局生效（在场时持续）': triggerTypeLabels.passive,
+  // v2.8.39 改名刀（用户 2026-10-06 裁「改回"营地"这个叫法」）：v2.8.18～v2.8.39 之间导出的
+  // 旧文件里，那三格营地系时机写的是「本营…」。同一扇单向门——**读入侧照旧认，写出侧
+  // 只出现行写法**。不认的后果与上面两族一样：技能照进、照显示、只是不再响。
+  本营成为攻击目标时: triggerTypeLabels.onBaseTargetedAtk,
+  本营成为技能目标时: triggerTypeLabels.onBaseTargetedSkill,
+  本营受到伤害时: triggerTypeLabels.onBaseDamaged,
 };
 
 /** 把 cell 里的旧细分词换成现行写法；不认识的一律原样交回。 */

@@ -531,6 +531,25 @@ describe('skillExcelFormat: 监听扩面（v2.8.21 「我听谁」＋「成为�
     expect(buildTriggerOptionStrings().some(s => s === '成为攻击目标时')).toBe(false);
   });
 
+  it('v2.8.39 改名：旧格「本营…」只进不出，写出来一律是「营地…」', () => {
+    const pairs: [string, string][] = [
+      ['本营成为攻击目标时', '营地成为攻击目标时'],
+      ['本营成为技能目标时', '营地成为技能目标时'],
+      ['本营受到伤害时', '营地受到伤害时'],
+    ];
+    for (const [legacy, current] of pairs) {
+      const read = readTriggerCell(legacy);
+      expect(read.unreadable).toBeUndefined();
+      expect(triggerToStr(read.trigger)).toBe(current);
+      // 那三格现在写"营地…"，旧写法不会再从任何写出面冒出来。
+      expect(buildTriggerOptionStrings().some(s => s === legacy)).toBe(false);
+    }
+    // 写出面（下拉选项全集）里一枚旧词都没有；新写法只以现行那三格出现。
+    expect(buildTriggerOptionStrings().some(s => s.includes('本营'))).toBe(false);
+    expect(buildTriggerOptionStrings().filter(s => s.startsWith('营地')).length)
+      .toBeGreaterThan(0);
+  });
+
   it('「我听谁」三档认得、留空＝没填、认不出的原文交回', () => {
     for (const label of Object.values(listenerScopeLabels)) {
       expect(readListenerScopeCell(label).scope).toBeTruthy();

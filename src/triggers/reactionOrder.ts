@@ -8,7 +8,7 @@
  *
  * 「受击方」是**将领那一层**，不是席位那一层：用户的工作例里 B 与挨打的 A 同坐
  * 席 2，B 仍排在绕圈之后（A→C→D→B）。所以分组轴先认"这件事点名打到哪一员"
- * （`victimGenerals`），点名不到具体哪一员（打本营这类）才退到席位
+ * （`victimGenerals`），点名不到具体哪一员（打营地这类）才退到席位
  * （`victimSeats`）。
  *
  * 三条纪律：
@@ -81,7 +81,7 @@ export function orderReactionCandidates<T extends ReactionCandidate>(
   const generalSet = new Set(ctx.victimGenerals);
   const seatSet = new Set(ctx.victimSeats.map(String));
   // 将领那一层认出来了就以它为准（同席没挨打的那一员算非受击组）；一个都没认出来
-  // 才退回席位那一层（打本营：这位玩家的全部监听都是受击方）。
+  // 才退回席位那一层（打营地：这位玩家的全部监听都是受击方）。
   const generalAxisIsAuthoritative = candidates.some(
     candidate => candidate.generalId && generalSet.has(candidate.generalId)
   );

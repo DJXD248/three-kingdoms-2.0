@@ -74,9 +74,9 @@ export function applyDamageEvent(state: EngineState, event: GameEvent): EngineSt
     const players = playersAfterCost.map(player => {
       if (player.id !== targetPlayerId) return player;
       const currentHp = typeof player.baseHp === 'number' ? player.baseHp : 0;
-      // 本营**不吃**「受到的伤害」那格修正（用户 2026-10-03 裁"问二＝不吃"）：那一格
-      // 的钥匙键在（座次＋将领实例）上，本营根本不是任何一员将⇒账本里压根没有它那一笔。
-      // 「本营单次最多 1 点」由**两条发射路**钉死（用户 2026-10-03 晚裁"封"，§12-96）：
+      // 营地**不吃**「受到的伤害」那格修正（用户 2026-10-03 裁"问二＝不吃"）：那一格
+      // 的钥匙键在（座次＋将领实例）上，营地根本不是任何一员将⇒账本里压根没有它那一笔。
+      // 「营地单次最多 1 点」由**两条发射路**钉死（用户 2026-10-03 晚裁"封"，§12-96）：
       // 普攻＝`AttackResolver`、技能伤害＝`SkillTriggerBridge`，两处取的是同一个常量
       // `core/baseDamage.ts`。这一侧只照事件里写着的数值落账，绝不再算第二遍——
       // 规则常量住发射点，结算口动一次＝同一件事两处都能改。

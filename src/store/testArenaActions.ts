@@ -332,7 +332,7 @@ export function buildTestArenaActions(get: GetState, set: SetState, shuffle: Shu
     testSetBaseHp: (playerId, hp) => {
       const { players } = get();
       const nextPlayers = players.map(player => player.id === playerId
-        ? { ...player, baseHp: Math.max(0, Math.min(hp, player.baseMaxHp)), isAlive: hp > 0, isSpectating: hp <= 0 ? true : player.isSpectating }
+        ? { ...player, baseHp: Math.max(0, hp), isAlive: hp > 0, isSpectating: hp <= 0 ? true : player.isSpectating }
         : player
       );
       set({ players: nextPlayers });
@@ -353,7 +353,7 @@ export function buildTestArenaActions(get: GetState, set: SetState, shuffle: Shu
       const { players } = get();
       const heal = Math.max(0, amount);
       const nextPlayers = players.map(player => player.id === playerId
-        ? { ...player, baseHp: Math.min(player.baseMaxHp, player.baseHp + heal), isAlive: true, isSpectating: false }
+        ? { ...player, baseHp: player.baseHp + heal, isAlive: true, isSpectating: false }
         : player
       );
       set({ players: nextPlayers });

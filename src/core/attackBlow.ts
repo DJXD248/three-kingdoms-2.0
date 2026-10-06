@@ -111,7 +111,7 @@ type AttackAim =
     readonly ranged: boolean;
     readonly consumeCard: any;
     readonly baseDamage: number;
-    /** 打的是本营（`base_<座次>`）：那一型压根没有"哪一员将成为了目标"⇒受击那一层
+    /** 打的是营地（`base_<座次>`）：那一型压根没有"哪一员将成为了目标"⇒受击那一层
      *  结构性无人可听（`matchesSkillEvent` 缺受击者键⇒三档都不响），也就永不延后。 */
     readonly isBase: boolean;
     readonly targetPlayerId: number;
@@ -221,7 +221,7 @@ function declareKey(state: EngineState, aim: Extract<AttackAim, { status: 'aimed
  */
 function damagePhase(state: EngineState, aim: Extract<AttackAim, { status: 'aimed' }>, action: GameAction): GameEvent[] {
   if (aim.isBase) {
-    // 本营单次最多 1 点＝发射点的规则常量（`core/baseDamage.ts`），技能伤害那条
+    // 营地单次最多 1 点＝发射点的规则常量（`core/baseDamage.ts`），技能伤害那条
     // 发射路（`SkillTriggerBridge`）取的是同一个数。
     const damage = capDamageToBase(aim.baseDamage);
     return [

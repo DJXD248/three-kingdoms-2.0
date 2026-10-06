@@ -42,9 +42,9 @@ export function matchesSkillEvent(
   const targetSource = skill.targetSource ?? 'attack';
 
   /** 「我听谁」的玩家那一层。`field` 档不比玩家键，但**事件必须带着这个键**：
-   *  缺键＝这件事根本没落到某一位玩家身上（打本营的 BEFORE_DAMAGE 就是这种），
+   *  缺键＝这件事根本没落到某一位玩家身上（打营地的 BEFORE_DAMAGE 就是这种），
    *  那是"没有受击者"，不是"受击者不是我"⇒ 三档都不响。这条保住了扩面前
-   *  "打本营不会触发将领的受击类技能"那一既有事实。 */
+   *  "打营地不会触发将领的受击类技能"那一既有事实。 */
   const playerMatches = (playerKey: unknown): boolean =>
     scope === 'field'
       ? playerKey !== undefined && playerKey !== null

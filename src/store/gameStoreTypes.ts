@@ -47,6 +47,9 @@ export interface FieldGeneral {
 export interface Player {
   id:number; name:string; faction:Faction|null; seatOrder:number; diceRoll:number;
   generalPool:General[]; hand:(General|GameCard)[]; fieldGenerals:FieldGeneral[];
+  // 营地（用户 2026-10-06 裁：改名回"营地"，且**没有体力上限**、允许超过初始 6 点）。
+  // `baseMaxHp` 只保留"初始值 6"这一份记录（旧状态字段、删它要动档形），**不再当上限用**：
+  // 全库已无任何一处拿它夹营地血量。
   baseHp:number; baseMaxHp:number; isAlive:boolean; isSpectating:boolean;
   avatarGeneral:General|null; graveyard:General[];
   // v2.2.9 human-vs-AI: stamped at createRoom from seatModes; survives engine

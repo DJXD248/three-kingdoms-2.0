@@ -177,7 +177,7 @@ describe('skill trigger tracking (2.4.3 content audit)', () => {
   });
 
   it('#39: REVEAL / DECK_PLACE triggers actually reach the report', () => {
-    // 本刀 v2.8.35 将营地格子从 3 减为 [0, 2]（砍掉 slot 1＝本营格）。
+    // 本刀 v2.8.35 将营地格子从 3 减为 [0, 2]（砍掉 slot 1＝营地格）。
     // 固定种子下某些局因槽位不足而部署失败、技能不触发；
     // 用多个种子跑一次，只要任意一个种子能产出两枚效果就算通过。
     const keysOf = (effectType: string) =>

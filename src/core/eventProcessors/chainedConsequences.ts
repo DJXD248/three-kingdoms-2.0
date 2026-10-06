@@ -51,7 +51,7 @@ export function enqueueDerivedConsequences(
       const afterPlayer = next.players.find(p => p.id === targetPlayerId);
       const baseHpLost = Math.max(0,
         (beforePlayer?.baseHp ?? 0) - (afterPlayer?.baseHp ?? 0));
-      // 本营掉血也算"这一席位受到了伤害"（刀5 前它就是靠那一声 `DAMAGE` 开格的：
+      // 营地掉血也算"这一席位受到了伤害"（刀5 前它就是靠那一声 `DAMAGE` 开格的：
       // 响应链在指认不出将领时退到席位那一层，整席先答）。键法与将领那一声同一句：
       // 只看真实下降的数值，伤害≤0 或压根没掉血⇒这一声不存在。
       if (baseHpLost > 0) {

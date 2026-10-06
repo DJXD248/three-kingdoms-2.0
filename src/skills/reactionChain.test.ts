@@ -276,7 +276,7 @@ describe('响应链 · 顺序（§H9 第十轮①工作例逐字）', () => {
     expect(seen).toEqual(['p2:gA', 'p3:gC', 'p4:gD', 'p2:gB']);
   });
 
-  it('点名不到场上任何一员（打本营）⇒ 退到席位那一层：整席先答', () => {
+  it('点名不到场上任何一员（打营地）⇒ 退到席位那一层：整席先答', () => {
     let state = buildWorkExample();
     const event: GameEvent = {
       type: 'INJURY',

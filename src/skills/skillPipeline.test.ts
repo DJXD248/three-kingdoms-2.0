@@ -427,7 +427,7 @@ describe('skill pipeline · onBecomingTarget (2.3.0, BEFORE_DAMAGE-backed)', () 
 
     expect(events.some(e => e.type === 'BEFORE_DAMAGE')).toBe(true);
     expect(events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill')).toHaveLength(0);
-    // v2.8.22：打本营那一声没有"受击的将领"⇒问答侧同样不开格。
+    // v2.8.22：打营地那一声没有"受击的将领"⇒问答侧同样不开格。
     expect(getReactionAsk(engine.state)).toBeNull();
     const p2 = engine.state.players.find(p => p.id === 2)!;
     expect(p2.baseHp).toBe(9);

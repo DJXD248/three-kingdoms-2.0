@@ -186,7 +186,7 @@ export function formatActionLine(step: number, action: RecordedAction): string {
       detail = '结束回合';
       break;
     case 'RESOLVE_BASE_LOSS':
-      detail = '结算本营扣血';
+      detail = '结算营地扣血';
       break;
     case 'SURRENDER':
       detail = '投降';

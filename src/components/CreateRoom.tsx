@@ -3,7 +3,7 @@ import { AI_TIER_KEYS, AI_TIER_LABELS, type AiSeatTier } from '../setup/runtimeS
 
 const TIER_HINTS: Record<AiSeatTier, string> = {
   random: '闭眼乱抓牌，入门陪练',
-  conservative: '重守本营，爱惜将领',
+  conservative: '重守营地，爱惜将领',
   balanced: '攻守各半，稳扎稳打',
   aggressive: '猛打猛冲，抢占地盘',
 };

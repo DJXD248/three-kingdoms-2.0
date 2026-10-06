@@ -2,7 +2,7 @@
  * 核心玩法流程自动化测试（GameAction 直驱）
  *
  * 覆盖范围：开局抽牌 → 部署将领 → 移动 → 攻击（含护甲扣伤）→ 击杀与补偿 →
- * 本营伤害 → 结束回合推进 → 空将池扣本营 → 投降 → 胜负判定，
+ * 营地伤害 → 结束回合推进 → 空将池扣营地 → 投降 → 胜负判定，
  * 以及一条从开局打到获胜的"完整一局"冒烟测试。
  *
  * 硬性约束（用户要求）：所有玩法推进一律通过引擎既有的 GameAction 接口
@@ -458,7 +458,7 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
     });
   });
 
-  describe('⑥ 本营伤害与胜负判定', () => {
+  describe('⑥ 营地伤害与胜负判定', () => {
     function baseFixture(baseHp: number, attackerArea: number) {
       const siegeGeneral = makeGeneral('siege_1', '攻城者', 4, '魏');
       const p1 = makePlayer(1, '玩家1', '魏', {
@@ -474,8 +474,8 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
       return { attackerId: 'siege_1', targetId: 'base_2', ranged: false, consumeCard: makeResource(consumeId) };
     }
 
-    it('本营只能在敌方前线/营地近战打到，每次攻击固定扣 1 点', () => {
-      // 站在自己前线的攻城者打不到 2 号本营
+    it('营地只能在敌方前线/营地近战打到，每次攻击固定扣 1 点', () => {
+      // 站在自己前线的攻城者打不到 2 号营地
       const wrong = baseFixture(3, 1);
       expect(rejectedReason(wrong.engine, 'ATTACK', 1, siegeAttack('s_cost_1'))).toBe('INVALID_ATTACK_TARGET');
 
@@ -483,12 +483,12 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
       const events = dispatchOk(ok.engine, 'ATTACK', 1, siegeAttack('s_cost_1'));
       const damage = events.find(e => e.type === 'DAMAGE') as any;
       expect(damage.data.isBase).toBe(true);
-      expect(damage.data.value).toBe(1);            // 近战 2 点对本营仍只扣 1
+      expect(damage.data.value).toBe(1);            // 近战 2 点对营地仍只扣 1
       expect(playerOf(ok.engine, 2).baseHp).toBe(2);
       expect(playerOf(ok.engine, 2).isAlive).toBe(true);
     });
 
-    it('本营被摧毁 → PLAYER_DEFEATED → GAME_OVER，胜者登记在 metadata.winnerId', () => {
+    it('营地被摧毁 → PLAYER_DEFEATED → GAME_OVER，胜者登记在 metadata.winnerId', () => {
       const { engine } = baseFixture(2, 2);
 
       dispatchOk(engine, 'ATTACK', 1, siegeAttack('s_cost_1'));
@@ -558,7 +558,7 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
       expect(reset.justDeployed).toBe(false);
     });
 
-    it('将池抽空时回合开始强制扣 1 点本营（RESOLVE_BASE_LOSS）', () => {
+    it('将池抽空时回合开始强制扣 1 点营地（RESOLVE_BASE_LOSS）', () => {
       const p1 = makePlayer(1, '玩家1', '魏', { generalPool: makeGeneralPool('bl1_', '魏', 3) });
       const p2 = makePlayer(2, '玩家2', '蜀', { generalPool: [] }); // 将池已空
       const engine = new GameEngine(makePlayingState([p1, p2], { round: 2 }));
@@ -594,7 +594,7 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
     });
   });
 
-  describe('⑨ 完整一局冒烟（开局抽牌→部署→三段推进→摧毁本营获胜）', () => {
+  describe('⑨ 完整一局冒烟（开局抽牌→部署→三段推进→摧毁营地获胜）', () => {
     it('全程只通过 GameAction 驱动，从 menu 一路打到 gameOver', () => {
       // D-2：抽将洗牌走 rngState 游标，可精确断言的只剩阵营纯度。
 
@@ -643,7 +643,7 @@ describe('核心玩法流程（GameAction 直驱，不绕过引擎）', () => {
       dispatchOk(engine, 'END_TURN', 1);
       passP2Turn();
 
-      // ── 第 4 回合：第一次攻本营（2→1）──
+      // ── 第 4 回合：第一次攻营地（2→1）──
       dispatchOk(engine, 'ATTACK', 1, {
         attackerId: generalId, targetId: 'base_2', ranged: false, consumeCard: costCard(),
       });

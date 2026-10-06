@@ -395,7 +395,7 @@ export default function GameBoard(){
         style={{borderColor:atkBase?'#ef4444':baseHit?'#f87171':bc,background:`linear-gradient(180deg,${bc}30 0%,${bc}10 100%)`}}>
         <div className="absolute -top-3 left-0 right-0 flex justify-center gap-0.5">{[0,1,2,3,4].map(i=><span key={i} className="text-[8px]" style={{opacity:i<fl?1:0.15}}>🚩</span>)}</div>
         <div className="text-xl">🏯</div>
-        <p className="text-[10px] font-black" style={{color:bc}}>本营</p>
+        <p className="text-[10px] font-black" style={{color:bc}}>营地</p>
         <p className={`text-xs font-black ${baseHit?'text-red-300 animate-number-pop':'text-red-400'}`}>❤️{areaOwner.baseHp}</p>
       </button>);
     }
@@ -418,7 +418,7 @@ export default function GameBoard(){
         borderColor: moveTarget ? '#22d3ee' : atkFg ? (atkFgFriendly ? '#facc15' : '#ef4444') : fg ? (generalVisual?.borderColor ?? fgColor) : canDep ? '#22c55e' : `${bc}55`,
         ...(fg ? {} : { background: canDep ? 'rgba(34,197,94,0.12)' : moveTarget ? 'rgba(34,211,238,0.12)' : 'rgba(0,0,0,0.28)' }),
       }}>
-      {fg?(<div className="px-0.5 text-center"><div className="text-xl">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[9px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p>{fg.currentArmor>0&&<p className="text-[8px] text-blue-300">🛡️{fg.currentArmor}</p>}<p className={`text-[9px] ${generalHit?'text-red-300 animate-number-pop':generalHeal?'text-green-300 animate-number-pop-heal':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className="text-[9px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地':'前线'}</span>)}
+      {fg?(<div className="px-0.5 text-center"><div className="text-xl">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[9px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p>{fg.currentArmor>0&&<p className="text-[8px] text-blue-300">🛡️{fg.currentArmor}</p>}<p className={`text-[9px] ${generalHit?'text-red-300 animate-number-pop':generalHeal?'text-green-300 animate-number-pop-heal':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className="text-[9px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地区域':'前线'}</span>)}
     </button>);
   };
 
@@ -627,7 +627,7 @@ export default function GameBoard(){
           <div className="relative flex flex-col items-center gap-4 animate-base-hit">
             <div className="text-7xl animate-pulse-glow">💥🏯💥</div>
             <div className="rounded-2xl border-2 px-10 py-5 text-center" style={{borderColor:defeatEvent.faction?factionColors[defeatEvent.faction]:'#ef4444',background:'rgba(0,0,0,0.85)',boxShadow:`0 0 40px ${defeatEvent.faction?factionColors[defeatEvent.faction]:'#ef4444'}`}}>
-              <p className="mb-1 text-sm tracking-[0.4em] text-red-300">本营击破</p>
+              <p className="mb-1 text-sm tracking-[0.4em] text-red-300">营地击破</p>
               <p className="text-4xl font-black" style={{color:defeatEvent.faction?factionColors[defeatEvent.faction]:'#fca5a5'}}>{defeatEvent.faction?`${defeatEvent.faction}势力击破`:'势力击破'}</p>
               <p className="mt-2 text-sm text-amber-200/70">{defeatEvent.name}</p>
             </div>
@@ -646,7 +646,7 @@ export default function GameBoard(){
                 <span className="mx-0.5 text-amber-100/50">|</span>
                 <span className={p.newHp<=0?'text-orange-300':'text-red-300'}>{p.maxHp!=null?`${p.newHp}/${p.maxHp}`:''}</span>
               </>):(<>HP: <span className={p.newHp>0?'text-green-300':'text-orange-300'}>{p.newHp}</span></>):null}
-              {!pred&&<span>本营 -{p.baseDamage}</span>}
+              {!pred&&<span>营地 -{p.baseDamage}</span>}
             </div>
           </div>);
         })()}
@@ -657,7 +657,7 @@ export default function GameBoard(){
       </div>
       {/* overlays */}
       {vm==='deploy'&&<Bar><span className="text-sm text-amber-200">登场：<b className="text-amber-100">{depGen?.name}</b> <span className="text-amber-400/60">(消耗{depCards.length}/{depGen?.hp}张)</span></span><Btn ok={depCards.length>0} onClick={confirmDep}>确认位置</Btn><Btn onClick={cancelDep} red>取消</Btn></Bar>}
-      {vm==='deployTarget'&&<div className="pointer-events-none absolute left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2"><div className="pointer-events-auto flex items-center gap-3 rounded-xl border border-green-500/50 bg-black/90 px-5 py-2.5 shadow-xl"><span className="text-sm font-bold text-green-300 animate-pulse">📍请选择你的营地空格放置将领</span><Btn onClick={cancelDep} red>取消</Btn></div></div>}
+      {vm==='deployTarget'&&<div className="pointer-events-none absolute left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2"><div className="pointer-events-auto flex items-center gap-3 rounded-xl border border-green-500/50 bg-black/90 px-5 py-2.5 shadow-xl"><span className="text-sm font-bold text-green-300 animate-pulse">📍请选择你的营地区域空格放置将领</span><Btn onClick={cancelDep} red>取消</Btn></div></div>}
       {vm==='selectAttackCard'&&<Bar><span className="text-sm font-bold text-red-300">选择一张手牌作为攻击消耗</span><Btn onClick={resetAtk}>取消</Btn></Bar>}
       {moveOptions.length>0&&movGen&&<Bar><span className="text-sm font-bold text-cyan-300">请选择一个高亮可进入区域</span><Btn onClick={cancelMov}>取消</Btn></Bar>}
       {vm==='selectMoveCard'&&<Bar><span className="text-sm font-bold text-blue-300">选择一张手牌作为移动消耗</span><Btn onClick={cancelMov}>取消</Btn></Bar>}
@@ -767,7 +767,7 @@ export default function GameBoard(){
                 <button onClick={()=>canArm&&startArm(fg)} disabled={!canArm} title={armReason} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canArm?'bg-sky-700/80 text-white hover:bg-sky-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🛡️叠甲</button>
               </div>}
               {canDeploy&&<button onClick={()=>{setIns(null);startDeploy(g);}} className="mt-3 w-full rounded-xl bg-gradient-to-r from-amber-600 to-red-700 py-2.5 text-lg font-bold text-white">⚔️登场将领</button>}
-              {!fg&&ins.type==='general'&&!campFree&&<p className="mt-3 text-center text-xs text-red-400/60">营地已满，无法登场</p>}
+              {!fg&&ins.type==='general'&&!campFree&&<p className="mt-3 text-center text-xs text-red-400/60">营地区域已满，无法登场</p>}
             </>);
           })():ins.card?(<><div className="mb-3 text-center text-4xl">{ins.card.type==='粮草'?'🌾':ins.card.type==='材料'?'⛏️':'🛡️'}</div><div className="mb-1 text-center"><span className="rounded-full bg-amber-800/30 px-3 py-1 text-sm font-bold text-amber-300">{ins.card.type}</span></div><h2 className="mt-3 mb-3 text-center text-2xl font-black text-amber-200">{ins.card.name}</h2><p className="text-center text-sm text-amber-100/60">{ins.card.description}</p></>):null}
           <button onClick={()=>{setVm('board');setIns(null);}} className="mt-4 w-full rounded-xl border border-gray-700/30 bg-gray-800/80 py-2.5 font-bold text-amber-200/80">关闭</button>

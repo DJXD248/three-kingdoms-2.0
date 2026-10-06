@@ -57,9 +57,9 @@ export type SkillTriggerType =
   | 'onCardGained'       // 获得手牌时（v2.5.3：事件源首批=GIVE 发放派生）
   | 'modifyAttack'       // 攻击结算前修改伤害值
   | 'modifyDefense'      // 受击结算前修改受到的伤害值
-  | 'onBaseTargetedAtk'  // 本营成为攻击目标时
-  | 'onBaseTargetedSkill'// 本营成为技能目标时
-  | 'onBaseDamaged'      // 本营受到伤害时
+  | 'onBaseTargetedAtk'  // 营地成为攻击目标时
+  | 'onBaseTargetedSkill'// 营地成为技能目标时
+  | 'onBaseDamaged'      // 营地受到伤害时
   | 'onOtherSkillActivated' // 其他将领技能发动时
   | 'activeSelf'         // 己方回合任意发动
   | 'activeOther'        // 其他玩家回合任意发动
@@ -121,9 +121,9 @@ export const triggerTypeLabels: Record<SkillTriggerType, string> = {
   onCardGained: '获得手牌时',
   modifyAttack: '攻击结算前修改伤害值',
   modifyDefense: '受击结算前修改受到的伤害值',
-  onBaseTargetedAtk: '本营成为攻击目标时',
-  onBaseTargetedSkill: '本营成为技能目标时',
-  onBaseDamaged: '本营受到伤害时',
+  onBaseTargetedAtk: '营地成为攻击目标时',
+  onBaseTargetedSkill: '营地成为技能目标时',
+  onBaseDamaged: '营地受到伤害时',
   onOtherSkillActivated: '其他将领技能发动时',
   activeSelf: '己方回合任意发动',
   activeOther: '其他玩家回合任意发动',

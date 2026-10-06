@@ -46,7 +46,7 @@ describe('orderReactionCandidates — 用户给的工作例逐字钉住', () => 
     expect(ordered(workExample, { victimGenerals: ['gA'], victimSeats: [2] })).toEqual(['A', 'C', 'D', 'B']);
   });
 
-  it('点名不到场上任何一员（打本营这类）⇒ 退到席位那一层：那位玩家的全部监听算受击组', () => {
+  it('点名不到场上任何一员（打营地这类）⇒ 退到席位那一层：那位玩家的全部监听算受击组', () => {
     // targetId='base_2' 不会等于任何将领 id，所以按 targetPlayerId=2 分整席。
     expect(ordered(workExample, { victimGenerals: ['base_2'], victimSeats: [2] })).toEqual(['A', 'B', 'C', 'D']);
   });
@@ -192,7 +192,7 @@ describe('比较器接进 TriggerEngine.process 之后真的按它动', () => {
     expect(generalsOf(result.events)).toEqual(['gStruck', 'gSelf', 'gMate']);
   });
 
-  it('打本营点名不到将领会退到席位：受击玩家的全部监听先动', () => {
+  it('打营地点名不到将领会退到席位：受击玩家的全部监听先动', () => {
     const engine = new TriggerEngine();
     engine.register(listener('other-seat1', 1, 'gOther', 'DAMAGE'));
     engine.register(listener('hit-seat2', 2, 'gHit', 'DAMAGE'));
