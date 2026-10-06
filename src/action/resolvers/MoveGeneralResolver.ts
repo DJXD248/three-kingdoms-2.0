@@ -134,7 +134,11 @@ export class MoveGeneralResolver implements ActionResolver {
     // （`core/attackBlow.ts` 攻击那一路用的是同一个词）。判定位置排在"本回合已移动"之前＝
     // 与界面 `movReason` 的优先级逐字同序（GameBoard.tsx:741 先读整备、再读已移动）。
     // v2.8.41：演练场（沙盒）按用户口径保留"强行移动整备中的将"，走 payload 上的
-    // `sandboxAllowArming`；除那条路以外本闸一字不动（正式对局/AI/回放都不传⇒无从旁路）。
+    // `sandboxAllowArming`；除那条路以外本闸一字不动。谁能产出这个键＝全库扫描钉住了四文件
+    // （钉子＝`sandboxArmingBypass.test.ts`，另有一枚按实参个数下钉的证人），正式对局棋盘与
+    // AI 司机都给不出它。**回放如实一条**：沙盒局的录像把动作原样存着（`structuredClone`）⇒
+    // 那笔键确实在文档里、重放时照放行（＝忠实复现"当时真的动了"）；全库没有"从录像恢复到
+    // 实盘继续打"的路径，所以不构成正式对局的旁路。
     if (general.isArming && payload.sandboxAllowArming !== true) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'GENERAL_IS_ARMING' } }];
     }
