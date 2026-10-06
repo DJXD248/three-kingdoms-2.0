@@ -460,8 +460,10 @@ export default function TestArena(){
             const meleeN=fg?getValidTargets(fg,cp.id,players,false).length:0;
             const rangeN=fg?getValidTargets(fg,cp.id,players,true).length:0;
             // In test mode: always allow actions (no limit check) — 含整备（v2.8.41：整备中的将
-            // 在演练场照样能移动与攻击，靠 moveGeneral 的第 4 个参数放行；正式对局不传⇒闸照旧）。
-            // 界面同时把"整备中"标出来（格子＋这张详情卡的蓝条），免得看着像 bug。
+            // 在演练场照样能移动，靠 moveGeneral 的第 4 个参数放行；正式对局不传⇒闸照旧。
+            // 攻击**不在放行范围**：`core/attackBlow.ts` 对整备中的将一律拒 `GENERAL_IS_ARMING`，
+            // 沙盒没有旁路它，所以这里按钮照旧可点、点了由引擎无声拒掉——详情卡那句蓝条写明此事）。
+            // 界面同时把"整备中"标出来（格子＋这张详情卡），免得看着像 bug。
             const canMov=!!(fg&&own&&moveOk&&(isSch?cp.hand.length>0:true));
             const canAtk=!!(fg&&own&&cp.hand.length>0);
             const inEnemy=fg?isInEnemyTerritory(fg):false;const supNeedCards=fg?(1+(inEnemy?1:0)):1;
@@ -482,7 +484,7 @@ export default function TestArena(){
               {ac&&<div className="mb-2 flex items-center gap-3 text-[10px] text-gray-400 bg-gray-900/30 rounded-lg px-3 py-1.5">
                 <span>本回合：</span><span className="text-red-300">⚔攻击 {ac.atk}次</span><span className="text-blue-300">🚶移动 {ac.mov}次</span><span className="text-green-300">💊补给 {ac.sup}次</span>
               </div>}
-              {fg&&fg.isArming&&<p className="mb-2 text-center text-xs text-blue-400/70">🛡️ 整备状态：正式对局里本回合无法移动和攻击；演练场不做限制检查，仍可强行移动与攻击</p>}
+              {fg&&fg.isArming&&<p className="mb-2 text-center text-xs text-blue-400/70">🛡️ 整备状态：正式对局里本回合不能移动、也不能攻击。演练场只对「移动」放开限制（整备中也可强行移动），「攻击」仍由引擎拦着＝整备中的将打不出人</p>}
               {fg&&own&&inEnemy&&<p className="mb-2 text-center text-xs text-yellow-500/60">⚠️ 敌方区域：补给额外消耗1张</p>}
               <div className="mb-3"><h3 className="mb-1.5 text-xs font-bold uppercase tracking-wider text-amber-400/80">技能</h3><div className="flex flex-wrap gap-1">{getGeneralWithEdits(g).skills.map((s,i)=><div key={i} className="rounded-lg border border-amber-700/20 bg-amber-900/30 px-2 py-0.5 text-xs text-amber-200"><span className="font-bold">{s.name}</span>{tagsOf(s).map(t=><span key={t} className="ml-1 text-[9px] px-1 py-0.5 rounded-full font-bold border" style={{color:skillTagColors[t],borderColor:skillTagColors[t]+'50',backgroundColor:skillTagColors[t]+'15'}} title={skillTagMeanings[t]}>{t}</span>)}{s.description&&<span className="text-amber-300/50 text-[10px] ml-1">— {s.description}</span>}</div>)}</div></div>
               {fg&&own&&<div className="flex flex-wrap gap-1.5 border-t border-amber-800/20 pt-2.5">

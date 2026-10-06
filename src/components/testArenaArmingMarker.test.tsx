@@ -64,14 +64,18 @@ describe('演练场整备可见性＋放行接线（v2.8.41）', () => {
     expect(screen.getAllByText('整备').length, '棋盘格上要有「整备」状态标记').toBeGreaterThanOrEqual(1);
   });
 
-  it('① 点开详情卡：既有「整备中」徽章，也说明这里不做限制检查', () => {
+  it('① 点开详情卡：既有「整备中」徽章，说明句也只写真实放行的那一半', () => {
     const { container } = render(<TestArena />);
     // 点那张将卡＝进检视面板（演练场的详情入口是点格子）
     const tile = Array.from(container.querySelectorAll('button')).find(b => (b.textContent ?? '').includes('沙盒测试将'));
     expect(tile, '找不到整备中将领所在的格子').toBeTruthy();
     fireEvent.click(tile!);
     expect(screen.getAllByText('整备中').length, '详情卡要有「整备中」徽章').toBeGreaterThanOrEqual(1);
-    expect(container.textContent, '详情卡要写明正式对局里不许动、演练场放行').toContain('演练场不做限制检查');
+    const note = container.textContent ?? '';
+    expect(note, '详情卡要写明正式对局里不许动、演练场只对移动放行').toContain('只对「移动」放开限制');
+    expect(note, '要写明攻击这条并没有放开（引擎照拒 GENERAL_IS_ARMING）').toContain('「攻击」仍由引擎拦着');
+    // 诚实钉：这句说明**不许**把"攻击"也说成放行了——本刀只裁了移动，攻击那一路没有旁路。
+    expect(note).not.toMatch(/放行.{0,12}移动与攻击|移动与攻击/);
   });
 
   it('② 那三处移动调用每一处都带旁路（漏一处＝沙盒里点移动静默失败）', () => {
