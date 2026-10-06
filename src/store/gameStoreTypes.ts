@@ -155,7 +155,7 @@ export interface GameState {
   confirmDraw:()=>void;
   resolvePendingDrawLoss:()=>void;
   deployGeneral:(g:General,slot:number,consume:(General|GameCard)[])=>boolean;
-  moveGeneral:(id:string,target:Position,consume?:General|GameCard)=>void;
+  moveGeneral:(id:string,target:Position,consume?:General|GameCard,sandboxAllowArming?:boolean)=>void;
   attackTarget:(atkId:string,tgtId:string,ranged:boolean,consume?:General|GameCard)=>void;
   supplyGeneral:(id:string,cards:(General|GameCard)[])=>void;
   armGeneral:(id:string,armorCards:GameCard[])=>boolean;

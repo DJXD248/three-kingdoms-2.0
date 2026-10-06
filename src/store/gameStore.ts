@@ -559,7 +559,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     return true;
   },
 
-  moveGeneral:(generalId,target,consumeCard)=>{
+  moveGeneral:(generalId,target,consumeCard,sandboxAllowArming)=>{
     const state=get();
     const {engineState}=dispatchStoreAction(
       state,
@@ -567,6 +567,8 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         generalId,
         target,
         consumeCard,
+        // 演练场（沙盒）旁路：整备中的将允许移动。GameBoard／AI／回放都不传⇒正式玩法不受影响。
+        ...(sandboxAllowArming === true ? { sandboxAllowArming: true } : {}),
       }),
     );
     const currentPlayerIndex = engineState.players.findIndex(player => player.id === engineState.currentPlayerId);

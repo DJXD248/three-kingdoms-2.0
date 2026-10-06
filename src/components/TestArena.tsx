@@ -17,6 +17,14 @@ type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'se
 interface InspectTarget { type:'general'|'card'|'fieldGeneral'; general?:General; card?:GameCard; fieldGeneral?:FieldGeneral; playerId?:number; }
 function isGen(c:General|GameCard):c is General{return 'skills' in c;}
 
+/**
+ * 演练场（沙盒）的整备旁路开关。用户 2026-10-07：「演练场（沙盒）保留可以强行移动整备中
+ * 的将，但是要说明是整备状态」⇒这里放行、格子和详情卡同时标出"整备"。正式棋盘（`GameBoard.tsx`）
+ * 永远不传这个参数（＝`moveGeneral` 的第 4 个参数 `sandboxAllowArming`），所以整备闸在玩法里
+ * 照旧生效（钉子＝`src/action/resolvers/sandboxArmingBypass.test.ts`）。
+ */
+const SANDBOX_ALLOW_ARMING = true;
+
 export default function TestArena(){
   const players=useGameStore(s=>s.players);
   const cpi=useGameStore(s=>s.currentPlayerIndex);
@@ -160,7 +168,7 @@ export default function TestArena(){
       setMoveOptions([]);setMovTgt(target);
       if(isSch){setVm('selectMoveCard');return;}
       trackAction(getRuntimeCardId(fg.general),'mov');
-      moveGeneral(getRuntimeCardId(fg.general),target);
+      moveGeneral(getRuntimeCardId(fg.general),target,undefined,fg.isArming===true&&SANDBOX_ALLOW_ARMING);
       setTimeout(()=>testResetActions(getRuntimeCardId(fg.general)),50);
       setMovGen(null);setMovTgt(null);setVm('board');
       return;
@@ -173,14 +181,14 @@ export default function TestArena(){
     if(!movGen)return;const isSch=movGen.general.type==='文将';setMovTgt(target);setMoveOptions([]);
     if(isSch){setVm('selectMoveCard');return;}
     trackAction(getRuntimeCardId(movGen.general),'mov');
-    moveGeneral(getRuntimeCardId(movGen.general),target);
+    moveGeneral(getRuntimeCardId(movGen.general),target,undefined,movGen.isArming===true&&SANDBOX_ALLOW_ARMING);
     setTimeout(()=>testResetActions(getRuntimeCardId(movGen.general)),50);
     setMovGen(null);setMovTgt(null);setVm('board');
   };
   const pickMoveCard=(c:General|GameCard)=>{
     if(movGen&&movTgt){
       trackAction(getRuntimeCardId(movGen.general),'mov');
-      moveGeneral(getRuntimeCardId(movGen.general),movTgt,c);
+      moveGeneral(getRuntimeCardId(movGen.general),movTgt,c,movGen.isArming===true&&SANDBOX_ALLOW_ARMING);
       setTimeout(()=>testResetActions(getRuntimeCardId(movGen.general)),50);
       setMovGen(null);setMovTgt(null);setMoveOptions([]);setIns(null);setVm('board');
     }
@@ -236,7 +244,7 @@ export default function TestArena(){
     return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(canDep)doDeploy(slot===0?0:2);else if(moveTarget)chooseMoveTarget({zone,slot,areaOwnerId:areaOwner.id});}}
       className={`relative flex h-[76px] w-[62px] items-center justify-center rounded-lg border-2 transition-all ${(fg||canDep||moveTarget)?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkFg?`animate-pulse ring-2 ${atkFgFriendly?'ring-yellow-400':'ring-red-500'}`:''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
       style={{...(generalVisual??{}),borderColor:moveTarget?'#22d3ee':atkFg?(atkFgFriendly?'#facc15':'#ef4444'):fg?(generalVisual?.borderColor??fgColor):canDep?'#22c55e':`${bc}55`,...(fg?{}:{background:canDep?'rgba(34,197,94,0.12)':moveTarget?'rgba(34,211,238,0.12)':'rgba(0,0,0,0.28)'})}}>
-      {fg?(<div className="px-0.5 text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[8px] font-black leading-tight text-amber-200">{fg.general.name}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className="text-[8px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地':'前线'}</span>)}</button>);
+      {fg?(<div className="px-0.5 text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[8px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className="text-[8px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地':'前线'}</span>)}</button>);
   };
 
   const BSlot=({slot}:{slot:number})=>{
@@ -252,7 +260,7 @@ export default function TestArena(){
     return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(moveTarget)chooseMoveTarget({zone:'battle',slot,areaOwnerId:null});}}
       className={`flex h-[76px] w-[62px] items-center justify-center rounded-lg border-2 transition-all ${fg||moveTarget?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkOk?`animate-pulse ring-2 ${atkFriendly?'ring-yellow-400':'ring-red-500'}`:''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
       style={{...(generalVisual??{}),borderColor:moveTarget?'#22d3ee':atkOk?(atkFriendly?'#facc15':'#ef4444'):fg?(generalVisual?.borderColor??c):'#333',...(fg?{}:{background:moveTarget?'rgba(34,211,238,0.12)':'rgba(0,0,0,0.4)'})}}>
-      {fg?(<div className="text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="text-[8px] font-black leading-tight text-amber-200">{fg.general.name}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className={`text-[8px] ${moveTarget?'text-cyan-300':'text-amber-700/20'}`}>{moveTarget?'可前进':'战场'}</span>)}
+      {fg?(<div className="text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="text-[8px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className={`text-[8px] ${moveTarget?'text-cyan-300':'text-amber-700/20'}`}>{moveTarget?'可前进':'战场'}</span>)}
     </button>);
   };
 
@@ -451,7 +459,9 @@ export default function TestArena(){
             const moveOk=fg?canFieldGeneralMove(fg,players):false;
             const meleeN=fg?getValidTargets(fg,cp.id,players,false).length:0;
             const rangeN=fg?getValidTargets(fg,cp.id,players,true).length:0;
-            // In test mode: always allow actions (no limit check)
+            // In test mode: always allow actions (no limit check) — 含整备（v2.8.41：整备中的将
+            // 在演练场照样能移动与攻击，靠 moveGeneral 的第 4 个参数放行；正式对局不传⇒闸照旧）。
+            // 界面同时把"整备中"标出来（格子＋这张详情卡的蓝条），免得看着像 bug。
             const canMov=!!(fg&&own&&moveOk&&(isSch?cp.hand.length>0:true));
             const canAtk=!!(fg&&own&&cp.hand.length>0);
             const inEnemy=fg?isInEnemyTerritory(fg):false;const supNeedCards=fg?(1+(inEnemy?1:0)):1;
@@ -460,7 +470,7 @@ export default function TestArena(){
             const canDeploy=!fg&&ins.type==='general'&&campFree&&cp.hand.length>1;
             const ac=fg?actionCounts[getRuntimeCardId(fg.general)]||{atk:0,mov:0,sup:0}:null;
             return(<>
-              <div className="mb-2 flex items-center gap-2"><div className="h-3 w-3 rounded-full" style={{backgroundColor:factionColors[g.faction]}}/><span className="rounded px-2 py-0.5 text-sm font-bold" style={{backgroundColor:`${factionColors[g.faction]}25`,color:factionColors[g.faction]}}>{g.faction}</span><span className="text-sm text-amber-400/70">{g.type}</span>{fg&&<span className="ml-auto text-xs text-green-400/60">场上</span>}</div>
+              <div className="mb-2 flex items-center gap-2"><div className="h-3 w-3 rounded-full" style={{backgroundColor:factionColors[g.faction]}}/><span className="rounded px-2 py-0.5 text-sm font-bold" style={{backgroundColor:`${factionColors[g.faction]}25`,color:factionColors[g.faction]}}>{g.faction}</span><span className="text-sm text-amber-400/70">{g.type}</span>{fg&&fg.isArming&&<span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/30">整备中</span>}{fg&&<span className="ml-auto text-xs text-green-400/60">场上</span>}</div>
               <h2 className="mb-0.5 text-2xl font-black text-amber-100">{g.name}</h2>
               {g.title&&<p className="mb-3 text-sm text-amber-500/60">{g.title}</p>}
               <div className="mb-3 grid grid-cols-4 gap-1.5">
@@ -472,6 +482,7 @@ export default function TestArena(){
               {ac&&<div className="mb-2 flex items-center gap-3 text-[10px] text-gray-400 bg-gray-900/30 rounded-lg px-3 py-1.5">
                 <span>本回合：</span><span className="text-red-300">⚔攻击 {ac.atk}次</span><span className="text-blue-300">🚶移动 {ac.mov}次</span><span className="text-green-300">💊补给 {ac.sup}次</span>
               </div>}
+              {fg&&fg.isArming&&<p className="mb-2 text-center text-xs text-blue-400/70">🛡️ 整备状态：正式对局里本回合无法移动和攻击；演练场不做限制检查，仍可强行移动与攻击</p>}
               {fg&&own&&inEnemy&&<p className="mb-2 text-center text-xs text-yellow-500/60">⚠️ 敌方区域：补给额外消耗1张</p>}
               <div className="mb-3"><h3 className="mb-1.5 text-xs font-bold uppercase tracking-wider text-amber-400/80">技能</h3><div className="flex flex-wrap gap-1">{getGeneralWithEdits(g).skills.map((s,i)=><div key={i} className="rounded-lg border border-amber-700/20 bg-amber-900/30 px-2 py-0.5 text-xs text-amber-200"><span className="font-bold">{s.name}</span>{tagsOf(s).map(t=><span key={t} className="ml-1 text-[9px] px-1 py-0.5 rounded-full font-bold border" style={{color:skillTagColors[t],borderColor:skillTagColors[t]+'50',backgroundColor:skillTagColors[t]+'15'}} title={skillTagMeanings[t]}>{t}</span>)}{s.description&&<span className="text-amber-300/50 text-[10px] ml-1">— {s.description}</span>}</div>)}</div></div>
               {fg&&own&&<div className="flex flex-wrap gap-1.5 border-t border-amber-800/20 pt-2.5">

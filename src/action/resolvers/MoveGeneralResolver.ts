@@ -14,6 +14,13 @@ interface MovePayload {
   generalId: string;
   target: LegacyPosition;
   consumeCard?: any;
+  /**
+   * 演练场（沙盒）专用旁路：整备中的将照样允许移动。正式对局、AI、热座、录像回放
+   * 全部不传这个字段⇒整备闸（v2.8.40）一字不让。用户 2026-10-07 原话＝「演练场
+   * （沙盒）保留可以强行移动整备中的将，但是要说明是整备状态」⇒放行＋界面注明。
+   * 全库只允许 `components/TestArena.tsx` 传它（钉子＝`sandboxArmingBypass.test.ts` 的扫描）。
+   */
+  sandboxAllowArming?: boolean;
 }
 
 function allFieldGenerals(state: EngineState) {
@@ -126,7 +133,9 @@ export class MoveGeneralResolver implements ActionResolver {
     // 直发一条 MOVE_GENERAL 就能带着整备走一格）。拒因复用既有词表 `GENERAL_IS_ARMING`
     // （`core/attackBlow.ts` 攻击那一路用的是同一个词）。判定位置排在"本回合已移动"之前＝
     // 与界面 `movReason` 的优先级逐字同序（GameBoard.tsx:741 先读整备、再读已移动）。
-    if (general.isArming) {
+    // v2.8.41：演练场（沙盒）按用户口径保留"强行移动整备中的将"，走 payload 上的
+    // `sandboxAllowArming`；除那条路以外本闸一字不动（正式对局/AI/回放都不传⇒无从旁路）。
+    if (general.isArming && payload.sandboxAllowArming !== true) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'GENERAL_IS_ARMING' } }];
     }
 
