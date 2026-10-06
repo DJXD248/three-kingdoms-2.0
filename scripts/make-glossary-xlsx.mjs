@@ -28,11 +28,15 @@ export const SHEETS = {
 
 const TITLE_LINE = /^##\s*([一二三四五六七八九十])、/;
 
+// 一格写多行（比如"你的理解"里那条将领池的组成规则）在 md 表格里只能写成 `<br>`：
+// md 的一行表格就是一行，真换行会把表劈断。这里把 `<br>` 折成 Excel 的换行符，
+// 配合下面的 wrapText，Excel 里就是一格三行；守卫测试另有一条专门盯着这件事。
 function clean(cell) {
   return cell
     .replace(/~~([\s\S]*?)~~/g, '$1（旧说法，已作废）')
     .replace(/\*\*([\s\S]*?)\*\*/g, '$1')
     .replace(/`([^`]*)`/g, '$1')
+    .replace(/<br\s*\/?>/gi, '\n')
     .trim();
 }
 
@@ -65,7 +69,7 @@ export function parse(md) {
     .split(/\r?\n/)
     .filter((l) => l.trim() && !l.trim().startsWith('# ') && !/^[-\s]*$/.test(l.trim()))
     .map((l) => l.trim().replace(/^-\s*/, '· '))
-    .map((l) => l.replace(/\*\*([\s\S]*?)\*\*/g, '$1').replace(/`([^`]*)`/g, '$1'));
+    .map((l) => l.replace(/\*\*([\s\S]*?)\*\*/g, '$1').replace(/`([^`]*)`/g, '$1').replace(/<br\s*\/?>/gi, '\n'));
   const docTitle = (md.match(/^#\s*(.+)$/m) || [, '玩家词汇 · 大白话对照表'])[1].trim();
   return { blocks, preamble, docTitle };
 }

@@ -14,7 +14,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = path.join(ROOT, 'PLAYER_GLOSSARY.md');
 const OUTPUT = path.join(ROOT, '词汇表.xlsx');
 
-const MARKDOWN_RESIDUE = [/~~/, /\*\*/, /`/, /^\|?\s*:?-{3,}/];
+const MARKDOWN_RESIDUE = [/~~/, /\*\*/, /`/, /^\|?\s*:?-{3,}/, /<br\s*\/?>/i];
 
 function sheetOf(workbook, name) {
   const sheet = workbook.Sheets[name];
@@ -70,6 +70,23 @@ describe('词汇表.xlsx 生成器', () => {
         }
       }
     }
+  });
+
+  it('<br> 写成 Excel 换行：一格三行、不劈表、不留尖括号残留', async () => {
+    const probe = [
+      '# 探针',
+      '',
+      '## 一、棋盘与数字',
+      '',
+      '| 术语 | 大白话翻译 | 你的理解 |',
+      '|---|---|---|',
+      '| 将领池 | 候着的将领。 | 甲<br>乙<br>丙 |',
+      '',
+    ].join('\n');
+    expect(parse(probe).blocks[0].rows[1][2]).toBe('甲\n乙\n丙');
+    const rows = sheetOf(XLSX.read(await renderXlsx(probe), { type: 'buffer' }), SHEETS.一);
+    expect(rows[1][2]).toBe('甲\n乙\n丙');
+    expect(rows.length).toBe(2);
   });
 
   it('同一份 md 两次生成的字节完全相同（zip 时间戳必须钉死）', async () => {
