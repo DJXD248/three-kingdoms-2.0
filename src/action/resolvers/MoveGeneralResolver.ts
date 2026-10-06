@@ -122,6 +122,14 @@ export class MoveGeneralResolver implements ActionResolver {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'GENERAL_NOT_ON_FIELD' } }];
     }
 
+    // 整备＝本回合不能移动也不能攻击（v2.8.40 把这把闸补到引擎侧：此前只有界面拦住，
+    // 直发一条 MOVE_GENERAL 就能带着整备走一格）。拒因复用既有词表 `GENERAL_IS_ARMING`
+    // （`core/attackBlow.ts` 攻击那一路用的是同一个词）。判定位置排在"本回合已移动"之前＝
+    // 与界面 `movReason` 的优先级逐字同序（GameBoard.tsx:741 先读整备、再读已移动）。
+    if (general.isArming) {
+      return [{ type: 'ACTION_REJECTED', data: { action, reason: 'GENERAL_IS_ARMING' } }];
+    }
+
     if (general.hasMoved) {
       return [{ type: 'ACTION_REJECTED', data: { action, reason: 'GENERAL_ALREADY_MOVED' } }];
     }

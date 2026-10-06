@@ -178,7 +178,10 @@ export function getLegalActions(engine: GameEngine, playerId: number): GameActio
     for (const slot of [0, 2]) moveTargets.push({ zone: 'camp', slot, areaOwnerId });
   }
   for (const fg of myField) {
-    if (fg?.hasMoved === true) continue;
+    // 整备中的将领不许动（与下方 ATTACK 的 `hasAttacked || isArming` 那一行同一把闸）。界面早就拦住了
+    // （GameBoard.tsx:724），这一行是补引擎侧：合法集是 AI 与直发动作的判定源，
+    // 缺了这一行＝"合法集里有一条界面会拦你的动作"。
+    if (fg?.hasMoved === true || fg?.isArming === true) continue;
     const generalId = runtimeId(fg?.general);
     if (!generalId) continue;
     const isScholar = fg?.general?.type === '文将' || fg?.general?.generalType === 'SCHOLAR';

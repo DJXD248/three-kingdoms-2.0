@@ -226,6 +226,41 @@ describe('legalActions · 枚举器与引擎裁判一致性', () => {
     expect(over.legalActions(1)).toHaveLength(0);
   });
 
+  // v2.8.40「整备不能动」引擎侧执法闸。此前枚举器给整备中的将发 MOVE（`isArming` 只在攻击那一路被读），
+  // 而界面早就拦着（GameBoard.tsx:724）⇒"合法集里有一条界面拦你的动作"。这一枚同时钉枚举侧与裁判侧。
+  it('整备中的将领：MOVE 与 ATTACK 都不入列，且直发 MOVE 被引擎拒绝', () => {
+    const armingGeneral = makeGeneral('arm1', '整备手', 4);
+    const idleGeneral = makeGeneral('idle1', '待动手', 4);
+    const p1 = makePlayer(1, {
+      hand: [makeResource('r1'), makeResource('r2', '军备')],
+      fieldGenerals: [
+        makeFieldGeneral(armingGeneral, 1, 'camp', 0, 1, { isArming: true, currentArmor: 1, armorCards: [makeResource('a1', '军备')] }),
+        makeFieldGeneral(idleGeneral, 1, 'camp', 2, 1),
+      ],
+    });
+    const p2 = makePlayer(2, {
+      fieldGenerals: [makeFieldGeneral(makeGeneral('enemy1', '敌将', 3), 2, 'battle', 1, null)],
+    });
+    const engine = new GameEngine(makeState([p1, p2]));
+    const actions = engine.legalActions(1);
+
+    // 整备那一员：既不出现在攻击者里，也不出现在移动者里（同席那员没整备的照常入列）。
+    expect(actions.filter(a => a.type === 'ATTACK' && (a.payload as any).attackerId === 'arm1')).toHaveLength(0);
+    const moves = actions.filter(a => a.type === 'MOVE_GENERAL');
+    expect(moves.length).toBeGreaterThan(0); // 对照：同席那员没整备的将照样能动
+    for (const move of moves) expect((move.payload as any).generalId).not.toBe('arm1');
+
+    // 裁判侧：绕过枚举器直发一条 MOVE_GENERAL，必须由引擎本人拒掉。
+    const probe = new GameEngine(structuredClone(makeState([p1, p2])));
+    const events = probe.dispatch(createAction('MOVE_GENERAL', 1, {
+      generalId: 'arm1',
+      target: { zone: 'front', slot: 0, areaOwnerId: 1 },
+    }) as any);
+    const rejection = events.find(e => e.type === 'ACTION_REJECTED');
+    expect(rejection).toBeTruthy();
+    expect((rejection?.data as any).reason).toBe('GENERAL_IS_ARMING');
+  });
+
   it('随机自对局冒烟：只凭清单驱动也能打到终局（2 个随机 AI，种子可复现）', () => {
     // 抽牌堆恒等排列（Fisher-Yates 在 random=0.99 下不动），决策随机用自带 LCG，互不污染
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.99);

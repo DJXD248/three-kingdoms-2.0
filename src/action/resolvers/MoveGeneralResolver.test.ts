@@ -110,6 +110,61 @@ describe('MoveGeneralResolver', () => {
       expect((events[0].data as any).reason).toBe('GENERAL_ALREADY_MOVED');
     });
 
+    // v2.8.40「整备不能动」引擎侧执法闸：此前这一路只有界面拦（GameBoard.tsx:724），
+    // 解析器不读 `isArming`⇒直发一条 MOVE_GENERAL 就能带着整备走一格。
+    it('should reject move while the general is arming', () => {
+      const general = makeFieldGeneral('g1', { ownerId: 1, isArming: true });
+      const player = createTestPlayer(1, { fieldGenerals: [general] });
+      const state = createTestState([player]);
+
+      const action = createAction('MOVE_GENERAL', 1, {
+        generalId: 'g1',
+        target: { zone: 'front', slot: 0, areaOwnerId: 1 },
+      });
+
+      const events = resolver.resolve(state, action as any);
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('ACTION_REJECTED');
+      expect((events[0].data as any).reason).toBe('GENERAL_IS_ARMING');
+    });
+
+    it('整备闸排在「文将前进要消耗手牌」之前：手牌为空、没带消耗牌时也先报整备', () => {
+      // 单独一枚证人：把闸摘掉的话这条会报 SCHOLAR_REQUIRES_MOVE_COST（文将＋空手牌），
+      // 而不是 GENERAL_IS_ARMING⇒它钉的是"判定次序"，与上一条（武将几何合法路）不重复。
+      const general = makeFieldGeneral('g1', {
+        ownerId: 1,
+        isArming: true,
+        general: { id: 'g1', hp: 4, type: '文将', generalType: 'SCHOLAR' },
+        currentArmor: 2,
+        armorCards: [{ id: 'a1' }, { id: 'a2' }],
+      });
+      const player = createTestPlayer(1, { fieldGenerals: [general], hand: [] });
+      const state = createTestState([player]);
+
+      const action = createAction('MOVE_GENERAL', 1, {
+        generalId: 'g1',
+        target: { zone: 'front', slot: 0, areaOwnerId: 1 },
+      });
+
+      const events = resolver.resolve(state, action as any);
+      expect(events).toHaveLength(1);
+      expect((events[0].data as any).reason).toBe('GENERAL_IS_ARMING');
+    });
+
+    it('should report GENERAL_IS_ARMING ahead of GENERAL_ALREADY_MOVED (same order as the UI)', () => {
+      const general = makeFieldGeneral('g1', { ownerId: 1, isArming: true, hasMoved: true });
+      const player = createTestPlayer(1, { fieldGenerals: [general] });
+      const state = createTestState([player]);
+
+      const action = createAction('MOVE_GENERAL', 1, {
+        generalId: 'g1',
+        target: { zone: 'front', slot: 0, areaOwnerId: 1 },
+      });
+
+      const events = resolver.resolve(state, action as any);
+      expect((events[0].data as any).reason).toBe('GENERAL_IS_ARMING');
+    });
+
     it('should reject move to invalid target', () => {
       const general = makeFieldGeneral('g1', { ownerId: 1, position: { zone: 'camp', slot: 0, areaOwnerId: 1 } });
       const player = createTestPlayer(1, { fieldGenerals: [general] });
