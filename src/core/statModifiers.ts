@@ -13,19 +13,21 @@
  *    走 `prune*` 系列，那不是"无效化"，是"人在场"这个前提本身没了。
  */
 
-/** 本刀接线（有真实读数消费）的四格＋已登记但还没接线的格；注册表全貌在契约表§三。 */
+/** 本刀接线（有真实读数消费）的五格＋已登记但还没接线的格；注册表全貌在契约表§三。 */
 export type StatModifierKey =
   | 'MELEE_ATK'
   | 'RANGED_ATK'
   | 'MAX_HP'
   | 'CURRENT_HP'
   | 'DAMAGE_TAKEN'
-  | 'DAMAGE_DEALT';
+  | 'DAMAGE_DEALT'
+  | 'RANGE';
 
 /** 接线档位＝本刀真的有读数点来读的键（其余键账本收得下，但还没人读）。
  *  `DAMAGE_TAKEN`＝2.8 刀5 接线（读数点=`core/damageTaken.ts`，护甲之前那一格）。
- *  `DAMAGE_DEALT` 照旧只登记：用户 2026-10-03 裁"本刀不接"。 */
-export const WIRED_STAT_KEYS: StatModifierKey[] = ['MELEE_ATK', 'RANGED_ATK', 'MAX_HP', 'DAMAGE_TAKEN'];
+ *  `DAMAGE_DEALT` 照旧只登记：用户 2026-10-03 裁"本刀不接"。
+ *  `RANGE`＝v2.9.0 射程刀接线（读数点=`core/attackReach.ts`＝全库唯一一处够得着判据）。 */
+export const WIRED_STAT_KEYS: StatModifierKey[] = ['MELEE_ATK', 'RANGED_ATK', 'MAX_HP', 'DAMAGE_TAKEN', 'RANGE'];
 
 export type StatModifierMode = 'delta' | 'set';
 

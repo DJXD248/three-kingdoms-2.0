@@ -168,6 +168,92 @@ describe('SkillEditor: structured runtime entry', () => {
       type: 'MODIFY_STAT', stat: 'MAX_HP', modifyMode: 'set', duration: 'untilSelfTurnEnd', target: 'SELF',
     });
   });
+
+  it('v2.9.0 射程刀：「改哪个数」那格真下拉里出现了「射程」，选中即存成 RANGE，编译器照收', () => {
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
+    render(<SkillEditor onClose={() => {}} />);
+    const listBtn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name));
+    fireEvent.click(listBtn!);
+    fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
+
+    const findStatSelect = (labelText: string) =>
+      (Array.from(document.querySelectorAll('label'))
+        .find(l => l.textContent?.includes(labelText))
+        ?.parentElement?.querySelector('select') as HTMLSelectElement | undefined);
+
+    fireEvent.change(findRuntimeSelect(), { target: { value: 'MODIFY_STAT' } });
+    const stat = findStatSelect('改哪个数')!;
+    // 证人就长在真渲染出来的那个下拉上：候选面（值＋给玩家看的中文）逐字对齐词表。
+    const rendered = Array.from(stat.options).map(o => [o.value, o.text] as const);
+    expect(rendered).toEqual([
+      ['MELEE_ATK', '近战攻击力'],
+      ['RANGED_ATK', '远程攻击力'],
+      ['MAX_HP', '体力上限'],
+      ['DAMAGE_TAKEN', '受到的伤害'],
+      ['RANGE', '射程'],
+    ]);
+
+    fireEvent.change(stat, { target: { value: 'RANGE' } });
+    // 一次性那一档对射程没有"被用掉一次"的那一刻⇒界面当场点名。
+    fireEvent.change(findStatSelect('有效周期')!, { target: { value: 'thisDamage' } });
+    expect(screen.getByText(/这一把钥匙没有"被用掉一次"的那一刻/)).toBeTruthy();
+    fireEvent.change(findStatSelect('有效周期')!, { target: { value: '' } });
+
+    const num = Array.from(document.querySelectorAll('input[type="number"]')).pop() as HTMLInputElement;
+    fireEvent.change(num, { target: { value: '1' } });
+    fireEvent.click(screen.getByText('💾 保存修改'));
+
+    const saved = useGameStore.getState().skillEdits[target.id];
+    expect(saved[0].effects?.[0].runtime)
+      .toEqual({ type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'RANGE', modifyMode: 'delta' });
+
+    const firstSkill = saved[0]!;
+    const withTrigger = {
+      ...target,
+      skills: [{
+        ...firstSkill,
+        trigger: { type: 'onTurnStart' as const },
+        effects: firstSkill.effects!.map(e => ({ ...e, trigger: { type: 'onTurnStart' as const } })),
+      }],
+    } as unknown as typeof target;
+    const compiled = compileGeneralSkills(withTrigger);
+    expect(compiled.skipped.filter(s => s.reason === 'MODIFY_STAT_INCOMPLETE')).toHaveLength(0);
+    expect(compiled.definitions).toHaveLength(1);
+    expect(compiled.definitions[0].effects[0]).toMatchObject({ type: 'MODIFY_STAT', stat: 'RANGE', modifyMode: 'delta', value: 1 });
+  });
+
+  it('v2.9.0 射程刀：射程×一次性保存后编译器逐条点名，不落半条定义', () => {
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
+    render(<SkillEditor onClose={() => {}} />);
+    const listBtn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name));
+    fireEvent.click(listBtn!);
+    fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
+
+    const findStatSelect = (labelText: string) =>
+      (Array.from(document.querySelectorAll('label'))
+        .find(l => l.textContent?.includes(labelText))
+        ?.parentElement?.querySelector('select') as HTMLSelectElement)!;
+
+    fireEvent.change(findRuntimeSelect(), { target: { value: 'MODIFY_STAT' } });
+    fireEvent.change(findStatSelect('改哪个数'), { target: { value: 'RANGE' } });
+    fireEvent.change(findStatSelect('有效周期'), { target: { value: 'thisDamage' } });
+    fireEvent.click(screen.getByText('💾 保存修改'));
+
+    const saved = useGameStore.getState().skillEdits[target.id];
+    const firstSkill = saved[0]!;
+    const compiled = compileGeneralSkills({
+      ...target,
+      skills: [{
+        ...firstSkill,
+        trigger: { type: 'onTurnStart' as const },
+        effects: firstSkill.effects!.map(e => ({ ...e, trigger: { type: 'onTurnStart' as const } })),
+      }],
+    } as unknown as typeof target);
+    expect(compiled.definitions).toHaveLength(0);
+    expect(compiled.skipped.some(s => s.reason === 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED')).toBe(true);
+  });
 });
 
 // v2.8.3 刀 B：发动门槛的录入面接线——打字即翻译成结构化条件，看不懂就地说明。

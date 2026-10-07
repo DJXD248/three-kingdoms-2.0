@@ -100,6 +100,26 @@ describe('DIY 固定样本：进编译器真的会响（反空转）', () => {
       expect(definitions.some(d => d.passive === true)).toBe(false);
     }
   });
+
+  it('射程那把钥匙有活例：「样·远射」的在场账逐字活到编译产物里，且没被点名跳过', () => {
+    const ranged = DIY_FIXTURE_GENERALS.filter(g =>
+      g.skills.some(s => (s.effects ?? []).some(e =>
+        e.runtime?.type === 'MODIFY_STAT' && e.runtime.stat === 'RANGE')),
+    );
+    expect(ranged.length, '样本里必须有一张「射程」活例，否则 v2.9.0 那把钥匙在 AI 战场上是空转').toBeGreaterThan(0);
+    for (const g of ranged) {
+      const { definitions, skipped } = compileGeneralSkills(g);
+      expect(skipped, `${g.name} 的射程那笔被跳过了`).toEqual([]);
+      // 射程＝在场即生效的常驻账（不挂一次性那档，编译器那条白名单只放行受到的伤害）。
+      const carried = definitions.filter(d =>
+        d.effects.some(e => e.stat === 'RANGE'));
+      expect(carried.length).toBe(1);
+      expect(carried[0].passive).toBe(true);
+      expect(carried[0].effects[0]).toMatchObject({
+        type: 'MODIFY_STAT', stat: 'RANGE', modifyMode: 'delta', value: 1,
+      });
+    }
+  });
 });
 
 describe('DIY 固定样本：势力覆盖面（座位随机只能落在样本真有的势力上）', () => {

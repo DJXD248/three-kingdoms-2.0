@@ -258,11 +258,12 @@ export interface SkillEffect {
  * v2.8 刀4（#25）「改一个数字」的两样东西：改**哪个数**、按**哪种形态**改。
  *
  * 这一档钥匙是**注册表**（ARCH_MAP §F 可改量注册表），不是形容词：录入面只放**真的接了
- * 读数点**的那四把（近战攻击力／远程攻击力／体力上限／受到的伤害——最后一把＝2.8 刀5）。
+ * 读数点**的那五把（近战攻击力／远程攻击力／体力上限／受到的伤害——最后一把＝2.8 刀5；
+ * 射程＝v2.9.0 射程刀，读数点＝`core/attackReach.ts` 那一处唯一够得着判据）。
  * 其余钥匙（当前体力、造成的伤害、行动次数……）在注册表里有名有坐标，但录入面此刻选不到——
  * 选了就是"看起来能响其实不响"，那是本项目明令禁止的第三种谎。
  */
-export type StatModifierKeyType = 'MELEE_ATK' | 'RANGED_ATK' | 'MAX_HP' | 'DAMAGE_TAKEN';
+export type StatModifierKeyType = 'MELEE_ATK' | 'RANGED_ATK' | 'MAX_HP' | 'DAMAGE_TAKEN' | 'RANGE';
 /** 增减＝在基础值上累加（可负数）；固定＝把这一个数摁成该值。固定优先于增减。 */
 export type StatModifyModeType = 'delta' | 'set';
 
@@ -271,6 +272,7 @@ export const statModifierKeyLabels: Record<StatModifierKeyType, string> = {
   RANGED_ATK: '远程攻击力',
   MAX_HP: '体力上限',
   DAMAGE_TAKEN: '受到的伤害',
+  RANGE: '射程',
 };
 
 export const statModifyModeLabels: Record<StatModifyModeType, string> = {

@@ -51,11 +51,12 @@ type FixtureSpec = {
 };
 
 /**
- * 13 张＝魏 5 张、蜀/吴 各 4 张。技能只用**编译器已结算的**触发时机与效果类型
+ * 14 张＝魏 6 张、蜀/吴 各 4 张。技能只用**编译器已结算的**触发时机与效果类型
  * （`skills/skillCompiler.ts` → `SkillTriggerBridge`），本刀不新增任何玩法语义。
  * 覆盖面：摸牌/伤害/回复/护甲/弃牌/赠牌/拆装备/看顶/放堆顶底/击杀后，外加一条
- * 带「发动门槛」的效果（v2.8.3 录入面产物）、一张双效果技能，与一条「下一次受到
- * 伤害−1」的一次性账（v2.8 刀5＝#26，`样·硬扛`）。
+ * 带「发动门槛」的效果（v2.8.3 录入面产物）、一张双效果技能，一条「下一次受到
+ * 伤害−1」的一次性账（v2.8 刀5＝#26，`样·硬扛`），与一条「射程＋1」（v2.9.0 射程刀，
+ * `样·远射`＝那把钥匙在仓库固定样本里的活例）。
  */
 const FIXTURE_SPECS: FixtureSpec[] = [
   {
@@ -96,6 +97,19 @@ const FIXTURE_SPECS: FixtureSpec[] = [
       effect('e1', { type: 'onTurnStart', turnSubType: 'selfTurn' }, {
         type: 'MODIFY_STAT', value: -1, target: 'SELF',
         stat: 'DAMAGE_TAKEN', modifyMode: 'delta', duration: 'thisDamage',
+      }),
+    ])],
+  },
+  {
+    key: 'wei6', name: '试作·魏己', faction: '魏', hp: 4,
+    // v2.9.0 射程刀（ARCH_MAP §三 `RANGE` 落地）的活例：那把钥匙必须有真卡写得出来、
+    // 编译时不被点名跳过、进了账本有人读——否则「射程」只是注册表上的一行字。
+    // 形状走「在场即生效」：这一员将只要站在场上就多够得着一块区域（用户那句
+    // "改变自身远程攻击范围一般是能够够得着更远处的区域"）。
+    skills: [skill('样·远射', '你的远程攻击多够得着一块区域。', [
+      effect('e1', { type: 'passive' }, {
+        type: 'MODIFY_STAT', value: 1, target: 'SELF',
+        stat: 'RANGE', modifyMode: 'delta',
       }),
     ])],
   },

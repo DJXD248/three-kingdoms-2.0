@@ -98,7 +98,7 @@ export default function TestArena(){
   const cp=players[cpi]; if(!cp) return null;
   const cpColor=factionColors[cp.faction!]||'#eab308';
 
-  const validTgts=useMemo(()=>atkGen?getValidTargets(atkGen,cp.id,players,atkRanged):[],[atkGen,cp.id,players,atkRanged]);
+  const validTgts=useMemo(()=>atkGen?getValidTargets(atkGen,players,atkRanged,engineState.statModifiers):[],[atkGen,players,atkRanged,engineState.statModifiers]);
 
   useEffect(()=>{
     const currentBaseMap:Record<number,number>=Object.fromEntries(players.map(p=>[p.id,p.baseHp]));
@@ -221,7 +221,6 @@ export default function TestArena(){
     const bc=factionColors[areaOwner.faction!]||'#666';
     const isBase=zone==='camp'&&slot===1;
     const atkFg=!!(atkCard&&fg&&validTgts.some(t=>t.id===getRuntimeCardId(fg.general)));
-    const atkFgFriendly=!!(atkFg&&fg&&fg.ownerId===cp.id);
     const atkBase=!!(atkCard&&isBase&&validTgts.some(t=>t.id===`base_${areaOwner.id}`));
     const moveTarget=!!moveOptions.find(t=>t.zone===zone&&t.areaOwnerId===areaOwner.id&&t.slot===slot);
     const canDep=vm==='deployTarget'&&areaOwner.id===cp.id&&zone==='camp'&&slot!==1&&!fg;
@@ -242,15 +241,14 @@ export default function TestArena(){
     const generalHeal=!!(fg&&healGeneralIds.includes(getRuntimeCardId(fg.general)));
     const generalVisual=fg?getGeneralCardVisual(fg.general,ownerOf(fg)?.faction||areaOwner.faction!,generalHit||generalHeal?'rgba(0,0,0,0.46)':'rgba(0,0,0,0.40)'):null;
     return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(canDep)doDeploy(slot===0?0:2);else if(moveTarget)chooseMoveTarget({zone,slot,areaOwnerId:areaOwner.id});}}
-      className={`relative flex h-[76px] w-[62px] items-center justify-center rounded-lg border-2 transition-all ${(fg||canDep||moveTarget)?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkFg?`animate-pulse ring-2 ${atkFgFriendly?'ring-yellow-400':'ring-red-500'}`:''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
-      style={{...(generalVisual??{}),borderColor:moveTarget?'#22d3ee':atkFg?(atkFgFriendly?'#facc15':'#ef4444'):fg?(generalVisual?.borderColor??fgColor):canDep?'#22c55e':`${bc}55`,...(fg?{}:{background:canDep?'rgba(34,197,94,0.12)':moveTarget?'rgba(34,211,238,0.12)':'rgba(0,0,0,0.28)'})}}>
+      className={`relative flex h-[76px] w-[62px] items-center justify-center rounded-lg border-2 transition-all ${(fg||canDep||moveTarget)?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkFg?'animate-pulse ring-2 ring-red-500':''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
+      style={{...(generalVisual??{}),borderColor:moveTarget?'#22d3ee':atkFg?'#ef4444':fg?(generalVisual?.borderColor??fgColor):canDep?'#22c55e':`${bc}55`,...(fg?{}:{background:canDep?'rgba(34,197,94,0.12)':moveTarget?'rgba(34,211,238,0.12)':'rgba(0,0,0,0.28)'})}}>
       {fg?(<div className="px-0.5 text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="truncate text-[8px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className="text-[8px] text-amber-700/30">{moveTarget?'可前进':zone==='camp'?'营地':'前线'}</span>)}</button>);
   };
 
   const BSlot=({slot}:{slot:number})=>{
     const fg=battleFg(slot);
     const atkOk=!!(atkCard&&fg&&validTgts.some(t=>t.id===getRuntimeCardId(fg.general)));
-    const atkFriendly=!!(atkOk&&fg&&fg.ownerId===cp.id);
     const generalHit=!!(fg&&hitGeneralIds.includes(getRuntimeCardId(fg.general)));
     const generalHeal=!!(fg&&healGeneralIds.includes(getRuntimeCardId(fg.general)));
     const moveTarget=!!moveOptions.find(t=>t.zone==='battle'&&t.areaOwnerId===null&&t.slot===slot);
@@ -258,8 +256,8 @@ export default function TestArena(){
     const c=o?.faction?factionColors[o.faction]:'#444';
     const generalVisual=fg?getGeneralCardVisual(fg.general,o?.faction,null):null;
     return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(moveTarget)chooseMoveTarget({zone:'battle',slot,areaOwnerId:null});}}
-      className={`flex h-[76px] w-[62px] items-center justify-center rounded-lg border-2 transition-all ${fg||moveTarget?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkOk?`animate-pulse ring-2 ${atkFriendly?'ring-yellow-400':'ring-red-500'}`:''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
-      style={{...(generalVisual??{}),borderColor:moveTarget?'#22d3ee':atkOk?(atkFriendly?'#facc15':'#ef4444'):fg?(generalVisual?.borderColor??c):'#333',...(fg?{}:{background:moveTarget?'rgba(34,211,238,0.12)':'rgba(0,0,0,0.4)'})}}>
+      className={`flex h-[76px] w-[62px] items-center justify-center rounded-lg border-2 transition-all ${fg||moveTarget?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkOk?'animate-pulse ring-2 ring-red-500':''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
+      style={{...(generalVisual??{}),borderColor:moveTarget?'#22d3ee':atkOk?'#ef4444':fg?(generalVisual?.borderColor??c):'#333',...(fg?{}:{background:moveTarget?'rgba(34,211,238,0.12)':'rgba(0,0,0,0.4)'})}}>
       {fg?(<div className="text-center"><div className="text-lg">{fg.general.type==='武将'?'⚔️':'📜'}</div><p className="text-[8px] font-black leading-tight text-amber-200">{fg.general.name}{fg.isArming&&<span className="text-[7px] text-blue-300"> 整备</span>}</p><p className={`text-[8px] ${generalHit?'text-red-300':generalHeal?'text-green-300':'text-red-400'}`}>❤️{fg.currentHp}/{maxHpOf(fg)}</p></div>):(<span className={`text-[8px] ${moveTarget?'text-cyan-300':'text-amber-700/20'}`}>{moveTarget?'可前进':'战场'}</span>)}
     </button>);
   };
@@ -457,8 +455,8 @@ export default function TestArena(){
             const fg=ins.fieldGeneral;const own=fg?fg.ownerId===cp.id:false;
             const isSch=g.type==='文将';
             const moveOk=fg?canFieldGeneralMove(fg,players):false;
-            const meleeN=fg?getValidTargets(fg,cp.id,players,false).length:0;
-            const rangeN=fg?getValidTargets(fg,cp.id,players,true).length:0;
+            const meleeN=fg?getValidTargets(fg,players,false,engineState.statModifiers).length:0;
+            const rangeN=fg?getValidTargets(fg,players,true,engineState.statModifiers).length:0;
             // In test mode: always allow actions (no limit check) — 含整备（v2.8.41：整备中的将
             // 在演练场照样能移动，靠 moveGeneral 的第 4 个参数放行；正式对局不传⇒闸照旧。
             // 攻击**不在放行范围**：`core/attackBlow.ts` 对整备中的将一律拒 `GENERAL_IS_ARMING`，

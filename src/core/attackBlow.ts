@@ -36,12 +36,8 @@ import { capDamageToBase } from './baseDamage';
 import { resolveDamageTaken } from './damageTaken';
 import { getAttackValue } from './attackValue';
 import { hasReactionListeners } from '../skills/reactionChain';
-
-interface Position {
-  zone: 'camp' | 'front' | 'battle';
-  slot: number;
-  areaOwnerId: number | null;
-}
+import { basePosition, canReach, effectiveAttackRange, reachReference } from './attackReach';
+import type { ReachPosition } from './attackReach';
 
 interface AttackPayload {
   attackerId: string;
@@ -57,38 +53,6 @@ function findFieldGeneral(state: EngineState, generalId: string) {
     if (found) return { player, general: found as any };
   }
   return null;
-}
-
-function sameArea(a: Position, b: Position) {
-  return a.zone === b.zone && a.areaOwnerId === b.areaOwnerId;
-}
-
-function isAttackInRange(attacker: any, target: any, ranged: boolean) {
-  const a = attacker?.position as Position | undefined;
-  const t = target?.position as Position | undefined;
-  if (!a || !t) return false;
-
-  if (ranged) {
-    if (a.zone === 'camp') return t.zone === 'battle';
-    if (a.zone === 'front') return t.zone === 'front' && t.areaOwnerId !== a.areaOwnerId;
-    if (a.zone === 'battle') return t.zone === 'camp';
-    return false;
-  }
-
-  if (sameArea(a, t)) return true;
-  if (a.zone === 'camp' && t.zone === 'front' && t.areaOwnerId === a.areaOwnerId) return true;
-  if (a.zone === 'front' && t.zone === 'battle') return true;
-  if (a.zone === 'battle' && t.zone === 'front') return true;
-  if (a.zone === 'front' && t.zone === 'camp' && t.areaOwnerId === a.areaOwnerId) return true;
-  return false;
-}
-
-function canTargetBase(attacker: any, targetPlayerId: number, attackerPlayerId: number, ranged: boolean) {
-  const p = attacker?.position as Position | undefined;
-  if (!p || targetPlayerId === attackerPlayerId) return false;
-  if (ranged) return p.zone === 'battle';
-  // Melee can hit the enemy base from its front or its camp.
-  return (p.zone === 'front' || p.zone === 'camp') && p.areaOwnerId === targetPlayerId;
 }
 
 // Both halves of the attack damage math now live in the core layer as the
@@ -147,10 +111,18 @@ function aimAttack(state: EngineState, action: GameAction<AttackPayload>): Attac
     return { status: 'rejected', reason: 'ATTACK_COST_CARD_NOT_IN_HAND' };
   }
 
+  const selfLedgerTarget = { playerId: action.playerId, generalId: String(payload.attackerId) };
   const baseDamage = getAttackValue(attacker, payload.ranged, {
     ledger: state.statModifiers,
-    target: { playerId: action.playerId, generalId: String(payload.attackerId) },
+    target: selfLedgerTarget,
   });
+  // 射程与攻击力走同一本账、同一个"这一员将是谁"的键——两把钥匙分叉的话，
+  // "射程够但打不着"和"打得着但没伤害"会变成同一件事的两种读法。
+  const maxRange = effectiveAttackRange(state.statModifiers, selfLedgerTarget);
+  const attackerPos = attacker?.position as ReachPosition | undefined;
+  const reference = attackerPos
+    ? reachReference({ position: attackerPos, ownerId: action.playerId })
+    : action.playerId;
   const common = {
     attackerPlayerId: action.playerId,
     attackerId: payload.attackerId,
@@ -164,7 +136,10 @@ function aimAttack(state: EngineState, action: GameAction<AttackPayload>): Attac
   if (targetBaseMatch) {
     const targetPlayerId = Number(targetBaseMatch[1]);
     const targetPlayer = state.players.find(player => player.id === targetPlayerId);
-    if (!targetPlayer || targetPlayer.isAlive === false || !canTargetBase(attacker, targetPlayerId, action.playerId, payload.ranged)) {
+    const reachesBase = !!attackerPos
+      && targetPlayerId !== action.playerId
+      && canReach(reference, attackerPos, basePosition(targetPlayerId), payload.ranged, maxRange);
+    if (!targetPlayer || targetPlayer.isAlive === false || !reachesBase) {
       return { status: 'rejected', reason: 'INVALID_ATTACK_TARGET' };
     }
     return { ...common, status: 'aimed', isBase: true, targetPlayerId, targetGeneral: null };
@@ -177,7 +152,8 @@ function aimAttack(state: EngineState, action: GameAction<AttackPayload>): Attac
   if (getRuntimeCardId(targetResult.general?.general as any) === String(payload.attackerId)) {
     return { status: 'rejected', reason: 'CANNOT_ATTACK_SELF' };
   }
-  if (!isAttackInRange(attacker, targetResult.general, payload.ranged)) {
+  const targetPos = targetResult.general?.position as ReachPosition | undefined;
+  if (!attackerPos || !targetPos || !canReach(reference, attackerPos, targetPos, payload.ranged, maxRange)) {
     return { status: 'rejected', reason: 'TARGET_OUT_OF_RANGE' };
   }
   return {

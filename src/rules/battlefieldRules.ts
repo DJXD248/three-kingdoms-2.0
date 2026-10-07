@@ -1,5 +1,7 @@
 import type { FieldGeneral, Player, Position } from '../store/gameStore';
+import type { StatModifier } from '../core/statModifiers';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { basePosition, canReach, effectiveAttackRange, reachReference } from '../core/attackReach';
 
 function allGeneralsAt(players: Player[], zone: Position['zone'], areaOwnerId: number | null) {
   return players.flatMap(player => player.fieldGenerals)
@@ -98,50 +100,46 @@ export interface AttackTarget {
   playerId: number;
 }
 
+/**
+ * 界面上那份"能打谁"的名单（v2.9.0 射程刀＝它不再是第二张距离表）。
+ *
+ * 两条硬边界，都是这一格出过的事故：
+ *  ① **够不够得着一律问 `core/attackReach.ts`**，连同射程读数。这一档原先自己抄了
+ *    一份"谁够得着谁"的表，与引擎那份同果但**没有测试规定它们必须同果**；射程一可变，
+ *    界面就会列出引擎注定拒的目标（v2.8.40 判据 §12-111⑩ 的反方向实例）。
+ *  ② **自家席位一员都不列**。旧写法只排除"出手的这一员自己"，于是同队的队友照样进名单，
+ *    点上去就是一笔被引擎当场拒掉的攻击（界面还把她们标成黄色＝"能打的自己人"）。
+ *    引擎那一侧一直拒着同席目标（`INVALID_ATTACK_TARGET`），所以这次是**名单向引擎对齐**，
+ *    不是新增一条规则。
+ *
+ * 名单不再收 `attackerPlayerId` 参数：出手者的席位只能从这一员将自己身上读
+ * （`ownerId`）。查看敌方将领详情时旧调用点传的是"看的人"，那算出来的射程是错的。
+ */
 export function getValidTargets(
   attacker: FieldGeneral,
-  attackerPlayerId: number,
   players: Player[],
   ranged: boolean,
+  ledger?: readonly StatModifier[],
 ): AttackTarget[] {
   const targets: AttackTarget[] = [];
-  const { zone, areaOwnerId } = attacker.position;
+  const seat = attacker.ownerId;
+  const reference = reachReference(attacker);
+  const maxRange = effectiveAttackRange(ledger, {
+    playerId: seat,
+    generalId: String(getRuntimeCardId(attacker.general as any) ?? ''),
+  });
 
   for (const player of players) {
-    if (!player.isAlive) continue;
+    if (!player.isAlive || player.id === seat) continue;
 
     for (const fieldGeneral of player.fieldGenerals) {
       if (getRuntimeCardId(fieldGeneral.general as any) === getRuntimeCardId(attacker.general as any)) continue;
-
-      const targetZone = fieldGeneral.position.zone;
-      const targetAreaOwnerId = fieldGeneral.position.areaOwnerId;
-      let valid = false;
-
-      if (ranged) {
-        if (zone === 'camp' && targetZone === 'battle') valid = true;
-        if (zone === 'front' && targetZone === 'front' && targetAreaOwnerId !== areaOwnerId) valid = true;
-        if (zone === 'battle' && targetZone === 'camp') valid = true;
-      } else {
-        if (zone === targetZone && targetAreaOwnerId === areaOwnerId) valid = true;
-        if (zone === 'camp' && targetZone === 'front' && targetAreaOwnerId === areaOwnerId) valid = true;
-        if (zone === 'front' && targetZone === 'battle') valid = true;
-        if (zone === 'battle' && targetZone === 'front') valid = true;
-        if (zone === 'front' && targetZone === 'camp' && targetAreaOwnerId === areaOwnerId) valid = true;
-      }
-
-      if (valid) {
+      if (canReach(reference, attacker.position, fieldGeneral.position, ranged, maxRange)) {
         targets.push({ type: 'general', id: getRuntimeCardId(fieldGeneral.general as any), playerId: player.id });
       }
     }
 
-    if (player.id === attackerPlayerId) continue;
-    if (ranged) {
-      if (zone === 'battle') targets.push({ type: 'base', id: `base_${player.id}`, playerId: player.id });
-    } else if (
-      (zone === 'front' || zone === 'camp') &&
-      areaOwnerId === player.id
-    ) {
-      // Melee can hit the enemy base from its front or its camp.
+    if (canReach(reference, attacker.position, basePosition(player.id), ranged, maxRange)) {
       targets.push({ type: 'base', id: `base_${player.id}`, playerId: player.id });
     }
   }
