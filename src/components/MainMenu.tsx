@@ -3,12 +3,13 @@ import { useState } from 'react';
 import { clearLocalGameSnapshot, readLocalGameSnapshot } from '../store/localGameSnapshot';
 import pkg from '../../package.json';
 import AiBattleConfig from './AiBattleConfig';
+import OnlineLobby from './OnlineLobby';
 
 export default function MainMenu() {
   const setPhase = useGameStore(s => s.setPhase);
   const developerMode = useGameStore(s => s.developerMode);
   const [showStartOptions, setShowStartOptions] = useState(false);
-  const [showOnlineMsg, setShowOnlineMsg] = useState(false);
+  const [showOnlineLobby, setShowOnlineLobby] = useState(false);
   const [showAiBattle, setShowAiBattle] = useState(false);
   const [hasSavedGame, setHasSavedGame] = useState(() => readLocalGameSnapshot() !== null);
 
@@ -118,20 +119,11 @@ export default function MainMenu() {
             <MenuButton onClick={() => setPhase('createRoom')} icon="🏠">
               本地游戏
             </MenuButton>
-            <MenuButton 
-              onClick={() => setShowOnlineMsg(true)} 
-              icon="🌐" 
-              disabled
-            >
+            <MenuButton onClick={() => setShowOnlineLobby(true)} icon="🌐">
               联网对战
             </MenuButton>
-            {showOnlineMsg && (
-              <div className="text-center py-2 px-4 rounded-lg bg-amber-900/20 border border-amber-700/20">
-                <p className="text-amber-400/80 text-sm">⚠️ 联网对战功能暂不可用，敬请期待</p>
-              </div>
-            )}
             <button 
-              onClick={() => { setShowStartOptions(false); setShowOnlineMsg(false); }}
+              onClick={() => setShowStartOptions(false)}
               className="text-amber-300/40 text-sm hover:text-amber-200 transition-colors mt-1"
             >
               ← 返回
@@ -147,6 +139,7 @@ export default function MainMenu() {
       </div>
 
       {showAiBattle && <AiBattleConfig onClose={() => setShowAiBattle(false)} />}
+      {showOnlineLobby && <OnlineLobby onClose={() => setShowOnlineLobby(false)} />}
     </div>
   );
 }

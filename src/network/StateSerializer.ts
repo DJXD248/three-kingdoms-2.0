@@ -1,7 +1,7 @@
 import type { StateSnapshot } from './types';
 import type { EngineState } from '../core/GameState';
 
-const NETWORK_SNAPSHOT_VERSION = 1;
+export const NETWORK_SNAPSHOT_VERSION = 1;
 
 function assertState(value: unknown): asserts value is EngineState {
   if (!value || typeof value !== 'object') throw new Error('Invalid EngineState snapshot.');
