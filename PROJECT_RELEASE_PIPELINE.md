@@ -101,6 +101,10 @@
    - 收工三查：`kill` 之后 **`pkill -f 脚本名` 杀不掉上一次 Bash 起的后台**⇒按 PID `taskkill //PID <pid> //F`，并 `netstat` 确认端口无监听、`--local`/`--global` 的 `http.proxy` 仍为空。
    - 这条**不稳定、不是永久修复**：同日主批八笔一次过，紧接着的小回填连吃 3 次 `schannel: server closed abruptly`／`400`，退避重试（20/40/60/80 s）第 4 次才过⇒每次都要重量，别当常规通道。
    - 另记一条诊断分界：**`api.github.com` 与 `github.com` 是两条独立的路**（当日前者 200、后者不通）⇒"推送失败"与"查 CI 失败"分开判，公开库查 CI 走匿名 REST、不需要凭据。
+   - **工具化与它的假阴性（2026-10-07 实测，登记于 v2.9.1 轮）**：第三级已收成一台通用工具 `C:\Users\10128\.qoder-cn\tools\gh-rescue\gh-rescue.mjs`（零依赖、只听 127.0.0.1、只放行 GitHub、不经手凭据），用法 `node …gh-rescue.mjs run -- <原命令>`。
+     ⚠️ 它的 `run --channel pin` 自检会**假阴性**：报"三条路都不通／pin 探测失败: proxy connect timeout"时**改道其实是通的**——自检打的是 `https://github.com` **根路径**，而根路径与 git 端点不是同一条路（当天根路径不通、`api.github.com`／`raw.githubusercontent.com` 通）。
+     ⇒**判据：别信那句"都不通"就停手**。先逐候选 IP 试**真实 git 端点**：`curl --max-time 12 --resolve github.com:443:<IP> -o /dev/null -w "%{http_code}\n" "https://github.com/<owner>/<repo>/info/refs?service=git-upload-pack"`；
+     任一 IP 返 200 就前台起改道器 `node gh-rescue.mjs proxy`（它自己用 TLS 筛活体、把可用 IP 排首位，日志出一行「钉 IP 改道器已启动：http://127.0.0.1:10810」），再一次性 `git -c http.proxy=http://127.0.0.1:10810 push origin master`，**推完关掉那个进程**并回查 `--local`/`--global` 的 `http.proxy` 仍为空。
 4. 三级都不通 → 停止，保留全部本地提交与标签，如实向用户报告"待补推"，
    等用户口令（如"补推"）后一次性推送并补 CI 回填。用户明示暂缓时（如 2.2.10 当晚），整条链连同 CI 一起暂缓，§9 中 CI 标 PENDING。
 5. 快速自检：`curl -sI --max-time 10 https://github.com` 返回 200 即直连可用；否则探测 10808 端口是否开。
