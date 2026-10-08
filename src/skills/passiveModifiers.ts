@@ -19,7 +19,7 @@
  * 和「选择其一」混在一起的 passive 一律点名跳过。所以本文件**不需要**求值门槛，
  * 也不需要处理多效果择一——它看到的就是"一员将 ＋ 一笔改数"。
  */
-import type { General } from '../data/generals';
+import type { General, Skill } from '../data/generals';
 import type { GameEvent } from '../core/Event';
 import type { NewStatModifier } from '../core/eventProcessors/statModifierEvents';
 import { compileGeneralSkills } from './skillCompiler';
@@ -71,4 +71,22 @@ export function passiveEventsForDeploy(
     type: 'STAT_MODIFY' as const,
     data: { op: 'ADD' as const, modifier, cause: 'PASSIVE_ON_FIELD' },
   }));
+}
+
+/**
+ * 2.9.3 刀A「获得技能」补的那一次落笔。文件头那条待办写的是"将来加回归路径时必须
+ * 在这里补一次落笔"，而**获得一枚在场技就是同一条路径的第一个实例**：登场那一刻已经
+ * 过去了，再不补就是"人拿着技能、账却没有"。
+ *
+ * 做法是把这一员将的技能表临时收成"只算刚拿到的这一枚"再走同一个
+ * `passiveEntriesOfGeneral`——**不落第二套在场账算术**（那一套算术的唯一落点还是上面）。
+ * 拿到的不是在场技⇒返回空数组⇒事件流一字不多。
+ */
+export function passiveEventsForGainedSkill(
+  general: General,
+  skill: Skill,
+  runtimeGeneralId: string,
+  playerId: number,
+): GameEvent[] {
+  return passiveEventsForDeploy({ ...general, skills: [skill] }, runtimeGeneralId, playerId);
 }

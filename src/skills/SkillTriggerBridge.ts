@@ -58,11 +58,20 @@ function asRecord(value: unknown): Record<string, unknown> {
  * `forced`（强制发动）＝"满足触发条件与代价后直接响、不用玩家点头"（§H9 用户
  * 更正 c 条），所以它留在自动路上；该字段此前只活在录入面、结算侧零消费
  * （§12-55），本刀起它是唯一的自动发动开关。其余触发型一字未动。
+ *
+ * **2.9.3 刀B 加第二族**：打了「觉醒技」徽章的定义（编译器的 `awakening` 位）也进
+ * 问答路，**与它听的是哪一声无关**——用户 2026-10-08 裁「觉醒达成条件当场问」，
+ * 而"达成条件"那一刻由这枚技能自己的触发时机说（魏关羽「单骑」＝近战击杀后）。
+ * 受击／受伤两型、其余既有触发型、以及没打徽章的一切内容判据逐字不变⇒两个锚池
+ * 结构上不动（今天官方名册与 DIY 夹具里没有一枚技能挂「觉醒技」，这条普查钉在
+ * `skills/awakeningSkill.test.ts`）。
  */
 export function defersToReactionQueue(skill: DataSkillDefinition): boolean {
   // choiceMode 技能不进反应队列，直接开选择账
   if ((skill as unknown as Record<string, unknown>).choiceMode === true) return false;
-  return isReactionTrigger(skill.trigger) && skill.forced !== true;
+  // 「强制发动」＝不用点头⇒压根不该停下来问
+  if (skill.forced === true) return false;
+  return isReactionTrigger(skill.trigger) || skill.awakening === true;
 }
 
 /**
@@ -481,6 +490,29 @@ export class SkillTriggerBridge {
         };
       }
 
+      if (effect.type === 'GAIN_SKILL' && effect.gainedSkill) {
+        // GAIN_SKILL（2.9.3 刀A「获得技能」）：这是引擎里**唯一**会改卡面的一型——
+        // 与 MODIFY_STAT 正好互补（那个只动账本、卡面一字不改）。它不动任何数字、
+        // 不掉血、不搬牌，只往那一员将的技能表上追加一枚技能，于是下一次重编译
+        // 就听得见它（本项目没有"技能表缓存"：每次发动前都从 EngineState 现算）。
+        // 名字早在编译器就解析好了（`effect.gainedSkill`，唯一解析点
+        // `skills/skillNameIndex.ts`）；解析不出来的名字走不到这一行，它是一条
+        // 点名的 skipped。目标被编译器强制为 SELF ⇒ 拿到技能的永远是发动者自己这一员，
+        // 两键一律从 binding 取，绝不从触发事件里猜（与 MODIFY_STAT 同一口径）。
+        const ownerGeneralId = String(binding.skill.sourceGeneralId ?? targetId ?? sourceId);
+        return {
+          type: 'SKILL_GAINED',
+          data: {
+            ...data,
+            // `data.skillName` 是**给技能的**那一枚（如「单骑」），不是被拿到那枚的
+            // 名字——后者在 `skill.name` 里。两个键各有其主，别把它们读成同一个。
+            playerId: Number(sourceId),
+            generalId: ownerGeneralId,
+            skill: effect.gainedSkill,
+          },
+        };
+      }
+
       return {
         type: 'CUSTOM',
         data: { ...data, kind: effect.type }
@@ -528,8 +560,10 @@ export class SkillTriggerBridge {
           result.push(testEvent);
           continue;
         }
-        // 其余类型（DAMAGE / HEAL / GAIN_ARMOR / EQUIP_STRIP / DUEL / STAT_MODIFY / CUSTOM）
-        // 需要目标存在才为有效。指不出目标 ⇒ 空操作 ⇒ 链断。
+        // 其余类型（DAMAGE / HEAL / GAIN_ARMOR / EQUIP_STRIP / DUEL / STAT_MODIFY /
+        // SKILL_GAINED / CUSTOM）需要目标存在才为有效。指不出目标 ⇒ 空操作 ⇒ 链断。
+        // （SKILL_GAINED 的目标被强制成 SELF＝发动者自己，在场⇒天然成立；写进这一支
+        // 而不是上面那两条豁免，是因为"豁免"的含义是"根本不看向不向着某一位"。）
         const targetId = (testEvent.data as Record<string, unknown>).targetId as string | undefined;
         const targetRef = SkillTriggerBridge.findGeneralRef(state, targetId);
         const isBaseTarget = targetId?.startsWith('base_');

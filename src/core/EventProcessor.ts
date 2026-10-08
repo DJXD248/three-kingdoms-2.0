@@ -14,6 +14,7 @@ import {
 import {
   applyGeneralDeployedEvent,
   applyGeneralMovedEvent,
+  applySkillGainedEvent,
   applySupplyResolvedEvent,
   applyArmorEquippedEvent,
   applyHealEvent,
@@ -136,6 +137,8 @@ export class EventProcessor {
         return applyDuelEvent(state, event);
       case 'STAT_MODIFY':
         return applyStatModifyEvent(state, event);
+      case 'SKILL_GAINED':
+        return applySkillGainedEvent(state, event);
       case 'CHOICE_REQUIRED':
         return applyChoiceRequiredEvent(state, event);
       case 'CHOICE_RESOLVED':

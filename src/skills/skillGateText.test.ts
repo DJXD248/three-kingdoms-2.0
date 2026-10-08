@@ -84,6 +84,33 @@ describe('skillGateText · 门槛文本 -> 结构化条件', () => {
     ]);
   });
 
+  it('刀C 那三个新量：认得、写出只用规范词、且压根没有对象之分', () => {
+    expect(parseGateText('近战击杀=1').conditions).toEqual([{ metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 }]);
+    expect(parseGateText('被杀者在战场=1').conditions).toEqual([{ metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 1 }]);
+    expect(parseGateText('身边与战场己方=0').conditions).toEqual([{ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'EQ', value: 0 }]);
+    // 别名与量词尾巴照样读得进同一个量，写出来一律是规范词（只进不出）。
+    for (const raw of ['死者站在战场=1', '同区与战场己方=0', '身边与战场自己人数量=0', '近战击杀数=1']) {
+      expect(parseGateText(raw).unknown).toEqual([]);
+    }
+    expect(gateConditionsToText(parseGateText('同区与战场己方=0').conditions)).toBe('身边与战场己方=0');
+    // 这五个量没有"属于谁"这一维：写了对象也不落字段（落一个不生效的限制＝骗人）。
+    expect(parseGateText('目标近战击杀=1').conditions).toEqual([{ metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 }]);
+    expect(parseGateText('伤害来源身边与战场己方>0').conditions)
+      .toEqual([{ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'GT', value: 0 }]);
+    // 右端同理：compareTo 挂上无对象之分的量时不带对象。
+    expect(parseGateText('手牌>目标身边与战场己方').conditions).toEqual([
+      { metric: 'HAND_COUNT', op: 'GT', compareTo: { metric: 'ALLY_NEAR_OR_BATTLE_COUNT' } },
+    ]);
+    // 「单骑」那句门槛：写法→结构→写法→再解析 逐字相同（Excel 往返不失真）。
+    const raw = '近战击杀=1，被杀者在战场=1，身边与战场己方=0';
+    const first = parseGateText(raw);
+    expect(first.unknown).toEqual([]);
+    expect(first.conditions).toHaveLength(3);
+    const text = gateConditionsToText(first.conditions);
+    expect(text).toBe(raw);
+    expect(parseGateText(text).conditions).toEqual(first.conditions);
+  });
+
   it('读不懂的片段逐条进 unknown，绝不猜、绝不静默丢', () => {
     const { conditions, unknown } = parseGateText('手牌≤2，攻击范围内没有马，牌不够多时看情况');
     expect(conditions).toEqual([{ metric: 'HAND_COUNT', op: 'LTE', value: 2 }]);

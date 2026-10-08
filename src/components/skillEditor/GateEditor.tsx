@@ -2,7 +2,7 @@
 // 录入用大白话文本，实时翻译成结构化条件；翻译不了的片段就地标红，绝不静默丢弃。
 import { useState } from 'react';
 import type { SkillCondition } from '../../data/generals';
-import { parseGateText, gateConditionsToText } from '../../skills/skillGateText';
+import { parseGateText, gateConditionsToText, GATE_SYNTAX_HINT } from '../../skills/skillGateText';
 
 const gateInputCls = "flex-1 px-2 py-1 rounded bg-black/50 border border-sky-800/30 text-sky-100 text-[11px] focus:outline-none focus:border-sky-500";
 
@@ -70,11 +70,16 @@ export function GateEditor({ conditions, onChange, label = '🚪 发动门槛' }
         </p>
       )}
 
-      <p className="text-[9px] text-sky-400/45 leading-tight">
-        能填的量只有：手牌 / 体力 / 护甲 / 场上将领 / 抽牌堆 / 本次伤害；
-        对象只有：自身（不写就是自身）/ 目标 / 伤害来源（抽牌堆与本次伤害是全局事实，不分对象）；
-        多条条件用顿号或逗号分开＝ 全部满足才发动；两边都可以填数，也可以跟另一个量比（例：手牌&gt;自身手牌）
-      </p>
+      {parsed.conditions.some(c => c.metric === 'KILL_BY_MELEE' || c.metric === 'VICTIM_IN_BATTLE_AREA') && (
+        <p className="text-[9px] text-amber-300/85 leading-tight">
+          ⚠ 「近战击杀」「被杀者在战场」只有击杀那一声才有账可查（决斗砍死的、技能打死的、体力上限被压到 0 的，那三种死法上没有这一格）；挂在别的触发时机上这条门槛永远不成立，技能不会发动。
+        </p>
+      )}
+
+      {/* 词表只有一个来源：`skills/skillGateText.ts` 的 GATE_SYNTAX_HINT。这里曾经另写了一份
+          手抄，v2.9.3 刀C 放开三枚新量时那份手抄没跟着变⇒真机点验当场撞见"编辑器说只有六个量、
+          可那三个新量又真填得进去"。绝不许再有第二份。 */}
+      <p className="text-[9px] text-sky-400/45 leading-tight">{GATE_SYNTAX_HINT}</p>
     </div>
   );
 }

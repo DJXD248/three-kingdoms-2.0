@@ -39,7 +39,13 @@ export type DataSkillEffectType =
   | 'DECK_PLACE'
   | 'DUEL'
   /** 改一个数字＝往账本落一笔（core/statModifiers.ts），**不改卡面**。 */
-  | 'MODIFY_STAT';
+  | 'MODIFY_STAT'
+  /** 2.9.3 刀A（#25 之后的新原语）：**改卡面**——给那一员将的技能表添上一枚技能。
+   *  与 MODIFY_STAT 恰好互补：那个只动账本、卡面一个字不改；这个只动卡面（技能表）、
+   *  不预写任何账。名字解析唯一的落点在 `skills/skillNameIndex.ts`，编译器查不到就
+   *  点名跳过；结算点=`core/eventProcessors/generalEvents.ts` 的 `applySkillGainedEvent`
+   *  往 `fg.general.skills` 追加（同名不重复落，幂等），于是下一次重编译就听得见这枚新技能。 */
+  | 'GAIN_SKILL';
 
 /** v2.7.3 自定义条件门槛谓词（§G 建议书第 4 项，十二格表见 ARCH_MAP F 节）。
  * 条件不是事件也不是状态：它只决定"这条监听要不要响"，产零事件、写零状态。
@@ -76,6 +82,15 @@ export interface SkillEffectData {
   stat?: import('../data/generals').StatModifierKeyType;
   modifyMode?: import('../data/generals').StatModifyModeType;
   duration?: import('../data/generals').StatModifierDurationType;
+  /** 仅 GAIN_SKILL：卡上写的那个技能名（录入原样，用于展示与点名）。 */
+  skillName?: string;
+  /**
+   * 仅 GAIN_SKILL：编译器**解析后的那枚技能**（`skillName` 的解析影子）。解析点全库
+   * 只有一处＝`skillCompiler.toEffectData` 经 `skills/skillNameIndex.ts` 查名册；
+   * 桥接层与结算侧读的都是这一份，因此不可能出现"编译时认得、发动时不认得"。
+   * 解析不出来的名字根本走不到这里——它在编译器就变成一条 `skipped` 了。
+   */
+  gainedSkill?: import('../data/generals').Skill;
 }
 
 export interface DataSkillDefinition {
@@ -161,6 +176,21 @@ export interface DataSkillDefinition {
    * 唯一消费点＝`skills/skillQuota.ts`（判定）＋同文件的 `skillActivatedEvent`（记账）。
    */
   limitKey?: string;
+  /**
+   * 2.9.3 刀B·「觉醒技」徽章第一次被结算读到。编译器从 `tagsOf(skill)` 里认「觉醒技」，
+   * 只在这一枚真的编出了定义时落键（其余定义的键集合逐字不变＝两个锚池不动）。
+   * 落键后它做两件事，都**不新写一条路**：
+   *  ① 额度：与限定技共用 `limitKey` 那同一本账（用户 2026-10-08 裁「觉醒技和限定技同理，
+   *    在同一局中发动过一次就不能再发动」）；
+   *  ② 发动方式：它听的那一声改成**停下来问人**（同受击／受伤两型，canonical
+   *    `ACTIVATE_SKILL`／`SKIP_REACTION`，人 and AI 同一队列）——开关单点＝
+   *    `SkillTriggerBridge.defersToReactionQueue`，开格判据单点＝
+   *    `skills/reactionChain.syncReactionQueue` 那句"没候选就不开格"。
+   * 「当场问」是用户 2026-10-08 的第 1 条补充裁定（不是拖到回合结束）。
+   * 「强制发动」的觉醒技**照样落这一位**，但分流开关第一句就把它放回自动路（＝到点
+   * 自己响、不问），额度那一半不受影响。
+   */
+  awakening?: boolean;
   /**
    * v2.7.2 choice 生产者面（GPT 三检 Q5 最小验证刀）：候选从哪里枚举。
    * 缺省（undefined）=v2.6.3 行为=逐效果预译分支，一字未动。

@@ -26,7 +26,8 @@ export const allSkillTags: SkillTag[] = ['锁定技', '限定技', '登场技', 
  * 徽章语义（同一轮更正，逐字口径）：
  *  - 锁定技＝这枚技能**不能被无效、不能被改变**（不是"到点自动响"）；
  *  - 限定技＝一局之内的次数额度；登场技／遗计技＝上场响／被击杀时响；
- *  - 觉醒技＝本作尚无觉醒机制，纯显示。
+ *  - 觉醒技＝达成条件的那一刻停下来问您一次（点头才结算），与限定技共用「一局一次」
+ *    那本账（2.9.3 刀B 起结算侧真读它：编译器的 `awakening` 位→响应链问答队列）。
  * `forced`（强制发动）＝满足触发条件与代价后**直接响／直接适用效果**，不用玩家点头。
  * 徽章与 `forced`、与"数值变化／持续生效"三者**互不相关**，可任意组合。
  * 读取一律走 domain/skillTags.ts 的 tagsOf()，别处不要自己拼两个字段。
@@ -217,7 +218,27 @@ export type SkillConditionMetric =
   /** 全局牌堆剩余张数（无主体） */
   | 'DECK_COUNT'
   /** 触发事件已记录的数值 data.value ?? data.count（无主体） */
-  | 'EVENT_VALUE';
+  | 'EVENT_VALUE'
+  /**
+   * 2.9.3 刀C「单骑」的第一格：这一声击杀是**近战**打死的吗（1＝是，0＝否；无主体）。
+   * 读的是击杀那一声里当场记下的近战/远程（`core/attackBlow.ts` 落笔），绝不事后推断。
+   * **缺这一格＝读不出＝失败即闭**：技能伤害那一刀（含决斗，`chainedConsequences` 派生的
+   * 那条 DEATH）压根没有近战/远程这个属性，体力归零之死同理⇒「近战击杀」在它们身上
+   * 结构上永远不成立，不靠任何一处再判断一次"这算不算近战"。
+   */
+  | 'KILL_BY_MELEE'
+  /**
+   * 2.9.3 刀C「单骑」的第二格：倒下那一员将**那一刻**踩在哪片区域（1＝战场，0＝营地或
+   * 前线；无主体）。同样只读当场记下的，不读事后状态——死者此刻已经离场，事后再也问不到。
+   */
+  | 'VICTIM_IN_BATTLE_AREA'
+  /**
+   * 2.9.3 刀C「单骑」的第三格：技能拥有者**自己那片区域＋战场**这两片里，同席位还站着
+   * 几员**别的**将（不含本体；无主体）。原文那句「没有其他己方角色」＝这一格 =0。
+   * 数的是**此刻**的在场状态⇒死者已经离场、不占位置；"己方"按席位口径
+   * （§H9 第七轮②），不是按势力。
+   */
+  | 'ALLY_NEAR_OR_BATTLE_COUNT';
 
 export type SkillConditionOperator = 'LT' | 'LTE' | 'EQ' | 'GTE' | 'GT';
 
@@ -305,7 +326,7 @@ export const STAT_DURATION_DEFAULT_LABEL = '在场期间一直有效（离场即
 
 /** 效果的结构化运行时载荷：类型 + 数值 + 目标角色 */
 export interface SkillRuntimeEffect {
-  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE' | 'EQUIP_STRIP' | 'REVEAL' | 'DECK_PLACE' | 'DUEL' | 'MODIFY_STAT';
+  type: 'DRAW_CARD' | 'DAMAGE' | 'HEAL' | 'GAIN_ARMOR' | 'DISCARD' | 'GIVE' | 'EQUIP_STRIP' | 'REVEAL' | 'DECK_PLACE' | 'DUEL' | 'MODIFY_STAT' | 'GAIN_SKILL';
   value?: number;
   target?: 'SELF' | 'ATTACKER' | 'TARGET';
   /** 仅 DECK_PLACE 使用：手牌移到牌堆顶还是底（默认 BOTTOM） */
@@ -320,6 +341,14 @@ export interface SkillRuntimeEffect {
    * `untilDeath` 与不填同义，所以不在这里重复列。
    */
   duration?: StatModifierDurationType;
+  /**
+   * 仅 GAIN_SKILL（2.9.3 刀A＝#25 之后的新原语「获得技能」）：**技能名**，不是将名、
+   * 不是技能 id。名字是唯一入口，因为用户原文就是这么写的（「获得技能「怒斩」」）。
+   * 解析点只有一个：编译器经 `skills/skillNameIndex.ts` 查名册，查不到／同名两份
+   * ⇒ 点名跳过（`GAIN_SKILL_INCOMPLETE`／`GAIN_SKILL_UNKNOWN_NAME`／
+   * `GAIN_SKILL_AMBIGUOUS_NAME`），绝不猜成"大概是他家那一个"。
+   */
+  skillName?: string;
 }
 
 /**
@@ -712,8 +741,12 @@ const SK_LINZHEN: Skill = {
     runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' },
   }],
 };
-const SK_DANQI: Skill = {
-  name: '单骑',
+/** v2.9.3 改名刀：原名「单骑」＝我（内容时代施工方）给晋国自建将配的初定义名，
+ *  用户 2026-10-08 裁「三国杀所有武将中，晋国势力的文鸯都没有单骑这个技能，所以这个
+ *  不算是我的官方……你可以把这个晋文鸯的单骑改另一个技能名」⇒ 只换名字，
+ *  描述语义与效果载荷一字未动。旧名腾出来给他的觉醒技（魏关羽「单骑」）。 */
+const SK_TONGMING: Skill = {
+  name: '同命',
   description: '挑枪同命：被击杀时，对击杀者造成1点技能伤害。',
   effects: [{
     id: 'e1',
@@ -903,7 +936,7 @@ const jinGenerals: General[] = [
   createGeneral('jin_009', '杜预', '晋', 3, [SK_TUOLUE, SK_POZHU], '文武全才'),
   createGeneral('jin_010', '羊祜', '晋', 3, [SK_QINGDE, SK_KENHUANG], '仁德的将军'),
   createGeneral('jin_011', '乐綝', '晋', 4, [SK_FENWEI, SK_LINZHEN], '威震边疆'),
-  createGeneral('jin_012', '文鸯', '晋', 4, [SK_DANQI, SK_FENGYONG], '骁勇的猛将'),
+  createGeneral('jin_012', '文鸯', '晋', 4, [SK_TONGMING, SK_FENGYONG], '骁勇的猛将'),
   createGeneral('jin_013', '贾南风', '晋', 3, ['乱政', SK_LUSHA], '毒后'),
   createGeneral('jin_014', '司马炎', '晋', 3, [SK_BINGTUN, SK_FENGSHANG], '晋武帝'),
   createGeneral('jin_015', '诸葛诞', '晋', 4, ['举兵', SK_SIJIE], '忠义的叛将'),

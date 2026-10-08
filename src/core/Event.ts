@@ -1,6 +1,10 @@
 // v2.8.22 响应链执法刀：`ReactionQueueSyncedData` 引用状态侧的队列形状。纯类型
 // 导入（编译期擦除），与 GameState→Event 那条方向构成类型环，运行时不存在环。
 // v2.8 刀4 同理再引一条 `statModifiers`（账本笔的形状），运行时依旧不存在环。
+// 2.9.3 刀A 新引的 `data/generals` **不构成环**：那一格是全库唯一的叶子模块
+// （它自己一个字都不 import），且同样只是类型导入——核心层因此仍然不认识内容层
+// 的任何运行时代码，只是承认"技能表里的东西长什么样"这件事有一个作者。
+import type { Skill } from '../data/generals';
 import type { PendingReaction } from './GameState';
 import type { StatModifier } from './statModifiers';
 
@@ -33,6 +37,12 @@ export type GameEventType =
   // 纯派生，零 RNG）、`op:'REMOVE'` 销一笔（`ids`＝被销的 `modifierId`）。缺省（无此
   // 事件）＝账本为空＝所有读数走卡面基础值⇒今日所有对局逐字不产生这一声。
   | 'STAT_MODIFY'
+  // 2.9.3 刀A（「获得技能」）：往那一员将的**技能表**上追加一枚技能。它是
+  // `STAT_MODIFY` 的对偶——那个只动账本、卡面一字不改，这个只动卡面、不碰账本。
+  // 既然"这一员将会哪些技能"是 A 类可回放事实（常驻／重建／回放必须逐字同果），
+  // 它就必须自己留痕，不能只靠派生悬浮在状态里。缺省（无此事件）＝技能表＝登场时
+  // 那一份⇒今日所有对局逐字不产生这一声。
+  | 'SKILL_GAINED'
   | 'CHOICE_REQUIRED'
   | 'CHOICE_RESOLVED'
   | 'CARD_LOST'
@@ -125,6 +135,26 @@ export interface SkillActivationEventData {
   /** v2.8.32：带「一局一次」额度的定义才落这一键＝这枚技能的额度身份。见
    *  `EngineState.consumedSkills` 上的同名键。 */
   limitKey?: string;
+}
+
+/**
+ * SKILL_GAINED（2.9.3 刀A「获得技能」）：把 `skill` 追加进 `generalId` 那一员将的
+ * 技能表（`fg.general.skills`）。
+ *
+ *  - 两个键（座次＋将领实例号）与 `STAT_MODIFY` 的 target 同形：拿技能的永远是发动者
+ *    自己这一员，编译器把目标强制收在 SELF，所以这里没有第三种可能。
+ *  - `skill` 是**编译器解析出来的那枚定义**（唯一解析点 `skills/skillNameIndex.ts`），
+ *    不是名字、也不是查表的凭据——结算侧不再查任何名册，回放因此与常驻读同一份内容。
+ *  - **绝不改写名册那一份**：处理器写的是这一员将自己的 `general` 拷贝（`{ ...general,
+ *    skills: [...] }`）。原地改会把"这一个人拿到了新技能"写进"全世界共用的那张卡"，
+ *    下一局、下一个座位、下一份存档都会看见它。
+ *  - 同名已在表里⇒不落第二份（幂等）。它管的是"重复发动不该多一枚"，不是兼容层：
+ *    两条路（常驻／回放）落的都是同一个判据，所以四路仍然逐字同果。
+ */
+export interface SkillGainedEventData {
+  playerId?: number;
+  generalId?: string;
+  skill?: Skill;
 }
 
 /**

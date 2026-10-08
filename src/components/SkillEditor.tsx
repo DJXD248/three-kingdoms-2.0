@@ -21,10 +21,16 @@ import {
   listenerScopeToStr,
   RUNTIME_TYPE_LIST,
   RUNTIME_TARGET_LIST,
+  VALUELESS_RUNTIME_TYPES,
   STAT_DURATION_HINT,
   STAT_KEY_LIST,
   STAT_MODE_LIST,
   STAT_DURATION_LIST,
+  STAT_KEY_HEADER,
+  STAT_MODE_HEADER,
+  STAT_DURATION_HEADER,
+  GAIN_SKILL_NAME_HEADER,
+  GAIN_SKILL_NAME_HINT,
 } from '../skills/skillExcelFormat';
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
 import {
@@ -602,12 +608,19 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         for (const eff of sk.effects) {
           if (!eff.description) reasons.push(`${sk.name}/${eff.label||'效果'}:描述空`);
           if (!eff.trigger) reasons.push(`${sk.name}/${eff.label||'效果'}:触发未设`);
-          if (eff.runtime && eff.runtime.value == null) reasons.push(`${sk.name}/${eff.label||'效果'}:结构化数值空`);
+          // 「根本没有数字可填」的类型不催数值（2.9.3 刀A）：催了就是"界面看着像没填完、
+          // 引擎那一档压根不读数"的又一处分叉——它们各有各的必需格，下面单独催。
+          if (eff.runtime && eff.runtime.value == null && !VALUELESS_RUNTIME_TYPES.includes(eff.runtime.type)) {
+            reasons.push(`${sk.name}/${eff.label||'效果'}:结构化数值空`);
+          }
           // v2.8 刀4（#25）：编译器会点名跳过的三种组合，导出备注里先催一遍——
           // 等用户去对局里发现"我写了怎么不生效"就太晚了（显示与生效不许分叉）。
           const isPassive = (eff.trigger ?? sk.trigger)?.type === 'passive';
           if (eff.runtime?.type === 'MODIFY_STAT' && (!eff.runtime.stat || !eff.runtime.modifyMode)) {
             reasons.push(`${sk.name}/${eff.label||'效果'}:改数三格缺一（要写「改哪个数」和「怎么改」）`);
+          }
+          if (eff.runtime?.type === 'GAIN_SKILL' && !String(eff.runtime.skillName ?? '').trim()) {
+            reasons.push(`${sk.name}/${eff.label||'效果'}:获得哪个技能空（要写那枚技能的名字）`);
           }
           if (isPassive && (sk.conditions?.length || eff.conditions?.length || eff.runtime?.duration)) {
             reasons.push(`${sk.name}/${eff.label||'效果'}:在场即生效不认门槛与有效周期，编译时会点名跳过`);
@@ -625,7 +638,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // ── Export to Excel using ExcelJS ──
   // Format: one row per SKILL (not per general). Each general occupies N rows (N = number of skills).
   // Multi-effect skills: sub-effects occupy additional columns within the skill row.
-  // Effect group (11 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 | 门槛 | 我听谁 | 改哪个数 | 怎么改 | 有效周期
+  // Effect group (12 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 | 门槛 | 我听谁 | 改哪个数 | 怎么改 | 有效周期 | 获得哪个技能
   // — 只有填了效果类型(+数值)的效果
   // 才会被技能编译器接入对局结算（见 skills/skillCompiler.ts）；门槛=该效果的发动条件（可空）。
   // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 技能门槛 | 我听谁 | 效果1标注 | 效果1触发 | ... | 设定备注
@@ -661,7 +674,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
 
         const ws = wb.addWorksheet(faction);
 
-        // Build header（13 个固定列＋每组 11 列＋设定备注；解析侧按表头认列，不按位置写死）
+        // Build header（13 个固定列＋每组 12 列＋设定备注；解析侧按表头认列，不按位置写死）
         const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述', '技能门槛', LISTENER_SCOPE_HEADER];
         for (let e = 0; e < maxEffects; e++) header.push(...effectGroupHeaders(e + 1));
         header.push('设定备注');
@@ -682,6 +695,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           }
           if (/^效果\d+有效周期$/.test(h)) {
             hdr.getCell(i + 1).note = { texts: [{ text: STAT_DURATION_HINT }] };
+          }
+          if (new RegExp(`^效果\\d+${GAIN_SKILL_NAME_HEADER}$`).test(h)) {
+            hdr.getCell(i + 1).note = { texts: [{ text: GAIN_SKILL_NAME_HINT }] };
           }
         });
 
@@ -716,9 +732,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               listenerScopeToStr(sk.trigger?.listenerScope),
             );
 
-            // Sub-effects (11-col groups: runtime fields + 发动门槛 + 我听谁 + 改数三格)
+            // Sub-effects (12-col groups: runtime fields + 发动门槛 + 我听谁 + 改数三格 + 获得哪个技能)
             for (let e = 0; e < maxEffects; e++) {
-              row.push(...serializeEffectGroup(sk.effects?.[e], 11));
+              row.push(...serializeEffectGroup(sk.effects?.[e], 12));
             }
 
             // Note (only on first skill row)
@@ -749,23 +765,24 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             ws.getCell(r, 10).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${modeList}"`] };
             ws.getCell(r, 13).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${LISTENER_SCOPE_LIST}"`] };
             for (let ei = 0; ei < maxEffects; ei++) {
-              // v5 group layout (1-based, 13 个固定列后): 标注=14+11n | 触发=15+11n |
-              // 类型=16+11n | 数值=17+11n | 目标=18+11n | 描述=19+11n | 门槛=20+11n |
-              // 我听谁=21+11n | 改哪个数=22+11n | 怎么改=23+11n | 有效周期=24+11n
-              ws.getCell(r, 15 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
-              ws.getCell(r, 16 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
-              ws.getCell(r, 18 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
-              ws.getCell(r, 21 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${LISTENER_SCOPE_LIST}"`] };
-              ws.getCell(r, 22 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_KEY_LIST}"`] };
-              ws.getCell(r, 23 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_MODE_LIST}"`] };
-              ws.getCell(r, 24 + ei * 11).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_DURATION_LIST}"`] };
+              // 效果组里每一栏按**表头自己的列名**定位，不写死偏移：组宽从 11 涨到 12
+              // （2.9.3 刀A 加「获得哪个技能」）时，写死的 `15+11n` 会让下拉挂错列、
+              // 而表头与数据仍然各自对齐——这种"校验挂在别人的格子上"没人会看见。
+              const at = (suffix: string) => header.indexOf(`效果${ei + 1}${suffix}`) + 1;
+              ws.getCell(r, at('触发')).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${triggerList}"`] };
+              ws.getCell(r, at('效果类型')).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TYPE_LIST}"`] };
+              ws.getCell(r, at('目标')).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${RUNTIME_TARGET_LIST}"`] };
+              ws.getCell(r, at(LISTENER_SCOPE_HEADER)).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${LISTENER_SCOPE_LIST}"`] };
+              ws.getCell(r, at(STAT_KEY_HEADER)).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_KEY_LIST}"`] };
+              ws.getCell(r, at(STAT_MODE_HEADER)).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_MODE_LIST}"`] };
+              ws.getCell(r, at(STAT_DURATION_HEADER)).dataValidation = { type: 'list', allowBlank: true, formulae: [`"${STAT_DURATION_LIST}"`] };
             }
           }
         }
 
         // Column widths
         const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40, 26, 18];
-        for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40, 26, 18, 14, 18, 24);
+        for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40, 26, 18, 14, 18, 24, 20);
         widths.push(30);
         widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       }

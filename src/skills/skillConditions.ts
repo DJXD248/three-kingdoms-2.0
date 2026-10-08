@@ -95,6 +95,30 @@ function resolveSubject(facts: SkillConditionFacts, subject: SkillConditionSubje
   return { player, general: byId.general };
 }
 
+/**
+ * 拥有者**自己踩的那片区域＋战场**这两片里，同席位还站着几员别的将（不含本体）。
+ * 「单骑」那句「所在区域及战场区域内没有其他己方角色」＝这一格 =0。
+ *
+ * 数的是**此刻**的在场状态：击杀那一刻这一声已经被记进事件流、死者也已经离场，
+ * 所以死者天然不占位置；"己方"按席位口径（§H9 第七轮②），不是按势力。
+ * 本体认不出（座次没了、将已离场、编译定义没钉将领实例）＝null＝失败即闭。
+ */
+function alliesNearOwnerOrInBattle(state: EngineState, ownerId: number | string, sourceGeneralId?: string): number | null {
+  const player = playerById(state, ownerId);
+  if (!player) return null;
+  const field = asArray<Record<string, unknown>>(player.fieldGenerals);
+  const self = sourceGeneralId
+    ? field.find(fg => getRuntimeCardId(fg?.general as never) === String(sourceGeneralId))
+    : undefined;
+  const ownZone = (self?.position as { zone?: string } | undefined)?.zone;
+  if (!ownZone) return null;
+  return field.filter(fg => {
+    if (getRuntimeCardId(fg?.general as never) === String(sourceGeneralId)) return false;
+    const zone = (fg?.position as { zone?: string } | undefined)?.zone;
+    return zone === ownZone || zone === 'battle';
+  }).length;
+}
+
 /** Read one recorded fact; null = unresolvable (the gate then fails closed). */
 function readMetric(
   facts: SkillConditionFacts,
@@ -109,6 +133,22 @@ function readMetric(
     const data = asRecord(event?.data);
     const value = data.value ?? data.count;
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+  // 2.9.3 刀C 前两格：只读击杀那一声**当场记下**的两格（近战/远程＝`core/attackBlow.ts`
+  // 那一刀自己的钥匙；站在哪片区域＝三个 DEATH 发射点都记的那一格）。缺键＝这一声压根
+  // 不是攻击打死的（技能伤害与决斗由 `chainedConsequences` 派生、体力归零之死没有出手
+  // 的人）⇒失败即闭，「近战击杀」在那些路上结构上永远不成立，而不是"再判断一次算不算"。
+  if (metric === 'KILL_BY_MELEE' || metric === 'VICTIM_IN_BATTLE_AREA') {
+    const data = asRecord(event?.data);
+    if (metric === 'KILL_BY_MELEE') {
+      return typeof data.ranged === 'boolean' ? (data.ranged ? 0 : 1) : null;
+    }
+    const zone = data.targetZone;
+    if (zone === 'battle') return 1;
+    return zone === 'camp' || zone === 'front' ? 0 : null;
+  }
+  if (metric === 'ALLY_NEAR_OR_BATTLE_COUNT') {
+    return alliesNearOwnerOrInBattle(state, facts.ownerId, facts.sourceGeneralId);
   }
   const resolved = resolveSubject(facts, subject);
   switch (metric) {

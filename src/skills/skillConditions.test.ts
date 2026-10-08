@@ -258,6 +258,101 @@ describe('v2.7.3 纯求值：六度量 × 三主体 × 五算子 · fail-closed'
   });
 });
 
+/** 2.9.3 刀C 场面：本体（sc_a）站座 1 的前线，同席另三员分站前线／战场／营地，
+ *  敌席（座 2）那一员将**也**站战场——它不是"己方"，绝不进那一格。 */
+function killShapeTable(): EngineState {
+  const stand = (id: string, seat: number, zone: 'camp' | 'front' | 'battle', areaOwnerId: number | null) => {
+    const fg = makeFieldGeneral(makeGeneral(id, id, 4), seat, 0);
+    (fg as unknown as { position: unknown }).position = { zone, slot: 0, areaOwnerId };
+    return fg;
+  };
+  return makeState([
+    makePlayer(1, { fieldGenerals: [
+      stand('sc_a', 1, 'front', 1),
+      stand('sc_ally_front', 1, 'front', 1),
+      stand('sc_ally_battle', 1, 'battle', null),
+      stand('sc_ally_camp', 1, 'camp', 1),
+    ] }),
+    makePlayer(2, { fieldGenerals: [stand('sc_enemy_battle', 2, 'battle', null)] }),
+  ]);
+}
+
+const deathFacts = (state: EngineState, data: Record<string, unknown>): SkillConditionFacts => ({
+  state, ownerId: 1, sourceGeneralId: 'sc_a', event: { type: 'DEATH', data } as GameEvent,
+});
+
+describe('2.9.3 刀C 击杀形状三格：只读当场记下的事实，缺键即闭', () => {
+  it('近战击杀＝击杀那一声里的 ranged（false⇒1、true⇒0），绝不回头推断', () => {
+    const state = killShapeTable();
+    expect(gate({ metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 }, deathFacts(state, { ranged: false }))).toBe(true);
+    expect(gate({ metric: 'KILL_BY_MELEE', op: 'EQ', value: 0 }, deathFacts(state, { ranged: true }))).toBe(true);
+    expect(gate({ metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 }, deathFacts(state, { ranged: true }))).toBe(false);
+  });
+
+  it('被杀者在战场＝那一身记下的 targetZone（battle⇒1，camp/front⇒0）', () => {
+    const state = killShapeTable();
+    for (const zone of ['camp', 'front'] as const) {
+      expect(gate({ metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 0 }, deathFacts(state, { targetZone: zone }))).toBe(true);
+    }
+    expect(gate({ metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 1 }, deathFacts(state, { targetZone: 'battle' }))).toBe(true);
+    expect(gate({ metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 1 }, deathFacts(state, { targetZone: 'front' }))).toBe(false);
+  });
+
+  it('缺键＝这一声压根不是攻击打死的：技能击杀／归零之死／无事件（决策路）一律闭，不是"取 0"', () => {
+    const state = killShapeTable();
+    // 决斗与技能击杀派生的那一条 DEATH 带 skillKill，但没有近战/远程这一格。
+    const skillKill = deathFacts(state, { skillKill: true, targetZone: 'battle' });
+    expect(gate({ metric: 'KILL_BY_MELEE', op: 'EQ', value: 0 }, skillKill)).toBe(false);
+    expect(gate({ metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 }, skillKill)).toBe(false);
+    // 归零之死连区域都没记（没有人动手），同理闭。
+    expect(gate({ metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 0 }, deathFacts(state, { deathCause: 'MAX_HP_ZERO' }))).toBe(false);
+    // 脏值（字符串"false"）不是 boolean⇒读不出。
+    expect(gate({ metric: 'KILL_BY_MELEE', op: 'EQ', value: 0 }, deathFacts(state, { ranged: 'false' }))).toBe(false);
+    // 没有事件＝ACTIVATE_SKILL 那一条路，击杀形状无从谈起。
+    const noEvent: SkillConditionFacts = { state, ownerId: 1, sourceGeneralId: 'sc_a' };
+    expect(gate({ metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 }, noEvent)).toBe(false);
+    expect(gate({ metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 1 }, noEvent)).toBe(false);
+  });
+
+  it('身边与战场己方＝本体那片区域＋战场里同席**别的**将（不含本体，敌席那一员不算）', () => {
+    const state = killShapeTable();
+    // 座 1：本体站 front ⇒ 数 front＋battle 两片 = sc_ally_front + sc_ally_battle = 2（营地那位不在那两片）。
+    expect(gate({ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'EQ', value: 2 }, deathFacts(state, {}))).toBe(true);
+    expect(gate({ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'GT', value: 0 }, deathFacts(state, {}))).toBe(true);
+    // 同席只剩本体一个人（单骑要的形状）⇒0。
+    const alone = killShapeTable();
+    alone.players[0].fieldGenerals = [(alone.players[0].fieldGenerals as any[]).slice(0, 1)[0]];
+    expect(gate({ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'EQ', value: 0 }, deathFacts(alone, {}))).toBe(true);
+    // 本体站战场时"自己那片"与"战场"是同一格，不重复数：座 2 那一员仍不算。
+    const onBattle = killShapeTable();
+    (onBattle.players[0].fieldGenerals as any[])[0].position = { zone: 'battle', slot: 0, areaOwnerId: null };
+    expect(gate({ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'EQ', value: 1 }, deathFacts(onBattle, {}))).toBe(true);
+  });
+
+  it('这一格也 fail-closed：本体不在场／编译定义没钉将领实例／座次不存在 ⇒ 一律不响', () => {
+    const state = killShapeTable();
+    expect(gate({ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'GTE', value: 0 },
+      { state, ownerId: 1, sourceGeneralId: 'no_such_general' })).toBe(false);
+    expect(gate({ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'GTE', value: 0 },
+      { state, ownerId: 1 })).toBe(false);
+    expect(gate({ metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'GTE', value: 0 },
+      { state, ownerId: 999, sourceGeneralId: 'sc_a' })).toBe(false);
+  });
+
+  it('纯度钉：三格求值前后 state 逐字节一致（零事件、零状态写、零随机）', () => {
+    const state = killShapeTable();
+    const before = JSON.stringify(state);
+    for (const condition of [
+      { metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 },
+      { metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 1 },
+      { metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'EQ', value: 0 },
+    ] as SkillCondition[]) {
+      evaluateSkillCondition(condition, deathFacts(state, { ranged: false, targetZone: 'battle' }));
+    }
+    expect(JSON.stringify(state)).toBe(before);
+  });
+});
+
 /** 触发路探针：条件只存在于编译模型层，唯一入口=engine.registerPlayerSkills。 */
 function gatedTurnStart(overrides: Partial<DataSkillDefinition> = {}): DataSkillDefinition {
   return {

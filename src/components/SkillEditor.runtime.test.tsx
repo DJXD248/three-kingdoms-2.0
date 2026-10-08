@@ -10,6 +10,7 @@ import SkillEditor from './SkillEditor';
 import { allGenerals } from '../data/generals';
 import { useGameStore } from '../store/gameStore';
 import { compileGeneralSkills } from '../skills/skillCompiler';
+import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
 
 function findRuntimeSelect(): HTMLSelectElement {
   const selects = Array.from(document.querySelectorAll('select'));
@@ -254,6 +255,53 @@ describe('SkillEditor: structured runtime entry', () => {
     expect(compiled.definitions).toHaveLength(0);
     expect(compiled.skipped.some(s => s.reason === 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED')).toBe(true);
   });
+
+  /**
+   * 2.9.3 刀A·「获得技能」那一格的真机形状（闸③复算点名：编译面与 Excel 往返都有钉，
+   * 唯独界面那个名字框零证人）。它同时钉四件"看得见"的事：没有数字框（这一档不读数）、
+   * 目标只写"自己"（不给下拉）、名册查不到时当场说、写了名字之后 `runtime.skillName`
+   * 真的存进 store 并被编译器解析成那枚技能。
+   */
+  it('v2.9.3 刀A：效果类型切到「获得技能」——没有数字框、目标只有"自己"、名字存得下、名册外的名字当场说', () => {
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
+    render(<SkillEditor onClose={() => {}} />);
+    fireEvent.click(Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name))!);
+    fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
+    fireEvent.change(findRuntimeSelect(), { target: { value: 'GAIN_SKILL' } });
+
+    // ① 这一档根本不读「数值」格：给它数字框＝"界面填了个数、引擎认的是别的"（§12-55 同族）。
+    // 只认效果卡里那一格（编辑器头部还有体力/近战/远程三个数字框，那不是本档的账）。
+    expect(screen.queryByText('└ 数值')).toBeNull();
+    // ② 目标不给下拉：跨将加技能是 #28 那条目标选择器的内容，今天没有。
+    const targetRow = Array.from(document.querySelectorAll('label'))
+      .find(l => l.textContent?.trim() === '目标')!.parentElement!;
+    expect(targetRow.querySelector('select')).toBeNull();
+    expect(targetRow.textContent).toContain('这一档只往自己的技能表上添一枚');
+    const nameInput = document.querySelector('input[aria-label="获得技能名"]') as HTMLInputElement;
+    expect(nameInput).toBeTruthy();
+    // ③ 空名＝红字说"这样填保存后会被逐条点名跳过"（拦在录入面，不等用户去对局里发现）。
+    // 只认这句警告本身：空名时预览那句也带"还没写要拿哪一枚"，那是两处、不是两处 bug。
+    expect(screen.getByText(/这样填的效果保存后会被引擎逐条点名跳过/)).toBeTruthy();
+
+    // ④ 名册里查得到的名字：警告撤掉，保存后 store 里落的是**名字**（不是 id、不是将名）。
+    fireEvent.change(nameInput, { target: { value: '屯田' } });
+    expect(screen.queryByText(/这样填的效果保存后会被引擎逐条点名跳过/)).toBeNull();
+    expect(screen.queryByText(/名册里暂时没有/)).toBeNull();
+    expect(screen.getByText(/获得技能「屯田」/)).toBeTruthy();   // 预览那句读的就是同一个名字
+    fireEvent.click(screen.getByText('💾 保存修改'));
+    const saved = useGameStore.getState().skillEdits[target.id]!;
+    expect(saved[0].effects?.[0].runtime).toEqual({ type: 'GAIN_SKILL', target: 'SELF', skillName: '屯田' });
+    const compiled = compileGeneralSkills(
+      { ...target, skills: saved.map(s => ({ ...s, trigger: { type: 'onTurnStart' as const },
+        effects: s.effects!.map(e => ({ ...e, trigger: { type: 'onTurnStart' as const } })) })) } as unknown as typeof target);
+    expect(compiled.definitions[0]?.effects.some(e => e.type === 'GAIN_SKILL' && e.gainedSkill?.name === '屯田')).toBe(true);
+
+    // ⑤ 名册外的名字（＝还没进池的那一枚）：不拦保存，但当场把"会被点名跳过"说清。
+    fireEvent.change(document.querySelector('input[aria-label="获得技能名"]') as HTMLInputElement,
+      { target: { value: '还没有这一枚' } });
+    expect(screen.getByText(/名册里暂时没有「还没有这一枚」/)).toBeTruthy();
+  });
 });
 
 // v2.8.3 刀 B：发动门槛的录入面接线——打字即翻译成结构化条件，看不懂就地说明。
@@ -320,8 +368,27 @@ describe('SkillEditor: 发动门槛录入（🚪 门槛框）', () => {
     expect(save(target.id)[0].effects?.[0].conditions).toBeUndefined();
   });
 
-  it('v2.8.11 刀2：「选择其一」×门槛照常录入，不再整条拒录（红字说明已撤）', () => {
-    const { gateInput, groupGateInput } = openFirstEffect();
+  it('v2.9.3 刀C：三枚击杀形状的量认得、存得下；那句词表提示只有一个来源', () => {
+    const { target, gateInput } = openFirstEffect();
+    fireEvent.change(gateInput, { target: { value: '近战击杀=1，被杀者在战场=1，身边与战场己方=0' } });
+    expect(screen.queryByText(/没看懂（这些条件不会生效）/)).toBeNull();
+    expect(screen.getByText('近战击杀=1')).toBeTruthy();
+    // 挂在非击杀的触发时机上也不许静悄悄：界面当场说清"这条永远不成立"。
+    expect(screen.getByText(/只有击杀那一声才有账可查/)).toBeTruthy();
+    expect(save(target.id)[0].effects?.[0].conditions).toEqual([
+      { metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 },
+      { metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 1 },
+      { metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'EQ', value: 0 },
+    ]);
+    // 提示语逐字等于 `skillGateText.ts` 的那一份，且界面上不存在第二份手抄——
+    // 真机点验撞见过一次：新量在词表里放开了，组件里另抄的那句还写"只有六个量"。
+    const hintLines = Array.from(document.querySelectorAll('p'))
+      .filter(p => p.textContent === GATE_SYNTAX_HINT);
+    expect(hintLines.length).toBeGreaterThanOrEqual(1);
+    expect(document.body.textContent).not.toContain('能填的量只有');
+  });
+
+  it('v2.8.11 刀2：「选择其一」×门槛照常录入，不再整条拒录（红字说明已撤）', () => {    const { gateInput, groupGateInput } = openFirstEffect();
     fireEvent.change(gateInput, { target: { value: '手牌≤2' } });
     expect(screen.queryByText(/暂时不能配门槛/)).toBeNull();
 

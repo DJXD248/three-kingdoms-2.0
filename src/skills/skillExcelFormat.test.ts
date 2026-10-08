@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   cleanCell,
   triggerToStr,
@@ -44,6 +44,8 @@ import {
   RUNTIME_TYPE_LIST,
   RUNTIME_TARGET_LIST,
   SETTLEABLE_RUNTIME_TYPE_LIST,
+  GAIN_SKILL_NAME_HEADER,
+  GAIN_SKILL_NAME_HINT,
 } from './skillExcelFormat';
 import type { SkillCondition, SkillEffect, SkillTriggerConfig } from '../data/generals';
 import {
@@ -56,6 +58,10 @@ import {
   STAT_DURATION_DEFAULT_LABEL,
 } from '../data/generals';
 import { compileSkill } from './skillCompiler';
+import {
+  __resetSkillNameIndexForTests,
+  __setSkillNameRosterForTests,
+} from './skillNameIndex';
 
 describe('skillExcelFormat: cell cleaning', () => {
   it('normalizes blanks and the 无 placeholder', () => {
@@ -308,10 +314,11 @@ describe('skillExcelFormat: effect column groups', () => {
     expect(detectEffectGroupWidth(v3Header)).toBe(7);
   });
 
-  it('builds v5 header cells for group n（v2.8 刀4 起第 9–11 列＝改哪个数／怎么改／有效周期）', () => {
+  it('builds v6 header cells for group n（v2.8 刀4 起第 9–11 列＝改哪个数／怎么改／有效周期；2.9.3 刀A 第 12 列＝获得哪个技能）', () => {
     expect(effectGroupHeaders(2)).toEqual([
       '效果2标注', '效果2触发', '效果2效果类型', '效果2数值', '效果2目标', '效果2描述',
       '效果2门槛', '效果2我听谁', '效果2改哪个数', '效果2怎么改', '效果2有效周期',
+      '效果2获得哪个技能',
     ]);
   });
 
@@ -396,6 +403,7 @@ describe('skillExcelFormat: effect column groups', () => {
       },
       gateUnknown: [],
       statIssues: [],
+      gainIssues: [],
     });
   });
 
@@ -562,13 +570,15 @@ describe('skillExcelFormat: 监听扩面（v2.8.21 「我听谁」＋「成为�
     expect(LISTENER_SCOPE_LIST.split(',')).toHaveLength(4);
   });
 
-  it('表头认出 11 列组；旧档 3/6/7/8 列照常认（新列只在自己导出里出现）', () => {
-    const v5Header = ['x', ...effectGroupHeaders(1), ...effectGroupHeaders(2)];
-    expect(detectEffectGroupWidth(v5Header)).toBe(11);
-    expect(effectGroupHeaders(1)).toHaveLength(11);
+  it('表头认出 12 列组；旧档 3/6/7/8/11 列照常认（新列只在自己导出里出现）', () => {
+    // 当前导出＝12 列（2.9.3 刀A 起第 12 列＝获得哪个技能）。
+    expect(detectEffectGroupWidth(['x', ...effectGroupHeaders(1), ...effectGroupHeaders(2)])).toBe(12);
+    expect(effectGroupHeaders(1)).toHaveLength(12);
     expect(effectGroupHeaders(1)[7]).toBe('效果1' + LISTENER_SCOPE_HEADER);
     expect(effectGroupHeaders(1)[10]).toBe('效果1有效周期');
-    // 旧档：v2.8.21 的 8 列组（没有改数三格）与 v2.8.3 的 7 列组都要照旧认出来。
+    // 旧档：v2.8 刀4 的 11 列组、v2.8.21 的 8 列组（没有改数三格）与 v2.8.3 的
+    // 7 列组都要照旧认出来——按表头认列，新列不砸旧档。
+    expect(detectEffectGroupWidth(['x', ...effectGroupHeaders(1).slice(0, 11), ...effectGroupHeaders(2).slice(0, 11)])).toBe(11);
     expect(detectEffectGroupWidth(['x', '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛', '效果1我听谁'])).toBe(8);
     expect(detectEffectGroupWidth(['x', '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛'])).toBe(7);
   });
@@ -657,9 +667,16 @@ describe('skillExcelFormat — 「改哪个数／怎么改／有效周期」三�
     expect(statModeToStr('set')).toBe(SET);
     expect(statDurationToStr(undefined)).toBe('无');
     expect(statKeyToStr(undefined)).toBe('无');
-    expect(effectGroupHeaders(1).slice(8)).toEqual([
+    // 第 9–11 列＝改数三格；第 12 列（2.9.3 刀A）另有自己的证人。
+    expect(effectGroupHeaders(1).slice(8, 11)).toEqual([
       '效果1改哪个数', '效果1怎么改', '效果1有效周期',
     ]);
+    expect(effectGroupHeaders(1)[11]).toBe('效果1' + GAIN_SKILL_NAME_HEADER);
+    expect(GAIN_SKILL_NAME_HINT).toContain('获得技能');
+    expect(GAIN_SKILL_NAME_HINT).toContain('按没填处理');
+    // 界面承诺不许大于引擎行为（§12-112）：这一版解析点只读官方名册，批注就得照实写。
+    expect(GAIN_SKILL_NAME_HINT).toContain('官方将领卡');
+    expect(GAIN_SKILL_NAME_HINT).not.toMatch(/DIY\s*都算/);
   });
 
   it('词表读法：大白话与原枚举名都认，认不出的交回原文（绝不静默丢）', () => {
@@ -863,5 +880,131 @@ describe('skillExcelFormat — 「改哪个数／怎么改／有效周期」三�
     );
     expect(definitions).toHaveLength(0);
     expect(skipped[0].reason).toBe('MODIFY_STAT_INCOMPLETE');
+  });
+});
+
+// ── 2.9.3 刀A：新原语「获得技能」的第 12 格「获得哪个技能」──
+describe('skillExcelFormat — 「获得哪个技能」第 12 格（2.9.3 刀A）', () => {
+  const GAIN = runtimeEffectTypeLabels.GAIN_SKILL;
+  const gainRow = (over: Partial<{
+    label: string; trigger: string; type: string; value: string; target: string;
+    desc: string; gate: string; scope: string; stat: string; mode: string; duration: string; gain: string;
+  }>): string[] => {
+    const cells = {
+      label: '觉醒', trigger: '无', type: GAIN, value: '无', target: '自身',
+      desc: '失去体力上限换来一枚新技能', gate: '无', scope: '无',
+      stat: '无', mode: '无', duration: '无', gain: '奸雄',
+    };
+    const merged = { ...cells, ...over };
+    return [merged.label, merged.trigger, merged.type, merged.value, merged.target, merged.desc,
+      merged.gate, merged.scope, merged.stat, merged.mode, merged.duration, merged.gain];
+  };
+
+  afterEach(() => __resetSkillNameIndexForTests());
+
+  it('「获得技能」在效果类型的下拉词表里、且不读数值格（填了点名按没填处理）', () => {
+    expect(RUNTIME_TYPE_LIST).toContain(GAIN);
+    expect(SETTLEABLE_RUNTIME_TYPES).toContain('GAIN_SKILL');
+    expect(VALUELESS_RUNTIME_TYPES).toContain('GAIN_SKILL');
+    const parsed = parseEffectGroup(gainRow({ value: '3' }), 0, 12)!;
+    expect(parsed.gainIssues).toEqual([]);
+    expect(parsed.fields.runtime).toEqual({ type: 'GAIN_SKILL', skillName: '奸雄', target: 'SELF' });
+    // 退回的话术得对得上**这一档自己的形状**，不能拿决斗那句套过来。
+    expect(parsed.valueNote).toContain('技能名字');
+    expect(parsed.valueNote).not.toContain('决斗的轮数');
+  });
+
+  it('严格往返：三格完整的一行序列化→读回→再序列化逐字相同；旧档 11 列不报错也不长出新格', () => {
+    const original: SkillEffect = {
+      id: 'e1',
+      label: '单骑',
+      trigger: { type: 'onKill' },
+      description: '失去1点体力上限并获得技能「怒斩」',
+      runtime: { type: 'GAIN_SKILL', skillName: '奸雄', target: 'SELF' },
+    };
+    const cells = serializeEffectGroup(original, 12);
+    expect(cells).toHaveLength(12);
+    expect(cells[11]).toBe('奸雄');
+    const back = parseEffectGroup(cells, 0, 12)!;
+    expect(back.gainIssues).toEqual([]);
+    expect(back.fields.runtime).toEqual(original.runtime);
+    expect(serializeEffectGroup({ ...original, ...back.fields } as SkillEffect, 12)).toEqual(cells);
+
+    // 旧档（11 列）没有这一格：读进来是"少了名字"，必须点名，而不是悄悄落一枚空技能。
+    expect(serializeEffectGroup(original, 11)).toHaveLength(11);
+    const legacy = parseEffectGroup(serializeEffectGroup(original, 11), 0, 11)!;
+    expect(legacy.gainIssues).toEqual([expect.stringContaining('没写要拿哪一枚技能的名字')]);
+    expect(legacy.fields.runtime!.skillName).toBeUndefined();
+  });
+
+  it('空着／写了名册里没有的／同名两份不同内容：三种都点名，绝不猜一个"最像的"', () => {
+    const blank = parseEffectGroup(gainRow({ gain: '无' }), 0, 12)!;
+    expect(blank.gainIssues).toHaveLength(1);
+    expect(blank.gainIssues[0]).toContain('编译时会点名跳过');
+    expect(blank.fields.runtime).toEqual({ type: 'GAIN_SKILL', target: 'SELF' });
+
+    const absent = parseEffectGroup(gainRow({ gain: '怒斩' }), 0, 12)!;
+    expect(absent.gainIssues[0]).toContain('名册里没有「怒斩」');
+    // 原文照收：能不能用由**唯一那个解析点**判，导入面不写第二套判断。
+    expect(absent.fields.runtime!.skillName).toBe('怒斩');
+
+    __setSkillNameRosterForTests([
+      { id: 'x1', name: '甲', faction: '群', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [{ name: '观星' }] },
+      { id: 'x2', name: '乙', faction: '群', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [{ name: '观星', description: '另一段话' }] },
+    ] as unknown as import('../data/generals').General[]);
+    const ambiguous = parseEffectGroup(gainRow({ gain: '观星' }), 0, 12)!;
+    expect(ambiguous.gainIssues[0]).toContain('不止一份、而且内容不同');
+    expect(ambiguous.gainIssues[0]).toContain('请给它们改成两个名字');
+  });
+
+  it('只有一句话、没有结构化效果的技能：能获得，但要说清"对局里不会发生变化"', () => {
+    // 武圣＝官方卡上印着、目前只有一段描述的技能（2.4 内容线之前的旧形态）。
+    const parsed = parseEffectGroup(gainRow({ gain: '武圣' }), 0, 12)!;
+    expect(parsed.gainIssues).toEqual([expect.stringContaining('能获得，但对局里不会发生变化')]);
+    expect(parsed.fields.runtime!.skillName).toBe('武圣');
+  });
+
+  it('别的类型填了这一格：点名按没填处理（同「改哪个数」那一族纪律）', () => {
+    const withType = parseEffectGroup(
+      ['反击', '造成伤害后', runtimeEffectTypeLabels.DAMAGE, '2', '被作用者', '追加2点伤害',
+        '无', '无', '无', '无', '无', '奸雄'],
+      0, 12,
+    )!;
+    expect(withType.gainIssues).toHaveLength(1);
+    expect(withType.gainIssues[0]).toContain(`「${runtimeEffectTypeLabels.DAMAGE}」不读「${GAIN_SKILL_NAME_HEADER}」`);
+    expect(withType.gainIssues[0]).toContain('按没填处理');
+    expect(withType.fields.runtime!.skillName).toBeUndefined();
+
+    const noType = parseEffectGroup(gainRow({ type: '无', gain: '奸雄' }), 0, 12)!;
+    expect(noType.gainIssues[0]).toContain('这一条（没写效果类型）不读');
+  });
+
+  it('只写了这一格、没写是哪个效果：不凭空造效果，把话交回导入面', () => {
+    const parsed = parseEffectGroup(
+      ['无', '无', '无', '无', '无', '无', '无', '无', '无', '无', '无', '奸雄'],
+      0, 12,
+    )!;
+    expect(Object.keys(parsed.fields)).toHaveLength(0);
+    // 这一组没有门槛⇒导入面不该再冒出一条"门槛挂错了"的假话。
+    expect(parsed.orphanGate ?? '').toBe('');
+    expect(parsed.gainIssues).toEqual([expect.stringContaining(`「${GAIN_SKILL_NAME_HEADER}」这一格得挂在某个效果上`)]);
+  });
+
+  it('目标只能是自身：填了别人既点名、也强制按自身落笔', () => {
+    const parsed = parseEffectGroup(gainRow({ target: '被作用者' }), 0, 12)!;
+    expect(parsed.gainIssues).toHaveLength(1);
+    expect(parsed.gainIssues[0]).toContain('目标只能是自身');
+    expect(parsed.fields.runtime!.target).toBe('SELF');
+  });
+
+  it('Excel 这一格读不全的账：导入面已点名，编译器再兜一次（两处同一口径）', () => {
+    const parsed = parseEffectGroup(gainRow({ gain: '怒斩', trigger: '回合开始时' }), 0, 12)!;
+    expect(parsed.gainIssues).toHaveLength(1);
+    const { definitions, skipped } = compileSkill(
+      { id: 'g1', name: '测试将' },
+      { name: '半截觉醒', effectMode: 'all', effects: [{ id: 'e1', ...parsed.fields }] },
+    );
+    expect(definitions).toHaveLength(0);
+    expect(skipped[0].reason).toBe('GAIN_SKILL_UNKNOWN_NAME');
   });
 });

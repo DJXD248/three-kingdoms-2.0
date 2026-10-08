@@ -60,6 +60,7 @@ import type {
 import type { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { lookupSkillByName } from './skillNameIndex';
 
 /** Skill triggers that map 1:1 onto real engine events.
  * onBecomingTarget maps to BEFORE_DAMAGE: a pure notification — no new event
@@ -105,6 +106,7 @@ const SUPPORTED_EFFECT_TYPES = new Set<DataSkillEffectType>([
   'DECK_PLACE',
   'DUEL',
   'MODIFY_STAT',
+  'GAIN_SKILL',
 ]);
 
 export interface SkillSkip {
@@ -131,7 +133,22 @@ export interface SkillSkip {
      *  没有任何重算路径，悄悄收下＝"记录而未消费"。 */
     | 'PASSIVE_CONDITION_UNSUPPORTED'
     /** passive 又填了周期＝两条规则说相反的话（周期是"发动笔"那一档的东西）。 */
-    | 'PASSIVE_DURATION_CONFLICT';
+    | 'PASSIVE_DURATION_CONFLICT'
+    /** 「觉醒技」与「在场即生效」在结构上互斥（2.9.3 刀B）：觉醒按徽章定义要"停下来
+     *  问一次"，而 passive 压根不进事件面⇒问窗永远开不到它，悄悄收下就是默认全时生效。 */
+    | 'AWAKENING_PASSIVE_CONFLICT'
+    /** 「觉醒技」与「选择其一」也互斥（2.9.3 刀B）：择一走的是「要哪一枚」那扇窗，
+     *  窗里没有"不觉醒"这个出口，也就没有"摇头不扣额度"那一条。 */
+    | 'AWAKENING_CHOICE_UNSUPPORTED'
+    /** 「获得技能」少了名字（或把目标填成了别人——技能只能落在发动它的那一员将身上，
+     *  给别人加技能是 #28 那条目标选择器的口径，今天没有）。点名，不猜。 */
+    | 'GAIN_SKILL_INCOMPLETE'
+    /** 这个名字不在技能名册上（拼错了，或那枚技能还没进池）。解析点唯一＝
+     *  `skills/skillNameIndex.ts`；猜一个"最像的"＝把玩法交给字符串相似度。 */
+    | 'GAIN_SKILL_UNKNOWN_NAME'
+    /** 名册里同名却有**两份不同内容**：谁也不知道要哪一枚。用户 2026-10-08 裁过
+     *  「官方目前不存在不同效果但重名的技能」，所以真撞上就是一条要人裁决的数据缺陷。 */
+    | 'GAIN_SKILL_AMBIGUOUS_NAME';
 }
 
 export interface CompileResult {
@@ -172,16 +189,38 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
       return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED' };
     }
   }
+  // GAIN_SKILL（2.9.3 刀A）：名字是唯一入口，解析点在**这里**（全库唯一一次）。
+  // 解析成功⇒那枚技能原样嵌进编译好的定义，桥接层与结算侧读的都是这一份；解析失败⇒
+  // 一条点名的 skipped，绝不让"发动了但没拿到东西"这种半成功进事件流。
+  let gainedSkill: Skill | undefined;
+  if (runtime.type === 'GAIN_SKILL') {
+    const wanted = String(runtime.skillName ?? '').trim();
+    if (!wanted || (runtime.target !== undefined && runtime.target !== 'SELF')) {
+      return { skillName: effect.id, effectId: effect.id, reason: 'GAIN_SKILL_INCOMPLETE' };
+    }
+    const found = lookupSkillByName(wanted);
+    if (found.status === 'unknown') {
+      return { skillName: effect.id, effectId: effect.id, reason: 'GAIN_SKILL_UNKNOWN_NAME' };
+    }
+    if (found.status === 'ambiguous') {
+      return { skillName: effect.id, effectId: effect.id, reason: 'GAIN_SKILL_AMBIGUOUS_NAME' };
+    }
+    gainedSkill = found.skill;
+  }
   return {
     type: runtime.type,
     value: runtime.value,
-    target: runtime.target ?? (runtime.type === 'MODIFY_STAT' ? 'SELF' : 'TARGET'),
+    target: runtime.target ?? (runtime.type === 'MODIFY_STAT' || runtime.type === 'GAIN_SKILL' ? 'SELF' : 'TARGET'),
     dest: runtime.dest,
     // choice option label source (2.6.3) — display-only, never matched on.
     description: effect.description,
     // v2.8 刀4（#25）：改数三格透传（缺省＝非 MODIFY_STAT，键不出现）。
     ...(runtime.type === 'MODIFY_STAT'
       ? { stat: runtime.stat, modifyMode: runtime.modifyMode, duration: runtime.duration }
+      : {}),
+    // 2.9.3 刀A：名字（录入原样）＋解析出来的那一枚，两个键都只在 GAIN_SKILL 时出现。
+    ...(runtime.type === 'GAIN_SKILL'
+      ? { skillName: String(runtime.skillName ?? '').trim(), gainedSkill }
       : {}),
   };
 }
@@ -233,6 +272,11 @@ export function compileSkill(
   // （`<将领实例>:<技能名>`），因为裁决说的是"每枚技能各一局一次"，而一枚技能可能
   // 编出多个定义（多效果／不同时机）——键按定义走会让第二次发动合法。
   const limitedTag = tagsOf(skill).includes('限定技');
+  // 2.9.3 刀B·觉醒技徽章。用户 2026-10-08 裁「觉醒技和限定技同理，在同一局中发动过
+  // 一次就不能再发动」⇒ 两枚徽章共用同一本额度账（同一个 `limitKey` 形状），而"觉醒"
+  // 这一位另外把它听的那一声从自动路搬到问答路（消费点见 dataTypes 的 awakening 注释）。
+  const awakeningTag = tagsOf(skill).includes('觉醒技');
+  const quotaTag = limitedTag || awakeningTag;
   const limitKey = `${ownerKey}:${skill.name}`;
 
   const consider = (effect: SkillEffect | undefined, fallbackTrigger: Skill['trigger']): CompiledEffect | null => {
@@ -272,6 +316,17 @@ export function compileSkill(
           skillName: skill.name,
           effectId: effect.id,
           reason: 'PASSIVE_DURATION_CONFLICT',
+        });
+        return null;
+      }
+      // 2.9.3 刀B：觉醒技说"到点问您点不点头"，在场即生效说"没有发动这一刻"——两句
+      // 互斥，而问答路压根扫不到它（`eventsHeardBy('passive')` 是空）。悄悄收下＝把
+      // 一条写着"由您自选"的技能默认成全时生效，那是另一种玩法。
+      if (awakeningTag) {
+        skipped.push({
+          skillName: skill.name,
+          effectId: effect?.id,
+          reason: 'AWAKENING_PASSIVE_CONFLICT',
         });
         return null;
       }
@@ -388,7 +443,10 @@ export function compileSkill(
     ...(lockedTag && c.data.type === 'MODIFY_STAT' ? { locked: true } : {}),
     // 「一局一次」额度按技能给键；passive 型不落键——持续生效没有"发动一次"的时刻，
     // 落键只会假装管住了它（如实账见 dataTypes 的 limitKey 注释）。
-    ...(limitedTag && c.mapped !== 'passive' ? { limitKey } : {}),
+    // 2.9.3 刀B：限定技与觉醒技共用同一本账（quotaTag）；觉醒位只在编出定义时落，
+    // passive 那一支在上面已经点名跳过，所以这一句永远走不到"落键却不问"的死角。
+    ...(quotaTag && c.mapped !== 'passive' ? { limitKey } : {}),
+    ...(awakeningTag && c.mapped !== 'passive' ? { awakening: true } : {}),
   });
 
   const candidates: CompiledEffect[] = [];
@@ -428,6 +486,19 @@ export function compileSkill(
         }
         continue;
       }
+      if (awakeningTag) {
+        // 2.9.3 刀B：择一组走的是 `CHOICE_REQUIRED` 那条窗（分流开关第一句就把
+        // choiceMode 留在自动路），它问的是"要哪一枚"，压根没有"觉不觉醒"这一问，
+        // 也就没有"摇头不扣额度"那个出口。点名跳过，等择一窗挂得上"不发动"再说。
+        for (const c of group) {
+          skipped.push({
+            skillName: skill.name,
+            effectId: c.effect.id,
+            reason: 'AWAKENING_CHOICE_UNSUPPORTED',
+          });
+        }
+        continue;
+      }
       definitions.push({
         id: `${ownerKey}:${skill.name}:choice`,
         name: skill.name,
@@ -452,7 +523,8 @@ export function compileSkill(
         // 一笔才需要"移不走"位）。
         ...(lockedTag && group.some(c => c.data.type === 'MODIFY_STAT') ? { locked: true } : {}),
         // 限定技同理继承：整组择一＝一次发动＝一次额度（键与单效果定义同形）。
-        ...(limitedTag ? { limitKey } : {}),
+        // （觉醒技＋择一那一组在上面已点名跳过，所以这一支只可能是限定技在落键。）
+        ...(quotaTag ? { limitKey } : {}),
       });
     }
     // v2.8.x 链式若-则刀：effectMode==='chain' 时，同一触发签名的多个效果编入一条
@@ -486,6 +558,14 @@ export function compileSkill(
         name: skill.name,
         trigger: group[0].mapped,
         description: skill.description ?? '',
+        // 2.9.3 刀C：链式一组**同样继承整组门槛**（与上面 choice 那一支同一格位子）。
+        // 这一槽是"这一刻到底该不该响/该不该问"的唯一判据（`SkillTriggerBridge.buildCondition`
+        // 与 `skills/reactionChain.ts` 候选枚举都读它）；链上不带＝写着门槛却没人读，
+        // 正是 §12-55 明令禁止的"记录而未消费"。魏关羽「单骑」那三格门槛就落在这里。
+        // 如实账：挂在**单条效果**上的逐项门槛今天只在择一窗被消费（`buildChoiceOptions`），
+        // 链式没有"跳过中间一环"的形状，所以这一支仍只并把它们留在效果数据里、不进定义级
+        // 判据——那是另立的一刀，本刀不假装已经管住它。
+        conditions: skill.conditions?.length ? skill.conditions : undefined,
         effects: group.map(c => (c.conditions ? { ...c.data, conditions: c.conditions } : c.data)),
         sourceGeneralId: runtimeGeneralId,
         damageTypeFilter: group[0].damageTypeFilter,
@@ -496,7 +576,10 @@ export function compileSkill(
         effectChain: true,
         ...(skill.forced === true ? { forced: true } : {}),
         ...(lockedTag && group.some(c => c.data.type === 'MODIFY_STAT') ? { locked: true } : {}),
-        ...(limitedTag ? { limitKey } : {}),
+        // 链式一组＝一次发动：额度与觉醒位照常继承（魏关羽「单骑」"失去1点体力上限
+        // **并**获得技能「怒斩」"就是这一支——一次觉醒、一笔账、两下连着落）。
+        ...(quotaTag ? { limitKey } : {}),
+        ...(awakeningTag ? { awakening: true } : {}),
       });
     }
   } else {

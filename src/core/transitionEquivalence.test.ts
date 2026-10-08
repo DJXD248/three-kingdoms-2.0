@@ -767,8 +767,8 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(p2.hand).toHaveLength(3); // 苦肉2 + 封赏1（TURN_START 补给窗口不逐内入手持）
   });
 
-  it('同命族实证：单骑/追忆/死节+并吞/戮杀在真实击杀链上触发（含技能击杀→DEATH 回灌）', () => {
-    // 单骑：文鸯被普通击杀 → 反伤凶手 1
+  it('同命族实证：同命/追忆/死节+并吞/戮杀在真实击杀链上触发（含技能击杀→DEATH 回灌）', () => {
+    // 同命（文鸯，v2.9.3 前原名「单骑」）：被普通击杀 → 反伤凶手 1
     const s1 = makeState([
       makePlayer(1, {
         fieldGenerals: [makeFieldGeneral(makeGeneral('a1', 4, []), 1)],
@@ -782,8 +782,8 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     syncPlayerSkills(e1, e1.state);
     const ev1 = e1.dispatch(attack('a1', 'wy', 0));
     expect(ev1.some(e => e.type === 'DEATH' && (e.data as any)?.targetId === 'wy')).toBe(true);
-    const danqi = ev1.find(e => e.type === 'DAMAGE' && String((e.data as any)?.skillId ?? '').includes('单骑:e1'));
-    expect(danqi).toBeTruthy();
+    const tongming = ev1.find(e => e.type === 'DAMAGE' && String((e.data as any)?.skillId ?? '').includes('同命:e1'));
+    expect(tongming).toBeTruthy();
     expect(fieldHp(e1.state, 1, 'a1')?.hp).toBe(3);
 
     // 追忆：步练师被普通击杀 → 拥有者摸 1

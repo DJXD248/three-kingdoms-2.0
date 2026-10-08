@@ -5,9 +5,11 @@
  * 多条之间用顿号/逗号/分号/换行分隔，语义为「全部成立才发动」。
  *   手牌≤2，牌堆≥5 / 自身体力=1 / 目标手牌>自身手牌 / 无
  *
- * 只认这 6 个度量（都是对局里已经记录下来的事实，见 skillConditions.ts）：
- *   手牌 / 体力 / 护甲 / 场上将领 / 牌堆 / 本次伤害
- * 对象只有 3 个：自身（缺省）/ 目标 / 伤害来源。
+ * 只认这 9 个度量（都是对局里**已经记录**下来的事实，见 skillConditions.ts）：
+ *   手牌 / 体力 / 护甲 / 场上将领 / 抽牌堆 / 本次伤害
+ *   近战击杀 / 被杀者在战场 / 身边与战场己方（v2.9.3 刀C：后两个是"是不是"那一类，填 1＝是、0＝否）
+ * 对象只有 3 个：自身（缺省）/ 目标 / 伤害来源。度量里抽牌堆、本次伤害与刀C 那三个
+ * 没有"属于谁"这一维（写了也不生效，所以解析时直接不落这个字段）。
  *
  * 失败即闭（fail-closed）：读不懂的片段一律进 unknown 交回录入面报告，
  * 绝不猜成别的条件，也绝不"当作没写"——技能宁可不发，不能乱发。
@@ -27,6 +29,9 @@ export const GATE_METRIC_LABELS: Record<SkillConditionMetric, string> = {
   FIELD_GENERAL_COUNT: '场上将领',
   DECK_COUNT: '抽牌堆',
   EVENT_VALUE: '本次伤害',
+  KILL_BY_MELEE: '近战击杀',
+  VICTIM_IN_BATTLE_AREA: '被杀者在战场',
+  ALLY_NEAR_OR_BATTLE_COUNT: '身边与战场己方',
 };
 
 export const GATE_SUBJECT_LABELS: Record<SkillConditionSubject, string> = {
@@ -57,6 +62,12 @@ const METRIC_ALIASES: [string, SkillConditionMetric][] = [
   ['手牌数', 'HAND_COUNT'], ['手牌', 'HAND_COUNT'],
   ['体力值', 'GENERAL_HP'], ['体力', 'GENERAL_HP'],
   ['护甲数', 'ARMOR_POINTS'], ['护甲值', 'ARMOR_POINTS'], ['护甲', 'ARMOR_POINTS'],
+  // 2.9.3 刀C（「单骑」那三格）。别名按长词在前排：'身边与战场自己人' 不能被 '手牌'…这类
+  // 短词截走（这里没有前缀冲突，但这一族词以后再加时仍按这条规矩排）。
+  ['近战击杀', 'KILL_BY_MELEE'],
+  ['被杀者在战场', 'VICTIM_IN_BATTLE_AREA'], ['死者站在战场', 'VICTIM_IN_BATTLE_AREA'],
+  ['身边与战场自己人', 'ALLY_NEAR_OR_BATTLE_COUNT'], ['身边与战场己方', 'ALLY_NEAR_OR_BATTLE_COUNT'],
+  ['同区与战场己方', 'ALLY_NEAR_OR_BATTLE_COUNT'],
 ];
 
 const SUBJECT_ALIASES: [string, SkillConditionSubject][] = [
@@ -87,6 +98,14 @@ function parseNumber(raw: string): number | undefined {
   if (s.endsWith('十') && s.length === 2 && CN_DIGITS[s[0]] !== undefined) return CN_DIGITS[s[0]] * 10;
   return undefined;
 }
+
+/**
+ * 没有"属于谁"这一维的度量（评估器压根不看主体）：全局的两格＋刀C 那三格。
+ * 录入面写了对象也不落字段——落一个不生效的限制等于骗人。
+ */
+const SUBJECTLESS_METRICS: readonly SkillConditionMetric[] = [
+  'DECK_COUNT', 'EVENT_VALUE', 'KILL_BY_MELEE', 'VICTIM_IN_BATTLE_AREA', 'ALLY_NEAR_OR_BATTLE_COUNT',
+];
 
 /** 量词尾巴：「手牌数量」「牌堆数」「体力数目」与「手牌」「牌堆」「体力」同义，只在整词出现时剥。 */
 const COUNT_SUFFIX = /^(数量|数目|数|量)$/;
@@ -138,8 +157,9 @@ function parseOne(clause: string): SkillCondition | null {
   // 「自身」就是缺省对象（skillConditions 里 subject ?? 'SELF'），写出来只多一层噪音，
   // 也会让「写法→结构→写法」的往返对不上，所以统一不落这个字段。
   // 牌堆与本次伤害是全局事实、没有"属于谁"，主体同理不落（评估器本来就忽略它，
-  // 留着会让回显显示一个不生效的限制，那是骗人）。
-  const subjectless = leftMetric.metric === 'DECK_COUNT' || leftMetric.metric === 'EVENT_VALUE';
+  // 留着会让回显显示一个不生效的限制，那是骗人）。刀C 那三格同理：前两格读的是击杀
+  // 那一声自己记下的事实，第三格永远数"技能拥有者这一席"——写别的对象也不生效。
+  const subjectless = SUBJECTLESS_METRICS.includes(leftMetric.metric);
   if (leftHead.subject && leftHead.subject !== 'SELF' && !subjectless) condition.subject = leftHead.subject;
 
   // 比较词后面常跟一个「为/是」赘词（至少为2、不超过是3），数字本身不会以它们开头。
@@ -153,7 +173,9 @@ function parseOne(clause: string): SkillCondition | null {
   const rightMetric = matchMetric(rightHead.rest.trim());
   if (!rightMetric || rightMetric.rest.trim() !== '') return null;
   condition.compareTo = { metric: rightMetric.metric };
-  if (rightHead.subject && rightHead.subject !== 'SELF') condition.compareTo.subject = rightHead.subject;
+  if (rightHead.subject && rightHead.subject !== 'SELF' && !SUBJECTLESS_METRICS.includes(rightMetric.metric)) {
+    condition.compareTo.subject = rightHead.subject;
+  }
   return condition;
 }
 
@@ -196,4 +218,4 @@ export function gateConditionsToText(conditions?: SkillCondition[]): string {
 
 /** 一句门槛提示语（编辑器/导入报告共用措辞）。 */
 export const GATE_SYNTAX_HINT =
-  '写法：手牌≤2，抽牌堆≥5（多条件用顿号或逗号＝都要满足）；可填的量只有 手牌/体力/护甲/场上将领/抽牌堆/本次伤害，对象只有 自身/目标/伤害来源';
+  '写法：手牌≤2，抽牌堆≥5（多条件用顿号或逗号＝都要满足）；可填的量只有 手牌/体力/护甲/场上将领/抽牌堆/本次伤害/近战击杀/被杀者在战场/身边与战场己方，对象只有 自身/目标/伤害来源（抽牌堆、本次伤害、近战击杀、被杀者在战场、身边与战场己方这五个量没有对象之分，写了也不生效）；"是不是"那一类（近战击杀、被杀者在战场）填 1＝是、0＝否';

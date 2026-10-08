@@ -493,3 +493,52 @@ describe('importEntryChangesNothing · 两个新维度按默认档归一（v2.8.
     expect(importEntryChangesNothing({ ...e.general, skills: stored }, e.gEdit, widened)).toBe(false);
   });
 });
+
+/**
+ * 2.9.3 刀A：第 12 列「获得哪个技能」.**逐列写死**（不 import 那个常量），这样列序
+ * 一旦被挪动这里就变红——导出/导入两端靠列名定位，列序漂了没人喊。
+ * 这一档只补"导入报告里有没有点名"那一只证人；名字本身认不认得由
+ * `skills/skillNameIndex.test.ts` 与 `skills/skillExcelFormat.test.ts` 判。
+ */
+describe('第 12 列「获得哪个技能」的导入报告（2.9.3 刀A）', () => {
+  const v12Header = [...FIXED,
+    '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛',
+    '效果1我听谁', '效果1改哪个数', '效果1怎么改', '效果1有效周期', '效果1获得哪个技能', '设定备注'];
+
+  /** 效果组 12 格：只改「效果类型」与最后一格，其余按"无"。 */
+  const group = (type: string, gainName: string) => [
+    '觉醒', '回合开始时', type, '无', '自身', '获得技能那一条', '无', '无', '无', '无', '无', gainName,
+  ];
+  const row = (type: string, gainName: string) => [
+    '关羽', '蜀', 4, 2, 1, '测试技', '无', '否', '回合开始时', '无', '获得技能那一条',
+    ...group(type, gainName), '',
+  ];
+  const parse = (type: string, gainName: string) => parseRowPerSkillSheet([v12Header, row(type, gainName)]);
+
+  it('名册上有的名字：零警告，名字原样进结构化效果', () => {
+    const { entries, parseWarnings } = parse('获得技能', '屯田');
+    expect(parseWarnings).toEqual([]);
+    expect(entries[0].skills[0].effects![0].runtime).toEqual({ type: 'GAIN_SKILL', skillName: '屯田', target: 'SELF' });
+  });
+
+  it('名字查不到：报告里点名（谁·哪个技能·第几个效果·原文），不静默收下', () => {
+    const { entries, parseWarnings } = parse('获得技能', '怒斩');
+    expect(entries[0].skills[0].effects![0].runtime).toMatchObject({ type: 'GAIN_SKILL', skillName: '怒斩' });
+    expect(parseWarnings).toHaveLength(1);
+    expect(parseWarnings[0]).toContain('关羽·测试技 效果1');
+    expect(parseWarnings[0]).toContain('怒斩');
+  });
+
+  it('这一格留空＝半条效果：同样点名', () => {
+    const { parseWarnings } = parse('获得技能', '无');
+    expect(parseWarnings).toHaveLength(1);
+    expect(parseWarnings[0]).toContain('关羽·测试技 效果1');
+  });
+
+  it('别的类型占了这一格：按没读处理并点名（与改数三格同一纪律）', () => {
+    const { entries, parseWarnings } = parse('回复体力', '屯田');
+    expect(entries[0].skills[0].effects![0].runtime).toEqual({ type: 'HEAL', value: undefined, target: 'SELF' });
+    expect(parseWarnings.some(w => w.includes('获得哪个技能'))).toBe(true);
+  });
+});
+

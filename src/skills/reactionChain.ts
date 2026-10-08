@@ -23,7 +23,11 @@
  *  - **不插队**（§H9 第九轮⑨）：应答产生的新事件只在**扫描时排到队尾**，
  *    当前这一格问完才轮到它——所以新格永远 append，绝不 insert。
  *  - **绝不既自动响又问**：分流开关在 `SkillTriggerBridge.defersToReactionQueue`，
- *    非 forced 的受击／受伤定义压根不进触发链。
+ *    非 forced 的受击／受伤定义压根不进触发链；v2.9.3 刀B 起同一句开关还认
+ *    「觉醒技」编译位（它听哪一声由自己的触发时机定，问窗在那一刻开）。
+ *
+ * 一句话把两族听众钉死：**开不开格只看"这一格有没有候选"**（`mayOpenReactionCell`
+ * 只是把明显不可能的先挡掉），所以"哪一声该问人"永远只有 `syncReactionQueue` 一处。
  */
 import type { General } from '../data/generals';
 import type { EngineState, PendingReaction, ReactionNode } from '../core/GameState';
@@ -35,7 +39,8 @@ import { matchesSkillEvent } from './skillEventMatch';
 import { limitedQuotaAvailable } from './skillQuota';
 import { PRIORITY, SkillTriggerBridge, defersToReactionQueue } from './SkillTriggerBridge';
 import type { DataSkillDefinition } from './dataTypes';
-import { eventsHeardBy, reactionTriggerOfEvent } from './reactionTriggers';
+import { ANY_TRIGGER_EVENT_TYPES, eventsHeardBy, reactionTriggerOfEvent } from './reactionTriggers';
+import { tagsOf } from '../domain/skillTags';
 import { orderReactionCandidates, victimRefOf, type ReactionCandidate } from '../triggers/reactionOrder';
 
 /**
@@ -266,10 +271,48 @@ export function reactionAnsweredOf(ask: ReactionAsk, option: ReactionOption | nu
  */
 export function isReactionSourceEvent(event: GameEvent): boolean {
   if (!reactionTriggerOfEvent(event.type)) return false;
+  return !excludedByDuel(event);
+}
+
+/** 决斗那两条排除（v2.9.3 刀B 起受击／受伤两型与觉醒技**共用这一份**，绝不第二处判）。 */
+function excludedByDuel(event: GameEvent): boolean {
   const payload = event.data as { duelRound?: unknown; duelStage?: unknown } | undefined;
-  if (typeof payload?.duelRound === 'number') return false;
-  if (event.type === 'BEFORE_DAMAGE' && payload?.duelStage === 'settled') return false;
-  return true;
+  if (typeof payload?.duelRound === 'number') return true;
+  return event.type === 'BEFORE_DAMAGE' && payload?.duelStage === 'settled';
+}
+
+/**
+ * 场上有没有挂着「觉醒技」徽章的技能（2.9.3 刀B 的**免费闸**，只读卡面徽章、不编译）。
+ *
+ * 它故意比真正的候选**宽**：徽章挂着而那枚定义被编译器点名跳过的（在场即生效、择一
+ * 两组），这里也算"有"。宽的一侧只是多跑一次候选枚举，随后开格那句"没候选就不开格"
+ * 会把窗关掉；窄了才会漏问，而漏问＝一条写着"由您自选发动"的技能悄悄不响。
+ */
+export function awakeningBadgeOnField(state: EngineState): boolean {
+  return state.players.some(player =>
+    player.isAlive !== false && fieldGeneralsOf(player).some(fg => {
+      const general = fg?.general as General | undefined;
+      if (!Array.isArray(general?.skills)) return false;
+      return general.skills.some(skill => tagsOf(skill).includes('觉醒技'));
+    }));
+}
+
+/**
+ * 这一声**有可能**开出一格待答问答吗（扫描器与 `core/TransitionCore` 的免费闸同读这一句）。
+ *
+ * 两族听众，一条判据：
+ *  - 受击／受伤两型（`isReactionSourceEvent`）——既有内容，逐字不变；
+ *  - **觉醒技**（v2.9.3 刀B，用户 2026-10-08 裁「觉醒达成条件当场问」）：它听哪一声
+ *    由自己的触发时机说（`eventsHeardBy`，与自动路同一张表），所以这里不列名单，
+ *    只要这一声落在"任何触发型听得懂"的总集里、且场上挂着这枚徽章，就让候选枚举
+ *    跑一次。表外的一声（摸牌、移动、投降……）压根没有时机听得懂，不白扫。
+ * "到底问不问"始终只有 `syncReactionQueue` 里那一句判据＝这一格有没有候选。
+ */
+export function mayOpenReactionCell(state: EngineState, event: GameEvent): boolean {
+  if (isReactionSourceEvent(event)) return true;
+  if (excludedByDuel(event)) return false;
+  if (!ANY_TRIGGER_EVENT_TYPES.has(event.type)) return false;
+  return awakeningBadgeOnField(state);
 }
 
 /**
@@ -432,7 +475,7 @@ export function syncReactionQueue(
   let overflow = 0;
 
   for (const event of dispatchEvents) {
-    if (!isReactionSourceEvent(event)) continue;
+    if (!mayOpenReactionCell(state, event)) continue;
     const node: ReactionNode = {
       key: `rn:${turn}:${serial}`,
       sourceEvent: { type: event.type, data: event.data },
@@ -440,6 +483,8 @@ export function syncReactionQueue(
     };
     // 没有候选＝这一刻没人有得响应，不开格（也不留空台账）。放在限量之前：
     // `overflow` 只记"本来该问却被封顶丢掉"的格数，真实对局恒为 0。
+    // 这一句今天还兼着觉醒技那一族的"问不问"（v2.9.3 刀B）：哪一声该开格不另立
+    // 名单，全场只有这一处判据＝**这一格有没有候选**。
     if (listReactionCandidates(state, node).length === 0) continue;
     serial += 1;
     if (serial > MAX_REACTION_NODES_PER_TURN) {

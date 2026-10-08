@@ -1,5 +1,8 @@
 import type { EngineState } from '../GameState';
-import type { GameEvent } from '../Event';
+import type { GameEvent, SkillGainedEventData } from '../Event';
+// 2.9.3 刀A：只借「技能表里那一格长什么样」这一个类型（`data/generals.ts` 是全库唯一的
+// 叶子模块、自己什么都不 import），运行时核心层仍然不认识内容层。
+import type { Skill } from '../../data/generals';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { selectHandCards } from './handSelection';
 import { effectiveMaxHp } from '../statModifiers';
@@ -127,6 +130,44 @@ export function applyGeneralMovedEvent(state: EngineState, event: GameEvent): En
       ? [...state.discardPile, consumedCard]
       : state.discardPile,
   };
+}
+
+/**
+ * SKILL_GAINED（2.9.3 刀A「获得技能」）：往那一员将的**技能表**上追加一枚技能。
+ * 引擎里唯一改写卡面的一型——`STAT_MODIFY` 那位对偶只动账本、卡面一字不改，这一位
+ * 只动卡面、不碰账本（它带来的那笔在场账由 `chainedConsequences` 在获得这一刻补落）。
+ *
+ * 三条判据：
+ *  1. **拷贝那一员将，绝不原地改**。`fg.general` 今天很可能就是名册里共用的那一个
+ *     对象（登场事件把卡面原样放进状态），原地 append 等于把"他拿到了新技能"写进
+ *     全世界共用的那张卡——下一局、别的座位、别的存档都会看见它。`instanceId` 是普通
+ *     可枚举字段，所以浅拷贝不会丢runtime身份（`utils/runtimeIdentity.ts`）。
+ *  2. **同名不重复落**＝幂等。判据读的是状态里已经有的那张表，不是任何缓存，所以
+ *     常驻／重建／回放四路得到同一个答案。
+ *  3. 人已不在场⇒诚实空操作（与 HEAL／EQUIP_STRIP 同一口径：事件照记，触发确实
+ *     发生过，只是没东西可改）。
+ */
+export function applySkillGainedEvent(state: EngineState, event: GameEvent): EngineState {
+  const data = event.data as SkillGainedEventData | undefined;
+  const gained = data?.skill;
+  if (typeof data?.playerId !== 'number' || !data.generalId || !gained || !gained.name) return state;
+  const wanted = String(gained.name).trim();
+
+  const players = state.players.map(player => {
+    if (player.id !== data.playerId) return player;
+    const fieldGenerals = Array.isArray(player.fieldGenerals) ? player.fieldGenerals as any[] : [];
+    const index = fieldGenerals.findIndex(fg => getRuntimeCardId(fg?.general as any) === String(data.generalId));
+    if (index < 0) return player;
+    const general = fieldGenerals[index]?.general;
+    const skills = Array.isArray(general?.skills) ? general.skills as Skill[] : [];
+    if (skills.some(skill => String(skill?.name ?? '').trim() === wanted)) return player;
+    const nextField = fieldGenerals.map((fg, i) => i === index
+      ? { ...fg, general: { ...fg.general, skills: [...skills, gained] } }
+      : fg);
+    return { ...player, fieldGenerals: nextField };
+  });
+
+  return { ...state, players };
 }
 
 export function applySupplyResolvedEvent(state: EngineState, event: GameEvent): EngineState {

@@ -56,6 +56,7 @@ import {
   statModifierDurationLabels,
 } from '../data/generals';
 import { parseGateText, gateConditionsToText } from './skillGateText';
+import { lookupSkillByName } from './skillNameIndex';
 
 const EMPTY = '无';
 
@@ -235,6 +236,7 @@ export const runtimeEffectTypeLabels: Record<SkillRuntimeEffect['type'], string>
   DECK_PLACE: '放回牌堆',
   DUEL: '决斗',
   MODIFY_STAT: '修改数值',
+  GAIN_SKILL: '获得技能',
 };
 
 /**
@@ -251,14 +253,23 @@ const LEGACY_TARGET_LABELS: Record<string, NonNullable<SkillRuntimeEffect['targe
 };
 
 /** Types the compiler can settle today (see skillCompiler SUPPORTED_EFFECT_TYPES). */
-export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE', 'DUEL', 'MODIFY_STAT'];
+export const SETTLEABLE_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DRAW_CARD', 'DAMAGE', 'HEAL', 'GAIN_ARMOR', 'DISCARD', 'GIVE', 'EQUIP_STRIP', 'REVEAL', 'DECK_PLACE', 'DUEL', 'MODIFY_STAT', 'GAIN_SKILL'];
 
 /**
  * 2.8 刀9：**根本不读「数值」格的类型**。决斗的轮数是规则常量（双方各三轮＝
  * 最多六次，§H9 第六轮①），把它做成可填数字＝"界面写 1、生效是 6"的分叉
  * （§12-55／v2.8.13 同族），所以录入面不给它数字框、Excel 侧填了也点名退回。
+ * 2.9.3 刀A 加上「获得技能」：它读的是**一个技能名**（住在自己的列里，见
+ * `GAIN_SKILL_NAME_HEADER`），给它一个数字框同样是"界面填了个数、引擎认的是别的"。
  */
-export const VALUELESS_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DUEL'];
+export const VALUELESS_RUNTIME_TYPES: readonly SkillRuntimeEffect['type'][] = ['DUEL', 'GAIN_SKILL'];
+
+/** 每一档"根本不读数值格"的理由各写各的：退回的话术必须对得上这一档自己的形状
+ *  （把决斗那句套到「获得技能」头上＝又一处显示与生效分叉）。 */
+const valuelessReasons: Partial<Record<SkillRuntimeEffect['type'], string>> = {
+  DUEL: '决斗的轮数由规则定死：双方各三轮、最多六次',
+  GAIN_SKILL: '它认的是「获得哪个技能」那一栏里的**技能名字**，没有数量可言',
+};
 
 /**
  * 数值 `0` 在这几个类型里**有真含义**＝「整只手（全部）」：它们都经
@@ -360,7 +371,7 @@ export function readValueCell(
   if (type && VALUELESS_RUNTIME_TYPES.includes(type)) {
     if (!WHOLE_HAND_VALUE_ALIASES.includes(cell) && parseRuntimeValue(cell) == null) return {};
     return {
-      note: `「${runtimeEffectTypeLabels[type]}」没有数量可填（决斗的轮数由规则定死：双方各三轮、最多六次），`
+      note: `「${runtimeEffectTypeLabels[type]}」没有数量可填（${valuelessReasons[type]}），`
         + `这一格按没填处理`,
     };
   }
@@ -486,9 +497,39 @@ export function parseStatValue(s: unknown): number | undefined {
   return Math.trunc(n);
 }
 
+// ── 「获得哪个技能」（2.9.3 刀A：第 12 列，只服务「获得技能」）──
+
+/** 列名。与「改哪个数」同一族做法：正交维度各占一列，不挤进「触发」那句话，
+ *  也不塞进「数值」那一格（这一档根本不读数）。 */
+export const GAIN_SKILL_NAME_HEADER = '获得哪个技能';
+
+/** 贴在「获得哪个技能」表头批注上的一句话。
+ *  ⚠ 名册那一句话说的是**当前真的查得到的东西**（官方将领卡上印的技能名）。DIY 卡上
+ *  自创的技能名这一版还查不到（解析点只读 `data/generals.ts` 那一份，见
+ *  `skills/skillNameIndex.ts` 文件头）——把"官方与 DIY 都算"写进来就是界面承诺 >
+ *  引擎行为（§12-112），所以这里按引擎的实际口径写，DIY 那半另立待办。 */
+export const GAIN_SKILL_NAME_HINT =
+  '「获得哪个技能」＝这一档要往这一员将的技能表上添的那枚技能的**名字**（只写名字，'
+  + '不写将名、不写势力）。引擎拿这个名字去查名册（＝官方将领卡上印着的那些技能名；'
+  + '自己新编的技能名要等它进了这张名册才认）：'
+  + '查到了才添得进去，从下一次发动起这一员将就听得见这枚新技能。'
+  + '查不到、或同名有两份不同内容，都会被导入报告与编译器逐条点名跳过——绝不猜一个"最像的"。'
+  + '只有「效果类型＝获得技能」时这一栏才有意义，别的类型填了会按没填处理并在导入报告里点名。';
+
+/** 名字格不做封闭下拉：可选的名字＝整张名册（一百多个、且随内容增长），把它做成
+ *  死下拉会把"先写技能、那枚技能还没进池"这条路堵死。读法因此是**原样收字**（去空白），
+ *  认不认由 `skills/skillNameIndex.ts` 单点判，导入面只把判不出来的逐条点名。 */
+export function readGainSkillNameCell(raw: unknown): string {
+  return cleanCell(raw);
+}
+
+export function gainSkillNameToStr(name?: string): string {
+  return String(name ?? '').trim() || EMPTY;
+}
+
 // ── Effect column groups (Excel) ────────────────────────────────────
 
-export type EffectGroupWidth = 3 | 6 | 7 | 8 | 11;
+export type EffectGroupWidth = 3 | 6 | 7 | 8 | 11 | 12;
 
 export const EFFECT_GROUP_COLS_V1 = ['标注', '触发', '描述'] as const;
 export const EFFECT_GROUP_COLS_V2 = ['标注', '触发', '效果类型', '数值', '目标', '描述'] as const;
@@ -502,15 +543,18 @@ export const EFFECT_GROUP_COLS_V4 = [...EFFECT_GROUP_COLS_V3, LISTENER_SCOPE_HEA
 export const EFFECT_GROUP_COLS_V5 = [
   ...EFFECT_GROUP_COLS_V4, STAT_KEY_HEADER, STAT_MODE_HEADER, STAT_DURATION_HEADER,
 ] as const;
+/** 2.9.3 刀A：第 12 列「获得哪个技能」——一格只服务「效果类型＝获得技能」。 */
+export const EFFECT_GROUP_COLS_V6 = [...EFFECT_GROUP_COLS_V5, GAIN_SKILL_NAME_HEADER] as const;
 
-/** Header cells for effect group n (1-based), current (11-col) format. */
+/** Header cells for effect group n (1-based), current (12-col) format. */
 export function effectGroupHeaders(n: number): string[] {
-  return EFFECT_GROUP_COLS_V5.map(c => `效果${n}${c}`);
+  return EFFECT_GROUP_COLS_V6.map(c => `效果${n}${c}`);
 }
 
 /** Detect the effect-group width of a sheet from its header row. */
 export function detectEffectGroupWidth(header: unknown[]): EffectGroupWidth {
   const cells = header.map(h => String(h ?? '').trim());
+  if (cells.some(h => /^效果\d+获得哪个技能$/.test(h))) return 12;
   if (cells.some(h => /^效果\d+有效周期$/.test(h))) return 11;
   if (cells.some(h => /^效果\d+我听谁$/.test(h))) return 8;
   if (cells.some(h => /^效果\d+门槛$/.test(h))) return 7;
@@ -571,6 +615,10 @@ export interface ParsedEffectGroup {
    *  根本不是「修改数值」、或是「修改数值」却缺了必需的一格——**全部已成句**交回
    *  导入面逐条点名。拦在导入面而不是只拦在编译器，是因为编译器的跳过用户看不见。 */
   statIssues: string[];
+  /** 「获得哪个技能」这一格的账（2.9.3 刀A）：没写、写在了别的类型上、名册里查不到
+   *  或同名两份——**全部已成句**交回导入面逐条点名，同 `statIssues` 的理由：编译器那边
+   *  的跳过用户看不见，所以拦在导入面。 */
+  gainIssues: string[];
 }
 
 /**
@@ -592,6 +640,7 @@ export function parseEffectGroup(
   let statKeyStr = '';
   let statModeStr = '';
   let statDurationStr = '';
+  let gainNameStr = '';
   if (width === 3) {
     desc = get(2);
   } else {
@@ -599,17 +648,18 @@ export function parseEffectGroup(
     desc = get(5);
     if (width >= 7) gateStr = get(6);
     if (width >= 8) scopeStr = get(7);
-    if (width === 11) {
+    if (width >= 11) {
       statKeyStr = get(8);
       statModeStr = get(9);
       statDurationStr = get(10);
     }
+    if (width >= 12) gainNameStr = get(11);
   }
   const hasEffectBody = !!(label || desc || runtimeStr.type);
   const triggerRead = readTriggerCell(triggerStr);
   const canFormEffect = hasEffectBody || !!triggerRead.trigger;
   const hasStatCells = !!(statKeyStr || statModeStr || statDurationStr);
-  if (!canFormEffect && !gateStr && !scopeStr && !hasStatCells && !triggerRead.unreadable) return null;
+  if (!canFormEffect && !gateStr && !scopeStr && !hasStatCells && !gainNameStr && !triggerRead.unreadable) return null;
   if (!canFormEffect) {
     // 这一组里没有一个"站得住的效果"（只写了门槛/只听谁，或触发写法没看懂）：
     // 不凭空造一个空效果占位（那会挤占效果编号并显示成"纯描述"），
@@ -623,6 +673,10 @@ export function parseEffectGroup(
         ? [`「${STAT_KEY_HEADER}／${STAT_MODE_HEADER}／${STAT_DURATION_HEADER}」这三格得挂在某个效果上，`
           + '可这一组没有效果（没写效果类型／描述），所以按没填处理']
         : [],
+      gainIssues: gainNameStr
+        ? [`「${GAIN_SKILL_NAME_HEADER}」这一格得挂在某个效果上，可这一组没有效果`
+          + `（没写效果类型／描述），所以「${gainNameStr}」按没填处理`]
+        : [],
       ...(scopeStr ? { scopeIgnored: scopeStr } : {}),
     };
   }
@@ -633,6 +687,7 @@ export function parseEffectGroup(
   const statModeRead = readStatModeCell(statModeStr);
   const statDurationRead = readStatDurationCell(statDurationStr);
   const valueRead = readValueCell(runtimeStr.value, type, statModeRead.value);
+  const gainName = readGainSkillNameCell(gainNameStr);
 
   const fields: ParsedEffectFields = {};
   if (label) fields.label = label;
@@ -672,6 +727,36 @@ export function parseEffectGroup(
     }
   }
 
+  // 「获得哪个技能」这一格的账（2.9.3 刀A）：与三格改数同一套纪律——只有「获得技能」
+  // 读它，别的类型填了必须点名；「获得技能」少了这一格、或名字在名册里查不出唯一的
+  // 一枚，也点名。查不查得出问的是**唯一那个解析点** `skillNameIndex`，导入面不再写
+  // 第二套"像不像"的判断。
+  const gainIssues: string[] = [];
+  if (gainNameStr && type !== 'GAIN_SKILL') {
+    const who = type ? `「${runtimeEffectTypeLabels[type]}」` : '这一条（没写效果类型）';
+    gainIssues.push(`${who}不读「${GAIN_SKILL_NAME_HEADER}」这一栏，「${gainNameStr}」按没填处理`);
+  }
+  if (type === 'GAIN_SKILL') {
+    if (!gainName) {
+      gainIssues.push('「获得技能」没写要拿哪一枚技能的名字：查不到名字就添不进技能表，编译时会点名跳过');
+    } else {
+      const found = lookupSkillByName(gainName);
+      if (found.status === 'unknown') {
+        gainIssues.push(`名册里没有「${gainName}」这一枚技能（名册＝所有将领卡上印着的技能名）：`
+          + '填了也添不进去，编译时会点名跳过。那枚技能进了将卡池，这一条就自动生效');
+      } else if (found.status === 'ambiguous') {
+        gainIssues.push(`「${gainName}」在名册里不止一份、而且内容不同（${found.owners.join('、')}）：`
+          + '引擎不知道该拿哪一份，所以编译时会点名跳过。请给它们改成两个名字');
+      } else if (!found.skill.effects?.some(effect => effect.runtime)) {
+        gainIssues.push(`「${gainName}」目前只有一段描述、没有结构化效果：能获得，但对局里不会发生变化`);
+      }
+    }
+    if (target && target !== 'SELF') {
+      gainIssues.push(`「获得技能」的目标只能是${runtimeTargetLabels.SELF}（给别人添一枚技能是另一把刀的内容，今天没有目标选择器），`
+        + `「${runtimeTargetLabels[target]}」按没填处理，编译时会点名跳过`);
+    }
+  }
+
   if (type) {
     fields.runtime = { type };
     if (valueRead.value != null) fields.runtime.value = valueRead.value;
@@ -681,6 +766,11 @@ export function parseEffectGroup(
       if (statModeRead.value) fields.runtime.modifyMode = statModeRead.value;
       if (statDurationRead.duration) fields.runtime.duration = statDurationRead.duration;
       // 目标写死自己：与编译器、运行时修正器账本同一口径（改别人的数今天没有入口）。
+      fields.runtime.target = 'SELF';
+    }
+    if (type === 'GAIN_SKILL' && gainName) {
+      fields.runtime.skillName = gainName;
+      // 同上：拿到技能的永远是发动者自己这一员（给别人添一枚是 #28 那条目标选择器）。
       fields.runtime.target = 'SELF';
     }
   }
@@ -710,6 +800,7 @@ export function parseEffectGroup(
     scopeUnknown,
     scopeIgnored,
     statIssues,
+    gainIssues,
   };
 }
 
@@ -719,6 +810,7 @@ export function serializeEffectGroup(
   width: EffectGroupWidth,
 ): (string | number)[] {
   if (!eff) {
+    if (width === 12) return EFFECT_GROUP_COLS_V6.map(() => EMPTY);
     if (width === 11) return EFFECT_GROUP_COLS_V5.map(() => EMPTY);
     if (width === 8) return [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY];
     if (width === 7) return [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY];
@@ -742,13 +834,18 @@ export function serializeEffectGroup(
   ];
   if (width >= 7) cells.push(gateConditionsToText(eff.conditions));
   if (width >= 8) cells.push(listenerScopeToStr(eff.trigger?.listenerScope));
-  if (width === 11) {
+  if (width >= 11) {
     const isModify = rt?.type === 'MODIFY_STAT';
     cells.push(
       statKeyToStr(isModify ? rt.stat : undefined),
       statModeToStr(isModify ? rt.modifyMode : undefined),
       statDurationToStr(isModify ? rt.duration : undefined),
     );
+  }
+  if (width >= 12) {
+    // 只「获得技能」读这一格；别的类型即使数据里悄悄留了一个 `skillName` 也导成「无」，
+    // 免得一次换档在文件里留下一个没人读的单词（§12-55 同族的"显示与生效分叉"）。
+    cells.push(rt?.type === 'GAIN_SKILL' ? gainSkillNameToStr(rt.skillName) : EMPTY);
   }
   return cells;
 }

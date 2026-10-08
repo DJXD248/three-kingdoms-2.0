@@ -7,6 +7,7 @@ import {
   runtimeEffectTypeLabels, runtimeTargetLabels, SETTLEABLE_RUNTIME_TYPES,
   WHOLE_HAND_RUNTIME_TYPES, WHOLE_HAND_LABEL, VALUELESS_RUNTIME_TYPES,
 } from '../../skills/skillExcelFormat';
+import { knownSkillNames } from '../../skills/skillNameIndex';
 
 // ── Structured runtime effect editor (类型 + 数值 + 目标) ──
 // Only effects carrying a runtime payload are compiled into the game runtime
@@ -32,6 +33,12 @@ const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number, rt?: Sk
     if (rt?.modifyMode === 'set') return `${once}把${key}摁成 ${v}（覆盖卡面上的数）`;
     return v < 0 ? `${once}让${key}减少 ${-v}` : `${once}让${key}增加 ${v}`;
   },
+  // 2.9.3 刀A：这一档根本不读数，读的是一个**技能名**。预览那句要跟引擎的判据
+  // 同一个来源（名字＝编译器拿去查名册的那一个字），别在这里再编一套说法。
+  GAIN_SKILL: (_v, rt) => {
+    const name = String(rt?.skillName ?? '').trim();
+    return name ? `获得技能「${name}」（往这一员将的技能表上添一枚）` : '获得技能：还没写要拿哪一枚';
+  },
 };
 
 export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEffect; onChange: (r: SkillRuntimeEffect | undefined) => void }) {
@@ -45,6 +52,12 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
   const isValueless = !!runtime && VALUELESS_RUNTIME_TYPES.includes(runtime.type);
   // v2.8 刀4（#25）：「修改数值」是这一族里**唯一**允许 0 与负数的一档，而且目标只有"自己"。
   const isModifyStat = runtime?.type === 'MODIFY_STAT';
+  // 2.9.3 刀A：「获得技能」也只落在自己身上（往别人的技能表添东西是 #28 那条目标
+  // 选择器的口径），所以它跟「修改数值」共用同一半界面：没有数字框、目标只写"自己"。
+  const isGainSkill = runtime?.type === 'GAIN_SKILL';
+  const isSelfOnly = isModifyStat || isGainSkill;
+  const gainName = String(runtime?.skillName ?? '').trim();
+  const gainKnown = knownSkillNames().includes(gainName);
 
   const handleTypeChange = (val: string) => {
     if (!val) { onChange(undefined); return; }
@@ -58,12 +71,14 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
         ? undefined
         : nextType === 'MODIFY_STAT' ? Math.max(-10, Math.min(10, carried))
         : WHOLE_HAND_RUNTIME_TYPES.includes(nextType) ? carried : Math.max(1, carried),
-      // 改数只改自己的账面数字；别的类型沿用原目标。换档时把不认识的键一并摘掉，
-      // 免得「改哪个数」这类键悄悄留在一条摸牌效果上（留了也没人读＝下一轮分叉）。
-      target: nextType === 'MODIFY_STAT' ? 'SELF' : (runtime?.target ?? 'TARGET'),
+      // 改数只改自己的账面数字；获得技能只往自己的技能表上添一枚；别的类型沿用原目标。
+      // 换档时把不认识的键一并摘掉，免得「改哪个数」这类键悄悄留在一条摸牌效果上
+      // （留了也没人读＝下一轮分叉）。
+      target: nextType === 'MODIFY_STAT' || nextType === 'GAIN_SKILL' ? 'SELF' : (runtime?.target ?? 'TARGET'),
       ...(nextType === 'MODIFY_STAT'
         ? { stat: runtime?.stat ?? 'MELEE_ATK' as StatModifierKeyType, modifyMode: runtime?.modifyMode ?? 'delta' as StatModifyModeType }
         : { stat: undefined, modifyMode: undefined, duration: undefined }),
+      skillName: nextType === 'GAIN_SKILL' ? (runtime?.skillName ?? '') : undefined,
       dest: nextType === 'DECK_PLACE' ? runtime?.dest : undefined,
     });
   };
@@ -125,10 +140,13 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
             </>
           )}
           <label className="text-[10px] text-emerald-400/50 whitespace-nowrap ml-2">目标</label>
-          {isModifyStat ? (
-            // 不给下拉＝不给"看起来能选、其实不响"的口子：跨将改数是另一把刀（#28 目标选择器）。
+          {isSelfOnly ? (
+            // 不给下拉＝不给"看起来能选、其实不响"的口子：跨将改数／给别人加技能都是
+            // 另一把刀（#28 目标选择器）。
             <span className={`${runtimeSelectCls} flex-1 inline-flex items-center opacity-70`}>
-              {runtimeTargetLabels.SELF}（这一档只改自己的账面数字）
+              {runtimeTargetLabels.SELF}（{isGainSkill
+                ? '这一档只往自己的技能表上添一枚'
+                : '这一档只改自己的账面数字'}）
             </span>
           ) : (
             <select value={runtime.target || 'TARGET'}
@@ -199,11 +217,49 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
         </div>
       )}
 
+      {isGainSkill && runtime && (
+        <div className="space-y-1.5 pl-4">
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] text-emerald-400/50 whitespace-nowrap">└ 拿哪一枚</label>
+            {/* 例子里那枚名字必须是**今天真查得到**的一枚：写一枚还没进名册的技能名，
+                用户照抄就会被下面那句琥珀色警告拦住＝界面自己挖坑（§12-112）。 */}
+            <input
+              type="text"
+              list="tk-gain-skill-names"
+              value={runtime.skillName ?? ''}
+              aria-label="获得技能名"
+              placeholder="填一枚技能的名字，例如「屯田」"
+              onChange={e => onChange({ ...runtime, skillName: e.target.value })}
+              className={`${runtimeSelectCls} flex-1`} />
+            {/* 名册里的名字全部列成候选（下拉只给"选得出"的词，而这个格子允许你写一枚
+                还没进池的技能——写了会被点名跳过，不会悄悄生效一半）。 */}
+            <datalist id="tk-gain-skill-names">
+              {knownSkillNames().map(name => <option key={name} value={name} />)}
+            </datalist>
+          </div>
+          <p className="text-[9px] text-emerald-300/40">
+            判据只有一个：这里写的名字。引擎拿它去查名册（＝官方将领卡上印着的那些技能名），
+            查到了才把那一枚添进这一员将的技能表；从下一次发动起他就听得见这枚新技能。
+          </p>
+          {!gainName && (
+            <p className="text-[9px] text-rose-400/80">
+              还没写要拿哪一枚：这样填的效果保存后会被引擎逐条点名跳过，不会悄悄生效一半。
+            </p>
+          )}
+          {gainName && !gainKnown && (
+            <p className="text-[9px] text-amber-400/80">
+              名册里暂时没有「{gainName}」这一枚技能：保存后会被引擎点名跳过（同名却有两份不同内容时
+              同样跳过，因为它不知道该拿哪一份）。那枚技能进了将卡池，这一条就自动生效。
+            </p>
+          )}
+        </div>
+      )}
+
       {runtime && (
         <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
           <span className="text-[9px] text-emerald-500/50">预览：</span>
           <span className="text-[10px] text-emerald-300 font-bold">{runtimePreviewText[runtime.type](runtime.value ?? (isModifyStat ? 0 : 1), runtime)}</span>
-          <span className="text-[10px] text-emerald-400/70">→ {runtimeTargetLabels[runtime.target || (isModifyStat ? 'SELF' : 'TARGET')]}</span>
+          <span className="text-[10px] text-emerald-400/70">→ {runtimeTargetLabels[runtime.target || (isSelfOnly ? 'SELF' : 'TARGET')]}</span>
           {!isSettleable && <span className="text-[10px] text-amber-400">⚠ 当前版本该类型不参与结算</span>}
         </div>
       )}

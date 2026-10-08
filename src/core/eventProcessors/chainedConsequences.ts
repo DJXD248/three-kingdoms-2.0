@@ -1,9 +1,9 @@
 import type { EngineState } from '../GameState';
-import type { GameEvent } from '../Event';
+import type { GameEvent, SkillGainedEventData } from '../Event';
 import { getTurnStartDrawCount } from '../turnRules';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { deriveDuelFlow } from './duelEvents';
-import { passiveEventsForDeploy } from '../../skills/passiveModifiers';
+import { passiveEventsForDeploy, passiveEventsForGainedSkill } from '../../skills/passiveModifiers';
 import { resolveDamageTaken } from '../damageTaken';
 import {
   modifierIdsExpiredAtTurnBoundary,
@@ -161,6 +161,10 @@ export function enqueueDerivedConsequences(
             attackerPlayerId: data?.sourcePlayerId ?? null,
             attackerId: data?.sourceGeneralId,
             skillKill: true,
+            // 2.9.3 刀C：死者倒下的那一刻踩在哪片区域照记（与普攻那一路同一个键）。
+            // 但这一声**不带**近战/远程——技能那一刀压根没有这个属性，缺键就等于
+            // 「近战击杀」在这一声上永远不成立（失败即闭，不靠任何一处再判断一次）。
+            targetZone: (beforeField.find(matches)?.position as { zone?: string } | undefined)?.zone,
           },
         });
       }
@@ -257,6 +261,37 @@ export function enqueueDerivedConsequences(
     }
   }
 
+  if (event.type === 'SKILL_GAINED') {
+    // 2.9.3 刀A：拿到的这一枚如果是「在场即生效」，登场那一刻早就过去了——在场那笔账
+    // 必须在**获得**这一刻补落，否则"人拿着技能、账却没有"（`passiveModifiers` 文件头
+    // 那条待办点名的形状，本条就是它说的"另一条进场的路"）。
+    // 判据读的是前后两份状态里"技能表有没有这个名字"（与 EQUIP_STRIP／DAMAGE 那两条
+    // 同一手法：派生层量状态差，不重抄结算层的幂等规矩）⇒重复获得那一趟表没变⇒补落
+    // 零笔，也就不会给同一枚在场技落第二笔账。
+    const data = event.data as SkillGainedEventData | undefined;
+    const playerId = typeof data?.playerId === 'number' ? data.playerId : null;
+    const generalId = data?.generalId;
+    const gained = data?.skill;
+    const wanted = String(gained?.name ?? '').trim();
+    if (playerId !== null && generalId && gained && wanted) {
+      const holds = (state: EngineState) => {
+        const field = state.players.find(player => player.id === playerId)?.fieldGenerals as any[] | undefined ?? [];
+        const general = field.find(fg => getRuntimeCardId(fg?.general as never) === String(generalId))?.general;
+        const skills = Array.isArray(general?.skills) ? general.skills as Array<{ name?: string }> : [];
+        return { general, has: skills.some(skill => String(skill?.name ?? '').trim() === wanted) };
+      };
+      const after = holds(next);
+      if (after.general && !holds(before).has && after.has) {
+        queue.push(...passiveEventsForGainedSkill(
+          after.general,
+          gained,
+          getRuntimeCardId(after.general as never) || String(after.general.id ?? ''),
+          playerId,
+        ));
+      }
+    }
+  }
+
   if (event.type === 'DEATH') {
     const data = event.data as any;
     const targetPlayerId = typeof data?.targetPlayerId === 'number' ? data.targetPlayerId : null;
@@ -327,6 +362,9 @@ export function enqueueDerivedConsequences(
             attackerPlayerId: null,
             attackerId: undefined,
             deathCause: 'MAX_HP_ZERO',
+            // 同一条记法：这一声也记下死者踩在哪片区域（全库 DEATH 的载荷形状因此只有
+            // 一处例外＝近战/远程那一格，它只在真攻击那一路存在）。
+            targetZone: (fg?.position as { zone?: string } | undefined)?.zone,
           },
         });
       }

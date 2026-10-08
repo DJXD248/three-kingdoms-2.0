@@ -36,7 +36,7 @@ const BATCH2: Array<{ owner: string; name: string }> = [
   { owner: 'jin_010', name: '垦荒' },
   { owner: 'jin_011', name: '奋威' },
   { owner: 'jin_011', name: '临阵' },
-  { owner: 'jin_012', name: '单骑' },
+  { owner: 'jin_012', name: '同命' },
   { owner: 'jin_013', name: '戮杀' },
   { owner: 'jin_014', name: '并吞' },
   { owner: 'jin_014', name: '封赏' },
@@ -188,7 +188,7 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
       trigger: 'onDamageTaken', damageTypeFilter: 'attack',
       effects: [{ type: 'GAIN_ARMOR', value: 1, target: 'SELF' }],
     });
-    expect(byId.get('jin_012:单骑:e1')).toMatchObject({
+    expect(byId.get('jin_012:同命:e1')).toMatchObject({
       trigger: 'onDeath',
       effects: [{ type: 'DAMAGE', value: 1, target: 'ATTACKER' }],
     });

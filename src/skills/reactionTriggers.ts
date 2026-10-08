@@ -64,6 +64,17 @@ export function eventsHeardBy(trigger: DataSkillTrigger): readonly GameEventType
 }
 
 /**
+ * **任何**触发型听得懂的几声总集（由上面那张表派生，绝不另写一份名单）。
+ * 给响应链的免费闸用（v2.9.3 刀B）：觉醒技听哪一声＝它自己的触发时机在那张表里的
+ * 那一行，所以"这一声有没有可能轮到觉醒技"只可能落在这几个类型上；表外的一声
+ * （摸牌、移动、投降……）压根没有任何时机听得懂，不必进去扫一遍候选。
+ * 表扩了新声，这一集自动跟着扩——两处不会分叉。
+ */
+export const ANY_TRIGGER_EVENT_TYPES: ReadonlySet<GameEventType> = new Set(
+  (Object.values(TRIGGER_EVENTS) as readonly (readonly GameEventType[])[]).flat(),
+);
+
+/**
  * 可响应问答读的"哪一声开一格"——**从上面那张表派生，不再自己写一份**
  * （v2.8.25；§H9 第九轮 d) 与决斗刀 2 的那两条事实原样保留）。
  *

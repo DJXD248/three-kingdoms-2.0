@@ -919,9 +919,11 @@ describe('EventProcessor', () => {
       expect(rounds[2]).toMatchObject({ targetId: 'du_b', newHp: 0 });
       expect(fieldOf(result, 2, 'du_b')).toBeUndefined();
       expect((result.players.find(p => p.id === 2)!.graveyard as Array<{ id: string }>).map(c => c.id)).toEqual(['du_b']);
-      // 技能伤害致死沿用既有派生链：DEATH → 补偿抽归阵亡方（第 2 家），不开第二条路
+      // 技能伤害致死沿用既有派生链：DEATH → 补偿抽归阵亡方（第 2 家），不开第二条路。
+      // 2.9.3 刀C：这一声记下了死者站的那片区域（`front`），但**不记**近战/远程——
+      // 决斗那一刀压根没有这个属性，所以「近战击杀」在它身上失败即闭。
       expect(collected.filter(e => e.type === 'DEATH').map(e => e.data)).toEqual([
-        { targetPlayerId: 2, targetId: 'du_b', attackerPlayerId: 1, attackerId: 'du_a', skillKill: true },
+        { targetPlayerId: 2, targetId: 'du_b', attackerPlayerId: 1, attackerId: 'du_a', skillKill: true, targetZone: 'front' },
       ]);
       expect(collected.filter(e => e.type === 'DRAW_REQUIRED')
         .map(e => (e.data as { playerId?: number } | undefined)?.playerId)).toEqual([2]);

@@ -12,7 +12,7 @@ import {
   attackResumeKeyOf,
   findResumedAttacks,
   findResumedDuels,
-  isReactionSourceEvent,
+  mayOpenReactionCell,
   reactionQueueFingerprint,
   syncReactionQueue,
 } from '../skills/reactionChain';
@@ -375,9 +375,10 @@ function settleDeferredAttack(
  * 结算后的响应链扫描（#71 的唯一调用点，决斗刀 2 起它同时报告"哪些决斗该续跑"，
  * v2.8.31 两拍刀起再加上"哪些延后的一刀该落"）。
  *
- * 触发条件先做免费闸：这一趟既没有可响应的一声（受击／受伤，且非决斗逐轮）、
- * 状态里也没有待答队列 ⇒ 原样返回，事件流一个字都不动。这条闸是"旧对局零扰动"
- * 的构造保证，不是优化。
+ * 触发条件先做免费闸（判据单点＝`skills/reactionChain.mayOpenReactionCell`：受击／受伤
+ * 两型的那两声，加上"场上挂着觉醒技徽章 ＆ 这一声是某个触发型听得懂的"）：这一趟
+ * 既没有可能开格的一声、状态里也没有待答队列 ⇒ 原样返回，事件流一个字都不动。
+ * 这条闸是"旧对局零扰动"的构造保证，不是优化。
  *
  * 队列没变（指纹相同）也不写事件——只有真的收格／开格／记账才落一条
  * `REACTION_QUEUE_SYNCED`，并经唯一突变入口 `EventProcessor` 落槽。封顶丢格是
@@ -395,7 +396,7 @@ function scanReaction(
   resumedAttacks: GameEvent[];
 } {
   const before = state.pendingReaction ?? null;
-  const hasSource = dispatchEvents.some(event => isReactionSourceEvent(event));
+  const hasSource = dispatchEvents.some(event => mayOpenReactionCell(state, event));
   let next = state;
   let after = before;
   if (hasSource || before) {

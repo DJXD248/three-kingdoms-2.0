@@ -84,8 +84,13 @@ describe('徽章语义 · 五枚徽章每枚都得有大白话说明，且互相
     expect(FORCED_MEANING).toContain('没有关系');
   });
 
-  it('觉醒技在本作尚无机制⇒说明里必须承认它现在只是分类', () => {
-    expect(skillTagMeanings['觉醒技']).toContain('分类');
+  it('觉醒技（2.9.3 刀B 起有机制了）：说明必须写"停下来问一次＋摇头不扣额度＋一局一次"', () => {
+    expect(skillTagMeanings['觉醒技']).toContain('问您一次');
+    expect(skillTagMeanings['觉醒技']).toContain('不扣额度');
+    expect(skillTagMeanings['觉醒技']).toContain('一局只觉醒一次');
+    // 绝不能再退回"纯分类／尚无机制"那一句——那一版已经过时。
+    expect(skillTagMeanings['觉醒技']).not.toContain('尚无');
+    expect(skillTagMeanings['觉醒技']).not.toContain('纯粹是给人看的分类');
   });
 });
 

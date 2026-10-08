@@ -289,6 +289,11 @@ function damagePhase(state: EngineState, aim: Extract<AttackAim, { status: 'aime
         targetId: aim.targetId,
         attackerPlayerId: aim.attackerPlayerId,
         attackerId: aim.attackerId,
+        // 2.9.3 刀C：击杀那一声**当场**把两格事实记全——这一刀是近战还是远程、死者倒下
+        // 那一刻踩在哪片区域。门槛只读这里记下的东西（`skills/skillConditions.ts`），绝不
+        // 事后回头推断：死者此刻已经离场，事后再也问不到"他刚才站哪儿"。
+        ranged: aim.ranged,
+        targetZone: (target?.position as ReachPosition | undefined)?.zone,
       },
     });
   }
