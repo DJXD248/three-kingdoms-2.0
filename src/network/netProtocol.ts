@@ -18,6 +18,9 @@ export type NetEnvelope =
   | { t: 'welcome'; from: string; to: string; name: string; v: VersionStamp }
   | { t: 'refuse'; from: string; to: string; reason: string }
   | { t: 'roster'; from: string; peers: NetPeer[] }
+  /** J2：房主每次局面变化后发的一份**已遮蔽**快照。协议层只当它是未知对象——
+   *  看懂它是快照层的事（`isRestorableEngineState` 在客人端把关）。 */
+  | { t: 'snapshot'; from: string; state: Record<string, unknown> }
   | { t: 'bye'; from: string };
 
 export function ourVersionStamp(): VersionStamp {
@@ -57,7 +60,7 @@ export function encodeEnvelope(envelope: NetEnvelope): string {
   return JSON.stringify(envelope);
 }
 
-/** 线上证人：解析器只认这五种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
+/** 线上证人：解析器只认这六种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
 export function parseEnvelope(text: string): NetEnvelope | null {
   if (typeof text !== 'string' || text.length === 0 || text.length > MAX_WIRE_BYTES) return null;
   let parsed: unknown;
@@ -100,6 +103,12 @@ export function parseEnvelope(text: string): NetEnvelope | null {
     }
     case 'bye':
       return isId(raw.from) ? { t: 'bye', from: raw.from } : null;
+    case 'snapshot': {
+      if (!isId(raw.from)) return null;
+      const state = raw.state;
+      if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
+      return { t: 'snapshot', from: raw.from, state: state as Record<string, unknown> };
+    }
     default:
       return null;
   }

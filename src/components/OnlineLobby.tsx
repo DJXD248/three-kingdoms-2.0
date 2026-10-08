@@ -1,6 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { composeRoomUrl, createRoomCode } from '../network/netProtocol';
 import { joinRoom, newPeerId, type NetRole, type SessionState } from '../network/netSession';
+import {
+  attachRoom,
+  bumpNetRoom,
+  detachRoom,
+  getActiveRoom,
+  getGuestSnapshot,
+  receiveGuestSnapshot,
+  subscribeNetRoom,
+} from '../network/netRoom';
+import NetSpectator from './NetSpectator';
 
 const DEFAULT_ADDRESS = 'ws://127.0.0.1:8787';
 const PHASE_LABEL: Record<SessionState['phase'], string> = {
@@ -12,19 +22,20 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
 };
 
 /**
- * J1 只做到"连得上、版本对得上、看得见谁在场"：
- * 牌桌画面同步＝J2，左上角 ping 表与掉线判定＝J3，客人动手＝J4。
+ * J1 做到"连得上、版本对得上、看得见谁在场"；J2（v2.9.2）再加上"客人看得见
+ * 房主那一局的牌桌"——发出去的是遮蔽过的局面，客人这一侧只看不能动。
+ * 左上角 ping 表与掉线判定＝J3，客人动手与座位绑定＝J4，都还没做。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
-  const [role, setRole] = useState<NetRole>('host');
-  const [address, setAddress] = useState(DEFAULT_ADDRESS);
-  const [name, setName] = useState('玩家');
-  const [roomCode, setRoomCode] = useState('');
-  const [session, setSession] = useState<SessionState | null>(null);
+  // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。
+  const [session, setSession] = useState<SessionState | null>(() => getActiveRoom()?.connection.state ?? null);
+  const [role, setRole] = useState<NetRole>(() => getActiveRoom()?.role ?? 'host');
+  const [address, setAddress] = useState(() => getActiveRoom()?.address ?? DEFAULT_ADDRESS);
+  const [name, setName] = useState(() => getActiveRoom()?.name ?? '玩家');
+  const [roomCode, setRoomCode] = useState(() => getActiveRoom()?.roomCode ?? '');
   const [formError, setFormError] = useState<string | null>(null);
-  const connection = useRef<ReturnType<typeof joinRoom> | null>(null);
 
-  useEffect(() => () => connection.current?.leave(), []);
+  const guestSnapshot = useSyncExternalStore(subscribeNetRoom, getGuestSnapshot, getGuestSnapshot);
 
   const start = () => {
     setFormError(null);
@@ -35,15 +46,34 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
       return;
     }
     if (role === 'host') setRoomCode(composed.roomCode);
-    connection.current?.leave();
-    connection.current = joinRoom(
-      { role, name, url: composed.url, roomCode: composed.roomCode, selfId: newPeerId() },
-      setSession,
+    const connection = joinRoom(
+      {
+        role,
+        name,
+        url: composed.url,
+        roomCode: composed.roomCode,
+        selfId: newPeerId(),
+        onSnapshot: (snapshot) => {
+          if (receiveGuestSnapshot(snapshot)) bumpNetRoom();
+        },
+      },
+      (next) => {
+        setSession(next);
+        bumpNetRoom();
+      },
     );
+    attachRoom({ role, name, roomCode: composed.roomCode, address, url: composed.url, connection });
+  };
+
+  const leave = () => {
+    getActiveRoom()?.connection.leave();
+    detachRoom();
+    setSession(null);
   };
 
   const connected = session !== null;
   const shownCode = session?.roomCode ?? roomCode;
+  const guestCount = (session?.peers ?? []).filter((p) => p.role === 'guest').length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" onClick={onClose}>
@@ -55,7 +85,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           <div>
             <h2 className="text-xl font-bold text-amber-300">🌐 联网对战</h2>
             <p className="text-xs text-amber-200/50 mt-1">
-              牌由房主那台机器算，传话程序只转发。这一格先做到"连得上、版本对得上、看得见谁在场"。
+              牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人还能看见房主那一局的牌桌"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -121,6 +151,12 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
                 <p>地址：<span className="select-all text-amber-100">{address}</span></p>
                 <p>房间码：<span className="select-all text-amber-100">{shownCode}</span></p>
                 <p className="text-amber-200/40 mt-1">同一屋里填上面这行；异地经虚拟网或服务器时，把地址换成那台机器的地址。</p>
+                {guestCount > 0 && (
+                  <p className="text-emerald-300/80 mt-1">
+                    现在有 {guestCount} 位客人正在看这一局。每次局面变化都会发一份遮蔽过的局面过去：
+                    手牌、将领池、牌堆顺序只发数量，不发内容。
+                  </p>
+                )}
               </div>
             )}
 
@@ -147,9 +183,11 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
+            {session.role === 'guest' && <NetSpectator snapshot={guestSnapshot} />}
+
             <div className="flex gap-2">
               <button
-                onClick={() => { connection.current?.leave(); setSession(null); }}
+                onClick={leave}
                 className="flex-1 rounded-xl border border-red-800/40 bg-red-950/30 px-4 py-2 text-sm text-red-100 hover:border-red-600/60"
               >
                 离开房间
@@ -164,8 +202,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         )}
 
         <p className="mt-3 text-[11px] leading-relaxed text-amber-200/40">
-          还没做的：牌桌画面同步（J2）、左上角 ping 表与掉线判定（J3）、客人动手（J4）。
-          现在连上也不会真的开始一局联机对局。
+          先关掉这个窗不会退房——连线还在，房主那边继续发局面。真要断线请点「离开房间」。
+          还没做的：左上角 ping 表与掉线判定（J3）、客人动手与座位绑定（J4）。
+          客人这一格仍然只是"看见同一局"，动不了牌。
         </p>
       </div>
     </div>

@@ -242,3 +242,66 @@ describe('两端接上真 reducer（假传话线，走完整握手）', () => {
     guest.leave();
   });
 });
+
+describe('J2 客人只认房主发来的局面', () => {
+  const VIEW = { version: 1, phase: 'turn', players: [{ id: 1, name: '甲' }], currentPlayerId: 1, turn: 3, round: 2, deck: [], discardPile: [] };
+  const OTHER = 'guest-2';
+
+  it('客人收到房主的快照 ⇒ 名册不动、状态不动，只把那份局面交出去', () => {
+    const inRoom = guestState({ phase: 'in-room', peers: [HOST, GUEST] });
+    const step = stepSession(inRoom, text({ t: 'snapshot', from: HOST.id, state: VIEW as never }));
+    expect(step.state).toBe(inRoom);
+    expect(step.sends).toEqual([]);
+    expect(step.snapshot).toEqual(VIEW);
+  });
+
+  it('别的客人发来的"局面"不当真（牌由房主那台机器算，落成一句判据）', () => {
+    const inRoom = guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: OTHER, name: '客人乙', role: 'guest' }] });
+    const step = stepSession(inRoom, text({ t: 'snapshot', from: OTHER, state: VIEW as never }));
+    expect(step.snapshot).toBeUndefined();
+    expect(step.state.note).toContain('不是房主发来');
+  });
+
+  it('房主一侧不采纳任何快照（客人没有算牌的资格，也就没有可发的东西）', () => {
+    const withGuest = hostState({ phase: 'in-room', peers: [HOST, GUEST] });
+    const step = stepSession(withGuest, text({ t: 'snapshot', from: GUEST.id, state: VIEW as never }));
+    expect(step.state).toBe(withGuest);
+    expect(step.sends).toEqual([]);
+    expect(step.snapshot).toBeUndefined();
+  });
+
+  it('接上假传话线：房主 send 一份快照 ⇒ 客人那边的 onSnapshot 收到同一份', async () => {
+    const relay = new FakeRelay();
+    const received: Record<string, unknown>[] = [];
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    const guest = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA',
+        selfId: GUEST.id, socketFactory: relay.factory, onSnapshot: (s) => received.push(s),
+      },
+      () => {},
+    );
+    await nextTick();
+
+    expect(host.send({ t: 'snapshot', from: HOST.id, state: VIEW as never })).toBe(true);
+    await nextTick();
+    expect(received).toEqual([VIEW]);
+
+    guest.leave();
+    host.leave();
+  });
+
+  it('线断了以后 send 返回 false（不排队、不假装已发出）', async () => {
+    const relay = new FakeRelay();
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    await nextTick();
+    host.leave();
+    expect(host.send({ t: 'snapshot', from: HOST.id, state: VIEW as never })).toBe(false);
+  });
+});

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import OnlineLobby from './OnlineLobby';
 import { NET_PROTOCOL_VERSION, encodeEnvelope, ourVersionStamp, type NetEnvelope } from '../network/netProtocol';
+import { buildBroadcastView } from '../network/snapshotView';
+import { detachRoom, getActiveRoom } from '../network/netRoom';
 
 class FakeWebSocket {
   static readonly created: FakeWebSocket[] = [];
@@ -93,6 +95,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  detachRoom(); // 连线住在房间里而不是弹窗上：不清就会串到下一条证人
   vi.unstubAllGlobals();
 });
 
@@ -182,14 +185,87 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     expect(text()).toContain('我开房间');
   });
 
-  it('界面上写明还没做的三格（牌桌同步/ping 表/客人动手），不假装已能开局', async () => {
+  it('界面上写明还没做的两格（ping 表／客人动手），不假装已能开局', async () => {
     render(<OnlineLobby onClose={() => {}} />);
-    expect(text()).toContain('牌桌画面同步（J2）');
     expect(text()).toContain('ping 表与掉线判定（J3）');
-    expect(text()).toContain('客人动手（J4）');
+    expect(text()).toContain('客人动手与座位绑定（J4）');
+    expect(text()).not.toContain('牌桌画面同步（J2）');
 
     await clickButton(/^🏠 开房间/);
     await settle();
-    expect(text()).toContain('牌桌画面同步（J2）');
+    expect(text()).toContain('ping 表与掉线判定（J3）');
+  });
+
+  it('J2：客人收到房主的遮蔽局面 ⇒ 屏幕上出现同一局的牌桌，写着"只看不动"', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('DDDDDD');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: myId(socket), name: '玩家', role: 'guest' }] });
+
+    expect(text()).toContain('还没收到房主发来的局面');
+    await receive(socket, { t: 'snapshot', from: 'host-9', state: maskedView() as unknown as Record<string, unknown> });
+    await settle();
+
+    expect(text()).toContain('这一局由房主算牌，你这边只看不动');
+    expect(text()).toContain('第 4 轮');
+    expect(text()).toContain('轮到房主乙');
+    expect(text()).toContain('🏯6');
+    expect(text()).toContain('🃏3 张');
+    expect(text()).toContain('赵云');
+    // 反向证人：屏上出现的是数量，牌面内容根本没上线
+    expect(text()).not.toContain('暗牌-p1-h1');
+    expect(socket.sent.join('')).not.toContain('p1-h1');
+  });
+
+  it('J2：关掉这个小窗不退房——连线还在；点「离开房间」才道别', async () => {
+    const { unmount } = render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('EEEEEE');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }] });
+
+    unmount();
+    expect(getActiveRoom()).not.toBeNull();
+    expect(socket.lastSent?.t).not.toBe('bye');
+    expect(socket.readyState).toBe(1);
+
+    render(<OnlineLobby onClose={() => {}} />);
+    await settle();
+    expect(text()).toContain('在场名单（共 1 人）');
+    expect(text()).toContain('房主乙');
+
+    await clickButton(/^离开房间/);
+    expect(socket.lastSent?.t).toBe('bye');
+    expect(getActiveRoom()).toBeNull();
   });
 });
+
+/** 房主那边算出来的、已经过 J2 遮蔽层的局面——界面拿到的就该长这样。 */
+function maskedView(): Record<string, unknown> {
+  return buildBroadcastView({
+    version: 1,
+    phase: 'turn',
+    timelinePhase: 'ACTION',
+    players: [
+      {
+        id: 1, name: '房主乙', faction: '蜀', baseHp: 6, isAlive: true,
+        hand: [{ id: 'p1-h1' }, { id: 'p1-h2' }, { id: 'p1-h3' }],
+        generalPool: [{ id: 'pool-1' }, { id: 'pool-2' }],
+        graveyard: [], statuses: [],
+        fieldGenerals: [{
+          general: { id: 'g1', name: '赵云' }, ownerId: 1, position: { q: 0, r: 0 },
+          currentHp: 3, maxHp: 4, meleeAtk: 2, rangedAtk: 1, armor: 1, currentArmor: 0,
+          isArming: false, hasMoved: false, hasAttacked: false, hasSupplied: false, justDeployed: false,
+          armorCards: [{ id: 'arm-1' }],
+        }],
+      },
+      { id: 2, name: '客人甲', faction: '魏', baseHp: 6, isAlive: true, hand: [], generalPool: [], graveyard: [], statuses: [], fieldGenerals: [] },
+    ],
+    currentPlayerId: 1,
+    turn: 7,
+    round: 4,
+    deck: [{ id: 'deck-1' }, { id: 'deck-2' }],
+    discardPile: [],
+    metadata: { roomId: 'EEEEEE' },
+    rngState: { s: 987654321 },
+  } as never) as unknown as Record<string, unknown>;
+}

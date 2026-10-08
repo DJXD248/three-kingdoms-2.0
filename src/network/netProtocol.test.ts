@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NETWORK_SNAPSHOT_VERSION } from './StateSerializer';
 import {
   MAX_NAME_LENGTH,
+  MAX_WIRE_BYTES,
   NET_PROTOCOL_VERSION,
   checkPeerName,
   composeRoomUrl,
@@ -127,5 +128,27 @@ describe('名字是客人自报的 ⇒ 房主校验后回提示，不照收也�
 
   it('正常名字前后空格去掉后收下', () => {
     expect(checkPeerName('  诸葛  ')).toEqual({ ok: true, name: '诸葛' });
+  });
+});
+
+describe('J2 快照信封：协议层只认形状，看不懂的内容不在这里猜', () => {
+  const VIEW = { version: 1, phase: 'turn', players: [] };
+
+  it('房主发来的快照原样收下（内容留给客人端那道闸判）', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'snapshot', from: 'a', state: VIEW })))
+      .toEqual({ t: 'snapshot', from: 'a', state: VIEW });
+  });
+
+  it('没有来路、或 state 不是对象／是数组／干脆没带 ⇒ 整条拒掉', () => {
+    expect(parseEnvelope('{"t":"snapshot","state":{"a":1}}')).toBeNull();
+    expect(parseEnvelope('{"t":"snapshot","from":"a","state":[1,2]}')).toBeNull();
+    expect(parseEnvelope('{"t":"snapshot","from":"a","state":"局面"}')).toBeNull();
+    expect(parseEnvelope('{"t":"snapshot","from":"a"}')).toBeNull();
+  });
+
+  it('超过单帧上限的快照直接不解析（房主手滑发了整份牌桌也不会撑爆）', () => {
+    const huge = JSON.stringify({ t: 'snapshot', from: 'a', state: { pad: 'x'.repeat(MAX_WIRE_BYTES) } });
+    expect(huge.length).toBeGreaterThan(MAX_WIRE_BYTES);
+    expect(parseEnvelope(huge)).toBeNull();
   });
 });

@@ -15,6 +15,7 @@ import Rules from './components/Rules';
 import AiBattleWindow from './components/AiBattleWindow';
 import AiBattleDock from './components/AiBattleDock';
 import AiDirector from './components/AiDirector';
+import NetRoomBridge from './components/NetRoomBridge';
 import { factionColors } from './data/generals';
 
 // Hash route for the background AI-battle window opened by developer mode.
@@ -76,6 +77,8 @@ export default function App() {
     <div className="app-shell">
       {content}
       <AiDirector />
+      {/* J2 发快照的接线住在屏幕上，不住在大厅弹窗里：房主关掉大厅去开局，连线也得继续发。 */}
+      <NetRoomBridge />
       <DeveloperOverlay />
       <AiBattleDock />
     </div>
