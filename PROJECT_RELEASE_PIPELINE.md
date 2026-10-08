@@ -105,6 +105,8 @@
      ⚠️ 它的 `run --channel pin` 自检会**假阴性**：报"三条路都不通／pin 探测失败: proxy connect timeout"时**改道其实是通的**——自检打的是 `https://github.com` **根路径**，而根路径与 git 端点不是同一条路（当天根路径不通、`api.github.com`／`raw.githubusercontent.com` 通）。
      ⇒**判据：别信那句"都不通"就停手**。先逐候选 IP 试**真实 git 端点**：`curl --max-time 12 --resolve github.com:443:<IP> -o /dev/null -w "%{http_code}\n" "https://github.com/<owner>/<repo>/info/refs?service=git-upload-pack"`；
      任一 IP 返 200 就前台起改道器 `node gh-rescue.mjs proxy`（它自己用 TLS 筛活体、把可用 IP 排首位，日志出一行「钉 IP 改道器已启动：http://127.0.0.1:10810」），再一次性 `git -c http.proxy=http://127.0.0.1:10810 push origin master`，**推完关掉那个进程**并回查 `--local`/`--global` 的 `http.proxy` 仍为空。
+     ⚠️ **第二类假阳性（2026-10-08 实测，登记于 v2.9.2 轮）**：那句"TLS 筛活体"只证明**握手能做完**，不证明这个入口真能用。当天改道器把 `140.82.112.9` 排首位并 CONNECT 成功，`git push` 与 `git ls-remote` 却都回 `The requested URL returned error: 400`——同批候选逐枚 `curl --resolve` 打真实 git 端点，`140.82.113.3／114.3／113.4／112.4` 全 **200**、只有 `112.9` **400**（`20.205.243.166` 直接 000）。改道器只在**连接层失败**时才换下一枚，握手成功而 HTTP 拒绝时它不会换，于是一遍遍撞同一枚坏 IP。处置＝把已验 400 的那枚从 `gh-rescue-cache.json` 首位挪开（缓存里上次"活着"的会被排到最前，所以坏 IP 一旦进了 alive 名单就会长期霸位），当场可推成。**这条判据适用于任何"IP 池 + 改道"结构：能握手 ≠ 能用。**
+     ⚠️ 同一轮 API 侧还有更狠的一枚：读 CI 时 `api.github.com` 的两枚候选 `140.82.113.21／140.82.112.21` 回的是 **HTTP 200、正文两个字符 `OK`**（假响应，不是登录墙也不是 404），只有 `20.205.243.168` 回真 JSON。⇒**状态码不足以自证，正文形状也要验**（`actions/runs` 那类接口先认 JSON 里该有的键在不在，再谈读数）。
 4. 三级都不通 → 停止，保留全部本地提交与标签，如实向用户报告"待补推"，
    等用户口令（如"补推"）后一次性推送并补 CI 回填。用户明示暂缓时（如 2.2.10 当晚），整条链连同 CI 一起暂缓，§9 中 CI 标 PENDING。
 5. 快速自检：`curl -sI --max-time 10 https://github.com` 返回 200 即直连可用；否则探测 10808 端口是否开。
