@@ -679,6 +679,27 @@ describe('skillExcelFormat — 「改哪个数／怎么改／有效周期」三�
     expect(GAIN_SKILL_NAME_HINT).not.toMatch(/DIY\s*都算/);
   });
 
+  /**
+   * 2.9.4 刀＝#56：「造成的伤害」这把钥匙进词表。三格都是**派生**的（`STAT_KEY_LIST`
+   * 由 `statModifierKeyLabels` 生成、界面下拉同样遍历那张表），所以这里钉的是"它真的
+   * 在表上、两种写法都认、写回去还是那句大白话"，而不是一枚硬编码的数字。
+   */
+  it('「造成的伤害」这把钥匙在 Excel 词表里，读得进也写得回（只进不出＝枚举名当别名）', () => {
+    const dealt = statModifierKeyLabels.DAMAGE_DEALT;
+    expect(dealt).toBe('造成的伤害');
+    expect(STAT_KEY_LIST.split(',')).toContain(dealt);
+    expect(readStatKeyCell(dealt).value).toBe('DAMAGE_DEALT');
+    expect(readStatKeyCell('damage_dealt').value).toBe('DAMAGE_DEALT');
+    expect(statKeyToStr('DAMAGE_DEALT')).toBe(dealt);
+    // 一次性那一档现在两把伤害钥匙都有"被读一次"那一刻——批注必须照实写，不许只提一把（§12-112）。
+    expect(STAT_DURATION_HINT).toContain('受到的伤害');
+    expect(STAT_DURATION_HINT).toContain('造成的伤害');
+    // 场合（occasion）今天既不在录入面的下拉里、也不是 Excel 的一列：它是纯机器侧的东西。
+    // 界面没承诺过它⇒不许出现第二条悄悄写它的路，导出那一栏压根没有这个格。
+    expect(effectGroupHeaders(1)).not.toContain('效果1生效场合');
+    expect(STAT_KEY_LIST).not.toContain('occasion');
+  });
+
   it('词表读法：大白话与原枚举名都认，认不出的交回原文（绝不静默丢）', () => {
     expect(readStatKeyCell(MELEE).value).toBe('MELEE_ATK');
     expect(readStatKeyCell('melee_atk').value).toBe('MELEE_ATK');

@@ -3,6 +3,7 @@ import type { GameEvent } from '../Event';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { applyArmorDamage } from '../armorDamage';
 import { resolveDamageTaken } from '../damageTaken';
+import { dealtDamageOrRaw, skillDealtContext } from '../damageDealt';
 
 export function applyBaseDamageEvent(state: EngineState, event: GameEvent): EngineState {
   const data = event.data as { playerId?: number; amount?: number } | undefined;
@@ -125,10 +126,20 @@ export function applyDamageEvent(state: EngineState, event: GameEvent): EngineSt
     // 看见第一笔之后的血量。被用掉的一次性账不在这里销——它由派生点发一条
     // canonical `STAT_MODIFY{REMOVE}`（读的是同一本账、同一个原始数⇒同一个清单）。
     if (data?.newHp === undefined && data?.damageType === 'skill') {
+      // 造方那一格与受方那一格在这条路上**都在结算时读**，顺序仍是造成伤害→受到伤害→护甲。
+      // 为什么这里也现读而不是发射时预解：同一技能连发两笔伤害时，第二笔必须看见第一笔之后
+      // 的账面。解不出来源的伤害（不是某一员将打出去的）结构上没有造方那一笔⇒原样往下走，
+      // 这一句判据的写法只有 `dealtDamageOrRaw` 一处——派生侧复核销账用的是同一个函数。
+      const dealt = dealtDamageOrRaw(
+        state.statModifiers,
+        data,
+        Number(data?.value ?? 0),
+        skillDealtContext(Number(target.currentArmor ?? 0)),
+      );
       const taken = resolveDamageTaken(
         state.statModifiers,
         { playerId: Number(player.id), generalId: String(targetId) },
-        Number(data?.value ?? 0),
+        dealt.damage,
       );
       const skillHit = applyArmorDamage(
         Number(target.currentHp ?? 0),

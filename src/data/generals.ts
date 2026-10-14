@@ -279,12 +279,13 @@ export interface SkillEffect {
  * v2.8 刀4（#25）「改一个数字」的两样东西：改**哪个数**、按**哪种形态**改。
  *
  * 这一档钥匙是**注册表**（ARCH_MAP §F 可改量注册表），不是形容词：录入面只放**真的接了
- * 读数点**的那五把（近战攻击力／远程攻击力／体力上限／受到的伤害——最后一把＝2.8 刀5；
- * 射程＝v2.9.0 射程刀，读数点＝`core/attackReach.ts` 那一处唯一够得着判据）。
- * 其余钥匙（当前体力、造成的伤害、行动次数……）在注册表里有名有坐标，但录入面此刻选不到——
+ * 读数点**的那六把（近战攻击力／远程攻击力／体力上限／受到的伤害＝2.8 刀5／**造成的伤害＝
+ * 2.9.4 刀**，读数点＝`core/damageDealt.ts`，位置在受方那一格**之前**＝用户当面裁的
+ * 「扣护甲前算」；射程＝v2.9.0 射程刀，读数点=`core/attackReach.ts` 那一处唯一够得着判据）。
+ * 其余钥匙（当前体力、行动次数……）在注册表里有名有坐标，但录入面此刻选不到——
  * 选了就是"看起来能响其实不响"，那是本项目明令禁止的第三种谎。
  */
-export type StatModifierKeyType = 'MELEE_ATK' | 'RANGED_ATK' | 'MAX_HP' | 'DAMAGE_TAKEN' | 'RANGE';
+export type StatModifierKeyType = 'MELEE_ATK' | 'RANGED_ATK' | 'MAX_HP' | 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'RANGE';
 /** 增减＝在基础值上累加（可负数）；固定＝把这一个数摁成该值。固定优先于增减。 */
 export type StatModifyModeType = 'delta' | 'set';
 
@@ -293,8 +294,18 @@ export const statModifierKeyLabels: Record<StatModifierKeyType, string> = {
   RANGED_ATK: '远程攻击力',
   MAX_HP: '体力上限',
   DAMAGE_TAKEN: '受到的伤害',
+  DAMAGE_DEALT: '造成的伤害',
   RANGE: '射程',
 };
+
+/**
+ * 「造成的伤害」这一把钥匙独有的**生效场合**（2.9.4 刀）。判据与为什么它是封闭枚举
+ * 而不是门槛，全文写在 `core/statModifiers.ts::DamageDealtOccasion` 那一段——一句话版：
+ * 「在场即生效」的账只在登场那一刻落一次、全库没有中途重算的发射器，所以"决斗时／
+ * 近战打有护甲的目标时"这种时刻只能由那一笔账自己带着，由读数点当场对表。
+ * 真值集合由 `damageDealt.test.ts` 的钉子钉成与核心那一份同集合。
+ */
+export type DamageDealtOccasionType = 'duel' | 'meleeVsArmored';
 
 export const statModifyModeLabels: Record<StatModifyModeType, string> = {
   delta: '增加或减少（可填负数）',
@@ -341,6 +352,14 @@ export interface SkillRuntimeEffect {
    * `untilDeath` 与不填同义，所以不在这里重复列。
    */
   duration?: StatModifierDurationType;
+  /**
+   * 仅 MODIFY_STAT 且钥匙＝「造成的伤害」：这一笔账在哪个时刻算数（缺省＝任何时候都算）。
+   * ⚠️ **这一格今天不在编辑器词表里、也不在 Excel 列里**——它只由仓库内的固定内容写得出来
+   * （怒斩那张：「你进行决斗计算或近战攻击有护甲的角色时伤害+1」）。编辑器还没有这一栏，
+   * 玩家此刻能填出来的「造成的伤害」一律是"不分场合"的那一笔。挂到别的钥匙上＝没人读它，
+   * 编译器点名跳过（`MODIFY_STAT_OCCASION_UNSUPPORTED`），绝不让它悄悄落成"记录而未消费"。
+   */
+  occasion?: DamageDealtOccasionType;
   /**
    * 仅 GAIN_SKILL（2.9.3 刀A＝#25 之后的新原语「获得技能」）：**技能名**，不是将名、
    * 不是技能 id。名字是唯一入口，因为用户原文就是这么写的（「获得技能「怒斩」」）。

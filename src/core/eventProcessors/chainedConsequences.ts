@@ -5,6 +5,7 @@ import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { deriveDuelFlow } from './duelEvents';
 import { passiveEventsForDeploy, passiveEventsForGainedSkill } from '../../skills/passiveModifiers';
 import { resolveDamageTaken } from '../damageTaken';
+import { dealtDamageOrRaw, skillDealtContext } from '../damageDealt';
 import {
   modifierIdsExpiredAtTurnBoundary,
   modifierIdsTouchingGeneral,
@@ -127,17 +128,34 @@ export function enqueueDerivedConsequences(
         }
       }
 
-      // 一次性「受到的伤害」账的消费清单：普攻与决斗逐轮在**发射点**就读过账本、也在那里
+      // 一次性账（造方＋受方两把钥匙）的消费清单：普攻与决斗逐轮在**发射点**就读过账本、也在那里
       // 发了销账令；技能伤害那一路是结算时才读（同一技能连发两笔伤害时第二笔要看见第一笔
       // 之后的血量），所以它的销账在这里补。判据与结算侧那一句完全同一句
-      // （`newHp===undefined && damageType==='skill'`），用的也是同一个纯函数＋同一本账
+      // （`newHp===undefined && damageType==='skill'`），用的也是同一对纯函数＋同一本账
       // （`before`＝结算前那一刻）⇒两边算出来的清单必然逐字相同，不存在第二种真相。
+      // 顺序也与结算侧同一句：造方先入算，它的读数才是受方那一格的进料。
       if (data?.damageType === 'skill' && data?.newHp === undefined) {
+        // 护甲那一格要取**结算前**那一刻的值（「有护甲」＝≥1，打掉之后就不算了），
+        // 与结算侧 `damageEvents.ts` 读的是同一个人的同一个瞬间。
+        const fieldBefore = (before.players.find(p => p.id === targetPlayerId)?.fieldGenerals as any[] | undefined) ?? [];
+        const armorBefore = Number(
+          (fieldBefore.find(f => getRuntimeCardId(f?.general as never) === String(data.targetId))?.currentArmor) ?? 0,
+        );
+        const dealt = dealtDamageOrRaw(
+          before.statModifiers,
+          data,
+          Number(data?.value ?? 0),
+          skillDealtContext(armorBefore),
+        );
+        const spentDealt = dealt.consumedIds;
         const spent = resolveDamageTaken(
           before.statModifiers,
           { playerId: targetPlayerId, generalId: String(data.targetId) },
-          Number(data?.value ?? 0),
+          dealt.damage,
         ).consumedIds;
+        if (spentDealt.length > 0) {
+          queue.push({ type: 'STAT_MODIFY', data: { op: 'REMOVE', ids: spentDealt, cause: 'DAMAGE_DEALT' } });
+        }
         if (spent.length > 0) {
           queue.push({ type: 'STAT_MODIFY', data: { op: 'REMOVE', ids: spent, cause: 'DAMAGE_TAKEN' } });
         }

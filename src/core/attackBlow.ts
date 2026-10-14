@@ -34,6 +34,7 @@ import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { applyArmorDamage } from './armorDamage';
 import { capDamageToBase } from './baseDamage';
 import { resolveDamageTaken } from './damageTaken';
+import { attackDealtContext, resolveDamageDealt } from './damageDealt';
 import { getAttackValue } from './attackValue';
 import { hasReactionListeners } from '../skills/reactionChain';
 import { basePosition, canReach, effectiveAttackRange, reachReference } from './attackReach';
@@ -224,12 +225,21 @@ function damagePhase(state: EngineState, aim: Extract<AttackAim, { status: 'aime
     ];
   }
 
-  // 2.8 刀5：护甲**之前**先过"受到的伤害"那一格（`core/damageTaken.ts`＝唯一算术）。
-  // 账本为空时它逐字返回原数⇒今日所有对局的事件流与接线前逐字相同。
+  // 2.9.4：护甲之前有**两**格，顺序是「造成伤害 → 受到伤害」。两本账都为空时两个纯函数
+  // 都逐字返回原数⇒今日所有对局的事件流与接线前逐字相同。
+  // 造方那一格的身份键取**打出去的那一员将**；场合取发射点此刻已知的两格事实
+  // （这一笔近不远程＝`aim.ranged`、受方护甲＝`target.currentArmor`），绝不事后回头推断。
+  const dealt = resolveDamageDealt(
+    state.statModifiers,
+    { playerId: aim.attackerPlayerId, generalId: String(aim.attackerId) },
+    aim.baseDamage,
+    attackDealtContext(aim.ranged, Number(aim.targetGeneral?.currentArmor ?? 0)),
+  );
+  // 2.8 刀5：护甲**之前**先过"受到的伤害"那一格（`core/damageLedgerRun.ts`＝唯一算术）。
   const taken = resolveDamageTaken(
     state.statModifiers,
     { playerId: aim.targetPlayerId, generalId: String(aim.targetId) },
-    aim.baseDamage,
+    dealt.damage,
   );
   const target = aim.targetGeneral;
   const armorResult = applyArmorDamage(
@@ -271,9 +281,15 @@ function damagePhase(state: EngineState, aim: Extract<AttackAim, { status: 'aime
     },
   ];
 
-  // 一次性「受到的伤害」账被这一刀用掉了⇒当场销账（canonical `STAT_MODIFY`，与在场
-  // 落笔／生命周期收账同一个入口；DAMAGE 处理器自己不碰账本）。位置紧跟这一"刀"，
-  // 因为决斗那一整块要逐轮线程同一本账——销账晚一轮＝同一笔账用两次。
+  // 一次性账被这一刀用掉了⇒当场销账（canonical `STAT_MODIFY`，与在场落笔／生命周期收账
+  // 同一个入口；DAMAGE 处理器自己不碰账本）。位置紧跟这一"刀"，因为决斗那一整块要逐轮
+  // 线程同一本账——销账晚一轮＝同一笔账用两次。造方与受方各一条，各带自己的 cause。
+  if (dealt.consumedIds.length > 0) {
+    events.push({
+      type: 'STAT_MODIFY',
+      data: { op: 'REMOVE', ids: dealt.consumedIds, cause: 'DAMAGE_DEALT' },
+    });
+  }
   if (taken.consumedIds.length > 0) {
     events.push({
       type: 'STAT_MODIFY',

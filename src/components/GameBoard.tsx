@@ -112,7 +112,7 @@ export default function GameBoard(){
       pred={baseDamage:dmg,takenDamage:dmg,hpLost:dmg,armorLost:0,newHp:0,newArmor:0,isBase:true as const};
     }else if(fu){
       const dmg=getAttackValue(atkGen,atkRanged,{ledger:engineState.statModifiers,target:ledgerTargetOf(atkGen)});
-      pred=predictAttack(dmg,fu.currentHp,fu.currentArmor,engineState.statModifiers,Number(fu.ownerId),String(getRuntimeCardId(fu.general)),maxHpOf(fu));
+      pred=predictAttack(dmg,fu.currentHp,fu.currentArmor,engineState.statModifiers,Number(fu.ownerId),String(getRuntimeCardId(fu.general)),maxHpOf(fu),ledgerTargetOf(atkGen),atkRanged);
     }
     if(pred){_setAtkPrevMap(p=>({...p,[tid]:pred!}));setAtkPreviewKey(tid);}else{setAtkPreviewKey(null);}
   };

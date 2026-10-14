@@ -192,6 +192,8 @@ describe('SkillEditor: structured runtime entry', () => {
       ['RANGED_ATK', '远程攻击力'],
       ['MAX_HP', '体力上限'],
       ['DAMAGE_TAKEN', '受到的伤害'],
+      // 2.9.4 刀＝#56 新开的这把钥匙：卡面原文那句「伤害+1」读的就是它。
+      ['DAMAGE_DEALT', '造成的伤害'],
       ['RANGE', '射程'],
     ]);
 
@@ -254,6 +256,51 @@ describe('SkillEditor: structured runtime entry', () => {
     } as unknown as typeof target);
     expect(compiled.definitions).toHaveLength(0);
     expect(compiled.skipped.some(s => s.reason === 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED')).toBe(true);
+  });
+
+  /**
+   * 2.9.4 刀＝#56：新开的那把钥匙「造成的伤害」走同一张证人。这里钉的四件事都是
+   * 玩家看得见的：下拉里有这两个字、选它存得下、编译照收、一次性那一档现在**认**它
+   * （与射程那一档正好相反：这一把钥匙有"被读一次"的那一刻）。
+   */
+  it('v2.9.4 造成伤害刀：「造成的伤害」存得下、编译器照收，×一次性也不再点名', () => {
+    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
+    render(<SkillEditor onClose={() => {}} />);
+    const listBtn = Array.from(document.querySelectorAll('button'))
+      .find(b => b.textContent?.includes(target.name));
+    fireEvent.click(listBtn!);
+    fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
+
+    const findStatSelect = (labelText: string) =>
+      (Array.from(document.querySelectorAll('label'))
+        .find(l => l.textContent?.includes(labelText))
+        ?.parentElement?.querySelector('select') as HTMLSelectElement)!;
+
+    fireEvent.change(findRuntimeSelect(), { target: { value: 'MODIFY_STAT' } });
+    fireEvent.change(findStatSelect('改哪个数'), { target: { value: 'DAMAGE_DEALT' } });
+    // 界面那句红字（"这一把钥匙没有被用掉一次的那一刻"）此刻**不该**出现。
+    fireEvent.change(findStatSelect('有效周期'), { target: { value: 'thisDamage' } });
+    expect(screen.queryByText(/这一把钥匙没有"被用掉一次"的那一刻/)).toBeNull();
+    fireEvent.change(findStatSelect('有效周期'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('💾 保存修改'));
+
+    const saved = useGameStore.getState().skillEdits[target.id];
+    expect(saved[0].effects?.[0].runtime)
+      .toEqual({ type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'DAMAGE_DEALT', modifyMode: 'delta' });
+
+    const firstSkill = saved[0]!;
+    const compiled = compileGeneralSkills({
+      ...target,
+      skills: [{
+        ...firstSkill,
+        trigger: { type: 'onTurnStart' as const },
+        effects: firstSkill.effects!.map(e => ({ ...e, trigger: { type: 'onTurnStart' as const } })),
+      }],
+    } as unknown as typeof target);
+    expect(compiled.skipped).toEqual([]);
+    expect(compiled.definitions[0].effects[0]).toMatchObject({ type: 'MODIFY_STAT', stat: 'DAMAGE_DEALT' });
+    // 场合那一格今天不在录入面上（它是机器侧的东西）：存出来的 runtime 里压根没有这个键。
+    expect('occasion' in (compiled.definitions[0].effects[0] as object)).toBe(false);
   });
 
   /**

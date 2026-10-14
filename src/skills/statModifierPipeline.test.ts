@@ -13,6 +13,11 @@ import { GameEngine } from '../core/GameEngine';
 import { createAction } from '../action/ActionTypes';
 import type { EngineState, EnginePlayer } from '../core/GameState';
 import type { General, Skill } from '../data/generals';
+import { allGenerals } from '../data/generals';
+import type { DamageDealtOccasionType } from '../data/generals';
+import { standaloneSkills } from '../data/standaloneSkills';
+import { DIY_FIXTURE_GENERALS } from '../ai/fixtures/diyGeneralFixture';
+import { predictAttack } from '../core/attackPreview';
 import { syncPlayerSkills } from './skillCompiler';
 import { getReactionAsk } from './reactionChain';
 import type { StatModifier } from '../core/statModifiers';
@@ -333,7 +338,7 @@ describe('stat modifier ledger · 体力上限那一笔会当场回落', () => {
 
 /** 账本上落「受到的伤害」那一格的笔（形状与刀4 那几条同源：键在座次＋将领实例上）。 */
 function dtEntry(
-  key: 'DAMAGE_TAKEN' | 'MELEE_ATK', mode: 'delta' | 'set', value: number,
+  key: 'DAMAGE_TAKEN' | 'DAMAGE_DEALT' | 'MELEE_ATK', mode: 'delta' | 'set', value: number,
   seat: number = 2, generalId: string = 'g2',
 ) {
   return {
@@ -606,6 +611,145 @@ describe('受到伤害那一格 · 真链路（2.8 刀5＝#26）', () => {
     expect(engine.state.statModifiers ?? []).toHaveLength(0);
     // 攻方这一刀真掉了 1 点血⇒它那一侧的"受到伤害"成立，一声记在流里。
     expect(answered.filter(e => e.type === 'INJURY').map(e => [(e.data as any)?.targetId, (e.data as any)?.value])).toEqual([['g1a', 1]]);
+  });
+});
+
+describe('造成伤害那一格 · 真链路（2.9.4 刀＝#54，用户 2026-10-14「第4条，扣护甲前算」）', () => {
+  /** 怒斩的两条腿（用户 2026-10-14 裁「允许」它们挂在「在场即生效」的被动上）：
+   *  一枚被动、两条各带一个场合的账，读数点当场对表。 */
+  const furyLegs = (): Skill[] => (['duel', 'meleeVsArmored'] as DamageDealtOccasionType[]).map(occasion => ({
+    name: '怒斩·' + occasion, trigger: { type: 'passive' },
+    effects: [{
+      id: 'e1', trigger: { type: 'passive' },
+      runtime: { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'DAMAGE_DEALT', modifyMode: 'delta', occasion },
+    }],
+  }));
+
+  function dealtEntry(
+    partial: Partial<StatModifier> = {}, id = 'sm:1', seq = 1,
+  ): StatModifier {
+    return {
+      ...dtEntry('DAMAGE_DEALT', 'delta', 1, 1, 'g1'), id, seq, ...partial,
+    } as StatModifier;
+  }
+
+  /** 攻方 g1 从手里登场（带着怒斩那两枚在场技＝账走真编译），受方护甲现场摆。 */
+  function meleeScene(skills: Skill[], armor: number) {
+    const attacker = makeGeneral('g1', skills);
+    const engine = buildEngine([
+      makePlayer(1, { hand: [attacker, ATTACK_COST, ATTACK_COST_2] }),
+      makePlayer(2, { fieldGenerals: [{ ...makeFieldGeneral(makeGeneral('g2', []), 2), currentArmor: armor }] }),
+    ]);
+    engine.dispatch(createAction('DEPLOY_GENERAL', 1, { general: attacker, slot: 0, consumeCards: [ATTACK_COST] }));
+    engine.dispatch(createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST_2 }));
+    return { engine, hp: hpOf(engine, 2, 'g2'), armorLeft: armorOf(engine, 2, 'g2') };
+  }
+
+  it('登场落笔＝场合逐字进账；没填场合的笔压根不出现这个键（两锚比的是字节，不是"意思一样"）', () => {
+    const withOccasion = buildEngine([
+      makePlayer(1, { hand: [makeGeneral('g1', furyLegs()), ATTACK_COST, ATTACK_COST_2] }),
+      makePlayer(2),
+    ]);
+    withOccasion.dispatch(createAction('DEPLOY_GENERAL', 1, {
+      general: (withOccasion.state.players[0].hand as any[])[0], slot: 0, consumeCards: [ATTACK_COST],
+    }));
+    const ledger = withOccasion.state.statModifiers ?? [];
+    expect(ledger.map(e => [e.key, e.occasion, e.passive])).toEqual([
+      ['DAMAGE_DEALT', 'duel', true],
+      ['DAMAGE_DEALT', 'meleeVsArmored', true],
+    ]);
+
+    // 不带场合的那一笔：键**不存在**，不是 `undefined`。整条搬运链（编译⇒桥⇒账）都只在
+    // 真填了时才落这个键，空账本之外的一切读数与上一版逐字相同。
+    const plain = makeGeneral('g3', [
+      statSkill('刚毅', { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'DAMAGE_DEALT', modifyMode: 'delta' }),
+    ]);
+    const plainEngine = buildEngine([makePlayer(1, { hand: [plain, ATTACK_COST] }), makePlayer(2)]);
+    plainEngine.dispatch(createAction('DEPLOY_GENERAL', 1, { general: plain, slot: 0, consumeCards: [ATTACK_COST] }));
+    const plainLedger = plainEngine.state.statModifiers ?? [];
+    expect(plainLedger).toHaveLength(1);
+    expect('occasion' in plainLedger[0]).toBe(false);
+  });
+
+  it('近战那条腿只在"对面有护甲"时给这 +1，而 +1 落在进护甲**之前**那一格', () => {
+    // 护甲 1：1 点甲抵不了 1 点伤（`armorDamage`：2 甲抵 1 伤），所以那一刀 whole 落在体力上。
+    expect(meleeScene(furyLegs(), 1)).toMatchObject({ hp: 1, armorLeft: 1 });
+    // 护甲 0＝场合不成立⇒卡面 2 点原样，与没带技能的将逐字同数。
+    expect(meleeScene(furyLegs(), 0).hp).toBe(2);
+    expect(meleeScene([], 1).hp).toBe(2);
+  });
+
+  it('决斗里吃的是决斗那条腿，近战那条腿一律不算⇒逐轮 +1、永不相加成 +2', () => {
+    const challenger = makeGeneral('gC', [{
+      name: '搦战', trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
+      effects: [{
+        id: 'e1', trigger: { type: 'onDamageDealt', damageSubType: 'attackDamage' },
+        runtime: { type: 'DUEL', target: 'TARGET' },
+      }],
+    }]);
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral({ ...challenger, hp: 12 } as any, 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral({ ...makeGeneral('gD', []), hp: 12 } as any, 2)] }),
+    ], [dealtEntry({ id: 'sm:1', seq: 1, targetId: 'gC', occasion: 'duel' }),
+        dealtEntry({ id: 'sm:2', seq: 2, targetId: 'gC', occasion: 'meleeVsArmored' })]);
+    const events = engine.dispatch(createAction('ATTACK', 1, {
+      attackerId: 'gC', targetId: 'gD', ranged: false, consumeCard: ATTACK_COST,
+    }));
+    const rounds = events.filter(e => e.type === 'DAMAGE' && typeof (e.data as any)?.duelRound === 'number');
+    // 两条腿都在场：若"决斗也算近战"，gC 那几轮会是 4。
+    expect(rounds.filter(e => (e.data as any)?.targetId === 'gD').map(e => (e.data as any)?.damageTaken)).toEqual([3, 3, 3]);
+    expect(rounds.filter(e => (e.data as any)?.targetId === 'gC').map(e => (e.data as any)?.damageTaken)).toEqual([2, 2, 2]);
+    // 两笔都是持续（在场）笔⇒整场决斗零条销账令。
+    expect(events.filter(e => e.type === 'STAT_MODIFY')).toHaveLength(0);
+  });
+
+  it('技能伤害那一路也在结算时先读造方那一格，用掉的一次性账由派生侧补销（cause 各归各的格）', () => {
+    const counter: Skill = {
+      name: '反击', trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' },
+      effects: [{
+        id: 'e1', trigger: { type: 'onDamageTaken', damageSubType: 'attackDamage' },
+        runtime: { type: 'DAMAGE', value: 2, target: 'ATTACKER' },
+      }],
+    };
+    // 一次性 +1 种在反击那一员将（g2）身上：它打出去的那一笔伤害结算时才读账⇒这一格读到 3。
+    const oneshot = dealtEntry({ ...{}, id: 'sm:1', seq: 1, targetPlayerId: 2, targetId: 'g2', ownerPlayerId: 2, ownerGeneralId: 'g2', expire: 'thisDamage' });
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g1a', []), 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(makeGeneral('g2', [counter]), 2)] }),
+    ], [oneshot]);
+    engine.dispatch(createAction('ATTACK', 1, { attackerId: 'g1a', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }));
+    const ask = getReactionAsk(engine.state)!;
+    expect(ask.options.map(o => o.skillName)).toEqual(['反击']);
+    const answered = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: ask.options[0].skillId, generalId: ask.generalId,
+    }));
+    expect(hpOf(engine, 1, 'g1a')).toBe(1);        // 卡面 2 点＋造方 1 点＝3 点，进护甲之前就已经是 3
+    expect(answered.some(e => e.type === 'STAT_MODIFY'
+      && (e.data as { ids?: string[] }).ids?.includes(oneshot.id)
+      && (e.data as { cause?: string }).cause === 'DAMAGE_DEALT')).toBe(true);
+    expect(engine.state.statModifiers ?? []).toHaveLength(0);
+    expect(answered.filter(e => e.type === 'INJURY').map(e => [(e.data as any)?.targetId, (e.data as any)?.value])).toEqual([['g1a', 3]]);
+  });
+
+  it('预览那一刀与引擎那一刀读的是同一段算术（同一次 +1，两侧不会一个显示 2 一个结算 3）', () => {
+    const ledger = [dealtEntry({ occasion: 'meleeVsArmored', targetId: 'g1', ownerGeneralId: 'g1' })];
+    const prediction = predictAttack(2, 4, 1, ledger, 2, 'g2', 4, { playerId: 1, generalId: 'g1' }, false);
+    expect(prediction).toMatchObject({ baseDamage: 2, takenDamage: 3, hpLost: 3, armorLost: 0, newHp: 1, newArmor: 1 });
+    // 同一副账、同一个受方，把"远程"那一格翻上去：场合不成立⇒预览就是卡面 2 点。
+    expect(predictAttack(2, 4, 1, ledger, 2, 'g2', 4, { playerId: 1, generalId: 'g1' }, true).takenDamage).toBe(2);
+    // 与真机同一形状：近战腿在场，打出去的那一刀确实掉 3 点。
+    expect(meleeScene(furyLegs(), 1).hp).toBe(1);
+  });
+
+  it('普查钉子：两个锚池里今天没有任何一条内容用「造成的伤害」，独立技能表也是空的⇒锚结构上不动', () => {
+    const users = (pool: readonly General[]) => pool.filter(general =>
+      (general.skills ?? []).some(skill => (skill.effects ?? []).some(effect =>
+        (effect.runtime as { stat?: string; occasion?: unknown } | undefined)?.stat === 'DAMAGE_DEALT'
+        || (effect.runtime as { occasion?: unknown } | undefined)?.occasion !== undefined)));
+    expect(users(allGenerals).map(g => g.name)).toEqual([]);
+    expect(users(DIY_FIXTURE_GENERALS).map(g => g.name)).toEqual([]);
+    // 第二来源本刀只修路、不放车：表体为空⇒名册读数与上一版逐字相同（怒斩 2.9.5 才进）。
+    expect(standaloneSkills).toEqual([]);
   });
 });
 

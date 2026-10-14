@@ -11,8 +11,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  ONESHOT_DAMAGE_DURATION, isOneshotModifier, pruneSpentModifiers, resolveDamageTaken,
-} from './damageTaken';
+  ONESHOT_DAMAGE_DURATION, isOneshotModifier, pruneSpentModifiers,
+} from './damageLedgerRun';
+import { resolveDamageTaken } from './damageTaken';
 import type { StatModifier } from './statModifiers';
 import type { EngineState, EnginePlayer } from './GameState';
 import { deriveDuelFlow } from './eventProcessors/duelEvents';

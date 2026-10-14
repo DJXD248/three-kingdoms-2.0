@@ -13,8 +13,10 @@ import {
   lookupSkillByName,
   __resetSkillNameIndexForTests,
   __setSkillNameRosterForTests,
+  __setStandaloneSkillsForTests,
 } from './skillNameIndex';
 import { allGenerals, type General, type Skill } from '../data/generals';
+import { standaloneSkills } from '../data/standaloneSkills';
 
 /** 与名册同一算法的独立序列化：证人要能自己算一遍，不复用被测实现的话术。 */
 function sig(v: unknown): string {
@@ -104,5 +106,53 @@ describe('skillNameIndex · 名册认名（2.9.3 刀A 唯一解析点）', () =>
     expect(names.filter(n => n === '屯田')).toHaveLength(1);
     __setSkillNameRosterForTests([G('甲', [{ name: '新技' }, { name: '新技' }])]);
     expect(knownSkillNames()).toEqual(['新技']);
+  });
+});
+
+/**
+ * 2.9.4 刀＝#57：用户 2026-10-08 傍晚裁的那条「加一张独立技能表」——怒斩这一类
+ * "觉醒白送、不印在任何将卡上"的技能从此有地方登记。这里钉的是**第二个来源接进来
+ * 之后，判据仍然只有一套**：认名／取第一份／跨表也照样不猜。
+ */
+describe('skillNameIndex · 独立技能表是第二个来源（2.9.4 刀＝#57）', () => {
+  afterEach(() => __resetSkillNameIndexForTests());
+
+  it('卡上没有、表上有＝查得到，归属那一格写的是表名（不是某员将）', () => {
+    __setStandaloneSkillsForTests([{
+      name: '怒斩', trigger: { type: 'passive' },
+      effects: [{ id: 'e1', trigger: { type: 'passive' }, runtime: { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'DAMAGE_DEALT', modifyMode: 'delta', occasion: 'duel' } }],
+    }]);
+    const found = lookupSkillByName('怒斩');
+    expect(found.status).toBe('found');
+    if (found.status !== 'found') return;
+    expect(found.owners).toEqual(['独立技能表']);
+    expect(found.skill.effects?.[0].runtime?.stat).toBe('DAMAGE_DEALT');
+    expect(knownSkillNames()).toContain('怒斩');
+  });
+
+  it('两表都问：卡上的排在前面，同名同内容＝同一枚（取第一份，四路一致）', () => {
+    const printed: Skill = { name: '观衅', description: '同一段话' };
+    __setSkillNameRosterForTests([G('甲', [printed])]);
+    __setStandaloneSkillsForTests([{ name: '观衅', description: '同一段话' }]);
+    const found = lookupSkillByName('观衅');
+    expect(found.status).toBe('found');
+    if (found.status !== 'found') return;
+    expect(found.skill).toBe(printed);
+    expect(found.owners).toEqual(['甲（群）', '独立技能表']);
+  });
+
+  it('跨表同名不同内容＝照样歧义，绝不按"哪张表排前面"裁决（两来源共用同一把判据）', () => {
+    __setSkillNameRosterForTests([G('甲', [{ name: '观星', effects: [{ id: 'e1', runtime: { type: 'REVEAL', value: 2 } }] }])]);
+    __setStandaloneSkillsForTests([{ name: '观星', effects: [{ id: 'e1', runtime: { type: 'REVEAL', value: 3 } }] }]);
+    const found = lookupSkillByName('观星');
+    expect(found.status).toBe('ambiguous');
+    if (found.status === 'ambiguous') expect(found.owners).toEqual(['甲（群）', '独立技能表']);
+  });
+
+  it('生产数据普查：这张表本刀是空的⇒今天两锚的名册读数与上一版逐字相同', () => {
+    __resetSkillNameIndexForTests();
+    expect(standaloneSkills).toEqual([]);
+    expect(knownSkillNames()).toHaveLength(rosterCensus().totalNames);
+    expect(lookupSkillByName('怒斩').status).toBe('unknown');
   });
 });

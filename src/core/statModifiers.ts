@@ -13,7 +13,7 @@
  *    走 `prune*` 系列，那不是"无效化"，是"人在场"这个前提本身没了。
  */
 
-/** 本刀接线（有真实读数消费）的五格＋已登记但还没接线的格；注册表全貌在契约表§三。 */
+/** 本刀接线（有真实读数消费）的六格＋已登记但还没接线的格；注册表全貌在契约表§三。 */
 export type StatModifierKey =
   | 'MELEE_ATK'
   | 'RANGED_ATK'
@@ -25,11 +25,40 @@ export type StatModifierKey =
 
 /** 接线档位＝本刀真的有读数点来读的键（其余键账本收得下，但还没人读）。
  *  `DAMAGE_TAKEN`＝2.8 刀5 接线（读数点=`core/damageTaken.ts`，护甲之前那一格）。
- *  `DAMAGE_DEALT` 照旧只登记：用户 2026-10-03 裁"本刀不接"。
+ *  `DAMAGE_DEALT`＝2.9.4 刀接线（读数点=`core/damageDealt.ts`，**在受方入算之前**那一格；
+ *  用户 2026-10-14 裁"+1 扣护甲前算"）。2026-10-03 那条"本刀不接"说的是它自己那一刀，
+ *  不是永久禁令——它说的那一刀已经过去了。
  *  `RANGE`＝v2.9.0 射程刀接线（读数点=`core/attackReach.ts`＝全库唯一一处够得着判据）。 */
-export const WIRED_STAT_KEYS: StatModifierKey[] = ['MELEE_ATK', 'RANGED_ATK', 'MAX_HP', 'DAMAGE_TAKEN', 'RANGE'];
+export const WIRED_STAT_KEYS: StatModifierKey[] = ['MELEE_ATK', 'RANGED_ATK', 'MAX_HP', 'DAMAGE_TAKEN', 'DAMAGE_DEALT', 'RANGE'];
 
 export type StatModifierMode = 'delta' | 'set';
+
+/**
+ * 「造成伤害」这一把钥匙**独有**的生效场合（2.9.4 刀）。为什么要它：怒斩那句
+ * 「你进行决斗计算或近战攻击有护甲的角色时伤害+1」是两个**时刻**，而它挂在
+ * 「在场即生效」那一型上（用户 2026-10-14 裁"允许"）——在场笔只在登场那一刻落一次账、
+ * 之后不重算（编译器 `PASSIVE_CONDITION_UNSUPPORTED` 那条纪律至今成立：全库没有
+ * "中途重算的发射器"）。所以这一笔账不能靠门槛表达，只能**自带它在哪个时刻算数**，
+ * 由读数点当场对表。
+ *
+ * 两枚都是**封闭枚举**，不是谓词、不接任意条件：
+ *  - `duel`＝这一笔伤害是**决斗逐轮计算**里打出来的；
+ *  - `meleeVsArmored`＝这一笔是**近战攻击**（普攻且非远程）且受方此刻**护甲≥1**
+ *    （用户 2026-10-08 裁"有护甲是护甲≥1就行"）。
+ * 决斗那一笔的 `meleeAttack` 恒为 false（用户 2026-10-08 原话「决斗不算近战攻击」）
+ * ⇒ 两条腿结构性不会同时成立⇒同一笔伤害至多 +1。
+ *
+ * 挂到别的钥匙上（近战攻击力／体力上限……）＝这一侧压根没人读它⇒编译器点名跳过，
+ * 绝不让它悄悄落成"记录而未消费"（§12-55 那一族）。
+ */
+export type DamageDealtOccasion = 'duel' | 'meleeVsArmored';
+
+/**
+ * 真值清单（不是文档注释）：`occasion` 从 localStorage／Excel／旧存档里读出来时**没有类型保护**，
+ * 所以编译器要按这张表逐字校验，认不出的一律点名跳过。清单与录入面那一份
+ * （`data/generals.ts::DamageDealtOccasionType`）必须同集合，钉子＝`core/damageDealt.test.ts`。
+ */
+export const DAMAGE_DEALT_OCCASIONS: readonly DamageDealtOccasion[] = ['duel', 'meleeVsArmored'];
 
 /** 周期（数据层那六档回合／离场词汇，＋刀5 那一档一次性）。契约表第 2 条：`untilDeath`
  *  与 `untilLeaveField` 同义，结算侧一律由"离场"这一条总闸负责，这里只保留回合边界那一档。
@@ -62,6 +91,10 @@ export interface StatModifier {
   passive: boolean;
   /** 周期；`passive` 笔不填（它的周期就是"在场"本身）。 */
   expire?: StatExpireCondition;
+  /** 「造成伤害」那一把钥匙独有的生效场合（见上面 `DamageDealtOccasion` 那段：为什么是
+   *  封闭枚举而不是门槛）。缺省＝不分场合，任何时候都算。**只有 `key==='DAMAGE_DEALT'`
+   *  的笔会带它**，别的钥匙带上了会被编译器拒收。 */
+  occasion?: DamageDealtOccasion;
   /** 显示用（结算提示/面板），不参与判定。 */
   ownerSkillName?: string;
 }

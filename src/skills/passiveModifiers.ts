@@ -52,6 +52,9 @@ export function passiveEntriesOfGeneral(
         locked: definition.locked === true,
         passive: true,
         // 在场笔不填 `expire`：它的周期就是"在场"本身（填了会被编译器点名跳过）。
+        // 「造成的伤害」那一把钥匙可以带场合（2.9.4＝怒斩的两条腿正是挂在在场笔上，
+        // 用户裁决「允许」：在场即生效的被动读造方伤害点）。同样只在真填了时才出现这个键。
+        ...(effect.occasion !== undefined ? { occasion: effect.occasion } : {}),
       });
     }
   }

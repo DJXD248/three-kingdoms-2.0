@@ -12,9 +12,12 @@
  * （导入面也问），已按实测改写成上面这一句。判据因此收窄一格、更硬：**不许有第二套
  * "像不像"的判断**，只许有第二个**问者**；发动侧与回放侧仍然一个字都不查。
  *
- * 名册的来源＝**官方将领卡上印着的技能**（`data/generals.ts` 的 `allGenerals`）。
+ * 名册的来源有两个，都在本文件内合一次表：**①官方将领卡上印着的技能**
+ * （`data/generals.ts` 的 `allGenerals`）；**②独立技能表**（`data/standaloneSkills.ts`，
+ * 2.9.4 刀起＝觉醒白送、不印在任何将卡上的那一类，用户 2026-10-08 傍晚裁「加一张独立
+ * 技能表」）。第二来源**不是第二套判据**：查名／判同名同内容／点名跳过仍只在这一处发生。
  * DIY 卡（`store/gameStore.ts` 的 `authoredGenerals`＋卡面编辑）上的自创新技能名
- * 目前**查不到**⇒走 `GAIN_SKILL_UNKNOWN_NAME`，点名、不静默。这一格是刻意留的口子：
+ * 目前**两个来源都不在**⇒走 `GAIN_SKILL_UNKNOWN_NAME`，点名、不静默。这一格是刻意留的口子：
  * 把 DIY 接进名册要同时解决"编辑过的卡算哪一份内容"与"缓存何时失效"，另立一刀，
  * 不与本刀掺着登记（同一条纪律也写在 `GAIN_SKILL_NAME_HINT` 的批注里）。
  *
@@ -32,6 +35,7 @@
  */
 import type { General, Skill } from '../data/generals';
 import { allGenerals } from '../data/generals';
+import { STANDALONE_SKILL_OWNER_LABEL, standaloneSkills } from '../data/standaloneSkills';
 
 export type SkillNameLookup =
   /** 名册里有且只有一种写法 ⇒ 编译器把这枚 `skill` 原样嵌进定义，发动时落进将卡。 */
@@ -59,23 +63,25 @@ interface IndexEntry {
 
 let index: Map<string, IndexEntry[]> | null = null;
 let roster: readonly General[] = allGenerals as General[];
+let standalone: readonly Skill[] = standaloneSkills;
 
 function buildIndex(): Map<string, IndexEntry[]> {
   const map = new Map<string, IndexEntry[]>();
+  const add = (skill: Skill, ownerLabel: string) => {
+    const name = String(skill?.name ?? '').trim();
+    if (!name) return;
+    const entry: IndexEntry = { skill, ownerLabel, signature: canonicalSignature(skill) };
+    const bucket = map.get(name);
+    if (!bucket) map.set(name, [entry]);
+    else bucket.push(entry);
+  };
+  // 来源一＝官方将卡上印的技能；来源二＝独立技能表（2.9.4 起，觉醒白送的那一类）。
+  // 先后次序是**定义好的**（卡上的一直排在表里的那一枚之前），四路读到同一份模块级
+  // 常量⇒同一个顺序；同名两枚而内容不同⇒歧义，绝不按"哪张表排前面"来猜。
   for (const general of roster) {
-    for (const skill of general.skills ?? []) {
-      const name = String(skill?.name ?? '').trim();
-      if (!name) continue;
-      const bucket = map.get(name);
-      const entry: IndexEntry = {
-        skill,
-        ownerLabel: `${general.name}（${general.faction}）`,
-        signature: canonicalSignature(skill),
-      };
-      if (!bucket) map.set(name, [entry]);
-      else bucket.push(entry);
-    }
+    for (const skill of general.skills ?? []) add(skill, `${general.name}（${general.faction}）`);
   }
+  for (const skill of standalone) add(skill, STANDALONE_SKILL_OWNER_LABEL);
   return map;
 }
 
@@ -98,15 +104,23 @@ export function lookupSkillByName(rawName: string): SkillNameLookup {
   return { status: 'found', skill: bucket[0].skill, owners };
 }
 
-/** 测试缝：让用例读一份"改了的名册"（模块级缓存的唯一失效入口），并把名册来源
- *  一并交回默认值——只有测试能改，生产路径永远读 `data/generals.ts` 的那一份。 */
+/** 测试缝：让用例读一份"改了的名册"（模块级缓存的唯一失效入口），并把两个名册来源
+ *  一并交回默认值——只有测试能改，生产路径永远读 `data/generals.ts` 与
+ *  `data/standaloneSkills.ts` 的那两份。 */
 export function __resetSkillNameIndexForTests(): void {
   index = null;
   roster = allGenerals as General[];
+  standalone = standaloneSkills;
 }
 
 /** 测试缝：临时换一份名册（用来证明"同名不同内容"这一支真的不猜）。 */
 export function __setSkillNameRosterForTests(generals: readonly General[]): void {
   roster = generals;
+  index = null;
+}
+
+/** 测试缝：临时换一份独立技能表（同上，第二来源的那一支）。 */
+export function __setStandaloneSkillsForTests(skills: readonly Skill[]): void {
+  standalone = skills;
   index = null;
 }

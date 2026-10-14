@@ -82,6 +82,13 @@ export interface SkillEffectData {
   stat?: import('../data/generals').StatModifierKeyType;
   modifyMode?: import('../data/generals').StatModifyModeType;
   duration?: import('../data/generals').StatModifierDurationType;
+  /**
+   * 仅 MODIFY_STAT＋钥匙 `DAMAGE_DEALT`：这笔「造成的伤害」账在哪个场合才算数。
+   * 录入面与 Excel 今天都没有这一格（它是纯机器侧的东西，见
+   * `core/statModifiers.ts::DamageDealtOccasion`），所以这个键**只在真填了时才出现**
+   * ——编译产物会进事件流与账本，多一个 `occasion: undefined` 就是逐字节比对的雷。
+   */
+  occasion?: import('../data/generals').DamageDealtOccasionType;
   /** 仅 GAIN_SKILL：卡上写的那个技能名（录入原样，用于展示与点名）。 */
   skillName?: string;
   /**

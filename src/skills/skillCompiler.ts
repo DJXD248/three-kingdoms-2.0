@@ -60,6 +60,7 @@ import type {
 import type { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
+import { DAMAGE_DEALT_OCCASIONS } from '../core/statModifiers';
 import { lookupSkillByName } from './skillNameIndex';
 
 /** Skill triggers that map 1:1 onto real engine events.
@@ -121,8 +122,11 @@ export interface SkillSkip {
     /** MODIFY_STAT 少了三样里任何一样（改哪个数／哪种形态／数值）——点名，不猜。 */
     | 'MODIFY_STAT_INCOMPLETE'
     /** MODIFY_STAT 把「一次性（用掉就销）」挂到了没有"用掉"那一刻的钥匙上
-     *  （2.8 刀5：只有「受到的伤害」会被读一次销一次）。收下＝记录而未消费。 */
+     *  （伤害那两把——造方＝2.9.4 刀、受方＝2.8 刀5——才有）。收下＝记录而未消费。 */
     | 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED'
+    /** MODIFY_STAT 把「生效场合」挂到了「造成的伤害」以外的钥匙上，或值不在那张
+     *  真值清单里（2.9.4 刀）。场合只有造方那一格会读；别处带上＝没人读的字段。 */
+    | 'MODIFY_STAT_OCCASION_UNSUPPORTED'
     /** 「在场即生效」与「选择其一」在结构上互斥：passive 按定义不进问窗，
      *  那就没人能替它择一。整组点名跳过，绝不让它悄悄变成"全都要"。 */
     | 'PASSIVE_CHOICE_UNSUPPORTED'
@@ -183,10 +187,19 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
       || (runtime.target !== undefined && runtime.target !== 'SELF')) {
       return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_INCOMPLETE' };
     }
-    // 一次性那档只有「受到的伤害」这把钥匙存在"用掉的那一刻"（刀5 的唯一读档点）。
+    // 一次性那档只有伤害两把钥匙存在"用掉的那一刻"（2.8 刀5 的受方读数点＋2.9.4 刀的
+    // 造方读数点，两处用的是同一份算术 `core/damageLedgerRun.ts`）。
     // 挂到攻距/体力上限上＝一笔永远没人去销的账，那是另一种语义，点名跳过。
-    if (runtime.duration === 'thisDamage' && runtime.stat !== 'DAMAGE_TAKEN') {
+    if (runtime.duration === 'thisDamage' && runtime.stat !== 'DAMAGE_TAKEN' && runtime.stat !== 'DAMAGE_DEALT') {
       return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED' };
+    }
+    // 生效场合＝「造成的伤害」那一把钥匙独有的东西（为什么不是门槛，见
+    // `core/statModifiers.ts::DamageDealtOccasion` 那一段）。挂到别的钥匙上、或值不在
+    // 那张真值清单里（localStorage／旧档里的数据没有类型保护）⇒ 没有读数点会去读它，
+    // 悄悄收下就是"记录而未消费"（§12-55 那一族），所以点名跳过。
+    if (runtime.occasion !== undefined
+      && (runtime.stat !== 'DAMAGE_DEALT' || !DAMAGE_DEALT_OCCASIONS.includes(runtime.occasion))) {
+      return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_OCCASION_UNSUPPORTED' };
     }
   }
   // GAIN_SKILL（2.9.3 刀A）：名字是唯一入口，解析点在**这里**（全库唯一一次）。
@@ -215,8 +228,10 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
     // choice option label source (2.6.3) — display-only, never matched on.
     description: effect.description,
     // v2.8 刀4（#25）：改数三格透传（缺省＝非 MODIFY_STAT，键不出现）。
+    // 2.9.4 起多一格「生效场合」——同样只在**真的填了**时才出现这个键：定义／事件载荷
+    // 里多一个 `occasion: undefined` 就是给逐字节比对埋雷（两锚比的是字节，不是"意思一样"）。
     ...(runtime.type === 'MODIFY_STAT'
-      ? { stat: runtime.stat, modifyMode: runtime.modifyMode, duration: runtime.duration }
+      ? { stat: runtime.stat, modifyMode: runtime.modifyMode, duration: runtime.duration, ...(runtime.occasion !== undefined ? { occasion: runtime.occasion } : {}) }
       : {}),
     // 2.9.3 刀A：名字（录入原样）＋解析出来的那一枚，两个键都只在 GAIN_SKILL 时出现。
     ...(runtime.type === 'GAIN_SKILL'

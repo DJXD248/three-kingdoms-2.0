@@ -2,7 +2,9 @@ import type { EngineState } from '../GameState';
 import type { GameEvent } from '../Event';
 import { getAttackValue } from '../attackValue';
 import { applyArmorDamage } from '../armorDamage';
-import { pruneSpentModifiers, resolveDamageTaken } from '../damageTaken';
+import { resolveDamageTaken } from '../damageTaken';
+import { pruneSpentModifiers } from '../damageLedgerRun';
+import { duelDealtContext, resolveDamageDealt } from '../damageDealt';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
 import { hasReactionListeners } from '../../skills/reactionChain';
 
@@ -133,9 +135,10 @@ export function simulateDuel(
   const startHp = [sides[0].hp, sides[1].hp];
 
   const rounds: GameEvent[] = [];
-  // 一次性「受到的伤害」账在决斗里的用法＝用户 2026-10-03 裁决："下 1 次受到伤害−1 每次
-  // 只算一轮，2 次算两轮"⇒这一条线程自己带账本，每一轮把用掉的那几笔记着销掉，下一轮
-  // 就读到销过的那本（事件流里每一轮各有一条 `STAT_MODIFY{REMOVE}`，账留痕在同一条路上）。
+  // 一次性账（造方／受方两把钥匙都有这一档）在决斗里的用法＝用户 2026-10-03 裁决：
+  // "下 1 次受到伤害−1 每次只算一轮，2 次算两轮"⇒这一条线程自己带账本，每一轮把用掉的那几笔
+  // 记着销掉，下一轮就读到销过的那本（事件流里每一轮各有一条 `STAT_MODIFY{REMOVE}`，
+  // 账留痕在同一条路上）。2.9.4 起造方那一格也会在这一轮里销自己的账，两半都要看得见。
   let ledger = state.statModifiers;
   for (let index = 0; index < DUEL_MAX_ROUNDS; index += 1) {
     const attacker = sides[index % 2];
@@ -146,11 +149,20 @@ export function simulateDuel(
       ledger,
       target: { playerId: attacker.ref.playerId, generalId: attacker.ref.generalId },
     });
-    // 受到伤害那一格与普攻同一个函数（`core/damageTaken.ts`）：护甲之前、绝不自成一套。
+    // 造成伤害那一格排在受到伤害**之前**（与普攻同一句顺序）；场合＝决斗，而决斗里的
+    // "近战"那一格恒为 false（用户 2026-10-08 原话「决斗不算近战攻击」，落点在
+    // `core/damageDealt.ts::duelDealtContext`）。账本为空时逐字返回原数⇒今日事件流一字不多。
+    const dealt = resolveDamageDealt(
+      ledger,
+      { playerId: attacker.ref.playerId, generalId: attacker.ref.generalId },
+      rawDamage,
+      duelDealtContext(defender.armor),
+    );
+    // 受到伤害那一格与普攻同一个函数（`core/damageLedgerRun.ts` 那一份算术）：护甲之前、绝不自成一套。
     const taken = resolveDamageTaken(
       ledger,
       { playerId: defender.ref.playerId, generalId: defender.ref.generalId },
-      rawDamage,
+      dealt.damage,
     );
     const hit = applyArmorDamage(defender.hp, defender.armor, taken.damage);
     defender.hp = hit.hp;
@@ -174,12 +186,23 @@ export function simulateDuel(
         duelKey,
       },
     });
+    // 这一轮用掉的一次性账当场销（造方与受方各一条 canonical 事件，各带自己的 cause⇒
+    // 录像里每一条都能自己说清"我销的是哪一格"）。销完立刻喂给下一轮的本地账本：
+    // 同一笔账在一轮里只能用一次，而"2 次算两轮"要的正是下一轮读到销过的那本。
+    if (dealt.consumedIds.length > 0) {
+      rounds.push({
+        type: 'STAT_MODIFY',
+        data: { op: 'REMOVE', ids: dealt.consumedIds, cause: 'DAMAGE_DEALT' },
+      });
+    }
     if (taken.consumedIds.length > 0) {
       rounds.push({
         type: 'STAT_MODIFY',
         data: { op: 'REMOVE', ids: taken.consumedIds, cause: 'DAMAGE_TAKEN' },
       });
-      ledger = pruneSpentModifiers(ledger, taken.consumedIds);
+    }
+    if (dealt.consumedIds.length > 0 || taken.consumedIds.length > 0) {
+      ledger = pruneSpentModifiers(ledger, [...dealt.consumedIds, ...taken.consumedIds]);
     }
     // 一旦有一方在计算受到的伤害后体力≤0，立刻终止（死者不再被轮换）。
     if (hit.hp <= 0) break;

@@ -178,6 +178,60 @@ describe('skillCompiler · compileSkill', () => {
     expect(cross.skipped[0].reason).toBe('MODIFY_STAT_INCOMPLETE');
   });
 
+  it('生效场合这把钥匙只认「造成的伤害」，认不出的一律点名跳过（2.9.4 刀＝#56）', () => {
+    const dealt = {
+      type: 'MODIFY_STAT' as const, value: 1, target: 'SELF' as const,
+      stat: 'DAMAGE_DEALT' as const, modifyMode: 'delta' as const,
+    };
+    // 认得：两枚合法场合各自透传，编译产物里逐字带上那一个键。
+    const both = compileSkill(general(), skill({
+      effects: [
+        { id: 'e1', trigger: { type: 'passive' }, runtime: { ...dealt, occasion: 'duel' as const } },
+        { id: 'e2', trigger: { type: 'passive' }, runtime: { ...dealt, occasion: 'meleeVsArmored' as const } },
+      ],
+    }), 'g1');
+    expect(both.skipped).toEqual([]);
+    expect(both.definitions.flatMap(d => d.effects).map(e => e.occasion)).toEqual(['duel', 'meleeVsArmored']);
+    // 没填＝键压根不出现（编译产物会进事件流与录像，多一个 `occasion: undefined` 就是逐字节比对的雷）。
+    const bare = compileSkill(general(), skill({
+      effects: [{ id: 'e1', trigger: { type: 'passive' }, runtime: dealt }],
+    }), 'g1');
+    expect('occasion' in (bare.definitions[0].effects[0] as object)).toBe(false);
+
+    // 挂到别的钥匙上＝那一侧压根没人读它⇒「记录而未消费」那一族，点名。
+    const wrongKey = compileSkill(general(), skill({
+      effects: [{
+        id: 'e1', trigger: { type: 'passive' },
+        runtime: { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'MELEE_ATK', modifyMode: 'delta', occasion: 'duel' },
+      }],
+    }), 'g1');
+    expect(wrongKey.definitions).toHaveLength(0);
+    expect(wrongKey.skipped[0].reason).toBe('MODIFY_STAT_OCCASION_UNSUPPORTED');
+    // 清单外的字符串（localStorage／旧档里没有类型保护的那一路）同样点名，绝不"大概是她那个意思"。
+    const unknownOccasion = compileSkill(general(), skill({
+      effects: [{
+        id: 'e1', trigger: { type: 'passive' },
+        runtime: { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'DAMAGE_DEALT', modifyMode: 'delta', occasion: 'anyMelee' as never },
+      }],
+    }), 'g1');
+    expect(unknownOccasion.skipped[0].reason).toBe('MODIFY_STAT_OCCASION_UNSUPPORTED');
+    // 一次性那一档现在两把伤害钥匙都有"被读一次"那一刻（造方自本刀起接线）。
+    const oneshotDealt = compileSkill(general(), skill({
+      effects: [{
+        id: 'e1', trigger: { type: 'onTurnStart' },
+        runtime: { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'DAMAGE_DEALT', modifyMode: 'delta', duration: 'thisDamage' },
+      }],
+    }), 'g1');
+    expect(oneshotDealt.skipped).toEqual([]);
+    const oneshotOther = compileSkill(general(), skill({
+      effects: [{
+        id: 'e1', trigger: { type: 'onTurnStart' },
+        runtime: { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: 'RANGE', modifyMode: 'delta', duration: 'thisDamage' },
+      }],
+    }), 'g1');
+    expect(oneshotOther.skipped[0].reason).toBe('MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED');
+  });
+
   it('skips onTurnStart otherTurn subtype (no event support yet)', () => {
     const { definitions, skipped } = compileSkill(
       general(),

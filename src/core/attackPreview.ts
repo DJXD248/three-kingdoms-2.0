@@ -7,6 +7,8 @@
  */
 import { applyArmorDamage } from './armorDamage';
 import { resolveDamageTaken } from './damageTaken';
+import { attackDealtContext, resolveDamageDealt } from './damageDealt';
+import type { StatModifier, StatModifierTarget } from './statModifiers';
 
 export interface AttackPrediction {
   /** Base damage read from attacker's ATK at aim time. */
@@ -29,16 +31,29 @@ export interface AttackPrediction {
   isBase?: true;
 }
 
+/**
+ * 预览＝引擎那一刀的**同一段算术**（`damageLedgerRun` 那一份，两条腿同一顺序：
+ * 造成伤害→受到伤害→护甲）。攻方那一员将必须进来：没有攻方键＝造方那一格压根没得读，
+ * 于是"平A预览显示 2 点、点下去结算 3 点"这种分叉就从这里长出来（§12 那族"两处各算一遍"）。
+ */
 export function predictAttack(
   baseDamage: number,
   currentHp: number,
   currentArmor: number,
-  statModifiers: readonly import('./statModifiers').StatModifier[] | undefined,
+  statModifiers: readonly StatModifier[] | undefined,
   targetPlayerId: number,
   targetGeneralId: string,
-  maxHp?: number,
+  maxHp: number | undefined,
+  attacker: StatModifierTarget,
+  ranged: boolean,
 ): AttackPrediction {
-  const taken = resolveDamageTaken(statModifiers, { playerId: targetPlayerId, generalId: targetGeneralId }, baseDamage);
+  const dealt = resolveDamageDealt(
+    statModifiers,
+    attacker,
+    baseDamage,
+    attackDealtContext(ranged, currentArmor),
+  );
+  const taken = resolveDamageTaken(statModifiers, { playerId: targetPlayerId, generalId: targetGeneralId }, dealt.damage);
   const armorResult = applyArmorDamage(Math.max(0, currentHp), Math.max(0, currentArmor), taken.damage);
   return {
     baseDamage,

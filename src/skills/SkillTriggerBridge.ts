@@ -485,6 +485,9 @@ export class SkillTriggerBridge {
               // 在场那半由 skills/passiveModifiers.ts 单点来写，周期＝在场本身。
               passive: false,
               expire: effect.duration,
+              // 生效场合（2.9.4）：只在真填了时才有这个键——账本笔会进 state、进录像，
+              // 多一个 `occasion: undefined` 就是两锚逐字节比对的雷。
+              ...(effect.occasion !== undefined ? { occasion: effect.occasion } : {}),
             },
           },
         };
