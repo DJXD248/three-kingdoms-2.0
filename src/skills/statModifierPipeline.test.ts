@@ -741,6 +741,39 @@ describe('造成伤害那一格 · 真链路（2.9.4 刀＝#54，用户 2026-10-
     expect(meleeScene(furyLegs(), 1).hp).toBe(1);
   });
 
+  /** 两笔"固定"同时在场（造方挂在打出去的 g1 上、受方挂在挨打的 g2 上），走**真普攻**。
+   *  这一档存在的理由＝跨侧赢家只由入算次序兑出（代码里没有第二次判断），而纯函数那档
+   *  的接线是测试自己替引擎排的序，抓不到引擎有没有按这个次序调它（闸③复算 2026-10-15 缺件 1）。 */
+  function crossSideBlow(ledger: StatModifier[]) {
+    const engine = buildEngine([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g1', []), 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(makeGeneral('g2', []), 2)] }),
+    ], ledger);
+    engine.dispatch(createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }));
+    return { engine, hp: hpOf(engine, 2, 'g2') };
+  }
+
+  it('跨侧两笔"固定"相撞＝落到血上是受方那个数：造方固定为 9 被受方固定为 1 盖掉', () => {
+    // 卡面近战 2 点：正序过完两道＝1 点；把两侧入算整体倒过来（受方先读原始值、造方再读受方那个数）＝9 点，这一员将当场死。
+    const dealtFirst = { ...dtEntry('DAMAGE_DEALT', 'set', 9, 1, 'g1'), id: 'sm:1', seq: 1 };
+    const takenLater = { ...dtEntry('DAMAGE_TAKEN', 'set', 1, 2, 'g2'), id: 'sm:2', seq: 2 };
+    expect(crossSideBlow([dealtFirst, takenLater]).hp).toBe(3);
+    // 数组位置与生效编号**一起反过来**写：赢家不变⇒钉的是入算次序，不是书写顺序、也不是先后编号。
+    const takenFirst = { ...dtEntry('DAMAGE_TAKEN', 'set', 1, 2, 'g2'), id: 'sm:2', seq: 1 };
+    const dealtLater = { ...dtEntry('DAMAGE_DEALT', 'set', 9, 1, 'g1'), id: 'sm:1', seq: 2 };
+    expect(crossSideBlow([takenFirst, dealtLater]).hp).toBe(3);
+    // 两侧各留一笔都是持续（在场）账⇒结算不销任何东西。
+    expect((crossSideBlow([dealtFirst, takenLater]).engine.state.statModifiers ?? []).map(e => e.id).sort())
+      .toEqual(['sm:1', 'sm:2']);
+  });
+
+  it('对照组（少了任何一半都测不出次序）：单侧那笔各自照自己的口径落', () => {
+    // 只有造方那笔⇒固定为 3 一路过到护甲与体力（卡面 2 点被顶成 3 点）。
+    expect(crossSideBlow([{ ...dtEntry('DAMAGE_DEALT', 'set', 3, 1, 'g1'), id: 'sm:1', seq: 1 }]).hp).toBe(1);
+    // 只有受方那笔⇒卡面 2 点被摁到 1 点（与上一档同一个数，说明 3 那笔没串过来）。
+    expect(crossSideBlow([{ ...dtEntry('DAMAGE_TAKEN', 'set', 1, 2, 'g2'), id: 'sm:1', seq: 1 }]).hp).toBe(3);
+  });
+
   it('普查钉子：两个锚池里今天没有任何一条内容用「造成的伤害」，独立技能表也是空的⇒锚结构上不动', () => {
     const users = (pool: readonly General[]) => pool.filter(general =>
       (general.skills ?? []).some(skill => (skill.effects ?? []).some(effect =>

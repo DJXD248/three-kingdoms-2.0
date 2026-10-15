@@ -2,7 +2,7 @@
  * 造成伤害那一格的算术（2.9.4 刀＝#54）·纯函数、场合对表与决斗逐轮。
  *
  * 分工照旧：`statModifiers.test.ts` 钉账本读数，`damageTaken.test.ts` 钉受方那一格，
- * `statModifierPipeline.test.ts` 与 `damageDealtPipeline.test.ts` 钉真链路；这一档钉的是
+ * `skills/statModifierPipeline.test.ts` 钉真链路（跨侧相撞那两枚在那里）；这一档钉的是
  * **造方那一格**本身——它是三路（普攻／技能伤害／决斗逐轮）唯一共用的造方读数函数，
  * 加上「生效场合」那把只对这一把钥匙存在的对表规则，所以它的每一条口径只在这里写一次。
  *
@@ -174,6 +174,15 @@ describe('造成伤害 · 与受方那一格的先后（跨侧固定赢家＝受
     expect(dealtRead.damage).toBe(9);
     expect(resolveDamageTaken(ledger, VICTIM, dealtRead.damage).damage).toBe(1);
   });
+  it('同一副账换个写法（数组位置与生效编号一起反向）⇒赢家仍由入算次序兑出', () => {
+    const ledger = [
+      dealt({ id: 'sm:2', seq: 1, key: 'DAMAGE_TAKEN', mode: 'set', value: 1, targetPlayerId: VICTIM.playerId, targetId: VICTIM.generalId, ownerPlayerId: VICTIM.playerId, ownerGeneralId: VICTIM.generalId }),
+      dealt({ id: 'sm:1', seq: 2, mode: 'set', value: 9 }),
+    ];
+    const dealtRead = resolveDamageDealt(ledger, ATTACKER, 4, MELEE_VS_ARMOR);
+    expect(dealtRead.damage).toBe(9);
+    expect(resolveDamageTaken(ledger, VICTIM, dealtRead.damage).damage).toBe(1);
+  });
 });
 
 describe('造成伤害 · 来源解不出＝结构上没有这一格', () => {
@@ -261,6 +270,25 @@ describe('决斗逐轮 · 造方那一格每轮各读一次（用户 2026-10-14�
     expect(once.taken).toEqual([3, 2, 2, 2, 2, 2]);
     expect(once.removes).toHaveLength(1);
     expect(once.removes[0].data).toMatchObject({ op: 'REMOVE', ids: ['sm:1'], cause: 'DAMAGE_DEALT' });
+  });
+
+  it('决斗里两侧「固定」同场相撞＝每一轮都是造方先、受方后（受方盖过造方）', () => {
+    // 决斗是唯一"两侧每轮都在同一次结算里相撞"的路：gA 打出去的三轮里，造方固定为 9 必须被
+    // gB 身上那笔受方固定为 1 盖掉；gB 还手的三轮里 gA 没人护着，照卡面 2 点。
+    const ledger = [
+      dealt({ id: 'sm:1', seq: 1, mode: 'set', value: 9, targetId: 'gA', ownerGeneralId: 'gA', ownerPlayerId: 1 }),
+      dealt({ id: 'sm:2', seq: 2, key: 'DAMAGE_TAKEN', mode: 'set', value: 1, targetPlayerId: 2, targetId: 'gB', ownerPlayerId: 2, ownerGeneralId: 'gB' }),
+    ];
+    const cross = duelWithLedger(ledger);
+    expect(cross.taken).toEqual([1, 2, 1, 2, 1, 2]);
+    // 两笔在数组里倒过来写、生效编号也倒过来：读数一字不变⇒赢家不是书写顺序给的。
+    const reversed = duelWithLedger([ledger[1], ledger[0]]);
+    expect(reversed.taken).toEqual([1, 2, 1, 2, 1, 2]);
+    // 收官按角色累计＝真掉掉的体力之和（受方那一笔把三轮摁成 3 点）。
+    expect(cross.injuries.map(e => [
+      (e.data as { targetId?: string }).targetId,
+      (e.data as { value?: number }).value,
+    ])).toEqual([['gB', 3], ['gA', 6]]);
   });
 
   it('没有账时决斗逐轮逐字不变：值＝原始伤害、零条销账令（两锚逐字的结构保证）', () => {

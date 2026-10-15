@@ -60,7 +60,7 @@ import type {
 import type { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
-import { DAMAGE_DEALT_OCCASIONS } from '../core/statModifiers';
+import { DAMAGE_DEALT_OCCASIONS, WIRED_STAT_KEYS } from '../core/statModifiers';
 import { lookupSkillByName } from './skillNameIndex';
 
 /** Skill triggers that map 1:1 onto real engine events.
@@ -121,6 +121,11 @@ export interface SkillSkip {
     | 'EFFECT_TYPE_UNSUPPORTED'
     /** MODIFY_STAT 少了三样里任何一样（改哪个数／哪种形态／数值）——点名，不猜。 */
     | 'MODIFY_STAT_INCOMPLETE'
+    /** MODIFY_STAT 的钥匙不在接线清单 `WIRED_STAT_KEYS` 里（2.9.4 刀闸③复算的缺件 2，
+     *  用户 2026-10-15 裁「配一道闸吧」）。类型层只有这六把能填，但 localStorage／旧存档
+     *  直塞的那条路**没有类型保护**——一把没人读的钥匙（当前体力）收下＝"记录而未消费"
+     *  （§12-55 那一族），界面显示改了、结算一动不动，正是本项目明令禁止的第三种谎。 */
+    | 'MODIFY_STAT_KEY_UNWIRED'
     /** MODIFY_STAT 把「一次性（用掉就销）」挂到了没有"用掉"那一刻的钥匙上
      *  （伤害那两把——造方＝2.9.4 刀、受方＝2.8 刀5——才有）。收下＝记录而未消费。 */
     | 'MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED'
@@ -186,6 +191,12 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
     if (!runtime.stat || !runtime.modifyMode || typeof runtime.value !== 'number'
       || (runtime.target !== undefined && runtime.target !== 'SELF')) {
       return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_INCOMPLETE' };
+    }
+    // 钥匙必须落在接线清单上（清单＝`core/statModifiers.ts::WIRED_STAT_KEYS`，与编辑器
+    // 下拉同源）。类型层写不出没接线的名字，但存档／localStorage 直塞那一路没有类型保护：
+    // 一把没人读的钥匙悄悄收下＝界面说"改了"、结算一动不动。
+    if (!WIRED_STAT_KEYS.includes(runtime.stat)) {
+      return { skillName: effect.id, effectId: effect.id, reason: 'MODIFY_STAT_KEY_UNWIRED' };
     }
     // 一次性那档只有伤害两把钥匙存在"用掉的那一刻"（2.8 刀5 的受方读数点＋2.9.4 刀的
     // 造方读数点，两处用的是同一份算术 `core/damageLedgerRun.ts`）。

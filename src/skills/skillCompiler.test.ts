@@ -10,6 +10,7 @@ import { GameEngine } from '../core/GameEngine';
 import { createInitialEngineState } from '../core/GameState';
 import type { EngineState } from '../core/GameState';
 import type { General, Skill } from '../data/generals';
+import { WIRED_STAT_KEYS } from '../core/statModifiers';
 
 function skill(overrides: Partial<Skill> = {}): Skill {
   return {
@@ -230,6 +231,29 @@ describe('skillCompiler · compileSkill', () => {
       }],
     }), 'g1');
     expect(oneshotOther.skipped[0].reason).toBe('MODIFY_STAT_ONESHOT_KEY_UNSUPPORTED');
+  });
+
+  it('钥匙不在接线清单上＝点名拒绝（2.9.4 刀闸③复算缺件 2，用户 2026-10-15「配一道闸吧」）', () => {
+    const withStat = (stat: string) => compileSkill(general(), skill({
+      effects: [{
+        id: 'e1', trigger: { type: 'passive' },
+        runtime: { type: 'MODIFY_STAT', value: 1, target: 'SELF', stat: stat as never, modifyMode: 'delta' },
+      }],
+    }), 'g1');
+    // 当前体力：注册表里有名有坐标，可全库没有任何读数点会去读它。类型层写不出这个名字
+    // （`StatModifierKeyType` 只有六把），但 localStorage／旧存档直塞那一路没有类型保护⇒
+    // 编译器这一关就是那条路的唯一闸。悄悄收下＝界面说"改好了"、结算一动不动。
+    expect(withStat('CURRENT_HP').skipped[0].reason).toBe('MODIFY_STAT_KEY_UNWIRED');
+    expect(withStat('CURRENT_HP').definitions).toHaveLength(0);
+    // 一个压根不在注册表里的字符串同样点名，绝不"大概是笔误、当它没填"。
+    expect(withStat('SOMETHING_ELSE').skipped[0].reason).toBe('MODIFY_STAT_KEY_UNWIRED');
+    // 反面对照：清单上六把各过一趟，闸不许把接线的钥匙一起挡掉。
+    for (const stat of ['MELEE_ATK', 'RANGED_ATK', 'MAX_HP', 'DAMAGE_TAKEN', 'DAMAGE_DEALT', 'RANGE'])
+      expect(withStat(stat).skipped).toEqual([]);
+    // 清单＝编译器读的这一份，与编辑器下拉同源（`rangeFillInSurface.test.ts` 钉的是"下拉
+    // 钥匙集＝标签表钥匙集"，这里钉的是"编译器认的钥匙集＝同一份清单"⇒ 三处只有一张表）。
+    expect(WIRED_STAT_KEYS.slice().sort()).toEqual(
+      ['DAMAGE_DEALT', 'DAMAGE_TAKEN', 'MAX_HP', 'MELEE_ATK', 'RANGE', 'RANGED_ATK']);
   });
 
   it('skips onTurnStart otherTurn subtype (no event support yet)', () => {
