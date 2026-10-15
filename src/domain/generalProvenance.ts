@@ -74,7 +74,6 @@ export type AuthoredGeneralInput = {
   faction: Faction;
   hp: number;
   identity?: string;
-  title?: string;
   skills?: Skill[];
 };
 
@@ -118,7 +117,6 @@ export function createAuthoredGeneral(
       rangedAtk: type === '武将' ? 1 : 2,
       armor: 0,
       skills: input.skills ?? [],
-      title: input.title?.trim() || undefined,
       identity,
       source,
     },

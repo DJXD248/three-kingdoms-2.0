@@ -744,8 +744,7 @@ export default function GameBoard(){
             let armReason='';if(fg&&own&&!canArm){if(fg.isArming)armReason='已在整备中，无法再次叠甲';else if(fg.currentArmor>=maxHpOf(fg))armReason='护甲已达体力上限';else if(armorInHand===0)armReason='手牌中没有军备卡';}
             return(<>
               <div className="mb-3 flex items-center gap-2"><div className="h-3 w-3 rounded-full" style={{backgroundColor:factionColors[g.faction]}}/><span className="rounded px-2 py-0.5 text-sm font-bold" style={{backgroundColor:`${factionColors[g.faction]}25`,color:factionColors[g.faction]}}>{g.faction}</span><span className="text-sm text-amber-400/70">{g.type}</span>{fg&&fg.isArming&&<span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/30">整备中</span>}{fg&&<span className="ml-auto text-xs text-green-400/60">场上</span>}</div>
-              <h2 className="mb-0.5 text-3xl font-black text-amber-100">{g.name}</h2>
-              {g.title&&<p className="mb-4 text-sm text-amber-500/60">{g.title}</p>}
+              <h2 className="mb-4 text-3xl font-black text-amber-100">{g.name}</h2>
               <div className="mb-4 grid grid-cols-5 gap-2">
                 <SC l="❤️体力" v={fg?`${fg.currentHp}/${maxHpOf(fg)}`:`${g.hp}`} c="text-red-400"/>
                 <SC l="🛡️护甲" v={fg?`${fg.currentArmor}/${maxHpOf(fg)}`:'0'} c="text-blue-300" tip="每 2 点护甲抵消 1 点伤害；单数护甲挡不下这一刀，会原样留在身上"/>

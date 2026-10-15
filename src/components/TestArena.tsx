@@ -471,8 +471,7 @@ export default function TestArena(){
             const ac=fg?actionCounts[getRuntimeCardId(fg.general)]||{atk:0,mov:0,sup:0}:null;
             return(<>
               <div className="mb-2 flex items-center gap-2"><div className="h-3 w-3 rounded-full" style={{backgroundColor:factionColors[g.faction]}}/><span className="rounded px-2 py-0.5 text-sm font-bold" style={{backgroundColor:`${factionColors[g.faction]}25`,color:factionColors[g.faction]}}>{g.faction}</span><span className="text-sm text-amber-400/70">{g.type}</span>{fg&&fg.isArming&&<span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/30">整备中</span>}{fg&&<span className="ml-auto text-xs text-green-400/60">场上</span>}</div>
-              <h2 className="mb-0.5 text-2xl font-black text-amber-100">{g.name}</h2>
-              {g.title&&<p className="mb-3 text-sm text-amber-500/60">{g.title}</p>}
+              <h2 className="mb-3 text-2xl font-black text-amber-100">{g.name}</h2>
               <div className="mb-3 grid grid-cols-4 gap-1.5">
                 <SC l="❤️体力" v={fg?`${fg.currentHp}/${maxHpOf(fg)}`:`${g.hp}`} c="text-red-400"/>
                 <SC l="⚔️近战" v={`${fg?.meleeAtk??g.meleeAtk}`} c="text-orange-300"/>

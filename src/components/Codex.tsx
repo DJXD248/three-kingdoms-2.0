@@ -311,9 +311,6 @@ export default function Codex() {
               <span className="text-amber-400 text-sm">{selectedGeneral.type}</span>
             </div>
             <h2 className="text-3xl font-black text-amber-200 mb-1">{selectedGeneral.name}</h2>
-            {selectedGeneral.title && (
-              <p className="text-amber-500/70 text-sm mb-4">{selectedGeneral.title}</p>
-            )}
             
             <div className="grid grid-cols-2 gap-3 mb-4">
               <StatBox label="体力" value={selectedGeneral.hp} icon="❤️" />
@@ -406,9 +403,6 @@ function GeneralCard({ general, onClick }: { general: General; onClick: () => vo
           <h3 className="text-lg font-black text-amber-100 group-hover:text-amber-200 transition-colors">
             {general.name}
           </h3>
-          {general.title && (
-            <p className="text-xs text-amber-500/50 mt-0.5">{general.title}</p>
-          )}
         </div>
         
         <div className="flex justify-between text-xs text-amber-300/70 mt-2">

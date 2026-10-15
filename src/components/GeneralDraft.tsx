@@ -240,9 +240,6 @@ function DraftCard({
       <div className="text-center">
         <div className="text-2xl mb-0.5">{general.type === '武将' ? '⚔️' : '📜'}</div>
         <h3 className="text-sm font-black text-amber-100 leading-tight">{general.name}</h3>
-        {general.title && (
-          <p className="text-[8px] text-amber-500/40 mt-0.5 truncate">{general.title}</p>
-        )}
         <div className="flex justify-center gap-1.5 text-[10px] text-amber-300/60 mt-1">
           <span>❤️{general.hp}</span>
           <span>⚔️{general.meleeAtk}</span>

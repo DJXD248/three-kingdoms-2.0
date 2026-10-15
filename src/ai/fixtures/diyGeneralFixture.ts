@@ -19,10 +19,9 @@
 import type { Faction, General, Skill, SkillEffect } from '../../data/generals';
 import { createAuthoredGeneral } from '../../domain/generalProvenance';
 
-/** 固定号后缀的命名空间标记（成卡后 id = `D-fix-<key>`）。 */
+/** 固定号后缀的命名空间标记（成卡后 id = `D-fix-<key>`）。
+ *  这份样本的可辨认性就靠这个前缀与 `试作·` 将名（v2.9.5 起不再有称号）。 */
 export const DIY_FIXTURE_ID_TAG = 'fix';
-/** 这份样本里每张卡的称号：一眼可辨它不是官方将。 */
-const FIXTURE_TITLE = '仓库固定样本';
 
 function effect(
   id: string,
@@ -174,7 +173,7 @@ const FIXTURE_SPECS: FixtureSpec[] = [
  */
 export const DIY_FIXTURE_GENERALS: General[] = FIXTURE_SPECS.map(spec => {
   const made = createAuthoredGeneral(
-    { name: spec.name, faction: spec.faction, hp: spec.hp, identity: '', title: FIXTURE_TITLE, skills: spec.skills },
+    { name: spec.name, faction: spec.faction, hp: spec.hp, identity: '', skills: spec.skills },
     'DIY',
     () => `${DIY_FIXTURE_ID_TAG}-${spec.key}`,
   );
