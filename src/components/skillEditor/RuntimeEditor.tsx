@@ -34,10 +34,12 @@ const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number, rt?: Sk
     return v < 0 ? `${once}让${key}减少 ${-v}` : `${once}让${key}增加 ${v}`;
   },
   // 2.9.3 刀A：这一档根本不读数，读的是一个**技能名**。预览那句要跟引擎的判据
-  // 同一个来源（名字＝编译器拿去查名册的那一个字），别在这里再编一套说法。
+  // 同一个来源（名字＝编译器拿去查技能表的那一个字），别在这里再编一套说法。
   GAIN_SKILL: (_v, rt) => {
     const name = String(rt?.skillName ?? '').trim();
-    return name ? `获得技能「${name}」（往这一员将的技能表上添一枚）` : '获得技能：还没写要拿哪一枚';
+    // 「技能表」这个词自 2.9.7 起只指那一本全局的册子，所以这里说"往这一员将身上添一枚"，
+    // 不再说"往他的技能表上添"——同一个词在两个地方指两样东西＝界面与引擎分叉的起手式。
+    return name ? `获得技能「${name}」（往这一员将身上添一枚）` : '获得技能：还没写要拿哪一枚';
   },
 };
 
@@ -52,7 +54,7 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
   const isValueless = !!runtime && VALUELESS_RUNTIME_TYPES.includes(runtime.type);
   // v2.8 刀4（#25）：「修改数值」是这一族里**唯一**允许 0 与负数的一档，而且目标只有"自己"。
   const isModifyStat = runtime?.type === 'MODIFY_STAT';
-  // 2.9.3 刀A：「获得技能」也只落在自己身上（往别人的技能表添东西是 #28 那条目标
+  // 2.9.3 刀A：「获得技能」也只落在自己身上（给别人身上添技能是 #28 那条目标
   // 选择器的口径），所以它跟「修改数值」共用同一半界面：没有数字框、目标只写"自己"。
   const isGainSkill = runtime?.type === 'GAIN_SKILL';
   const isSelfOnly = isModifyStat || isGainSkill;
@@ -71,7 +73,7 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
         ? undefined
         : nextType === 'MODIFY_STAT' ? Math.max(-10, Math.min(10, carried))
         : WHOLE_HAND_RUNTIME_TYPES.includes(nextType) ? carried : Math.max(1, carried),
-      // 改数只改自己的账面数字；获得技能只往自己的技能表上添一枚；别的类型沿用原目标。
+      // 改数只改自己的账面数字；获得技能只往这一员将身上添一枚；别的类型沿用原目标。
       // 换档时把不认识的键一并摘掉，免得「改哪个数」这类键悄悄留在一条摸牌效果上
       // （留了也没人读＝下一轮分叉）。
       target: nextType === 'MODIFY_STAT' || nextType === 'GAIN_SKILL' ? 'SELF' : (runtime?.target ?? 'TARGET'),
@@ -145,7 +147,7 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
             // 另一把刀（#28 目标选择器）。
             <span className={`${runtimeSelectCls} flex-1 inline-flex items-center opacity-70`}>
               {runtimeTargetLabels.SELF}（{isGainSkill
-                ? '这一档只往自己的技能表上添一枚'
+                ? '这一档只给自己添一枚技能'
                 : '这一档只改自己的账面数字'}）
             </span>
           ) : (
@@ -221,7 +223,7 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
         <div className="space-y-1.5 pl-4">
           <div className="flex items-center gap-2">
             <label className="text-[10px] text-emerald-400/50 whitespace-nowrap">└ 拿哪一枚</label>
-            {/* 例子里那枚名字必须是**今天真查得到**的一枚：写一枚还没进名册的技能名，
+            {/* 例子里那枚名字必须是**今天真在技能表上**的一枚：写一枚还没进表的技能名，
                 用户照抄就会被下面那句琥珀色警告拦住＝界面自己挖坑（§12-112）。 */}
             <input
               type="text"
@@ -231,15 +233,15 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
               placeholder="填一枚技能的名字，例如「屯田」"
               onChange={e => onChange({ ...runtime, skillName: e.target.value })}
               className={`${runtimeSelectCls} flex-1`} />
-            {/* 名册里的名字全部列成候选（下拉只给"选得出"的词，而这个格子允许你写一枚
-                还没进池的技能——写了会被点名跳过，不会悄悄生效一半）。 */}
+            {/* 技能表上的名字全部列成候选（下拉只给"选得出"的词，而这个格子允许你写一枚
+                还没进表的技能——写了会被点名跳过，不会悄悄生效一半）。 */}
             <datalist id="tk-gain-skill-names">
               {knownSkillNames().map(name => <option key={name} value={name} />)}
             </datalist>
           </div>
           <p className="text-[9px] text-emerald-300/40">
-            判据只有一个：这里写的名字。引擎拿它去查名册（＝官方将领卡上印着的那些技能名），
-            查到了才把那一枚添进这一员将的技能表；从下一次发动起他就听得见这枚新技能。
+            判据只有一个：这里写的名字。引擎拿它去查技能表（＝卡上有真结算内容的技能自动在册，
+            加上不印在任何将卡上的那几枚），查到了才把那一枚添进这一员将身上；从下一次发动起他就听得见这枚新技能。
           </p>
           {!gainName && (
             <p className="text-[9px] text-rose-400/80">
@@ -248,8 +250,9 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
           )}
           {gainName && !gainKnown && (
             <p className="text-[9px] text-amber-400/80">
-              名册里暂时没有「{gainName}」这一枚技能：保存后会被引擎点名跳过（同名却有两份不同内容时
-              同样跳过，因为它不知道该拿哪一份）。那枚技能进了将卡池，这一条就自动生效。
+              技能表里暂时没有「{gainName}」这一枚技能（只有名字、还没挂上可结算内容的技能不进表）：
+              保存后会被引擎点名跳过（同名却有两份不同内容时同样跳过，因为它不知道该拿哪一份）。
+              那枚技能挂上内容、进了表，这一条就自动生效。
             </p>
           )}
         </div>

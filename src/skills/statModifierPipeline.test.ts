@@ -15,7 +15,7 @@ import type { EngineState, EnginePlayer } from '../core/GameState';
 import type { General, Skill } from '../data/generals';
 import { allGenerals } from '../data/generals';
 import type { DamageDealtOccasionType } from '../data/generals';
-import { standaloneSkills } from '../data/standaloneSkills';
+import { authoredSkillTableEntries } from '../data/skillTable';
 import { DIY_FIXTURE_GENERALS } from '../ai/fixtures/diyGeneralFixture';
 import { predictAttack } from '../core/attackPreview';
 import { syncPlayerSkills } from './skillCompiler';
@@ -788,8 +788,8 @@ describe('造成伤害那一格 · 真链路（2.9.4 刀＝#54，用户 2026-10-
         || (effect.runtime as { occasion?: unknown } | undefined)?.occasion !== undefined)));
     expect(users(allGenerals).map(g => g.name)).toEqual([]);
     expect(users(DIY_FIXTURE_GENERALS).map(g => g.name)).toEqual([]);
-    expect(standaloneSkills.map(s => s.name)).toEqual(['怒斩']);
-    expect(standaloneSkills[0].effects?.map(e => e.runtime?.occasion)).toEqual(['duel', 'meleeVsArmored']);
+    expect(authoredSkillTableEntries.map(s => s.name)).toEqual(['怒斩']);
+    expect(authoredSkillTableEntries[0].effects?.map(e => e.runtime?.occasion)).toEqual(['duel', 'meleeVsArmored']);
   });
 });
 

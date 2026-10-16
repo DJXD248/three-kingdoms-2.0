@@ -8,7 +8,8 @@
  *  · `gainSkill.test.ts`＝「获得技能」那一条效果本身；
  *  · `passiveModifiers.test.ts`＝在场账的形状与普查。
  * 这一档只回答一个问题：**换上真的卡，这些机制接上了没有**——所以场面里的关羽、
- * 武圣、单骑全部从 `data/generals.ts` 当场取，怒斩从 `data/standaloneSkills.ts` 当场取，
+ * 武圣、单骑全部从 `data/generals.ts` 当场取，怒斩从 `data/skillTable.ts` 那张技能表上
+ * 当场取（v2.9.7 起＝「获得技能」唯一认的名单），
  * 只有"对面站谁"和"谁挑起来一场决斗"这两样与本刀要证的事无关，才用合成件。
  */
 import { describe, it, expect } from 'vitest';
@@ -18,14 +19,17 @@ import { createAction } from '../action/ActionTypes';
 import { effectiveMaxHp, type StatModifier } from '../core/statModifiers';
 import { getAttackValue } from '../core/attackValue';
 import { allGenerals, type General, type Skill } from '../data/generals';
-import { standaloneSkills } from '../data/standaloneSkills';
+import { skillTable } from '../data/skillTable';
 import { compileGeneralSkills, syncPlayerSkills } from './skillCompiler';
 import { passiveEntriesOfGeneral } from './passiveModifiers';
 import { getReactionAsk } from './reactionChain';
 
 const wei = allGenerals.find(g => g.id === 'wei_022')!;
 const shu = allGenerals.find(g => g.id === 'shu_002')!;
-const nuzhan = standaloneSkills[0];
+/** 怒斩从**技能表**上取（不是从自建清单那一份另抄一遍）：表上那一行交出来的对象
+ *  与「单骑」按名字拿到的必须是同一个，否则"表里一个样、卡上另一个样"就成立了。 */
+const nuzhanRow = skillTable.find(row => row.skill.name === '怒斩')!;
+const nuzhan = nuzhanRow.skill;
 
 /** 与既有几档同一副夹具形状：`areaOwnerId` 一律 1（除战场）＝这一库"近战够得着"的
  *  惯用摆法——距离按 `core/attackReach.ts` 数：自家前线(档 1) ↔ 战场(档 2) 差 1，
@@ -130,7 +134,7 @@ describe('魏关羽·内容形态（三枚各就各位）', () => {
       trigger: 'onKill', awakening: true, effectChain: true, limitKey: 'wei_022:单骑',
     });
     expect(danqi.conditions).toHaveLength(3);
-    // 「获得技能」拿到的必须是独立技能表上那一个对象（同名再编一枚＝两个来源分叉）。
+    // 「获得技能」拿到的必须是技能表上交出来的那一个对象（同名再编一枚＝两个来源分叉）。
     const gained = danqi.effects.find(e => e.type === 'GAIN_SKILL')?.gainedSkill;
     expect(gained).toBe(nuzhan);
   });

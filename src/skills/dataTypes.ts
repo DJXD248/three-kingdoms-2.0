@@ -40,11 +40,12 @@ export type DataSkillEffectType =
   | 'DUEL'
   /** 改一个数字＝往账本落一笔（core/statModifiers.ts），**不改卡面**。 */
   | 'MODIFY_STAT'
-  /** 2.9.3 刀A（#25 之后的新原语）：**改卡面**——给那一员将的技能表添上一枚技能。
-   *  与 MODIFY_STAT 恰好互补：那个只动账本、卡面一个字不改；这个只动卡面（技能表）、
-   *  不预写任何账。名字解析唯一的落点在 `skills/skillNameIndex.ts`，编译器查不到就
-   *  点名跳过；结算点=`core/eventProcessors/generalEvents.ts` 的 `applySkillGainedEvent`
-   *  往 `fg.general.skills` 追加（同名不重复落，幂等），于是下一次重编译就听得见这枚新技能。 */
+  /** 2.9.3 刀A（#25 之后的新原语）：**改卡面**——给那一员将的卡面技能清单添上一枚技能。
+   *  与 MODIFY_STAT 恰好互补：那个只动账本、卡面一个字不改；这个只动卡面（技能清单）、
+   *  不预写任何账。名字解析唯一的落点在 `skills/skillNameIndex.ts`（＝查技能表），
+   *  编译器查不到就点名跳过；结算点=`core/eventProcessors/generalEvents.ts` 的
+   *  `applySkillGainedEvent` 往 `fg.general.skills` 追加（同名不重复落，幂等），
+   *  于是下一次重编译就听得见这枚新技能。 */
   | 'GAIN_SKILL';
 
 /** v2.7.3 自定义条件门槛谓词（§G 建议书第 4 项，十二格表见 ARCH_MAP F 节）。
@@ -93,7 +94,7 @@ export interface SkillEffectData {
   skillName?: string;
   /**
    * 仅 GAIN_SKILL：编译器**解析后的那枚技能**（`skillName` 的解析影子）。解析点全库
-   * 只有一处＝`skillCompiler.toEffectData` 经 `skills/skillNameIndex.ts` 查名册；
+   * 只有一处＝`skillCompiler.toEffectData` 经 `skills/skillNameIndex.ts` 查技能表；
    * 桥接层与结算侧读的都是这一份，因此不可能出现"编译时认得、发动时不认得"。
    * 解析不出来的名字根本走不到这里——它在编译器就变成一条 `skipped` 了。
    */

@@ -632,18 +632,21 @@ export default function GameBoard(){
           </div>
         </div>}
         {atkCard&&atkGen&&<div className="absolute left-1/2 top-2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-lg border border-red-500 bg-red-900/90 px-5 py-2 animate-fadeIn"><span className="text-sm font-bold text-red-200">⚔️{atkRanged?'远程':'近战'}攻击 - 点击高亮目标</span><button onClick={resetAtk} className="rounded bg-gray-700 px-3 py-1 text-xs text-white">取消</button></div>}
-        {/* v2.8.34 attack preview tooltip */}
+        {/* v2.8.34 attack preview tooltip；配色按用户裁决第 5 条那一句改（v2.9.7）：
+            「指向哪个目标就提前显示对方的体力/护甲变化（体力变化用黄色，护甲变化用蓝色）」。
+            数字本身一个都没动——只把颜色与词按那一句对齐：HP→体力（黄）、N甲/无甲→护甲 −N／
+            护甲不变（蓝）。伤害那一格没被这一句圈到，照旧红。 */}
         {atkCard&&atkGen&&atkPreviewKey&&(_previewFor(atkPreviewKey))&&(()=>{
           const p=_previewFor(atkPreviewKey)!;const pred=p.isBase!==true&&p.newHp>=0;
           return(<div className="pointer-events-none absolute left-1/2 top-[44px] z-30 -translate-x-1/2">
             <div className={`rounded-lg border px-2.5 py-1 text-xs font-bold shadow-lg ${pred?(p.hpLost>0?'border-red-500/70 bg-black/85 text-red-200':'border-blue-500/70 bg-black/85 text-blue-200'):'border-yellow-500/70 bg-black/85 text-yellow-200'}`} style={{whiteSpace:'nowrap'}}>
-              {pred?p.hpLost>0?(<>
+              {pred?(<>
                 <span className="text-red-300">{p.baseDamage}伤</span>
                 <span className="mx-0.5 text-amber-100/50">|</span>
-                <span className="text-blue-300">{p.armorLost>0?`${p.armorLost}甲`:'无甲'}</span>
+                <span className="text-blue-300">{p.armorLost>0?`护甲 -${p.armorLost}`:'护甲不变'}</span>
                 <span className="mx-0.5 text-amber-100/50">|</span>
-                <span className={p.newHp<=0?'text-orange-300':'text-red-300'}>{p.maxHp!=null?`${p.newHp}/${p.maxHp}`:''}</span>
-              </>):(<>HP: <span className={p.newHp>0?'text-green-300':'text-orange-300'}>{p.newHp}</span></>):null}
+                <span className="text-yellow-300">体力 {p.newHp}/{p.maxHp}</span>
+              </>):null}
               {!pred&&<span>营地 -{p.baseDamage}</span>}
             </div>
           </div>);

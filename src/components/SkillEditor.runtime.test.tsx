@@ -306,10 +306,10 @@ describe('SkillEditor: structured runtime entry', () => {
   /**
    * 2.9.3 刀A·「获得技能」那一格的真机形状（闸③复算点名：编译面与 Excel 往返都有钉，
    * 唯独界面那个名字框零证人）。它同时钉四件"看得见"的事：没有数字框（这一档不读数）、
-   * 目标只写"自己"（不给下拉）、名册查不到时当场说、写了名字之后 `runtime.skillName`
+   * 目标只写"自己"（不给下拉）、技能表查不到时当场说、写了名字之后 `runtime.skillName`
    * 真的存进 store 并被编译器解析成那枚技能。
    */
-  it('v2.9.3 刀A：效果类型切到「获得技能」——没有数字框、目标只有"自己"、名字存得下、名册外的名字当场说', () => {
+  it('v2.9.3 刀A：效果类型切到「获得技能」——没有数字框、目标只有"自己"、名字存得下、表外的名字当场说', () => {
     const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
     render(<SkillEditor onClose={() => {}} />);
     fireEvent.click(Array.from(document.querySelectorAll('button'))
@@ -324,17 +324,17 @@ describe('SkillEditor: structured runtime entry', () => {
     const targetRow = Array.from(document.querySelectorAll('label'))
       .find(l => l.textContent?.trim() === '目标')!.parentElement!;
     expect(targetRow.querySelector('select')).toBeNull();
-    expect(targetRow.textContent).toContain('这一档只往自己的技能表上添一枚');
+    expect(targetRow.textContent).toContain('这一档只给自己添一枚技能');
     const nameInput = document.querySelector('input[aria-label="获得技能名"]') as HTMLInputElement;
     expect(nameInput).toBeTruthy();
     // ③ 空名＝红字说"这样填保存后会被逐条点名跳过"（拦在录入面，不等用户去对局里发现）。
     // 只认这句警告本身：空名时预览那句也带"还没写要拿哪一枚"，那是两处、不是两处 bug。
     expect(screen.getByText(/这样填的效果保存后会被引擎逐条点名跳过/)).toBeTruthy();
 
-    // ④ 名册里查得到的名字：警告撤掉，保存后 store 里落的是**名字**（不是 id、不是将名）。
+    // ④ 技能表里查得到的名字：警告撤掉，保存后 store 里落的是**名字**（不是 id、不是将名）。
     fireEvent.change(nameInput, { target: { value: '屯田' } });
     expect(screen.queryByText(/这样填的效果保存后会被引擎逐条点名跳过/)).toBeNull();
-    expect(screen.queryByText(/名册里暂时没有/)).toBeNull();
+    expect(screen.queryByText(/技能表里暂时没有/)).toBeNull();
     expect(screen.getByText(/获得技能「屯田」/)).toBeTruthy();   // 预览那句读的就是同一个名字
     fireEvent.click(screen.getByText('💾 保存修改'));
     const saved = useGameStore.getState().skillEdits[target.id]!;
@@ -344,10 +344,17 @@ describe('SkillEditor: structured runtime entry', () => {
         effects: s.effects!.map(e => ({ ...e, trigger: { type: 'onTurnStart' as const } })) })) } as unknown as typeof target);
     expect(compiled.definitions[0]?.effects.some(e => e.type === 'GAIN_SKILL' && e.gainedSkill?.name === '屯田')).toBe(true);
 
-    // ⑤ 名册外的名字（＝还没进池的那一枚）：不拦保存，但当场把"会被点名跳过"说清。
+    // ⑤ 表外的名字（自己新编的一枚）：不拦保存，但当场把"会被点名跳过"说清。
     fireEvent.change(document.querySelector('input[aria-label="获得技能名"]') as HTMLInputElement,
       { target: { value: '还没有这一枚' } });
-    expect(screen.getByText(/名册里暂时没有「还没有这一枚」/)).toBeTruthy();
+    expect(screen.getByText(/技能表里暂时没有「还没有这一枚」/)).toBeTruthy();
+
+    // ⑥ 2.9.7 用户裁「技能表只做有真内容的」⇒卡上只印了名字的那 123 枚老形态技能
+    // **也不在表上**：界面不能对它说"能获得"（那正是上一版的说法，与引擎行为分叉）。
+    fireEvent.change(document.querySelector('input[aria-label="获得技能名"]') as HTMLInputElement,
+      { target: { value: '突袭' } });
+    const shellWarning = screen.getByText(/技能表里暂时没有「突袭」/) as HTMLElement;
+    expect(shellWarning.textContent).toContain('只有名字、还没挂上可结算内容的技能不进表');
   });
 });
 

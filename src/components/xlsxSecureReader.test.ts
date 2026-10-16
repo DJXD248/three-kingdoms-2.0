@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // 回归说明：SkillEditor 的 Excel 导入路径只依赖 XLSX.read + sheet_to_json(header:1)
-// 两个只读 API。本测试读取真实 .xlsx 夹具文件（exceljs 生成的 3 行技能表，含中文
+// 两个只读 API。本测试读取真实 .xlsx 夹具文件（exceljs 生成的 3 行技能表格，含中文
 // 与空洞单元格），在 jsdom（与生产打包相同的 browser 构建解析）下用升级后的
 // SheetJS CDN 构建（>=0.19.3，修复 GHSA-4r6h 原型污染 / GHSA-5pgg ReDoS）解析，
 // 证明安全升级后导入路径行为不变。

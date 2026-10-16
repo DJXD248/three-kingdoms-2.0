@@ -72,7 +72,7 @@ function makeState(players: EnginePlayer[]): EngineState {
 
 /**
  * 「单骑」的最小真实形状：近战击杀后，失去1点体力上限**并**获得技能「屯田」。
- * 效果名册用 `屯田`（官方卡上印着、刀A 那个解析点查得到）——本刀判的是问窗与额度，
+ * 效果用技能表上的 `屯田`（官方卡上印着、有真内容，所以刀A 那个解析点查得到）——本刀判的是问窗与额度，
  * 拿到哪一枚无所谓；"真拿到手"那一半由 `gainSkill.test.ts` 钉。
  */
 function awakeningKill(name: string, extra: Partial<Skill> = {}): Skill {

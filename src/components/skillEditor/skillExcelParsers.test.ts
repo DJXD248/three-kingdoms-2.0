@@ -515,20 +515,29 @@ describe('第 12 列「获得哪个技能」的导入报告（2.9.3 刀A）', ()
   ];
   const parse = (type: string, gainName: string) => parseRowPerSkillSheet([v12Header, row(type, gainName)]);
 
-  it('名册上有的名字：零警告，名字原样进结构化效果', () => {
+  it('技能表上有的名字：零警告，名字原样进结构化效果', () => {
     const { entries, parseWarnings } = parse('获得技能', '屯田');
     expect(parseWarnings).toEqual([]);
     expect(entries[0].skills[0].effects![0].runtime).toEqual({ type: 'GAIN_SKILL', skillName: '屯田', target: 'SELF' });
   });
 
   it('名字查不到：报告里点名（谁·哪个技能·第几个效果·原文），不静默收下', () => {
-    // 占位名用一枚名册上根本没有的假名。「怒斩」过去当这个占位，v2.9.6 它进了
-    // 独立技能表⇒占位不再成立。
+    // 占位名用一枚技能表上根本没有的假名。「怒斩」过去当这个占位，v2.9.6 它进了
+    // 表⇒占位不再成立。
     const { entries, parseWarnings } = parse('获得技能', '查无此技');
     expect(entries[0].skills[0].effects![0].runtime).toMatchObject({ type: 'GAIN_SKILL', skillName: '查无此技' });
     expect(parseWarnings).toHaveLength(1);
     expect(parseWarnings[0]).toContain('关羽·测试技 效果1');
     expect(parseWarnings[0]).toContain('查无此技');
+  });
+
+  it('卡上只印了名字、还没挂内容的那一枚：同样点名（2.9.7「表里只做有真内容的」）', () => {
+    // 突袭＝张辽卡上那枚老形态技能（只有名字）。它在将领名册里、却不在技能表里，
+    // 所以导入面必须照引擎说：填了会被点名跳过，而不是"能获得但对局里没变化"。
+    const { entries, parseWarnings } = parse('获得技能', '突袭');
+    expect(entries[0].skills[0].effects![0].runtime).toMatchObject({ type: 'GAIN_SKILL', skillName: '突袭' });
+    expect(parseWarnings).toHaveLength(1);
+    expect(parseWarnings[0]).toContain('技能表上没有「突袭」');
   });
 
   it('这一格留空＝半条效果：同样点名', () => {

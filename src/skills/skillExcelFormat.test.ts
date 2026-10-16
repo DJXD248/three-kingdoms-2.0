@@ -699,8 +699,10 @@ describe('skillExcelFormat — 「改哪个数／怎么改／有效周期」三�
     expect(effectGroupHeaders(1)[11]).toBe('效果1' + GAIN_SKILL_NAME_HEADER);
     expect(GAIN_SKILL_NAME_HINT).toContain('获得技能');
     expect(GAIN_SKILL_NAME_HINT).toContain('按没填处理');
-    // 界面承诺不许大于引擎行为（§12-112）：这一版解析点只读官方名册，批注就得照实写。
-    expect(GAIN_SKILL_NAME_HINT).toContain('官方将领卡');
+    // 界面承诺不许大于引擎行为（§12-112）：2.9.7 起解析点只读**技能表**（＝卡上有真
+    // 结算内容的那几枚＋表上自建的），批注就得照实写这一格，包括"哪些不在表上"。
+    expect(GAIN_SKILL_NAME_HINT).toContain('技能表');
+    expect(GAIN_SKILL_NAME_HINT).toContain('都不在表上');
     expect(GAIN_SKILL_NAME_HINT).not.toMatch(/DIY\s*都算/);
   });
 
@@ -983,33 +985,42 @@ describe('skillExcelFormat — 「获得哪个技能」第 12 格（2.9.3 刀A�
     expect(legacy.fields.runtime!.skillName).toBeUndefined();
   });
 
-  it('空着／写了名册里没有的／同名两份不同内容：三种都点名，绝不猜一个"最像的"', () => {
+  it('空着／技能表上没有的／同名两份不同内容：三种都点名，绝不猜一个"最像的"', () => {
     const blank = parseEffectGroup(gainRow({ gain: '无' }), 0, 12)!;
     expect(blank.gainIssues).toHaveLength(1);
     expect(blank.gainIssues[0]).toContain('编译时会点名跳过');
     expect(blank.fields.runtime).toEqual({ type: 'GAIN_SKILL', target: 'SELF' });
 
-    // 「查无此技」＝名册里根本没有的名字。过去这里用「怒斩」当占位，v2.9.6 它
-    // 真进了独立技能表⇒那个占位不再成立，改用一枚注定查不到的假名。
+    // 「查无此技」＝技能表上根本没有的名字。过去这里用「怒斩」当占位，v2.9.6 它
+    // 真进了表⇒那个占位不再成立，改用一枚注定查不到的假名。
     const absent = parseEffectGroup(gainRow({ gain: '查无此技' }), 0, 12)!;
-    expect(absent.gainIssues[0]).toContain('名册里没有「查无此技」');
+    expect(absent.gainIssues[0]).toContain('技能表上没有「查无此技」');
     // 原文照收：能不能用由**唯一那个解析点**判，导入面不写第二套判断。
     expect(absent.fields.runtime!.skillName).toBe('查无此技');
 
+    // 歧义的证人必须**带可结算载荷**：2.9.7 起只印名字的技能压根不进表，
+    // 拿两枚空壳去撞歧义会测到"两张都不在表上"⇒判据没有证人（同 §12-110）。
+    const cargo = (description: string) => [{
+      id: 'e1', trigger: { type: 'onAttack' } as const,
+      runtime: { type: 'DAMAGE', value: 1, target: 'TARGET' } as const,
+      description,
+    }];
     __setSkillNameRosterForTests([
-      { id: 'x1', name: '甲', faction: '群', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [{ name: '观星' }] },
-      { id: 'x2', name: '乙', faction: '群', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [{ name: '观星', description: '另一段话' }] },
+      { id: 'x1', name: '甲', faction: '群', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [{ name: '观星', effects: cargo('第一段') }] },
+      { id: 'x2', name: '乙', faction: '群', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [{ name: '观星', effects: cargo('第二段') }] },
     ] as unknown as import('../data/generals').General[]);
     const ambiguous = parseEffectGroup(gainRow({ gain: '观星' }), 0, 12)!;
-    expect(ambiguous.gainIssues[0]).toContain('不止一份、而且内容不同');
+    expect(ambiguous.gainIssues[0]).toContain('在技能表里不止一份、而且内容不同');
     expect(ambiguous.gainIssues[0]).toContain('请给它们改成两个名字');
   });
 
-  it('只有一句话、没有结构化效果的技能：能获得，但要说清"对局里不会发生变化"', () => {
-    // 突袭＝官方卡上只印了名字的老形态技能。（过去这里用武圣，v2.9.6 它有了结构化
-    // 载荷⇒不再是"只有一句话"的代表，换成仍然只有一枚名字的张辽「突袭」。）
+  it('只印了名字、还没挂上可结算内容的技能：不进表 ⇒ 与查无此技同一句点名', () => {
+    // 突袭＝官方卡上只印了名字的老形态技能（张辽）。2.9.4/2.9.6 那一版它落在"能获得、
+    // 但对局里不会发生变化"这一格；2.9.7 用户裁「技能表只做有真内容的」⇒空壳不进表，
+    // 判据因此**收窄**成一格：表上没有＝填了也白填，当场说清，不留半截效果。
     const parsed = parseEffectGroup(gainRow({ gain: '突袭' }), 0, 12)!;
-    expect(parsed.gainIssues).toEqual([expect.stringContaining('能获得，但对局里不会发生变化')]);
+    expect(parsed.gainIssues).toEqual([expect.stringContaining('技能表上没有「突袭」')]);
+    expect(parsed.gainIssues[0]).toContain('只印了名字、还没挂上可结算内容的技能不进表');
     expect(parsed.fields.runtime!.skillName).toBe('突袭');
   });
 

@@ -2,7 +2,7 @@
  * 2.9.3 刀A：新原语「获得技能」（GAIN_SKILL）的端到端证人。
  *
  * 这一档钉的是**真链路**——录入的名字 ⇒ 唯一解析点 ⇒ 编译进定义 ⇒ 一张桥接事件
- * ⇒ 卡面技能表真的长出一枚 ⇒ 下一次发动听得见它。单层测试（编译面 / Excel 面）
+ * ⇒ 卡面技能清单真的长出一枚 ⇒ 下一次发动听得见它。单层测试（编译面 / Excel 面）
  * 抓不到的是中间掉链子那一类：定义里有、事件里没、落了却没重编译、重编译了却没账。
  *
  * 与相邻几档的分工：`skillNameIndex.test.ts` 钉"名字查得出/查不出"，
@@ -61,7 +61,7 @@ function buildEngine(players: EnginePlayer[]): GameEngine {
   return engine;
 }
 
-/** 觉醒那一句的最小形状：回合开始时把名册里那枚添到自己卡面上。 */
+/** 觉醒那一句的最小形状：回合开始时把技能表里那枚添到自己卡面上。 */
 function awaken(name: string, skillName: string, extra: Partial<Skill> = {}): Skill {
   return {
     name,
@@ -92,7 +92,7 @@ function handOf(state: EngineState, playerId: number): number {
  * 每一趟之前先 `syncPlayerSkills`，这不是测试自己加的胶水：常驻容器就是这条路
  * （`store/engineExecutionBridge.ts:90` 每次派发前全量重推导），`playResidentAll`
  * （`core/transitionEquivalence.test.ts:212`）钉的就是它。这一趟因而真正判的是
- * "卡面长了新技能⇒下一趟就听得见"，中间没有任何技能表缓存可依赖。
+ * "卡面长了新技能⇒下一趟就听得见"，中间没有任何卡面技能清单的缓存可依赖。
  *
  * 第三趟同样不是冗余：新技能是在第一趟中途才长上去的，而被拿的那一枚必须自己站在
  * 事件面上才可能被听见——`onTurnEnd` 那一族**故意不在事件面上**（`skillCompiler.ts:84-88`：
@@ -125,7 +125,7 @@ function playAwaken(gainedName: string) {
 afterEach(() => __resetSkillNameIndexForTests());
 
 describe('获得技能 · 编译面（名字是唯一入口，解析点只有一个）', () => {
-  it('名册里查得到：那一枚技能**原样**嵌进定义，目标强制落在自己身上', () => {
+  it('技能表里查得到：那一枚技能**原样**嵌进定义，目标强制落在自己身上', () => {
     const { definitions, skipped } = compileSkill(
       { id: 'g1', name: '测试将' },
       awaken('觉醒', '屯田'),
@@ -139,7 +139,7 @@ describe('获得技能 · 编译面（名字是唯一入口，解析点只有一
     expect(definitions[0].effects[0]).toMatchObject({
       type: 'GAIN_SKILL', target: 'SELF', skillName: '屯田',
     });
-    // 嵌进去的就是名册上那一个对象——桥接层与结算侧不再问第二次，也就无从分叉。
+    // 嵌进去的就是技能表上那一个对象——桥接层与结算侧不再问第二次，也就无从分叉。
     expect(definitions[0].effects[0].gainedSkill).toBe(printed);
   });
 
@@ -157,11 +157,19 @@ describe('获得技能 · 编译面（名字是唯一入口，解析点只有一
     });
     expect(otherTarget.skipped[0].reason).toBe('GAIN_SKILL_INCOMPLETE');
 
-    // 「查无此技」＝名册与独立表里都没有的名字：不猜、不就近取一枚像的。
-    // （过去这里用「怒斩」当占位——v2.9.6 它真进了独立技能表⇒占位不再成立。）
+    // 「查无此技」＝技能表上没有的名字：不猜、不就近取一枚像的。
+    // （过去这里用「怒斩」当占位——v2.9.6 它真进了表⇒占位不再成立。）
     const absent = compileSkill({ id: 'g1', name: '测试将' }, awaken('觉醒', '查无此技'));
     expect(absent.definitions).toHaveLength(0);
     expect(absent.skipped[0].reason).toBe('GAIN_SKILL_UNKNOWN_NAME');
+
+    // 2.9.7 用户裁「技能表只做有真内容的」⇒**卡上印了名字、却还没挂上可结算内容**的
+    // 那一类（张辽「突袭」＝这种老形态）与"压根没这个名字"走同一支：都是点名跳过。
+    // 上一版这里给的是"能获得，但对局里不会发生变化"——那半条效果留在数据里没人读，
+    // 正是本项目反复登记的静默失真族；判据收窄成一格后，编译器不再产出这种半成品定义。
+    const shell = compileSkill({ id: 'g1', name: '测试将' }, awaken('觉醒', '突袭'));
+    expect(shell.definitions).toHaveLength(0);
+    expect(shell.skipped[0].reason).toBe('GAIN_SKILL_UNKNOWN_NAME');
 
     __setSkillNameRosterForTests([
       makeGeneral('x1', [{ name: '观星', effects: [{ id: 'e1', trigger: { type: 'onTurnStart' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }] }]),
@@ -195,7 +203,7 @@ describe('获得技能 · 真链路（卡面长出一枚，下一次发动才听
     // 事件上那个 `skillName` 是**给技能的那一枚**（觉醒），不是被拿到那枚——两个键各有其主。
     expect((gained[0].data as any).skillName).toBe('觉醒');
     expect(skills).toEqual(['觉醒', '屯田']);
-    // 技能表是**新数组**：原对象没被原地改（名册共用性的证人另开一条）。
+    // 那份技能清单是**新数组**：原对象没被原地改（将领名册共用性的证人另开一条）。
     expect(engine.state.players.find(p => p.id === 2)!.fieldGenerals as any[]).toHaveLength(1);
   });
 
@@ -203,7 +211,7 @@ describe('获得技能 · 真链路（卡面长出一枚，下一次发动才听
     const got = playAwaken('封赏');
     expect(got.thirdDispatch.some(e => e.type === 'DRAW')).toBe(true);
     // 封赏＝回合开始时摸一张；对照那跑（名字查不到⇒什么都没拿到）只多出这一张。
-    // 对照名用一枚名册与独立表都没有的假名（「怒斩」v2.9.6 起是真的了，不再能当"查不到"）。
+    // 对照名用一枚技能表上根本没有的假名（「怒斩」v2.9.6 起是真的了，不再能当"查不到"）。
     const control = playAwaken('查无此技');
     expect(control.skills).toEqual(['觉醒']);
     expect(got.handGrowthAfterGain - control.handGrowthAfterGain).toBe(1);
@@ -241,7 +249,7 @@ describe('获得技能 · 真链路（卡面长出一枚，下一次发动才听
     }
   });
 
-  it('绝不动名册：拿到之后，官方那两张邓艾卡上印的技能一字未改', () => {
+  it('绝不动将领名册：拿到之后，官方那两张邓艾卡上印的技能一字未改', () => {
     const before = allGenerals.filter(g => g.name === '邓艾').map(g => [...(g.skills ?? [])]);
     playAwaken('屯田');
     const after = allGenerals.filter(g => g.name === '邓艾').map(g => [...(g.skills ?? [])]);

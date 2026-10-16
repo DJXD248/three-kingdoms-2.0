@@ -283,8 +283,8 @@ export function enqueueDerivedConsequences(
     // 2.9.3 刀A：拿到的这一枚如果是「在场即生效」，登场那一刻早就过去了——在场那笔账
     // 必须在**获得**这一刻补落，否则"人拿着技能、账却没有"（`passiveModifiers` 文件头
     // 那条待办点名的形状，本条就是它说的"另一条进场的路"）。
-    // 判据读的是前后两份状态里"技能表有没有这个名字"（与 EQUIP_STRIP／DAMAGE 那两条
-    // 同一手法：派生层量状态差，不重抄结算层的幂等规矩）⇒重复获得那一趟表没变⇒补落
+    // 判据读的是前后两份状态里"卡面技能清单有没有这个名字"（与 EQUIP_STRIP／DAMAGE 那两条
+    // 同一手法：派生层量状态差，不重抄结算层的幂等规矩）⇒重复获得那一趟清单没变⇒补落
     // 零笔，也就不会给同一枚在场技落第二笔账。
     const data = event.data as SkillGainedEventData | undefined;
     const playerId = typeof data?.playerId === 'number' ? data.playerId : null;

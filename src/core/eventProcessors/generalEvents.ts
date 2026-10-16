@@ -1,6 +1,6 @@
 import type { EngineState } from '../GameState';
 import type { GameEvent, SkillGainedEventData } from '../Event';
-// 2.9.3 刀A：只借「技能表里那一格长什么样」这一个类型（`data/generals.ts` 是全库唯一的
+// 2.9.3 刀A：只借「卡面技能清单里那一格长什么样」这一个类型（`data/generals.ts` 是全库唯一的
 // 叶子模块、自己什么都不 import），运行时核心层仍然不认识内容层。
 import type { Skill } from '../../data/generals';
 import { getRuntimeCardId } from '../../utils/runtimeIdentity';
@@ -133,12 +133,12 @@ export function applyGeneralMovedEvent(state: EngineState, event: GameEvent): En
 }
 
 /**
- * SKILL_GAINED（2.9.3 刀A「获得技能」）：往那一员将的**技能表**上追加一枚技能。
+ * SKILL_GAINED（2.9.3 刀A「获得技能」）：往那一员将的**卡面技能清单**上追加一枚技能。
  * 引擎里唯一改写卡面的一型——`STAT_MODIFY` 那位对偶只动账本、卡面一字不改，这一位
  * 只动卡面、不碰账本（它带来的那笔在场账由 `chainedConsequences` 在获得这一刻补落）。
  *
  * 三条判据：
- *  1. **拷贝那一员将，绝不原地改**。`fg.general` 今天很可能就是名册里共用的那一个
+ *  1. **拷贝那一员将，绝不原地改**。`fg.general` 今天很可能就是技能表里共用的那一个
  *     对象（登场事件把卡面原样放进状态），原地 append 等于把"他拿到了新技能"写进
  *     全世界共用的那张卡——下一局、别的座位、别的存档都会看见它。`instanceId` 是普通
  *     可枚举字段，所以浅拷贝不会丢runtime身份（`utils/runtimeIdentity.ts`）。
