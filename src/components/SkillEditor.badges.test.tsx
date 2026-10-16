@@ -14,14 +14,18 @@ import { useGameStore } from '../store/gameStore';
 const { savedBlobs } = vi.hoisted(() => ({ savedBlobs: [] as Blob[] }));
 vi.mock('file-saver', () => ({ saveAs: (blob: Blob) => { savedBlobs.push(blob); } }));
 
-const guanyu = allGenerals.find(g => g.id === 'shu_002')!;
+// v2.9.6：fixture 从蜀关羽换成张辽。这张卡本身没被改动——**名字被改动的是它旁边的世界**：
+// 魏势力多了一张同名「关羽」，而本文件的夹具是靠"列表里第一行文字含将名"把将领点出来的，
+// 重名之后第一行落在魏那张（它有两枚技能⇒徽章排成两行，chip() 的"必须只有一个"当场红）。
+// 所以测"一枚技能挂几枚徽章"要用一张**将名唯一、且只有一枚技能**的官方卡：张辽「突袭」。
+const zhangliao = allGenerals.find(g => g.id === 'wei_004')!;
 
 const HEADER = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动',
   '触发时机', '效果模式', '技能描述', '设定备注'];
 
 const rowFor = (tagCell: string, triggerCell: string = '无') => [
-  guanyu.name, guanyu.faction, guanyu.hp, guanyu.meleeAtk, guanyu.rangedAtk,
-  '武圣', tagCell, '无', triggerCell, '无', '出牌阶段，你使用【杀】无距离限制', '✓ 已完成',
+  zhangliao.name, zhangliao.faction, zhangliao.hp, zhangliao.meleeAtk, zhangliao.rangedAtk,
+  '突袭', tagCell, '无', triggerCell, '无', '测试用描述：本文件只测徽章，不测卡面语义', '✓ 已完成',
 ];
 
 function fileFrom(rows: (string | number)[][]): File {
@@ -67,7 +71,7 @@ function openEditor(seed?: Record<string, unknown>) {
   } as Partial<ReturnType<typeof useGameStore.getState>>);
   render(<SkillEditor onClose={() => {}} />);
   const listBtn = Array.from(document.querySelectorAll('button'))
-    .find(b => b.textContent?.includes(guanyu.name));
+    .find(b => b.textContent?.includes(zhangliao.name));
   fireEvent.click(listBtn!);
 }
 
@@ -98,21 +102,21 @@ describe('编辑器 · 一枚技能同时挂几枚徽章', () => {
   });
 
   it('保存时只写 `tags` 一份账：旧单值字段读得出来，但不再被写回去', () => {
-    openEditor({ skillEdits: { [guanyu.id]: [{ name: '武圣', description: '', tag: '限定技' }] } });
+    openEditor({ skillEdits: { [zhangliao.id]: [{ name: '突袭', description: '', tag: '限定技' }] } });
     // 旧存档的单值徽章在界面上是"亮着"的——读不到的话界面会说这技能没徽章
     expect(lit('限定技')).toBe(true);
     fireEvent.click(chip('锁定技'));
     fireEvent.click(chip('遗计技'));
     fireEvent.click(screen.getByText('💾 保存修改'));
 
-    const saved = useGameStore.getState().skillEdits[guanyu.id][0] as Record<string, unknown>;
+    const saved = useGameStore.getState().skillEdits[zhangliao.id][0] as Record<string, unknown>;
     expect(saved.tags).toEqual(['限定技', '锁定技', '遗计技']);
     expect('tag' in saved).toBe(false);
   });
 
   it('再点一次⇒摘掉那一枚，其余几枚不受影响', () => {
     openEditor({
-      skillEdits: { [guanyu.id]: [{ name: '武圣', description: '', tags: ['锁定技', '遗计技'] }] },
+      skillEdits: { [zhangliao.id]: [{ name: '突袭', description: '', tags: ['锁定技', '遗计技'] }] },
     });
     expect(lit('锁定技')).toBe(true);
     fireEvent.click(chip('锁定技'));
@@ -123,8 +127,8 @@ describe('编辑器 · 一枚技能同时挂几枚徽章', () => {
   it('卡面写登场技而时机不在登场时⇒编辑器行内点名两句话说的是什么事', () => {
     openEditor({
       skillEdits: {
-        [guanyu.id]: [{
-          name: '武圣', description: '', tags: ['登场技'],
+        [zhangliao.id]: [{
+          name: '突袭', description: '', tags: ['登场技'],
           trigger: { type: 'onTurnEnd' },
         }],
       },
@@ -139,8 +143,8 @@ describe('编辑器 · 一枚技能同时挂几枚徽章', () => {
   it('时机与徽章说同一件事⇒一声不出（对账不是恒报警）', () => {
     openEditor({
       skillEdits: {
-        [guanyu.id]: [{
-          name: '武圣', description: '', tags: ['登场技'],
+        [zhangliao.id]: [{
+          name: '突袭', description: '', tags: ['登场技'],
           trigger: { type: 'onDeploy' },
         }],
       },
@@ -154,9 +158,9 @@ describe('导入路 · 徽章多枚与对账进总结面板', () => {
     openEditor();
     openImport();
     await importRows([rowFor('遗计技、锁定技', '自身被击杀时')]);
-    const saved = useGameStore.getState().skillEdits[guanyu.id][0] as Record<string, unknown>;
+    const saved = useGameStore.getState().skillEdits[zhangliao.id][0] as Record<string, unknown>;
     expect(saved.tags).toEqual(['遗计技', '锁定技']);
-    expect(panelText()).toContain(guanyu.name);
+    expect(panelText()).toContain(zhangliao.name);
   });
 
   it('徽章与时机对不上⇒导入总结里点名，不静悄悄收下', async () => {
@@ -171,7 +175,7 @@ describe('导入路 · 徽章多枚与对账进总结面板', () => {
     openEditor();
     openImport();
     await importRows([rowFor('锁定技、遗计济')]);
-    const saved = useGameStore.getState().skillEdits[guanyu.id][0] as Record<string, unknown>;
+    const saved = useGameStore.getState().skillEdits[zhangliao.id][0] as Record<string, unknown>;
     expect(saved.tags).toEqual(['锁定技']);
   });
 
@@ -191,7 +195,7 @@ describe('导出 Excel · 两枚徽章共用一格', () => {
     fireEvent.click(chip('锁定技'));
     fireEvent.click(chip('遗计技'));
     fireEvent.click(screen.getByText('💾 保存修改'));
-    const savedBefore = JSON.parse(JSON.stringify(useGameStore.getState().skillEdits[guanyu.id]));
+    const savedBefore = JSON.parse(JSON.stringify(useGameStore.getState().skillEdits[zhangliao.id]));
     expect(savedBefore[0].tags).toEqual(['锁定技', '遗计技']);
 
     openImport();
@@ -209,6 +213,6 @@ describe('导出 Excel · 两枚徽章共用一格', () => {
     });
     await waitFor(() => expect(toastText()).toContain('导入 0 名将领'), { timeout: 20000 });
     expect(toastText()).toContain('无变化');
-    expect(JSON.parse(JSON.stringify(useGameStore.getState().skillEdits[guanyu.id]))).toEqual(savedBefore);
+    expect(JSON.parse(JSON.stringify(useGameStore.getState().skillEdits[zhangliao.id]))).toEqual(savedBefore);
   });
 });

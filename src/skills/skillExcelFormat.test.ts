@@ -17,6 +17,9 @@ import {
   LISTENER_SCOPE_LIST,
   listenerScopeToStr,
   readListenerScopeCell,
+  effectModeToStr,
+  readEffectModeCell,
+  EFFECT_MODE_LIST,
   detectEffectGroupWidth,
   detectEffectGroupStart,
   SKILL_GATE_HEADER,
@@ -570,6 +573,28 @@ describe('skillExcelFormat: 监听扩面（v2.8.21 「我听谁」＋「成为�
     expect(LISTENER_SCOPE_LIST.split(',')).toHaveLength(4);
   });
 
+  /**
+   * v2.9.6 第一枚官方链式技能（魏关羽「单骑」）上表时发现的缺口：「效果模式」这一栏
+   * 的短词过去在写侧（`SkillEditor.tsx` 的导出）与读侧（`skillExcelParsers.ts` 两处）
+   * 各写一份、且都只认前两档 ⇒ `chain` 写出成「无」，导入自己的文件把链式降级成
+   * 全部生效。现在短词只住 `effectModeWords` 一处，三档必须逐字往返。
+   */
+  it('「效果模式」三档短词逐字往返（链式不许再落进「无」）', () => {
+    for (const mode of ['all', 'choice', 'chain'] as const) {
+      expect(readEffectModeCell(effectModeToStr(mode))).toBe(mode);
+    }
+    expect(effectModeToStr(undefined)).toBe('无');
+    expect(readEffectModeCell('无')).toBeUndefined();
+    expect(readEffectModeCell('')).toBeUndefined();
+    // 历史文件可能直接写枚举名（读侧一直认）。
+    expect(readEffectModeCell('choice')).toBe('choice');
+    expect(readEffectModeCell('chain')).toBe('chain');
+    // 词表以外的写法＝按没填处理（本刀前后行为一致，不新增回执）。
+    expect(readEffectModeCell('全部生效（各效果独立触发）')).toBeUndefined();
+    // 下拉里必须数得出三档＋「无」——少一档就等于那一档写不进去。
+    expect(EFFECT_MODE_LIST.split(',')).toEqual(['无', '全部生效', '选择其一', '链式若-则']);
+  });
+
   it('表头认出 12 列组；旧档 3/6/7/8/11 列照常认（新列只在自己导出里出现）', () => {
     // 当前导出＝12 列（2.9.3 刀A 起第 12 列＝获得哪个技能）。
     expect(detectEffectGroupWidth(['x', ...effectGroupHeaders(1), ...effectGroupHeaders(2)])).toBe(12);
@@ -964,10 +989,12 @@ describe('skillExcelFormat — 「获得哪个技能」第 12 格（2.9.3 刀A�
     expect(blank.gainIssues[0]).toContain('编译时会点名跳过');
     expect(blank.fields.runtime).toEqual({ type: 'GAIN_SKILL', target: 'SELF' });
 
-    const absent = parseEffectGroup(gainRow({ gain: '怒斩' }), 0, 12)!;
-    expect(absent.gainIssues[0]).toContain('名册里没有「怒斩」');
+    // 「查无此技」＝名册里根本没有的名字。过去这里用「怒斩」当占位，v2.9.6 它
+    // 真进了独立技能表⇒那个占位不再成立，改用一枚注定查不到的假名。
+    const absent = parseEffectGroup(gainRow({ gain: '查无此技' }), 0, 12)!;
+    expect(absent.gainIssues[0]).toContain('名册里没有「查无此技」');
     // 原文照收：能不能用由**唯一那个解析点**判，导入面不写第二套判断。
-    expect(absent.fields.runtime!.skillName).toBe('怒斩');
+    expect(absent.fields.runtime!.skillName).toBe('查无此技');
 
     __setSkillNameRosterForTests([
       { id: 'x1', name: '甲', faction: '群', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [{ name: '观星' }] },
@@ -979,10 +1006,11 @@ describe('skillExcelFormat — 「获得哪个技能」第 12 格（2.9.3 刀A�
   });
 
   it('只有一句话、没有结构化效果的技能：能获得，但要说清"对局里不会发生变化"', () => {
-    // 武圣＝官方卡上印着、目前只有一段描述的技能（2.4 内容线之前的旧形态）。
-    const parsed = parseEffectGroup(gainRow({ gain: '武圣' }), 0, 12)!;
+    // 突袭＝官方卡上只印了名字的老形态技能。（过去这里用武圣，v2.9.6 它有了结构化
+    // 载荷⇒不再是"只有一句话"的代表，换成仍然只有一枚名字的张辽「突袭」。）
+    const parsed = parseEffectGroup(gainRow({ gain: '突袭' }), 0, 12)!;
     expect(parsed.gainIssues).toEqual([expect.stringContaining('能获得，但对局里不会发生变化')]);
-    expect(parsed.fields.runtime!.skillName).toBe('武圣');
+    expect(parsed.fields.runtime!.skillName).toBe('突袭');
   });
 
   it('别的类型填了这一格：点名按没填处理（同「改哪个数」那一族纪律）', () => {
@@ -1019,7 +1047,7 @@ describe('skillExcelFormat — 「获得哪个技能」第 12 格（2.9.3 刀A�
   });
 
   it('Excel 这一格读不全的账：导入面已点名，编译器再兜一次（两处同一口径）', () => {
-    const parsed = parseEffectGroup(gainRow({ gain: '怒斩', trigger: '回合开始时' }), 0, 12)!;
+    const parsed = parseEffectGroup(gainRow({ gain: '查无此技', trigger: '回合开始时' }), 0, 12)!;
     expect(parsed.gainIssues).toHaveLength(1);
     const { definitions, skipped } = compileSkill(
       { id: 'g1', name: '测试将' },

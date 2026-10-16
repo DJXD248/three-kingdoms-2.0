@@ -8,7 +8,9 @@ import SkillEditor from './SkillEditor';
 import { allGenerals } from '../data/generals';
 import { useGameStore } from '../store/gameStore';
 
-const target = allGenerals.find(g => g.name === '关羽' && g.faction === '蜀')!;
+// 张辽：将名唯一的一张官方卡。v2.9.6 起「关羽」有魏/蜀两张，而本文件的行定位靠
+// "按钮文字含将名"——重名会点错行，只读这件事与重名无关，不该借重名卡来证。
+const target = allGenerals.find(g => g.id === 'wei_004')!;
 
 function openGeneral(name: string) {
   const listBtn = Array.from(document.querySelectorAll('button'))

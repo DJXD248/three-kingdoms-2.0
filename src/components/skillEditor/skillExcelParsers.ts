@@ -8,6 +8,7 @@ import {
   readTriggerCell, triggerToStr, detectEffectGroupWidth, parseEffectGroup,
   SKILL_GATE_HEADER, detectEffectGroupStart, parseSkillGate,
   LISTENER_SCOPE_HEADER, readListenerScopeCell,
+  readEffectModeCell,
 } from '../../skills/skillExcelFormat';
 import { parseSkillTagsCell, tagsOf, formatTags } from '../../domain/skillTags';
 
@@ -312,8 +313,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
         }
       }
     }
-    const effectMode = (sMode === '选择其一' || sMode === 'choice') ? 'choice' as SkillEffectMode
-      : (sMode === '全部生效' || sMode === 'all') ? 'all' as SkillEffectMode : undefined;
+    const effectMode = readEffectModeCell(sMode);
 
     // v2.8.11 刀2：整组门槛（「技能门槛」列）。这一列不存在=旧文件=没有整组门槛。
     const groupGate = skillGateCol >= 0
@@ -455,8 +455,7 @@ export const parseLegacyDetailedRow = (row: (string|number|undefined)[]): {
     for (const u of tagRead.unknown) tagUnknown.push(`${sName}：${u}`);
     const tags = tagRead.tags;
     const forced = sForced === '是' || undefined;
-    const effectMode = (sMode === '选择其一' || sMode === 'choice') ? 'choice' as SkillEffectMode
-      : (sMode === '全部生效' || sMode === 'all') ? 'all' as SkillEffectMode : undefined;
+    const effectMode = readEffectModeCell(sMode);
     skills.push({ name: sName, tags, forced, effectMode, description: sDesc || undefined });
     col += 5;
   }

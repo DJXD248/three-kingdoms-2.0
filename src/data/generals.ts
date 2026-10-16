@@ -843,6 +843,83 @@ const SK_DUANCHANG: Skill = {
   }],
 };
 
+/**
+ * 2.9.6 内容刀（魏关羽入册）：官方卡面上第一次同时出现「在场即生效＋改数」与
+ * 「觉醒技＋门槛＋获得技能」这两族形状。三条文本一条都不是我写的：
+ *
+ * **武圣**逐字取自用户自己的参考文件 `G:\THREE_KINGDOMS\将领数据_参考.xlsx`
+ * sheet「1」第 5 行那张**已在册**的蜀关羽卡——技能标签＝锁定技、发动模式＝持续生效、
+ * 效果＝数值变化·将领自身，描述原文「你的初始远程攻击力+1」（同格"实际效果"那栏他
+ * 写的是「初始远程攻击力为2」＝卡面远程 1 加完之后的读数，不是我另起的一种口径）。
+ * 归属口径同样出自用户（2026-10-14 逐字）：「魏关羽卡上的『武圣』和蜀关羽卡上的
+ * 『武圣』是同一个效果，所以我没有另外写上，参考文件里我有写蜀关羽的技能」⇒ 两家
+ * 共用**同一个 `Skill` 常量**。这不是整齐癖：「获得技能」按名字查名册，同名而内容
+ * 不同＝`ambiguous`⇒点名跳过，而"改初始数值"这一类今天只有 `passive` 一种形态
+ * （§H9 第十八轮那条判据）。
+ * ⚠️ 一并把话说在前头：蜀关羽卡上那枚 `['武圣']` 过去是**只挂名、无描述无载荷**的
+ * 旧写法⇒永不响；换上这一枚之后它**真的会响**（该将远程攻击力 1→2）。这是玩家看得见
+ * 的行为变化，登记与汇报都要点名，不许当成"补了段文字"混过去。
+ */
+const SK_WUSHENG: Skill = {
+  name: '武圣',
+  description: '你的初始远程攻击力+1',
+  tags: ['锁定技'],
+  trigger: { type: 'passive' },
+  effects: [{
+    id: 'e1',
+    trigger: { type: 'passive' },
+    runtime: { type: 'MODIFY_STAT', stat: 'RANGED_ATK', modifyMode: 'delta', value: 1, target: 'SELF' },
+  }],
+};
+
+/**
+ * 单骑那三格门槛＝卡面那句条件的结构化形状（近战／死者踩在战场／身边与战场没有别的
+ * 己方）。三枚量只读**击杀那一声当场记下**的键（`core/attackBlow.ts` 落笔），缺键＝
+ * 读不出＝失败即闭：技能伤害那一刀、上限压到 0 之死压根没有"近战/远程"这个属性⇒
+ * 「近战击杀」在它们身上结构上不成立，不靠任何一处再判断一次。求值单点
+ * `skills/skillConditions.ts`，证人＝`awakeningSkill.test.ts` 刀C 那一档。
+ */
+const SOLO_RIDER_GATES: SkillCondition[] = [
+  { metric: 'KILL_BY_MELEE', op: 'EQ', value: 1 },
+  { metric: 'VICTIM_IN_BATTLE_AREA', op: 'EQ', value: 1 },
+  { metric: 'ALLY_NEAR_OR_BATTLE_COUNT', op: 'EQ', value: 0 },
+];
+
+/**
+ * **单骑**原文逐字出自用户（2026-10-08 01:42，已入 HANDOFF §12-117①）：
+ * 「单骑：觉醒技，你近战击杀战场区域的角色后，若所在区域及战场区域内没有其他己方角色，
+ * 可以失去1点体力上限并获得技能「怒斩」（你进行决斗计算或近战攻击有护甲的角色时伤害+1）」。
+ * 描述这一格只抄前半句——后半那句是**怒斩自己的**卡面文字（落在
+ * `data/standaloneSkills.ts`），而「单骑」「觉醒技」两个词已分别由 `name` 与徽章承载，
+ * 抄进来会变成同一件事说两遍。原文里那个「可以」留着：觉醒技＝非强制发动
+ * （用户 2026-10-04），达成那一刻停下来问一次，摇头不扣额度。
+ *
+ * 两笔效果走 `chain`（「失去…**并**获得…」＝前一环没成就不落下一环），三格门槛挂在
+ * **技能级**⇒编译器把整组门槛继承进那一条链定义（`skillCompiler.ts` 链式那一支）——
+ * 这一槽才是"这一刻到底问不问"的判据，落在效果上＝写着门槛却没人读（§12-55）。
+ * 失去体力上限那一笔的"当前体力跟着削"是白送的：`statModifierEvents.ts::clampToMaxHp`，
+ * 用户 2026-10-08 已裁这一格（体力跟上限一起削到 3）。
+ */
+const SK_DANQI: Skill = {
+  name: '单骑',
+  description: '你近战击杀战场区域的角色后，若所在区域及战场区域内没有其他己方角色，可以失去1点体力上限并获得技能「怒斩」',
+  tags: ['觉醒技'],
+  effectMode: 'chain',
+  conditions: SOLO_RIDER_GATES,
+  effects: [
+    {
+      id: 'e1',
+      trigger: { type: 'onKill' },
+      runtime: { type: 'MODIFY_STAT', stat: 'MAX_HP', modifyMode: 'delta', value: -1, target: 'SELF' },
+    },
+    {
+      id: 'e2',
+      trigger: { type: 'onKill' },
+      runtime: { type: 'GAIN_SKILL', skillName: '怒斩', target: 'SELF' },
+    },
+  ],
+};
+
 // 魏势力 - 界限突破标准包
 const weiGenerals: General[] = [
   createGeneral('wei_001', '曹操', '魏', 4, [SK_JIANXIONG, '护驾']),
@@ -866,12 +943,21 @@ const weiGenerals: General[] = [
   createGeneral('wei_019', '李典', '魏', 3, ['恂恂', '忘隙']),
   createGeneral('wei_020', '满宠', '魏', 3, ['峻刑', '御策']),
   createGeneral('wei_021', '张春华', '魏', 3, ['绝情', '伤逝']),
+  // v2.9.6 内容刀＝用户 2026-10-08 认定的官方将（原文「关羽 魏势力 体力4 近战2远程1
+  // 技能①武圣 技能②单骑」；逐字在 HANDOFF §12-117①）。`hp=4` ⇒ `createGeneral` 走
+  // 武将默认值＝近战 2 远程 1，与他给的那两个数一字不差，所以这里不另写攻击力。
+  // 与 `shu_002` 同名不同势力＝身份锁的键是 (身份, 势力) 两格（`domain/identity.ts`），
+  // 两家各锁各的；名册里这种跨势力同名早有先例（司马懿 魏/晋、邓艾、钟会、张春华）。
+  createGeneral('wei_022', '关羽', '魏', 4, [SK_WUSHENG, SK_DANQI]),
 ];
 
 // 蜀势力 - 界限突破标准包
 const shuGenerals: General[] = [
   createGeneral('shu_001', '刘备', '蜀', 4, ['仁德', '激将']),
-  createGeneral('shu_002', '关羽', '蜀', 4, ['武圣']),
+  // 「武圣」这一格 v2.9.6 起交的是**同一个常量**（原来是只挂名的旧写法）。
+  // 用户口径逐字：魏蜀两张卡上的武圣「是同一个效果，所以我没有另外写上」⇒
+  // 语义仍取参考文件里这张蜀关羽卡，文本一格未改；变的是它从此真的会响。
+  createGeneral('shu_002', '关羽', '蜀', 4, [SK_WUSHENG]),
   createGeneral('shu_003', '张飞', '蜀', 4, ['咆哮']),
   createGeneral('shu_004', '诸葛亮', '蜀', 3, ['观星', '空城']),
   createGeneral('shu_005', '赵云', '蜀', 4, ['龙胆', '涯角']),

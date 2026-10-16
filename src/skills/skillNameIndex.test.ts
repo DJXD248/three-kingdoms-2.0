@@ -17,6 +17,7 @@ import {
 } from './skillNameIndex';
 import { allGenerals, type General, type Skill } from '../data/generals';
 import { standaloneSkills } from '../data/standaloneSkills';
+import { compileGeneralSkills } from './skillCompiler';
 
 /** 与名册同一算法的独立序列化：证人要能自己算一遍，不复用被测实现的话术。 */
 function sig(v: unknown): string {
@@ -58,9 +59,12 @@ describe('skillNameIndex · 名册认名（2.9.3 刀A 唯一解析点）', () =>
   it('官方名册里没有"同名但内容不同"的两枚——用户那条裁决今天是实测成立的', () => {
     const census = rosterCensus();
     expect(census.conflictingNames).toEqual([]);
-    // 实测（2026-10-08）：162 个名字、6 个重名，全部是同一枚技能印在两张卡上。
-    expect(census.totalNames).toBe(162);
-    expect(census.duplicatedNames).toEqual(['凿险', '屯田', '巧变', '权计', '自立', '马术']);
+    // 实测（2026-10-16 量的）：163 个名字、7 个重名，全部是同一枚技能印在两张卡上。
+    // 162→163 与「重名 6→7」都来自 v2.9.6 内容刀：魏关羽「单骑」是一个新名字，
+    // 而「武圣」现在蜀/魏两张卡各印一份——**同一枚定义对象**，所以只进重名、不进歧义。
+    expect(census.totalNames).toBe(163);
+    // 这份清单是 `.sort()` 过的（按码点，不是首次出现顺序）：武 U+6B66 排在权 U+6743 之后。
+    expect(census.duplicatedNames).toEqual(['凿险', '屯田', '巧变', '权计', '武圣', '自立', '马术']);
     // 重名的这几枚必须走"取第一份"这条路，而不是被当成歧义拦下。
     for (const name of census.duplicatedNames) {
       const found = lookupSkillByName(name);
@@ -101,11 +105,15 @@ describe('skillNameIndex · 名册认名（2.9.3 刀A 唯一解析点）', () =>
 
   it('录入面的名字清单＝名册上出现过的全部（去重、按首次出现顺序）', () => {
     const names = knownSkillNames();
-    expect(names).toHaveLength(rosterCensus().totalNames);
+    // 生产数据现场量（2026-10-16）：163 个名册名＋独立技能表那 1 枚「怒斩」＝164。
+    expect(rosterCensus().totalNames).toBe(163);
+    expect(names).toHaveLength(164);
     expect(names).toContain('奸雄');
     expect(names.filter(n => n === '屯田')).toHaveLength(1);
     __setSkillNameRosterForTests([G('甲', [{ name: '新技' }, { name: '新技' }])]);
-    expect(knownSkillNames()).toEqual(['新技']);
+    // 名册换成了两张假卡，但独立技能表是**第二个来源**、不归这个测试钩子管：
+    // 它那一枚（v2.9.6 起＝怒斩）照旧排在清单末尾。写死成 ['新技'] 是表还空着时的读数。
+    expect(knownSkillNames()).toEqual(['新技', '怒斩']);
   });
 });
 
@@ -149,10 +157,25 @@ describe('skillNameIndex · 独立技能表是第二个来源（2.9.4 刀＝#57�
     if (found.status === 'ambiguous') expect(found.owners).toEqual(['甲（群）', '独立技能表']);
   });
 
-  it('生产数据普查：这张表本刀是空的⇒今天两锚的名册读数与上一版逐字相同', () => {
+  /**
+   * 生产数据普查。2.9.4 那趟这张表还是空的（钉子钉的是"空"）；v2.9.6 内容刀放进
+   * 第一枚⇒改成逐字钉"表里有且只有哪一枚、它长什么形状"，两锚的名册读数因此**会动**，
+   * 这一条就是那条事实的落点（要不要动锚按 §12-121③ 实测收口，不靠这里预告）。
+   */
+  it('生产数据普查：表里有且只有「怒斩」一枚，两条在场腿各带自己的场合', () => {
     __resetSkillNameIndexForTests();
-    expect(standaloneSkills).toEqual([]);
-    expect(knownSkillNames()).toHaveLength(rosterCensus().totalNames);
-    expect(lookupSkillByName('怒斩').status).toBe('unknown');
+    expect(standaloneSkills.map(s => s.name)).toEqual(['怒斩']);
+    expect(knownSkillNames()).toHaveLength(rosterCensus().totalNames + 1);
+    const found = lookupSkillByName('怒斩');
+    expect(found.status).toBe('found');
+    if (found.status !== 'found') return;
+    expect(found.owners).toEqual(['独立技能表']);
+    expect((found.skill.effects ?? []).map(e => e.runtime?.occasion)).toEqual(['duel', 'meleeVsArmored']);
+    // 表上这枚与魏关羽卡上「单骑」白送的那一枚必须是**同一个对象**：获得技能时
+    // 按名字查表拿到的就是编译落进去的那份，不许存在第二份写法。
+    const compiled = compileGeneralSkills(allGenerals.find(g => g.id === 'wei_022')!)
+      .definitions.find(d => d.id === 'wei_022:单骑:chain')!;
+    const granted = compiled.effects.find(e => e.type === 'GAIN_SKILL')?.gainedSkill;
+    expect(granted).toBe(found.skill);
   });
 });

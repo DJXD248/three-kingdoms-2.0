@@ -157,8 +157,9 @@ describe('获得技能 · 编译面（名字是唯一入口，解析点只有一
     });
     expect(otherTarget.skipped[0].reason).toBe('GAIN_SKILL_INCOMPLETE');
 
-    // 「怒斩」＝用户原文里那枚还没进池的技能：不猜、不就近取一枚像的。
-    const absent = compileSkill({ id: 'g1', name: '测试将' }, awaken('觉醒', '怒斩'));
+    // 「查无此技」＝名册与独立表里都没有的名字：不猜、不就近取一枚像的。
+    // （过去这里用「怒斩」当占位——v2.9.6 它真进了独立技能表⇒占位不再成立。）
+    const absent = compileSkill({ id: 'g1', name: '测试将' }, awaken('觉醒', '查无此技'));
     expect(absent.definitions).toHaveLength(0);
     expect(absent.skipped[0].reason).toBe('GAIN_SKILL_UNKNOWN_NAME');
 
@@ -171,11 +172,16 @@ describe('获得技能 · 编译面（名字是唯一入口，解析点只有一
     expect(ambiguous.skipped[0].reason).toBe('GAIN_SKILL_AMBIGUOUS_NAME');
   });
 
-  it('入口存在性：能力已经在了，官方内容里**还没有一处**用得上它（两件事各有证人）', () => {
+  /**
+   * 入口存在性普查。2.9.3 那趟钉的是"能力已经在了，但官方内容里一处都没用上"；
+   * v2.9.6 内容刀放进第一处⇒钉子改成"用在哪、只有这一处"：逐字＝['关羽·单骑']
+   * （魏关羽 id=wei_022；蜀关羽那张卡上没有这一条）。将来再有一处用得上，这条先红。
+   */
+  it('入口存在性：官方内容里已经有一处用得上它，而且只有那一处', () => {
     const users = allGenerals.flatMap(g => (g.skills ?? []).flatMap(s => (s.effects ?? [])
       .filter(e => e.runtime?.type === 'GAIN_SKILL')
       .map(() => `${g.name}·${s.name}`)));
-    expect(users).toEqual([]);
+    expect(users).toEqual(['关羽·单骑']);
   });
 });
 
@@ -197,7 +203,8 @@ describe('获得技能 · 真链路（卡面长出一枚，下一次发动才听
     const got = playAwaken('封赏');
     expect(got.thirdDispatch.some(e => e.type === 'DRAW')).toBe(true);
     // 封赏＝回合开始时摸一张；对照那跑（名字查不到⇒什么都没拿到）只多出这一张。
-    const control = playAwaken('怒斩');
+    // 对照名用一枚名册与独立表都没有的假名（「怒斩」v2.9.6 起是真的了，不再能当"查不到"）。
+    const control = playAwaken('查无此技');
     expect(control.skills).toEqual(['觉醒']);
     expect(got.handGrowthAfterGain - control.handGrowthAfterGain).toBe(1);
   });

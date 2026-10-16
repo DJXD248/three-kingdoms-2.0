@@ -1,7 +1,7 @@
 /**
  * 2.5.4 收敛核验 · 逐技能强制触发可达性专项。
  *
- * 对全库 40 条内置 runtime 定义逐条构造"必然触发"的最小场景，断言每条
+ * 对全库内置 runtime 定义逐条构造"必然触发"的最小场景，断言每条
  * 定义都产出过带自身 skillId 的效果事件——随机档 ai-battle 里零触发的
  * 攻击链技能（v2.4.3 洞察①）在这里没有躲藏空间。onTurnEnd 走"候选在列
  * + ACTIVATE_SKILL 真响"两段（决策通道形态），onDeploy 走部署步重放
@@ -92,8 +92,7 @@ const ARMOR_CARD = (index: number): GameCard =>
   ({ id: `rc_armor_${index}`, name: '军备', type: '军备', description: '测试预挂军备' });
 
 /** 全库编译账本快照：36 定义逐条带 owner，顺序由 generals.ts 决定。 */
-function allCompiledEntries(): DefEntry[] {
-  const entries: DefEntry[] = [];
+function allCompiledEntries(): DefEntry[] {  const entries: DefEntry[] = [];
   for (const general of allGenerals) {
     const { definitions } = compileGeneralSkills(general);
     for (const def of definitions) entries.push({ def, owner: general });
@@ -373,13 +372,34 @@ function armorCardsLeft(state: EngineState, generalId: string): number | undefin
 
 const ENTRIES = allCompiledEntries();
 
+/**
+ * 本专项的判据是"强制场景里打出一条属于 `EFFECT_EVENT_TYPES` 那七型、且带自身 skillId
+ * 的**效果事件**"。v2.9.6 内容刀第一次往官方卡池里放了三枚结构上不属于这一判据的定义，
+ * 它们各有各的证人，绝不许被当成"没人管"：
+ *   · 蜀／魏关羽「武圣」＝在场即生效（passive）——没有发动的那一刻，唯一读者是
+ *     `passiveModifiers.ts` 的改数账本⇒证人＝`passiveModifiers.test.ts` 官方池那一组；
+ *   · 魏关羽「单骑」＝链式两项（改体力上限＋获得技能），两项都不是那七型事件，而且
+ *     它三条门槛（近战击杀·被杀者在战场·身边与战场己方=0）在喂招场里本就不成立⇒
+ *     证人＝`awakeningSkill.test.ts`＋`gainSkill.test.ts` 的觉醒链真链路。
+ * 名单**逐字钉**（按定义 id）：这一档要是往里长，必须显式改这里；写了名字而库里没有
+ * （改名／撤卡）同样红——不留一条"豁免了个不存在的东西"的假账。
+ */
+const NON_EVENT_IDS = ['shu_002:武圣:e1', 'wei_022:单骑:chain', 'wei_022:武圣:e1'];
+const FEED_ENTRIES = ENTRIES.filter(e => !NON_EVENT_IDS.includes(e.def.id));
+
 describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', () => {
-  it('账本钉：40 条 runtime 定义 / 129 条诚实跳过，触发类别覆盖 8+onTurnEnd 全谱', () => {
-    expect(ENTRIES).toHaveLength(40);
+  it('账本钉：43 条 runtime 定义 / 128 条诚实跳过，触发类别覆盖 8+onTurnEnd 全谱', () => {
+    expect(ENTRIES).toHaveLength(43);
+    // v2.9.6 内容刀现场量的：43＝40＋武圣两枚（蜀／魏各一，passive）＋单骑一枚（链式）。
+    const allIds = ENTRIES.map(e => e.def.id);
+    for (const id of NON_EVENT_IDS) {
+      expect(allIds, `豁免名单里的 ${id} 在库里找不到＝假账`).toContain(id);
+    }
+    expect(FEED_ENTRIES).toHaveLength(40);
     let skipped = 0;
     for (const g of allGenerals) skipped += compileGeneralSkills(g).skipped.length;
-    expect(skipped).toBe(129);
-    const triggers = new Set(ENTRIES.map(e => `${e.def.trigger}${e.def.damageTypeFilter ? `:${e.def.damageTypeFilter}` : ''}`));
+    expect(skipped).toBe(128);
+    const triggers = new Set(FEED_ENTRIES.map(e => `${e.def.trigger}${e.def.damageTypeFilter ? `:${e.def.damageTypeFilter}` : ''}`));
     expect([...triggers].sort()).toEqual([
       'onBecomingTarget', 'onCardLost', 'onDamageDealt:attack', 'onDamageTaken',
       'onDamageTaken:attack', 'onDamageTaken:skill', 'onDeath', 'onDeploy', 'onKill',
@@ -389,7 +409,7 @@ describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', (
 
   it('每一条定义都能在强制场景里打出带自身 skillId 的效果事件', () => {
     const unreachable: string[] = [];
-    ENTRIES.forEach((entry, i) => {
+    FEED_ENTRIES.forEach((entry, i) => {
       const { state, events, scenarioId } = forceTrigger(entry, i);
       if (!hasEffectFor(events, scenarioId)) unreachable.push(entry.def.id);
       if (entry.def.effects[0]?.type === 'EQUIP_STRIP') {
@@ -405,7 +425,7 @@ describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', (
 
   it('分触发类别逐类点名（失败时定位到类）', () => {
     const byTrigger = new Map<string, DefEntry[]>();
-    ENTRIES.forEach((entry) => {
+    FEED_ENTRIES.forEach((entry) => {
       const key = `${entry.def.trigger}|${entry.def.damageTypeFilter ?? 'any'}`;
       const list = byTrigger.get(key) ?? [];
       list.push(entry);
@@ -413,7 +433,7 @@ describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', (
     });
     for (const [key, list] of byTrigger) {
       for (const entry of list) {
-        const idx = ENTRIES.indexOf(entry);
+        const idx = FEED_ENTRIES.indexOf(entry);
         const { events, scenarioId } = forceTrigger(entry, idx);
         expect(
           hasEffectFor(events, scenarioId),
@@ -425,10 +445,10 @@ describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', (
   });
 
   it('回合结束六条：候选在列且激活后 SKILL_ACTIVATED 与效果事件同现', () => {
-    const turnEnd = ENTRIES.filter(e => e.def.trigger === 'onTurnEnd');
+    const turnEnd = FEED_ENTRIES.filter(e => e.def.trigger === 'onTurnEnd');
     expect(turnEnd).toHaveLength(6);
     for (const entry of turnEnd) {
-      const idx = ENTRIES.indexOf(entry);
+      const idx = FEED_ENTRIES.indexOf(entry);
       const { events, scenarioId } = forceTrigger(entry, idx);
       expect(events.some(e => e.type === 'SKILL_ACTIVATED')).toBe(true);
       expect(hasEffectFor(events, scenarioId)).toBe(true);
@@ -444,7 +464,7 @@ describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', (
         .replace(/"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"/g, '"_u"')
         .replace(/"timestamp":\d+/g, '"timestamp":"_t"')
         .replace(/"rootEventId":"[^"]*"/g, '"rootEventId":"_v"');
-    ENTRIES.forEach((entry, i) => {
+    FEED_ENTRIES.forEach((entry, i) => {
       const action = scenarioAction(entry, i);
       action.id = `rc_fixed_${i}`;
       const first = forceTrigger(entry, i, action).events;

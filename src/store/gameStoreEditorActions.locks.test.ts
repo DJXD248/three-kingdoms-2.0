@@ -14,7 +14,10 @@ import {
 } from './editorPersistence';
 import { createAuthoredGeneral } from '../domain/generalProvenance';
 
-const ledger = allGenerals.find(g => g.name === '关羽' && g.faction === '蜀') as General;
+// 张辽：将名唯一的官方卡，用来当"金锁那张"。v2.9.6 起「关羽」有魏/蜀两张，而
+// importSkillEditsFromText 是**按名字**找将的——`${ledger.name}|...` 会先撞上魏关羽，
+// 白锁就锁不到被写入的那张卡（测出来的拒绝/放行全落在错的人身上）。
+const ledger = allGenerals.find(g => g.id === 'wei_004') as General;
 const authoredFixture = createAuthoredGeneral({ name: '锁试·自建将', faction: '蜀', hp: 3 }, 'DIY');
 if (!authoredFixture.ok) throw new Error('fixture 造卡失败');
 const diy = authoredFixture.general;

@@ -774,15 +774,22 @@ describe('造成伤害那一格 · 真链路（2.9.4 刀＝#54，用户 2026-10-
     expect(crossSideBlow([{ ...dtEntry('DAMAGE_TAKEN', 'set', 1, 2, 'g2'), id: 'sm:1', seq: 1 }]).hp).toBe(3);
   });
 
-  it('普查钉子：两个锚池里今天没有任何一条内容用「造成的伤害」，独立技能表也是空的⇒锚结构上不动', () => {
+  /**
+   * 普查钉子。2.9.4 那趟钉的是"两个锚池里没有内容用「造成的伤害」、独立技能表还是
+   * 空的"⇒那一刀结构上不动锚。v2.9.6 内容刀把表填上了第一枚（怒斩），这一档改口成
+   * "谁在用、只有这一处"：卡面上仍然没有第二处（怒斩不印在任何将卡上，只由魏关羽
+   * 「单骑」白送），所以两锚池的读数照旧是空表。
+   * 至于这一枚会不会动锚＝跑出来才算，不靠这里预告（§12-121③）。
+   */
+  it('普查钉子：用「造成的伤害」的内容有且只有表上那枚怒斩，两锚池的卡面仍是一处没有', () => {
     const users = (pool: readonly General[]) => pool.filter(general =>
       (general.skills ?? []).some(skill => (skill.effects ?? []).some(effect =>
         (effect.runtime as { stat?: string; occasion?: unknown } | undefined)?.stat === 'DAMAGE_DEALT'
         || (effect.runtime as { occasion?: unknown } | undefined)?.occasion !== undefined)));
     expect(users(allGenerals).map(g => g.name)).toEqual([]);
     expect(users(DIY_FIXTURE_GENERALS).map(g => g.name)).toEqual([]);
-    // 第二来源本刀只修路、不放车：表体为空⇒名册读数与上一版逐字相同（怒斩 2.9.5 才进）。
-    expect(standaloneSkills).toEqual([]);
+    expect(standaloneSkills.map(s => s.name)).toEqual(['怒斩']);
+    expect(standaloneSkills[0].effects?.map(e => e.runtime?.occasion)).toEqual(['duel', 'meleeVsArmored']);
   });
 });
 

@@ -125,14 +125,19 @@ describe('passiveModifiers · 登场落笔', () => {
  * 「两锚逐字不换名」这句话有两个完全不同的原因：账本没接线（代码缺陷），或
  * 账本接了线但官方卡池里没有任何一张卡能触发它（内容现状）。只有把后者做成
  * 断言，前一种漂移才不会被误读成后者。所以这里**不跑对局**、只按内容定义追
- * 「官方卡池 → 技能 → 触发／效果」这条链：官方 95 将里既不许出现 `passive`
- * 这一型触发，也不许出现 `MODIFY_STAT` 这一类效果。哪天第一张改数官方卡落地，
- * 这条测试当场变红——那正是换锚那一刀要显式处理的事，不是一起事故。
+ * 「官方卡池 → 技能 → 触发／效果」这条链。
+ *
+ * v2.9.6 内容刀把这条链的第一张卡放了进来（关羽「武圣」＝远程攻击力+1），
+ * 于是这条钉子从"一处都不许有"改口成"有哪几处、逐字列出来"：
+ * 官方池里带 passive／带 MODIFY_STAT 的卡**有且只有两张关羽**，落笔账各一笔。
+ * 再多一张就得显式改这里——这一档正是"要动锚"那类改动，不是一起事故。
  */
-describe('passiveModifiers · 官方卡池的入口存在性（改数能力的零入口基线）', () => {
+describe('passiveModifiers · 官方卡池的入口存在性（v2.9.6 起第一张改数卡已落地）', () => {
   const officials = allGenerals.filter(g => g.source !== 'DIY');
+  /** 现场量的：官方池里带这一型的只有蜀关羽 shu_002 与魏关羽 wei_022。 */
+  const STAT_CARD_IDS = ['shu_002', 'wei_022'];
 
-  it('官方池一张改数卡都没有：既无 passive 触发，也无 MODIFY_STAT 效果', () => {
+  it('官方池只有两张改数卡，都是关羽·武圣：passive 触发与 MODIFY_STAT 效果各点名一遍', () => {
     const withPassiveTrigger = officials.filter(g =>
       JSON.stringify(g.skills).includes('"passive"'),
     );
@@ -140,13 +145,23 @@ describe('passiveModifiers · 官方卡池的入口存在性（改数能力的�
       JSON.stringify(g.skills).includes('"MODIFY_STAT"'),
     );
     expect(officials.length).toBeGreaterThan(0);
-    expect(withPassiveTrigger.map(g => g.name)).toEqual([]);
-    expect(withStatEffect.map(g => g.name)).toEqual([]);
+    expect(withPassiveTrigger.map(g => g.id).sort()).toEqual(STAT_CARD_IDS);
+    expect(withStatEffect.map(g => g.id).sort()).toEqual(STAT_CARD_IDS);
+    expect(withPassiveTrigger.map(g => g.name)).toEqual(['关羽', '关羽']);
   });
 
-  it('逐位官方将走一遍落笔⇒空数组（锚不换名的结构保证，不是"多了又被消化"）', () => {
+  it('逐位官方将走一遍落笔⇒除两张关羽外全是空数组，关羽各且仅一笔', () => {
     for (const g of officials) {
-      expect(passiveEntriesOfGeneral(g, `${g.id}#1`, 1), g.name).toEqual([]);
+      const entries = passiveEntriesOfGeneral(g, `${g.id}#1`, 1);
+      if (!STAT_CARD_IDS.includes(g.id)) {
+        expect(entries, g.name).toEqual([]);
+        continue;
+      }
+      expect(entries, g.name).toHaveLength(1);
+      expect(entries[0], g.name).toMatchObject({
+        key: 'RANGED_ATK', mode: 'delta', passive: true, locked: true,
+        ownerSkillName: '武圣', ownerGeneralId: `${g.id}#1`, targetId: `${g.id}#1`,
+      });
     }
   });
 });

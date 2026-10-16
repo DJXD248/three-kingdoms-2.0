@@ -151,11 +151,16 @@ describe('skill trigger report (2.4.3, keyed per-general since 2.7.0)', () => {
   it('configuredSkillRows covers exactly the runtime-bearing built-in skills', () => {
     const rows = configuredSkillRows();
     // 批一 9 + 批二 21 + 批三 2 + v2.5.2 onDeploy 转正 3 + v2.6.0 EQUIP_STRIP 2 + v2.6.2 连营/枭姬 2（苦肉双效果仍是一行）
-    expect(rows).toHaveLength(39);
+    // ＋ v2.9.6 内容刀 3（蜀·武圣、魏·武圣、魏·单骑）＝42
+    expect(rows).toHaveLength(42);
     const keys = rows.map(r => r.key);
-    // join key = 模板id:技能名 → 屯田（魏/晋邓艾同名）不再共行 = 39 个唯一键
-    expect(new Set(keys).size).toBe(39);
+    // join key = 模板id:技能名 → 屯田（魏/晋邓艾同名）不再共行 = 42 个唯一键
+    expect(new Set(keys).size).toBe(42);
     expect(keys.filter(k => k.endsWith(':屯田'))).toHaveLength(2);
+    // 「关羽」这个名字现在有两张官方卡（蜀/魏），同名技能也各占一行⇒按将领 id 逐字钉
+    expect(keys).toContain('shu_002:武圣');
+    expect(keys).toContain('wei_022:武圣');
+    expect(keys).toContain('wei_022:单骑');
     expect(keys).toContain(`${idOf('曹操')}:奸雄`);
     expect(keys).toContain(`${idOf('司马懿')}:反馈`);
     expect(keys).toContain(`${idOf('陆逊')}:连营`);

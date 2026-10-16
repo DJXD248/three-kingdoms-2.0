@@ -24,6 +24,7 @@ import type {
   SkillTriggerConfig,
   SkillTriggerType,
   SkillEffect,
+  SkillEffectMode,
   SkillRuntimeEffect,
   SkillCondition,
   DeploySubType,
@@ -221,6 +222,42 @@ export const LISTENER_SCOPE_HINT =
   + '留空＝只听自己（与今天对局一致）。'
   + '只有部署、回合开始、成为目标、受到伤害、造成伤害、击杀、阵亡、失去牌、获得牌这些时机认这一栏；'
   + '别的时机填了会按没填处理，并在导入报告里点名（不会静默收下）。';
+
+// ── 「效果模式」（Excel 侧的词表） ─────────────────────────────────────────
+// 界面上那个 <select> 用的是 `effectModeLabels`（长句，带括号解释），Excel 格子
+// 用的是短词。两套词各管各的场合没问题，**唯独不能两处各写一份短词**：
+// v2.9.6 第一枚官方链式技能（魏关羽「单骑」）上表后暴露的就是这个——写侧的
+// 三档词表只认前两档，链式落进 `'无'`，导出自己的文件再导回来会被悄悄降级
+// 成「全部生效」。所以短词只住在这里，读写两侧都从这里取。
+
+/** 短词表：键＝引擎枚举，值＝格子里写的那个词。 */
+export const effectModeWords: Record<SkillEffectMode, string> = {
+  all: '全部生效',
+  choice: '选择其一',
+  chain: '链式若-则',
+};
+
+/** 写出侧：没填＝「无」。 */
+export function effectModeToStr(mode?: SkillEffectMode): string {
+  return mode ? effectModeWords[mode] : EMPTY;
+}
+
+/**
+ * 读入侧：认这里的短词，也认原始枚举名（历史文件可能直接写了 `'all'`／`'choice'`）。
+ * 词表以外的写法按没填处理——这与本刀之前的行为逐字一致，**没有**新增"认不出来就
+ * 点名"那一路（那是「我听谁」「门槛」两栏的规矩；这一栏是闭合三档＋下拉，
+ * 收到别词的可能性极低，为它扩回执口径不值当）。
+ */
+export function readEffectModeCell(raw: unknown): SkillEffectMode | undefined {
+  const cell = cleanCell(raw);
+  if (!cell) return undefined;
+  const hit = (Object.entries(effectModeWords) as [SkillEffectMode, string][])
+    .find(([, w]) => w === cell)?.[0];
+  return hit ?? ((Object.keys(effectModeWords) as SkillEffectMode[]).find(k => k === cell));
+}
+
+/** 「效果模式」列的 Excel 下拉内容。 */
+export const EFFECT_MODE_LIST = [EMPTY, ...Object.values(effectModeWords)].join(',');
 
 // ── Runtime effect fields ───────────────────────────────────────────
 

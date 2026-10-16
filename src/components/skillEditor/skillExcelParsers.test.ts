@@ -522,11 +522,13 @@ describe('第 12 列「获得哪个技能」的导入报告（2.9.3 刀A）', ()
   });
 
   it('名字查不到：报告里点名（谁·哪个技能·第几个效果·原文），不静默收下', () => {
-    const { entries, parseWarnings } = parse('获得技能', '怒斩');
-    expect(entries[0].skills[0].effects![0].runtime).toMatchObject({ type: 'GAIN_SKILL', skillName: '怒斩' });
+    // 占位名用一枚名册上根本没有的假名。「怒斩」过去当这个占位，v2.9.6 它进了
+    // 独立技能表⇒占位不再成立。
+    const { entries, parseWarnings } = parse('获得技能', '查无此技');
+    expect(entries[0].skills[0].effects![0].runtime).toMatchObject({ type: 'GAIN_SKILL', skillName: '查无此技' });
     expect(parseWarnings).toHaveLength(1);
     expect(parseWarnings[0]).toContain('关羽·测试技 效果1');
-    expect(parseWarnings[0]).toContain('怒斩');
+    expect(parseWarnings[0]).toContain('查无此技');
   });
 
   it('这一格留空＝半条效果：同样点名', () => {

@@ -71,6 +71,9 @@ const ALL_IDS = [
   // batch five (v2.6.2) — the first onCardLost-filtered skills（事件源扩面：
   // DISCARD/EQUIP_STRIP 派生 CARD_LOST 后转正的 连营/枭姬）
   'wu_007:连营:e1', 'wu_008:枭姬:e1',
+  // v2.9.6 内容刀＝第一枚官方「在场即生效」与第一枚链式技能上表：
+  // 武圣（蜀关羽/魏关羽各一张卡，同一个定义形状）＋单骑（改上限→获得技能）。
+  'shu_002:武圣:e1', 'wei_022:武圣:e1', 'wei_022:单骑:chain',
 ];
 
 function compileAllGenerals() {
@@ -87,10 +90,10 @@ function compileAllGenerals() {
 describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () => {
   const { definitions, skipped } = compileAllGenerals();
 
-  it('24 条编译入局：全库共 40 条 runtime 定义（含 v2.6.0 EQUIP_STRIP 两条与 v2.6.2 onCardLost 两条）', () => {
-    expect(definitions).toHaveLength(40);
+  it('24 条编译入局：全库共 43 条 runtime 定义（含 v2.6.0 EQUIP_STRIP 两条、v2.6.2 onCardLost 两条与 v2.9.6 三条）', () => {
+    expect(definitions).toHaveLength(43);
     expect(definitions.map(d => d.id).sort()).toEqual([...ALL_IDS].sort());
-    expect(skipped).toHaveLength(129);
+    expect(skipped).toHaveLength(128);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 
@@ -241,7 +244,7 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
         ids.add(d.id);
       }
     }
-    expect(ids.size).toBe(40); // v2.6.2 连营/枭姬转正后全库定义数（无碰撞）
+    expect(ids.size).toBe(43); // 全库定义数（无碰撞）：v2.6.2 转正 40＋v2.9.6 武圣两枚与单骑一枚
   });
 });
 

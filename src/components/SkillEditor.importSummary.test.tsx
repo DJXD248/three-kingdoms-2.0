@@ -12,15 +12,18 @@ import { allGenerals } from '../data/generals';
 import { useGameStore } from '../store/gameStore';
 import { renderSummaryText } from './skillEditor/importSummary';
 
-const guanyu = allGenerals.find(g => g.id === 'shu_002')!;
+// v2.9.6：换成张辽「突袭」（将名唯一的官方卡）。两张同名「关羽」会让"按名字点行/按名字查将"
+// 落在魏那一张；更要紧的是武圣现在带**结构化载荷**，用它做导入总结的对照物，光改体力就会
+// 多报一条"技能改动"——那是内容的真变化，却会把本文件想测的"只点名体力"糊掉。
+const zhangliao = allGenerals.find(g => g.id === 'wei_004')!;
 
 const HEADER = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动',
   '触发时机', '效果模式', '技能描述', '技能门槛',
   '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛',
   '设定备注'];
 
-const rowFor = (hp: number, name: string = guanyu.name, faction: string = guanyu.faction, skill: string = '武圣') => [
-  name, faction, hp, guanyu.meleeAtk, guanyu.rangedAtk,
+const rowFor = (hp: number, name: string = zhangliao.name, faction: string = zhangliao.faction, skill: string = '突袭') => [
+  name, faction, hp, zhangliao.meleeAtk, zhangliao.rangedAtk,
   skill, '无', '无', '无', '无', '无', '无',
   '', '', '', '', '', '', '', '✓ 已完成',
 ];
@@ -74,17 +77,17 @@ async function importFile(file: File, expectText: string) {
 describe('导入总结 · Excel 路', () => {
   afterEach(cleanup);
 
-  it('改体力的行⇒面板写「修改 1 名 · 关羽：体力 4→5」，条目名与改动项都点名', async () => {
+  it('改体力的行⇒面板写「修改 1 名 · 张辽：体力 4→5」，条目名与改动项都点名', async () => {
     arm();
     expect(hasPanel()).toBe(false); // 没导入过⇒不弹空壳
-    await importFile(fileFrom([rowFor(guanyu.hp + 1)]), '导入 1 名将领');
+    await importFile(fileFrom([rowFor(zhangliao.hp + 1)]), '导入 1 名将领');
     await waitFor(() => expect(summaryText()).toContain('修改 1 名'));
-    expect(summaryText()).toContain(`· 关羽：体力 ${guanyu.hp}→${guanyu.hp + 1}`);
+    expect(summaryText()).toContain(`· 张辽：体力 ${zhangliao.hp}→${zhangliao.hp + 1}`);
   });
 
   it('原样重导（被跳过的那些）⇒绝不进总结，面板内容逐字不变', async () => {
     arm();
-    const file = fileFrom([rowFor(guanyu.hp + 1)]);
+    const file = fileFrom([rowFor(zhangliao.hp + 1)]);
     await importFile(file, '导入 1 名将领');
     await waitFor(() => expect(summaryText()).toContain('修改 1 名'));
     const first = summaryText();
@@ -97,21 +100,21 @@ describe('导入总结 · Excel 路', () => {
 
   it('旧值取的是生效视图而非仓库原始卡：第二次导入报「5→6」，不是「4→6」（#47 口径）', async () => {
     arm();
-    await importFile(fileFrom([rowFor(guanyu.hp + 1)]), '导入 1 名将领');
+    await importFile(fileFrom([rowFor(zhangliao.hp + 1)]), '导入 1 名将领');
     await waitFor(() => expect(summaryText()).toContain('修改 1 名'));
-    await importFile(fileFrom([rowFor(guanyu.hp + 2)]), '导入 1 名将领');
-    await waitFor(() => expect(summaryText()).toContain(`体力 ${guanyu.hp + 1}→${guanyu.hp + 2}`));
-    expect(summaryText()).not.toContain(`体力 ${guanyu.hp}→${guanyu.hp + 2}`);
+    await importFile(fileFrom([rowFor(zhangliao.hp + 2)]), '导入 1 名将领');
+    await waitFor(() => expect(summaryText()).toContain(`体力 ${zhangliao.hp + 1}→${zhangliao.hp + 2}`));
+    expect(summaryText()).not.toContain(`体力 ${zhangliao.hp}→${zhangliao.hp + 2}`);
   });
 
   it('技能变更加一行⇒只点名是哪条技能，不铺平到槽位', async () => {
     arm();
-    const row = rowFor(guanyu.hp);
+    const row = rowFor(zhangliao.hp);
     const withSkill = [...row];
-    withSkill[10] = '出牌阶段，你可以将一张红色牌当【杀】使用或打出';
+    withSkill[10] = '本机自填的一句话：官方卡面上没有这句';
     await importFile(fileFrom([withSkill]), '导入 1 名将领');
     await waitFor(() => expect(summaryText()).toContain('修改 1 名'));
-    expect(summaryText()).toContain('技能「武圣」改动');
+    expect(summaryText()).toContain('技能「突袭」改动');
     expect(summaryText()).not.toContain('描述');
   });
 });
@@ -121,13 +124,13 @@ describe('导入总结 · 文本路与待点选新建共用同一份', () => {
 
   it('文本导入报「新增技能「义绝」」，且与先前 Excel 那条累积在同一面板（两条路一份总结）', async () => {
     arm();
-    await importFile(fileFrom([rowFor(guanyu.hp + 1)]), '导入 1 名将领');
+    await importFile(fileFrom([rowFor(zhangliao.hp + 1)]), '导入 1 名将领');
     await waitFor(() => expect(summaryText()).toContain('修改 1 名'));
     const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: `${guanyu.name}|武圣,义绝` } });
+    fireEvent.change(textarea, { target: { value: `${zhangliao.name}|突袭,义绝` } });
     fireEvent.click(screen.getByText('导入文本'));
     await waitFor(() => expect(summaryText()).toContain('新增技能「义绝」'));
-    expect(summaryText()).toContain(`体力 ${guanyu.hp}→${guanyu.hp + 1}`);
+    expect(summaryText()).toContain(`体力 ${zhangliao.hp}→${zhangliao.hp + 1}`);
   });
 
   it('待点选里点「新建」⇒总结记一条「新增 1 名 · 名字：技能名」', async () => {
@@ -146,33 +149,33 @@ describe('导入总结 · 面板自身行为', () => {
 
   it('「知道了」关掉面板，但已经写进存档的内容一条都不回滚', async () => {
     arm();
-    await importFile(fileFrom([rowFor(guanyu.hp + 1)]), '导入 1 名将领');
+    await importFile(fileFrom([rowFor(zhangliao.hp + 1)]), '导入 1 名将领');
     await waitFor(() => expect(summaryText()).toContain('修改 1 名'));
     const before = storageSnapshot();
     fireEvent.click(screen.getByText('知道了'));
     await waitFor(() => expect(hasPanel()).toBe(false));
     expect(storageSnapshot()).toBe(before);
-    expect(useGameStore.getState().generalEdits[guanyu.id]?.hp).toBe(guanyu.hp + 1);
+    expect(useGameStore.getState().generalEdits[zhangliao.id]?.hp).toBe(zhangliao.hp + 1);
   });
 
   it('「复制全文」交出去的就是面板上那一段字（所见＝所得）', async () => {
     arm();
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    await importFile(fileFrom([rowFor(guanyu.hp + 1)]), '导入 1 名将领');
+    await importFile(fileFrom([rowFor(zhangliao.hp + 1)]), '导入 1 名将领');
     await waitFor(() => expect(summaryText()).toContain('修改 1 名'));
     fireEvent.click(screen.getByText('复制全文'));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     const payload = writeText.mock.calls[0][0] as string;
     expect(payload).toBe(summaryText());
     expect(payload).toBe(renderSummaryText([
-      { kind: 'modified', name: '关羽', items: [`体力 ${guanyu.hp}→${guanyu.hp + 1}`] },
+      { kind: 'modified', name: '张辽', items: [`体力 ${zhangliao.hp}→${zhangliao.hp + 1}`] },
     ]));
   });
 
   it('权限被拦下的行不进总结（"写不了"绝不被说成"改了什么"）', async () => {
     arm(false); // 玩家模式：官方将写不动
-    await importFile(fileFrom([rowFor(guanyu.hp + 1)]), '拒录 1 名');
+    await importFile(fileFrom([rowFor(zhangliao.hp + 1)]), '拒录 1 名');
     expect(hasPanel()).toBe(false);
   });
 });

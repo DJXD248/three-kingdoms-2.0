@@ -31,6 +31,8 @@ import {
   STAT_DURATION_HEADER,
   GAIN_SKILL_NAME_HEADER,
   GAIN_SKILL_NAME_HINT,
+  effectModeToStr,
+  EFFECT_MODE_LIST,
 } from '../skills/skillExcelFormat';
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
 import {
@@ -653,7 +655,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       const factionOrder: Faction[] = ['魏', '蜀', '吴', '群', '晋'];
       const tagList = ['无', ...allSkillTags].join(',');
       const forcedList = '无,是,否';
-      const modeList = '无,全部生效,选择其一';
+      const modeList = EFFECT_MODE_LIST;
       const factionList = '魏,蜀,吴,群,晋';
       const triggerList = allTriggerOptionStrings.join(',');
 
@@ -725,7 +727,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               formatTags(tagsOf(sk)) || '无',
               sk.forced ? '是' : '无',
               triggerToStr(sk.trigger),
-              sk.effectMode === 'choice' ? '选择其一' : sk.effectMode === 'all' ? '全部生效' : '无',
+              // 三档词只住一份：`skillExcelFormat.ts` 的 `effectModeWords`。
+              // 曾经这里手写两档判断，链式落进「无」⇒导出自己的文件再导回来，
+              // 官方第一枚链式技能（魏关羽「单骑」＝v2.9.6）被悄悄降级成「全部生效」。
+              effectModeToStr(sk.effectMode),
               sk.description || '无',
               serializeSkillGate(sk.conditions),
               // 「我听谁」住在触发配置里，导出时拆成自己的一列（与「技能门槛」同理）。

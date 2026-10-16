@@ -224,10 +224,17 @@ describe('觉醒技 · 编译面（徽章⇒编译位，额度与限定技同键
       ['AWAKENING_CHOICE_UNSUPPORTED', 'AWAKENING_CHOICE_UNSUPPORTED']);
   });
 
-  it('普查钉子：今天两个锚池里没有任何一枚技能挂「觉醒技」⇒锚结构上不动', () => {
+  /**
+   * 普查钉子。2.9.3 那趟它钉的是"两锚池一张觉醒卡都没有⇒锚结构上不动"；
+   * v2.9.6 内容刀把魏关羽「单骑」放进了官方池⇒**这一档从今天起会动锚**，
+   * 钉子改成"动在哪、动几张"：官方池逐字＝['关羽']，仓库固定 DIY 样本仍然一张没有
+   * （ fixture 池不动＝B21 那一锚的输入面没被这刀碰，实测见登记）。
+   */
+  it('普查钉子：官方池只有魏关羽一枚挂「觉醒技」，DIY 样本池仍是一张没有', () => {
     const taggedIn = (pool: readonly General[]) => pool.filter(general =>
       (general.skills ?? []).some(skill => tagsOf(skill).includes('觉醒技')));
-    expect(taggedIn(allGenerals).map(g => g.name)).toEqual([]);
+    expect(taggedIn(allGenerals).map(g => g.name)).toEqual(['关羽']);
+    expect(taggedIn(allGenerals).map(g => g.id)).toEqual(['wei_022']);
     expect(taggedIn(DIY_FIXTURE_GENERALS).map(g => g.name)).toEqual([]);
   });
 });

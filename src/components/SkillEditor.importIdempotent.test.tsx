@@ -17,7 +17,13 @@ import { useGameStore } from '../store/gameStore';
 const { savedBlobs } = vi.hoisted(() => ({ savedBlobs: [] as Blob[] }));
 vi.mock('file-saver', () => ({ saveAs: (blob: Blob) => { savedBlobs.push(blob); } }));
 
-const guanyu = allGenerals.find(g => g.id === 'shu_002')!;
+/**
+ * 取张辽当"官方将"证人：他的「突袭」在卡上仍是一枚只有名字的旧形态技能，
+ * 于是下面那份手造行（技能名以外全填「无」）逐字等于卡面，才配当"无变化"的证人。
+ * v2.9.6 之前这里用的是蜀关羽·武圣——武圣现在带锁定技＋结构化载荷（v2.9.6），
+ * "全填无"那一行不再等于卡面，用它测跳过判定只会测出一条假变化。
+ */
+const probe = allGenerals.find(g => g.id === 'wei_004')!;
 
 /** 与 handleExport 同形：12 固定列 + 一组 7 列效果 + 设定备注。 */
 const HEADER = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动',
@@ -26,8 +32,8 @@ const HEADER = ['将领名称', '势力', '体力', '近战', '远程', '技能�
   '设定备注'];
 
 const rowFor = (hp: number) => [
-  guanyu.name, guanyu.faction, hp, guanyu.meleeAtk, guanyu.rangedAtk,
-  '武圣', '无', '无', '无', '无', '无', '无',
+  probe.name, probe.faction, hp, probe.meleeAtk, probe.rangedAtk,
+  '突袭', '无', '无', '无', '无', '无', '无',
   '', '', '', '', '', '', '', '✓ 已完成',
 ];
 
@@ -83,10 +89,10 @@ describe('Excel 逐技能行导入 · 无变化判定（#45）', () => {
 
   it('原样重导未改动的官方将：报"跳过…无变化"、不记"导入"、零覆盖记录', async () => {
     arm();
-    const toast = await importFile(xlsxFile(guanyu.hp), '跳过 1 名无变化');
+    const toast = await importFile(xlsxFile(probe.hp), '跳过 1 名无变化');
     expect(toast).toContain('导入 0 名将领');
-    expect(useGameStore.getState().skillEdits[guanyu.id]).toBeUndefined();
-    expect(useGameStore.getState().generalEdits[guanyu.id]).toBeUndefined();
+    expect(useGameStore.getState().skillEdits[probe.id]).toBeUndefined();
+    expect(useGameStore.getState().generalEdits[probe.id]).toBeUndefined();
     expect(snapshot().head).toBe('{}');
   });
 
@@ -99,7 +105,7 @@ describe('Excel 逐技能行导入 · 无变化判定（#45）', () => {
   it('玩家模式下无变化的官方行⇒报"拒录"而不是"无变化"（权限优先于跳过）', async () => {
     arm(false);
     const before = snapshot();
-    const toast = await importFile(xlsxFile(guanyu.hp), '拒录 1 名');
+    const toast = await importFile(xlsxFile(probe.hp), '拒录 1 名');
     expect(toast).toContain('拒录 1 名');
     expect(toast).not.toContain('无变化');
     expect(toast).toContain('导入 0 名将领');
@@ -108,9 +114,9 @@ describe('Excel 逐技能行导入 · 无变化判定（#45）', () => {
 
   it('真改了数值的行照旧写入；同一份文件第二次导入则跳过、存档一条字节都不多', async () => {
     arm();
-    const file = xlsxFile(guanyu.hp - 1);
+    const file = xlsxFile(probe.hp - 1);
     await importFile(file, '导入 1 名将领');
-    expect(useGameStore.getState().generalEdits[guanyu.id]?.hp).toBe(guanyu.hp - 1);
+    expect(useGameStore.getState().generalEdits[probe.id]?.hp).toBe(probe.hp - 1);
 
     const before = snapshot();
     const second = await importFile(file, '跳过 1 名无变化');
@@ -125,12 +131,12 @@ describe('Excel 逐技能行导入 · 无变化判定（#45）', () => {
    */
   it('文件写回原始体力⇒撤不掉已有覆盖记录，判定为"无变化"而不是假装导入成功', async () => {
     arm();
-    await importFile(xlsxFile(guanyu.hp - 1), '导入 1 名将领');
+    await importFile(xlsxFile(probe.hp - 1), '导入 1 名将领');
     const before = snapshot();
-    const toast = await importFile(xlsxFile(guanyu.hp), '跳过 1 名无变化');
+    const toast = await importFile(xlsxFile(probe.hp), '跳过 1 名无变化');
     expect(toast).toContain('导入 0 名将领');
     expect(snapshot()).toEqual(before);
-    expect(useGameStore.getState().generalEdits[guanyu.id]?.hp).toBe(guanyu.hp - 1);
+    expect(useGameStore.getState().generalEdits[probe.id]?.hp).toBe(probe.hp - 1);
   });
 
   /**

@@ -53,8 +53,9 @@ describe('2.4.1 批量一 · 编译形态（§G 施工图逐字核对）', () =>
     const batchKeys = new Set(BATCH1.map(b => `${b.owner}|${b.name}`));
     const batchSkips = skipped.filter(s => batchKeys.has(`${s.owner}|${s.skillName}`));
     expect(batchSkips).toEqual([]);
-    // 全局精确账（40 定义 / 129 跳过，含 v2.6.2 连营/枭姬两条 onCardLost）由批量二文件钉死，此处只做下限哨兵
-    expect(skipped.length).toBeGreaterThanOrEqual(129);
+    // 全局精确账（43 定义 / 128 跳过）由批量二文件钉死，此处只做下限哨兵。
+    // 128＝129−1：v2.9.6 蜀关羽「武圣」从"只有名字"变成带结构化载荷⇒少一条诚实跳过。
+    expect(skipped.length).toBeGreaterThanOrEqual(128);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 
@@ -127,7 +128,7 @@ describe('2.4.1 哨兵③ · 跨势力重名技能编译 id 唯一性', () => {
         ids.add(d.id);
       }
     }
-    expect(ids.size).toBe(40); // v2.6.2 连营/枭姬转正后全库定义数（无碰撞）
+    expect(ids.size).toBe(43); // 全库定义数（无碰撞）：v2.6.2 转正 40＋v2.9.6 武圣两枚与单骑一枚
   });
 });
 
