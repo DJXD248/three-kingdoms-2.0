@@ -49,6 +49,10 @@ import { describeLockKey, findIdentityConflicts } from '../domain/identity';
 import { TriggerEditor } from './skillEditor/TriggerEditor';
 import { RuntimeEditor } from './skillEditor/RuntimeEditor';
 import { GateEditor } from './skillEditor/GateEditor';
+import {
+  patchEffect, patchSkill, effectSentence, skillSentence,
+  isHandWritten, isSkillHandWritten,
+} from '../skills/skillSentence';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
@@ -1387,7 +1391,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                   <h4 className="text-xs font-bold text-purple-400/80 uppercase tracking-wider">技能列表</h4>
                   {editingSkills.map((skill, i) => {
                     const hasEffects = skill.effects && skill.effects.length > 0;
-                    const updateSkill = (patch: Partial<typeof skill>) => setEditingSkills(prev => prev.map((s, j) => j === i ? { ...s, ...patch } : s));
+                    // #49 拼积木：改积木（时机／门槛／效果）时那句卡面话跟着重写，
+                    // 但只在"这句还是上一次生成出来的"时候跟——用户手改过就听用户的。
+                    const updateSkill = (patch: Partial<typeof skill>) => setEditingSkills(prev => prev.map((s, j) => j === i ? patchSkill(s, patch) : s));
                     const addEffect = () => {
                       const efs = [...(skill.effects || [])];
                       efs.push({ id: `e${Date.now()}_${efs.length}`, label: `效果${efs.length + 1}`, description: '' });
@@ -1398,7 +1404,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                       updateSkill({ effects: efs.length > 0 ? efs : undefined, effectMode: efs.length > 0 ? skill.effectMode : undefined });
                     };
                     const updateEffect = (ei: number, patch: Partial<SkillEffect>) => {
-                      const efs = (skill.effects || []).map((e, j) => j === ei ? { ...e, ...patch } : e);
+                      const efs = (skill.effects || []).map((e, j) => j === ei ? patchEffect(e, patch) : e);
                       updateSkill({ effects: efs });
                     };
 
@@ -1468,8 +1474,15 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                             <div>
                               <label className="text-[10px] text-purple-400/60 mb-1 block">技能描述</label>
                               <textarea value={skill.description || ''} onChange={e => handleSkillChange(i, 'description', e.target.value)}
+                                aria-label="技能描述"
                                 placeholder="输入技能效果描述..."
                                 className="w-full px-3 py-1.5 rounded-lg bg-black/50 border border-purple-700/30 text-purple-100 text-sm h-14 resize-none focus:outline-none focus:border-purple-500" />
+                              {/* 这一档没有积木格（没有"做什么"那一块），所以系统拼不出一句完整话——
+                                  界面必须说清"这句全靠你写、保存后也不参与对局结算"，否则用户会以为写了字就会响。 */}
+                              <p className="mt-1 text-[9px] text-purple-300/50">
+                                这一档只有文字、没有积木：保存后不参与对局结算。要"挑积木、系统替你写这句话"，
+                                请点下面的「＋ 切换为多效果模式」，那里每填一块积木，下面那句话就自动跟着变。
+                              </p>
                             </div>
                           </>
                         )}
@@ -1478,12 +1491,31 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                         {hasEffects && (
                           <div className="space-y-2">
                             {/* Overall description */}
-                            <div>
-                              <label className="text-[10px] text-purple-400/60 mb-1 block">技能总述（可选）</label>
-                              <input type="text" value={skill.description || ''} onChange={e => handleSkillChange(i, 'description', e.target.value)}
-                                placeholder="技能总体描述..."
-                                className="w-full px-3 py-1.5 rounded-lg bg-black/50 border border-purple-700/30 text-purple-100 text-sm focus:outline-none focus:border-purple-500" />
-                            </div>
+                            {(() => {
+                              const generated = skillSentence(skill);
+                              const handWritten = isSkillHandWritten(skill.description, skill);
+                              return (
+                                <div>
+                                  <label className="text-[10px] text-purple-400/60 mb-1 block">技能总述（可选）</label>
+                                  <input type="text" value={skill.description || ''} onChange={e => handleSkillChange(i, 'description', e.target.value)}
+                                    aria-label="技能总述"
+                                    placeholder={generated || '技能总体描述…（下面的积木还没拼出可结算的效果，这句得你自己写）'}
+                                    className="w-full px-3 py-1.5 rounded-lg bg-black/50 border border-purple-700/30 text-purple-100 text-sm focus:outline-none focus:border-purple-500" />
+                                  {generated !== '' && handWritten && (
+                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                      <button type="button"
+                                        onClick={() => handleSkillChange(i, 'description', generated)}
+                                        className="text-[10px] px-2 py-0.5 rounded border border-purple-700/40 text-purple-200 hover:bg-purple-900/30">
+                                        ↺ 用积木重写这句
+                                      </button>
+                                      <span className="text-[9px] text-purple-300/60">
+                                        这句是你手改的：下面每条效果自己的文字照旧生效，这里只影响总述。
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                             {/* Effect mode selector */}
                             <div className="flex items-center gap-2">
                               <label className="text-[10px] text-orange-400/70 font-bold whitespace-nowrap">多效果模式</label>
@@ -1518,9 +1550,36 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                                 <TriggerEditor trigger={eff.trigger} onChange={t => updateEffect(ei, { trigger: t })} />
                                 <GateEditor conditions={eff.conditions} onChange={c => updateEffect(ei, { conditions: c })} />
                                 <RuntimeEditor runtime={eff.runtime} onChange={rt => updateEffect(ei, { runtime: rt })} />
-                                <textarea value={eff.description || ''} onChange={e => updateEffect(ei, { description: e.target.value })}
-                                  placeholder="该效果的描述..."
-                                  className="w-full px-2 py-1 rounded bg-black/40 border border-orange-800/20 text-orange-100 text-[11px] h-12 resize-none focus:outline-none focus:border-orange-500" />
+                                {(() => {
+                                  const generated = effectSentence(eff);
+                                  const handWritten = isHandWritten(eff.description, eff);
+                                  return (
+                                    <div className="space-y-1">
+                                      <textarea value={eff.description || ''} onChange={e => updateEffect(ei, { description: e.target.value })}
+                                        aria-label={`效果${ei + 1}卡面文字`}
+                                        placeholder={generated || '该效果的描述…（上面没填可结算的积木时，这句得你自己写）'}
+                                        className="w-full px-2 py-1 rounded bg-black/40 border border-orange-800/20 text-orange-100 text-[11px] h-12 resize-none focus:outline-none focus:border-orange-500" />
+                                      {/* 积木齐着就一句废话不少：自动生成那句时不显示按钮，手改过才给"重写"这条路。 */}
+                                      {generated !== '' && handWritten && (
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <button type="button"
+                                            onClick={() => updateEffect(ei, { description: generated })}
+                                            className="text-[10px] px-2 py-0.5 rounded border border-orange-700/40 text-orange-200 hover:bg-orange-900/30">
+                                            ↺ 用积木重写这句
+                                          </button>
+                                          <span className="text-[9px] text-orange-300/60">
+                                            这句是你手改的：上面积木再变也不会动它。想听积木的，点左边那颗。
+                                          </span>
+                                        </div>
+                                      )}
+                                      {generated !== '' && !handWritten && (
+                                        <p className="text-[9px] text-emerald-300/45">
+                                          这句由上面的积木拼出来：改积木它就跟着变，你也可以直接在这上面改，改完就不再自动变。
+                                        </p>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             ))}
                             <button onClick={addEffect}

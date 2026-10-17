@@ -19,6 +19,15 @@ function findRuntimeSelect(): HTMLSelectElement {
   return el as HTMLSelectElement;
 }
 
+/**
+ * 效果行右侧那格预览。2.9.8「拼积木→生成文字」之后，同一句话也会出现在下面的
+ * 卡面文字框里，按文本全局找必然两处一起命中——所以按文本取证必须收进这一格。
+ */
+function findEffectPreview(re: RegExp): HTMLElement | undefined {
+  return Array.from(document.querySelectorAll('span'))
+    .find(el => el.className.includes('text-emerald-300') && re.test(el.textContent ?? ''));
+}
+
 describe('SkillEditor: structured runtime entry', () => {
   beforeEach(() => {
     cleanup();
@@ -97,11 +106,11 @@ describe('SkillEditor: structured runtime entry', () => {
 
     // 看牌堆顶/放回牌堆同为上表新枚；REVEAL 无位置面→不应出现放置位置下拉
     fireEvent.change(findRuntimeSelect(), { target: { value: 'REVEAL' } });
-    expect(screen.getByText(/观看牌堆顶/)).toBeTruthy();
+    expect(findEffectPreview(/观看牌堆顶/)).toBeTruthy();
     expect(findDestSelect()).toBeUndefined();
 
     fireEvent.change(findRuntimeSelect(), { target: { value: 'DECK_PLACE' } });
-    expect(screen.getByText(/张手牌放回牌堆/)).toBeTruthy();
+    expect(findEffectPreview(/张手牌放回牌堆/)).toBeTruthy();
     const dest = findDestSelect();
     expect(dest).toBeTruthy();
     expect(dest!.value).toBe('BOTTOM'); // 缺省=牌堆底
@@ -335,7 +344,7 @@ describe('SkillEditor: structured runtime entry', () => {
     fireEvent.change(nameInput, { target: { value: '屯田' } });
     expect(screen.queryByText(/这样填的效果保存后会被引擎逐条点名跳过/)).toBeNull();
     expect(screen.queryByText(/技能表里暂时没有/)).toBeNull();
-    expect(screen.getByText(/获得技能「屯田」/)).toBeTruthy();   // 预览那句读的就是同一个名字
+    expect(findEffectPreview(/获得技能「屯田」/)).toBeTruthy();   // 预览那句读的就是同一个名字
     fireEvent.click(screen.getByText('💾 保存修改'));
     const saved = useGameStore.getState().skillEdits[target.id]!;
     expect(saved[0].effects?.[0].runtime).toEqual({ type: 'GAIN_SKILL', target: 'SELF', skillName: '屯田' });

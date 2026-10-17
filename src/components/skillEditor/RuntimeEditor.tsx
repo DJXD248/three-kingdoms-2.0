@@ -8,40 +8,16 @@ import {
   WHOLE_HAND_RUNTIME_TYPES, WHOLE_HAND_LABEL, VALUELESS_RUNTIME_TYPES,
 } from '../../skills/skillExcelFormat';
 import { knownSkillNames } from '../../skills/skillNameIndex';
+import { runtimeEffectPhrases } from '../../skills/skillSentence';
 
 // ── Structured runtime effect editor (类型 + 数值 + 目标) ──
 // Only effects carrying a runtime payload are compiled into the game runtime
 // (skills/skillCompiler.ts). Types outside SETTLEABLE_RUNTIME_TYPES are shown
 // but flagged as "not settleable yet" — the compiler will skip them honestly.
 const runtimeSelectCls = "px-2 py-1 rounded bg-black/50 border border-emerald-800/30 text-emerald-100 text-[11px] focus:outline-none focus:border-emerald-500";
-/** 「改哪个数」这一栏的预览要把键名与两种形态都说清（固定为 3 与 +3 在账本上是两回事），
- *  所以预览函数除了数值还要读到整条 runtime。 */
-const runtimePreviewText: Record<SkillRuntimeEffect['type'], (v: number, rt?: SkillRuntimeEffect) => string> = {
-  DRAW_CARD: v => `摸牌 ×${v}`,
-  DAMAGE: v => `造成 ${v} 点技能伤害`,
-  HEAL: v => `回复 ${v} 点体力`,
-  GAIN_ARMOR: v => `获得 ${v} 点护甲`,
-  DISCARD: v => (v === 0 ? '弃全部手牌' : `弃 ${v} 张手牌`),
-  GIVE: v => (v === 0 ? '发放全部手牌' : `发放 ${v} 张手牌`),
-  EQUIP_STRIP: v => `拆掉 ${v} 张军备卡`,
-  REVEAL: v => `观看牌堆顶 ${v} 张`,
-  DECK_PLACE: v => (v === 0 ? '把全部手牌放回牌堆' : `把 ${v} 张手牌放回牌堆`),
-  DUEL: () => '与目标将领决斗（双方各三轮，最多六次）',
-  MODIFY_STAT: (v, rt) => {
-    const key = statModifierKeyLabels[rt?.stat ?? 'MELEE_ATK'];
-    const once = rt?.duration === 'thisDamage' ? '下一次' : '';
-    if (rt?.modifyMode === 'set') return `${once}把${key}摁成 ${v}（覆盖卡面上的数）`;
-    return v < 0 ? `${once}让${key}减少 ${-v}` : `${once}让${key}增加 ${v}`;
-  },
-  // 2.9.3 刀A：这一档根本不读数，读的是一个**技能名**。预览那句要跟引擎的判据
-  // 同一个来源（名字＝编译器拿去查技能表的那一个字），别在这里再编一套说法。
-  GAIN_SKILL: (_v, rt) => {
-    const name = String(rt?.skillName ?? '').trim();
-    // 「技能表」这个词自 2.9.7 起只指那一本全局的册子，所以这里说"往这一员将身上添一枚"，
-    // 不再说"往他的技能表上添"——同一个词在两个地方指两样东西＝界面与引擎分叉的起手式。
-    return name ? `获得技能「${name}」（往这一员将身上添一枚）` : '获得技能：还没写要拿哪一枚';
-  },
-};
+/** 这一行预览与「积木拼成整句」用的是同一份词（skills/skillSentence.ts）：
+ *  两处各写一套，界面就会与它替用户写进卡面的那句话长得不一样。 */
+const runtimePreviewText = runtimeEffectPhrases;
 
 export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEffect; onChange: (r: SkillRuntimeEffect | undefined) => void }) {
   const currentType = runtime?.type || '';
