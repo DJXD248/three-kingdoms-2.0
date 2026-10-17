@@ -53,6 +53,8 @@ import {
   patchEffect, patchSkill, effectSentence, skillSentence,
   isHandWritten, isSkillHandWritten,
 } from '../skills/skillSentence';
+import { SkillTextPanel } from './skillEditor/SkillTextPanel';
+import type { SkillTextDraft } from '../skills/skillTextParse';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
@@ -1407,6 +1409,20 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                       const efs = (skill.effects || []).map((e, j) => j === ei ? patchEffect(e, patch) : e);
                       updateSkill({ effects: efs });
                     };
+                    // v2.9.9「自己写效果」采用：反解出来的就是这几格积木，直接并进现在这条技能，
+                    // 玩家随后在下面的拼积木格子里逐格改——不新增第二条录入路，也不新增第二条结算路。
+                    const adoptDraft = (d: SkillTextDraft) => {
+                      const stamp = Date.now();
+                      const efs = [
+                        ...(skill.effects || []),
+                        ...d.effects.map((e, k) => ({ ...e, id: `e${stamp}_${(skill.effects || []).length + k}` })),
+                      ];
+                      updateSkill({
+                        effects: efs,
+                        effectMode: d.effectMode ?? skill.effectMode ?? 'all',
+                        conditions: d.conditions?.length ? [...(skill.conditions ?? []), ...d.conditions] : skill.conditions,
+                      });
+                    };
 
                     return (
                     <div key={i} className="rounded-xl border border-purple-800/30 bg-black/30 p-4">
@@ -1466,6 +1482,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                             <p key={wi} className="mt-1 text-[10px] text-amber-300">⚠ 徽章与时机对不上 — {w}</p>
                           ))}
                         </div>
+
+                        {/* v2.9.9：单效果档也开这一格——玩家先写一句话、由它生成积木，
+                            正是给"还没有积木"的人准备的第一条路。 */}
+                        <SkillTextPanel onAdopt={adoptDraft} />
 
                         {/* Single-effect mode (no sub-effects) */}
                         {!hasEffects && (

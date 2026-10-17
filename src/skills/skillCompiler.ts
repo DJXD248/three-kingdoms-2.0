@@ -48,7 +48,7 @@
  *     branches that do not meet their gate (用户 2026-09-29 口径①/③).
  */
 
-import type { General, Skill, SkillCondition, SkillEffect, SkillTriggerType } from '../data/generals';
+import type { General, Skill, SkillCondition, SkillEffect, SkillTriggerConfig, SkillTriggerType } from '../data/generals';
 import { supportsListenerScope } from '../data/generals';
 import { tagsOf } from '../domain/skillTags';
 import type {
@@ -252,6 +252,61 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
   };
 }
 
+/**
+ * 这块积木今天到底编不编得出结算——**判据就是从下面 `consider` 那条真编译路里搬上来的**，
+ * 不是抄的第二份名单。`undefined`＝编得出；否则返回编译器自己那个点名代码。
+ *
+ * 为什么要单独露这一支：v2.9.9 的「玩家自己写一句效果」要在**给玩家确认之前**就把
+ * "写了等于没写"那一类点出来（用户原话：「遇到不支持的技能效果则返回说明哪一段不支持」）。
+ * 只靠编译时静默 `skipped`＝界面说"生成了"、结算一动不动，正是 §12-112 那一族禁止的形态。
+ * 于是录入面（反解侧）与真编译路共用这一支判据，两侧不可能漂。
+ */
+export function judgeSkillEffect(
+  effect: SkillEffect,
+  triggerConfig: SkillTriggerConfig | undefined,
+  usage: { skillConditions?: SkillCondition[]; awakeningTag?: boolean } = {},
+): SkillSkip['reason'] | undefined {
+  // 先验载荷、后验时机：一条既没写时机、载荷又拼错了的积木，玩家要改的是那句写错的话，
+  // 而不是"还没选时机"（选时机在界面上就是一格下拉，随手就有；载荷错了必须改字）。
+  const converted = toEffectData(effect);
+  if (converted === null) return 'NO_RUNTIME_PAYLOAD';
+  if ('reason' in converted) return converted.reason;
+
+  if (!triggerConfig?.type) return 'NO_TRIGGER';
+  const mapped = SUPPORTED_TRIGGER_MAP[triggerConfig.type];
+  if (!mapped) return 'TRIGGER_UNSUPPORTED';
+
+  if (mapped === 'passive') {
+    // 「在场即生效」这笔账的**唯一**变化条件是人在不在场。门槛（体力/手牌数一变
+    // 就该改口）与周期（在场期间又到期）都要有"中途重算/再落笔"的发射器才谈得上，
+    // 今天两者都不存在（调离区＝另立的一刀）⇒ 悄悄收下就是 §12-55 那种"记录而未
+    // 消费"，所以宁可点名跳过。
+    if (usage.skillConditions?.length || effect.conditions?.length) return 'PASSIVE_CONDITION_UNSUPPORTED';
+    if (effect.runtime?.duration) return 'PASSIVE_DURATION_CONFLICT';
+    // 2.9.3 刀B：觉醒技说"到点问您点不点头"，在场即生效说"没有发动这一刻"——两句
+    // 互斥，而问答路压根扫不到它（`eventsHeardBy('passive')` 是空）。
+    if (usage.awakeningTag) return 'AWAKENING_PASSIVE_CONFLICT';
+  }
+  // The ask window only ever belongs to the current turn's owner, so an
+  // otherTurn onTurnEnd has no honest activation path (2.3.1, same
+  // discipline as the pre-existing onTurnStart guard).
+  if ((mapped === 'onTurnStart' || mapped === 'onTurnEnd') && triggerConfig.turnSubType === 'otherTurn') {
+    return 'TRIGGER_SUBTYPE_UNSUPPORTED';
+  }
+  // The engine only emits DEATH for enemy kills — never fires; skip honestly.
+  if (mapped === 'onKill' && triggerConfig.killSubType === 'killAlly') return 'TRIGGER_SUBTYPE_UNSUPPORTED';
+  // v2.6.2：与触发方向相反的牌类细分没有发射源（只有 GIVE 会导出 CARD_GAINED，
+  // 所以"获得"侧的装备/手牌细分与"失去"侧的任意获得都不会响），宁可点名不悄悄空转。
+  if (mapped === 'onCardLost' && triggerConfig.cardSubType === 'anyGained') return 'TRIGGER_SUBTYPE_UNSUPPORTED';
+  if (mapped === 'onCardGained') {
+    const lostOnly = triggerConfig.cardSubType === 'equipmentLost'
+      || triggerConfig.cardSubType === 'lastHandLost' || triggerConfig.cardSubType === 'handLost';
+    if (lostOnly) return 'TRIGGER_SUBTYPE_UNSUPPORTED';
+  }
+
+  return undefined;
+}
+
 /** v2.8.11 刀2：两级门槛并成一槽。求值本来就是 AND（全部成立才响），整组
  *  门槛排前面只影响可读顺序，不改变语义。两侧都空⇒undefined。 */
 function mergeGates(
@@ -318,60 +373,16 @@ export function compileSkill(
       skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'NO_TRIGGER' });
       return null;
     }
-
-    const mapped = SUPPORTED_TRIGGER_MAP[triggerConfig.type];
-    if (!mapped) {
-      skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_UNSUPPORTED' });
+    const verdict = judgeSkillEffect(effect, triggerConfig, {
+      skillConditions: skill.conditions,
+      awakeningTag,
+    });
+    if (verdict) {
+      skipped.push({ skillName: skill.name, effectId: effect?.id, reason: verdict });
       return null;
     }
-
-    if (mapped === 'passive') {
-      // 「在场即生效」这笔账的**唯一**变化条件是人在不在场。门槛（体力/手牌数一变
-      // 就该改口）与周期（在场期间又到期）都要有"中途重算/再落笔"的发射器才谈得上，
-      // 今天两者都不存在（调离区＝另立的一刀）⇒ 悄悄收下就是 §12-55 那种"记录而未
-      // 消费"，所以宁可点名跳过。
-      if (skill.conditions?.length || effect?.conditions?.length) {
-        skipped.push({
-          skillName: skill.name,
-          effectId: effect?.id,
-          reason: 'PASSIVE_CONDITION_UNSUPPORTED',
-        });
-        return null;
-      }
-      if (effect?.runtime?.duration) {
-        skipped.push({
-          skillName: skill.name,
-          effectId: effect.id,
-          reason: 'PASSIVE_DURATION_CONFLICT',
-        });
-        return null;
-      }
-      // 2.9.3 刀B：觉醒技说"到点问您点不点头"，在场即生效说"没有发动这一刻"——两句
-      // 互斥，而问答路压根扫不到它（`eventsHeardBy('passive')` 是空）。悄悄收下＝把
-      // 一条写着"由您自选"的技能默认成全时生效，那是另一种玩法。
-      if (awakeningTag) {
-        skipped.push({
-          skillName: skill.name,
-          effectId: effect?.id,
-          reason: 'AWAKENING_PASSIVE_CONFLICT',
-        });
-        return null;
-      }
-    }
-
+    const mapped = SUPPORTED_TRIGGER_MAP[triggerConfig.type] as DataSkillTrigger;
     let damageTypeFilter: DataSkillDefinition['damageTypeFilter'];
-    if ((mapped === 'onTurnStart' || mapped === 'onTurnEnd') && triggerConfig.turnSubType === 'otherTurn') {
-      // The ask window only ever belongs to the current turn's owner, so an
-      // otherTurn onTurnEnd has no honest activation path (2.3.1, same
-      // discipline as the pre-existing onTurnStart guard).
-      skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
-      return null;
-    }
-    if (mapped === 'onKill' && triggerConfig.killSubType === 'killAlly') {
-      // The engine only emits DEATH for enemy kills — never fires; skip honestly.
-      skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
-      return null;
-    }
     if ((mapped === 'onDamageTaken' || mapped === 'onDamageDealt') && triggerConfig.damageSubType) {
       if (triggerConfig.damageSubType === 'attackDamage') damageTypeFilter = 'attack';
       else if (triggerConfig.damageSubType === 'skillDamage') damageTypeFilter = 'skill';
@@ -393,26 +404,13 @@ export function compileSkill(
     }
     // v2.6.2 card-trigger predicates (连营/枭姬 keys): 'anyLost' and an
     // absent sub-type stay the pre-expansion any-source behavior (undefined
-    // filter). A sub-type that contradicts its trigger direction, or a
-    // gained-side predicate with no emission source yet (only GIVE derives
-    // CARD_GAINED), skips honestly rather than silently never-firing.
+    // filter). The contradicting combinations are refused up in `judgeSkillEffect`
+    // —— 反解侧在"给玩家看确认页"之前问的也是同一支判据。
     let cardFilter: DataSkillDefinition['cardFilter'];
-    if (mapped === 'onCardLost' || mapped === 'onCardGained') {
-      const cardSub = triggerConfig.cardSubType;
-      const lostOnly = cardSub === 'equipmentLost' || cardSub === 'lastHandLost' || cardSub === 'handLost';
-      if (cardSub === 'anyGained' && mapped === 'onCardLost') {
-        skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
-        return null;
-      }
-      if (lostOnly && mapped === 'onCardGained') {
-        skipped.push({ skillName: skill.name, effectId: effect?.id, reason: 'TRIGGER_SUBTYPE_UNSUPPORTED' });
-        return null;
-      }
-      if (mapped === 'onCardLost') {
-        if (cardSub === 'equipmentLost') cardFilter = 'equipment';
-        else if (cardSub === 'lastHandLost') cardFilter = 'lastHand';
-        else if (cardSub === 'handLost') cardFilter = 'hand';
-      }
+    if (mapped === 'onCardLost' && triggerConfig.cardSubType) {
+      if (triggerConfig.cardSubType === 'equipmentLost') cardFilter = 'equipment';
+      else if (triggerConfig.cardSubType === 'lastHandLost') cardFilter = 'lastHand';
+      else if (triggerConfig.cardSubType === 'handLost') cardFilter = 'hand';
     }
 
     const converted = toEffectData(effect);

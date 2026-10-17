@@ -16,10 +16,17 @@ import {
   statModifierKeyLabels, deploySubLabels, turnSubLabels, damageSubLabels, targetSubLabels,
   killSubLabels, cardSubLabels, expireLabels,
 } from '../data/generals';
+import type { DamageDealtOccasionType, StatModifierDurationType } from '../data/generals';
 import { runtimeTargetLabels } from './skillExcelFormat';
 import { gateConditionsToText } from './skillGateText';
 
-/** 一块积木（结构化效果）说出来的那句话——运行时预览与生成文字共用这一份。 */
+/** 一块积木（结构化效果）说出来的那句话——运行时预览与生成文字共用这一份。
+ *
+ * ⚠️ v2.9.9 起这一份必须**说全**：`skillTextParse.ts` 的反解要靠这句话里出现的字段
+ * 反推积木，这里少说一个字段，反解就永远拿不到它（漏掉的那一档会被点名成"没看懂"，
+ * 不会瞎猜，但玩家也就白写了）。所以加字段时的规矩＝**先在这里说出来，再在解析侧接住**，
+ * 两侧由 `skillTextParse.test.ts` 的往返钉（生成的那句再解回去、再生成 ⇒ 逐字不变）钉死。
+ */
 export const runtimeEffectPhrases: Record<SkillRuntimeEffect['type'], (v: number, rt?: SkillRuntimeEffect) => string> = {
   DRAW_CARD: v => (v === 0 ? '摸全部手牌' : `摸 ${v} 张牌`),
   DAMAGE: v => `造成 ${v} 点技能伤害`,
@@ -29,13 +36,17 @@ export const runtimeEffectPhrases: Record<SkillRuntimeEffect['type'], (v: number
   GIVE: v => (v === 0 ? '发放全部手牌' : `发放 ${v} 张手牌`),
   EQUIP_STRIP: v => `拆掉 ${v} 张军备卡`,
   REVEAL: v => `观看牌堆顶 ${v} 张`,
-  DECK_PLACE: v => (v === 0 ? '把全部手牌放回牌堆' : `把 ${v} 张手牌放回牌堆`),
+  DECK_PLACE: (v, rt) => (v === 0
+    ? `把全部手牌放回牌堆${deckDest(rt)}`
+    : `把 ${v} 张手牌放回牌堆${deckDest(rt)}`),
   DUEL: (_v, rt) => `与${duelFoe(rt)}将领决斗（双方各三轮，最多六次）`,
   MODIFY_STAT: (v, rt) => {
     const key = statKeyLabel(rt?.stat);
-    const once = rt?.duration === 'thisDamage' ? '下一次' : '';
-    if (rt?.modifyMode === 'set') return `${once}把${key}摁成 ${v}（覆盖卡面上的数）`;
-    return v < 0 ? `${once}让${key}减少 ${-v}` : `${once}让${key}增加 ${v}`;
+    const span = [occasionPhrase(rt?.occasion), durationPhrase(rt?.duration)].filter(Boolean).join('，');
+    if (rt?.modifyMode === 'set') return `把${key}摁成 ${v}（${span}）`;
+    return v < 0
+      ? `让${key}减少 ${-v}（${span}）`
+      : `让${key}增加 ${v}（${span}）`;
   },
   GAIN_SKILL: (_v, rt) => {
     const name = String(rt?.skillName ?? '').trim();
@@ -46,6 +57,44 @@ export const runtimeEffectPhrases: Record<SkillRuntimeEffect['type'], (v: number
 function statKeyLabel(stat?: string): string {
   const key = (stat ?? 'MELEE_ATK') as keyof typeof statModifierKeyLabels;
   return statModifierKeyLabels[key] ?? String(stat ?? '');
+}
+
+/** 放回牌堆那一档：牌堆顶／牌堆底。引擎缺省＝底，所以不填也念成"底"。 */
+export const DECK_DEST_PHRASES: Record<NonNullable<SkillRuntimeEffect['dest']>, string> = {
+  BOTTOM: '底', TOP: '顶',
+};
+function deckDest(rt?: SkillRuntimeEffect): string {
+  return DECK_DEST_PHRASES[rt?.dest ?? 'BOTTOM'];
+}
+
+/**
+ * 「造成的伤害」那一把钥匙独有的生效场合（只有这一把钥匙读它，见 `core/statModifiers.ts`）。
+ * 引擎读，所以话里必须说；不说＝玩家写了场合、系统回一句不分场合的话＝界面替引擎说话。
+ */
+export const OCCASION_PHRASES: Record<DamageDealtOccasionType, string> = {
+  duel: '决斗时',
+  meleeVsArmored: '近战砍有护甲的目标时',
+};
+function occasionPhrase(occasion?: DamageDealtOccasionType): string {
+  return occasion ? OCCASION_PHRASES[occasion] : '';
+}
+
+/**
+ * 改数那一档的有效周期。缺省（不填）＝在场期间一直有效、离场即结束（用户裁决：离场打断一切），
+ * 这一条也得念出来——它是这块积木真正生效的形状之一。
+ */
+export const DURATION_PHRASES: Record<StatModifierDurationType, string> = {
+  untilSelfTurnStart: expireLabels.untilSelfTurnStart,
+  untilSelfTurnEnd: expireLabels.untilSelfTurnEnd,
+  untilOtherTurnStart: expireLabels.untilOtherTurnStart,
+  untilOtherTurnEnd: expireLabels.untilOtherTurnEnd,
+  thisDamage: '用掉就销',
+};
+const DEFAULT_DURATION_PHRASE = '在场期间';
+/** 反解侧要把「在场期间」认成"不填＝缺省"，所以这个词也得只有一个出处。 */
+export const STAT_DEFAULT_DURATION_PHRASE = DEFAULT_DURATION_PHRASE;
+function durationPhrase(duration?: StatModifierDurationType): string {
+  return duration ? DURATION_PHRASES[duration] : DEFAULT_DURATION_PHRASE;
 }
 
 /** 触发时机那一格说出来的话（含细分与「我听谁」）。没选时机＝空串，不硬造半句。 */
@@ -119,9 +168,21 @@ export function skillSentence(skill: SkillBlocks): string {
   const rows = (skill.effects ?? []).map(effectSentence).filter(Boolean);
   if (rows.length === 0) return '';
   const groupGate = gatePhrase(skill.conditions);
-  const head = skill.effectMode === 'choice' && rows.length > 1 ? '以下择一' : '';
+  const head = modeHead(skill.effectMode, rows.length);
   const body = rows.map(r => r.replace(/。$/, '')).join('；');
   return [head, groupGate, body].filter(Boolean).join('，') + '。';
+}
+
+/**
+ * 「这一组怎么发动」那一句的头。三种模式都得念出来——反解要靠它认出 `effectMode`，
+ * 而"全部生效"与"依次生效"在结算上是两件事（后者前一件没成就不做下一件），
+ * 只在界面上有下拉、卡面上一个字不写＝又一处"看着一样、算得不一样"（§12-112 那一族）。
+ */
+export function modeHead(mode: string | undefined, rowCount: number): string {
+  if (rowCount <= 1) return '';
+  if (mode === 'choice') return '以下择一';
+  if (mode === 'chain') return '以下依次生效';
+  return '';   // 'all'（含缺省）＝各条各算各的，没有要额外声明的事
 }
 
 /** 这块积木被改动时，那句由它生成的文字要不要跟着重写。 */

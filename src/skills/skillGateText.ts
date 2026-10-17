@@ -100,6 +100,15 @@ function parseNumber(raw: string): number | undefined {
 }
 
 /**
+ * 「一个数量词到底是不是数」的唯一判据（数字与「一…十」中文写法都认）。
+ * 导出给 `skillTextParse.ts` 用——**全库只许有这一套数词读法**，
+ * 另一处再写一份"两=2"迟早和这里分叉（同一个词两种读法＝界面与引擎分叉的起手式）。
+ */
+export function parseCountNumber(raw: string): number | undefined {
+  return parseNumber(raw);
+}
+
+/**
  * 没有"属于谁"这一维的度量（评估器压根不看主体）：全局的两格＋刀C 那三格。
  * 录入面写了对象也不落字段——落一个不生效的限制等于骗人。
  */
