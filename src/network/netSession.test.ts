@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { encodeEnvelope, ourVersionStamp, type NetEnvelope, type VersionStamp } from './netProtocol';
+import {
+  DISCONNECT_SILENCE_MS,
+  HEARTBEAT_PROBE_INTERVAL_MS,
+} from './netHeartbeat';
+import {
+  encodeEnvelope,
+  ourVersionStamp,
+  parseEnvelope,
+  type NetEnvelope,
+  type NetLinkRow,
+  type VersionStamp,
+} from './netProtocol';
 import { initialSessionState, joinRoom, stepSession, type SessionState } from './netSession';
 
 /** 本机戳＝握手比对的那一份；写死版本号会让这组测试在每次抬版本时假红。 */
@@ -118,9 +129,12 @@ describe('客人侧：只在房主那里对上版本才算进房', () => {
 /** 假传话线：按 URL 路径分房间，和真传话程序同一条规矩（发话人自己收不到）。 */
 class FakeRelay {
   private sockets = new Set<FakeSocket>();
+  /** 建过的每一根线都留着：J3 的实测要把某一人的线单独掐掉（他不再回任何一条消息）。 */
+  readonly created: FakeSocket[] = [];
   readonly factory = (url: string) => {
     const socket = new FakeSocket(url, this);
     this.sockets.add(socket);
+    this.created.push(socket);
     setTimeout(() => socket.fireOpen(), 0);
     return socket;
   };
@@ -141,6 +155,9 @@ class FakeRelay {
 class FakeSocket {
   open = false;
   readyState = 0;
+  /** 掐掉这个人往外发的所有消息（线还开着、他还能听见，就是他不再回话）＝J3 的掉线场景。 */
+  silent = false;
+  readonly sent: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((ev: { data: unknown }) => void) | null = null;
   onclose: ((ev: { reason?: string }) => void) | null = null;
@@ -159,7 +176,9 @@ class FakeSocket {
   }
 
   send(data: string) {
-    if (this.open) this.relay.forward(this, data);
+    if (!this.open || this.silent) return;
+    this.sent.push(data);
+    this.relay.forward(this, data);
   }
 
   close() {
@@ -303,5 +322,266 @@ describe('J2 客人只认房主发来的局面', () => {
     await nextTick();
     host.leave();
     expect(host.send({ t: 'snapshot', from: HOST.id, state: VIEW as never })).toBe(false);
+  });
+});
+
+/** J3 客人侧：只做两件事——原样抄回时刻、照抄房主发来的表。判定权一条也不在客人手里。 */
+describe('J3 客人只回话、只照抄，绝不自判', () => {
+  const TABLE: NetLinkRow[] = [
+    { id: HOST.id, name: HOST.name, pingMs: null, state: 'online' },
+    { id: GUEST.id, name: GUEST.name, pingMs: 42, state: 'online' },
+  ];
+  const inRoom = () => guestState({ phase: 'in-room', peers: [HOST, GUEST] });
+
+  it('指名发给我的探测 ⇒ 只回一条 pong，时刻原样抄回去（客人这边一个数也不算）', () => {
+    const before = inRoom();
+    const step = stepSession(before, text({ t: 'ping', from: HOST.id, to: GUEST.id, at: 1_700_000_000_123 }));
+    expect(step.sends).toEqual([{ t: 'pong', from: GUEST.id, to: HOST.id, at: 1_700_000_000_123 }]);
+    expect(step.state).toBe(before);
+  });
+
+  it('发给别人的探测绝不代答（两个人同名也不能互相顶缸）', () => {
+    const step = stepSession(inRoom(), text({ t: 'ping', from: HOST.id, to: 'guest-2', at: 10 }));
+    expect(step.sends).toEqual([]);
+  });
+
+  it('房主发来的连线表照抄交出去，名册与状态都不动（掉线是房主算好的，不是客人算的）', () => {
+    const before = inRoom();
+    const step = stepSession(before, text({ t: 'netstatus', from: HOST.id, rows: TABLE }));
+    expect(step.table).toEqual(TABLE);
+    expect(step.state).toBe(before);
+    expect(step.sends).toEqual([]);
+  });
+
+  it('不是房主发来的表不当真（客人也可以往房间里发"某某掉线了"，那条必须无效）', () => {
+    const withTwo = guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: 'guest-2', name: '客人乙', role: 'guest' }] });
+    const step = stepSession(withTwo, text({ t: 'netstatus', from: 'guest-2', rows: TABLE }));
+    expect(step.table).toBeUndefined();
+    expect(step.state.note).toContain('不是房主发来');
+  });
+
+  it('还没进房（名册里根本没有房主）时收到的表也不收：没有"谁算的是准的"就没有可抄的', () => {
+    const step = stepSession(guestState(), text({ t: 'netstatus', from: HOST.id, rows: TABLE }));
+    expect(step.table).toBeUndefined();
+  });
+
+  it('房主一侧完全不采纳连线表（他自己那张是算出来的，不需要别人告诉他）', () => {
+    const withGuest = hostState({ phase: 'in-room', peers: [HOST, GUEST] });
+    const step = stepSession(withGuest, text({ t: 'netstatus', from: GUEST.id, rows: TABLE }));
+    expect(step.table).toBeUndefined();
+    expect(step.state).toBe(withGuest);
+    expect(step.sends).toEqual([]);
+  });
+
+  it('任何一条解析成功的来信都带出"是谁发的"，pong 还带上那个时刻（房主据此刷新时钟）', () => {
+    const withGuest = hostState({ phase: 'in-room', peers: [HOST, GUEST] });
+    expect(stepSession(withGuest, text({ t: 'bye', from: GUEST.id })).saw).toEqual({ from: GUEST.id, kind: 'bye' });
+    expect(stepSession(withGuest, text({ t: 'pong', from: GUEST.id, to: HOST.id, at: 777 })).saw)
+      .toEqual({ from: GUEST.id, kind: 'pong', at: 777 });
+    // 看不懂的一条不产生"saw"：坏消息不能把一个人的时钟刷新。
+    expect(stepSession(withGuest, { type: 'text', text: '{"t":"mystery"}' }).saw).toBeUndefined();
+  });
+});
+
+/** 假钟＋手动跳格：判据用时刻一比，测试绝不真等十五秒，也不靠真定时器碰运气。 */
+function fakeClock(start = 1_700_000_000_000) {
+  let at = start;
+  return { now: () => at, advance: (ms: number) => { at += ms; } };
+}
+
+function manualTicks() {
+  const queue: Array<{ id: number; fn: () => void }> = [];
+  let seq = 0;
+  return {
+    deps: {
+      schedule: (fn: () => void) => {
+        seq += 1;
+        queue.push({ id: seq, fn });
+        return seq as unknown as ReturnType<typeof setTimeout>;
+      },
+      cancel: (handle: ReturnType<typeof setTimeout>) => {
+        const id = handle as unknown as number;
+        const i = queue.findIndex((item) => item.id === id);
+        if (i >= 0) queue.splice(i, 1);
+      },
+    },
+    /** 走一跳＝房主那台机器上的一个探测时刻到了。 */
+    tick: () => {
+      const item = queue.shift();
+      if (!item) return false;
+      item.fn();
+      return true;
+    },
+    pending: () => queue.length,
+  };
+}
+
+/** 把某根线上发过的信封挑出来（判"谁发过什么"要看线上证人，不能只看界面）。 */
+function framesFrom(socket: FakeSocket | undefined, type: string): NetEnvelope[] {
+  if (!socket) return [];
+  return socket.sent.map((text) => parseEnvelope(text)).filter((e): e is NetEnvelope => e !== null && e.t === type);
+}
+
+/** 这根线最后发出去的那张连线表（表上写了什么＝房主判出来什么）。 */
+function lastTable(socket: FakeSocket | undefined): NetLinkRow[] {
+  if (!socket) return [];
+  let rows: NetLinkRow[] = [];
+  for (const sent of socket.sent) {
+    const envelope = parseEnvelope(sent);
+    if (envelope?.t === 'netstatus') rows = envelope.rows;
+  }
+  return rows;
+}
+
+describe('J3 两端接线：房主探测＋算毫秒＋广播表，客人回话＋照抄', () => {
+  it('握手完成后房主开始探测，客人回话，全桌拿到同一张表（数字只用房主一个钟算）', async () => {
+    const relay = new FakeRelay();
+    const clock = fakeClock();
+    const ticks = manualTicks();
+    const guestTables: NetLinkRow[][] = [];
+
+    const host = joinRoom(
+      {
+        role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id,
+        socketFactory: relay.factory, heartbeat: { now: clock.now, schedule: ticks.deps.schedule, cancel: ticks.deps.cancel },
+      },
+      () => {},
+    );
+    await nextTick();
+    const guest = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id,
+        socketFactory: relay.factory, onTable: (rows) => guestTables.push(rows),
+      },
+      () => {},
+    );
+    await nextTick();
+
+    const hostSocket = relay.created[0];
+    const guestSocket = relay.created[1];
+    // 客人一进门，房主就探一次（第一跳在握手时已经发出去了）。
+    expect(framesFrom(hostSocket, 'ping').length).toBeGreaterThan(0);
+    expect(framesFrom(guestSocket, 'ping')).toHaveLength(0);
+    expect(framesFrom(guestSocket, 'netstatus')).toHaveLength(0);
+    expect(framesFrom(guestSocket, 'pong').length).toBeGreaterThan(0);
+
+    ticks.tick();
+    await nextTick();
+
+    const last = lastTable(hostSocket);
+    expect(last).toEqual([
+      { id: HOST.id, name: HOST.name, pingMs: null, state: 'online' },
+      { id: GUEST.id, name: GUEST.name, pingMs: 0, state: 'online' },
+    ]);
+    expect(guestTables[guestTables.length - 1]).toEqual(last);
+
+    // 客人这一侧确实照抄到了掉线之前那张表，且一条探测/连线表也没发过。
+    expect(guestTables.length).toBeGreaterThan(0);
+    expect(framesFrom(guestSocket, 'netstatus')).toHaveLength(0);
+
+    guest.leave();
+    host.leave();
+    expect(ticks.pending()).toBe(0);
+  });
+
+  it('客人不再回任何一条消息 ⇒ 满 15 秒后房主把他判成掉线，全桌同一张表都看得见；名册照旧不动', async () => {
+    const relay = new FakeRelay();
+    const clock = fakeClock();
+    const ticks = manualTicks();
+    const guestTables: NetLinkRow[][] = [];
+
+    const host = joinRoom(
+      {
+        role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id,
+        socketFactory: relay.factory, heartbeat: { now: clock.now, schedule: ticks.deps.schedule, cancel: ticks.deps.cancel },
+      },
+      () => {},
+    );
+    await nextTick();
+    const guest = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id,
+        socketFactory: relay.factory, onTable: (rows) => guestTables.push(rows),
+      },
+      () => {},
+    );
+    await nextTick();
+    const guestSocket = relay.created[1];
+    guestSocket.silent = true;
+
+    const hostSocket = relay.created[0];
+    // 差一毫秒不算：判据两边都测，免得阈值被改成 > 也照样绿。
+    clock.advance(DISCONNECT_SILENCE_MS - 1);
+    ticks.tick();
+    await nextTick();
+    expect(lastTable(hostSocket).find((r) => r.id === GUEST.id)?.state).toBe('online');
+
+    clock.advance(1);
+    ticks.tick();
+    await nextTick();
+    const last = lastTable(hostSocket);
+    expect(last.find((r) => r.id === GUEST.id)).toEqual({ id: GUEST.id, name: GUEST.name, pingMs: null, state: 'lost' });
+    expect(last.find((r) => r.id === HOST.id)?.state).toBe('online');
+    expect(guestTables[guestTables.length - 1]).toEqual(last);
+    // 摘人＝J4（座位绑定），本刀只做到"看得见"，名单一个也不动。
+    expect(host.state.peers.map((p) => p.id)).toEqual([HOST.id, GUEST.id]);
+
+    // 他又来信 ⇒ 那一行自己回到在线（不需要新政策，也没有粘住的标签）。
+    guestSocket.silent = false;
+    clock.advance(HEARTBEAT_PROBE_INTERVAL_MS);
+    ticks.tick();
+    await nextTick();
+    expect(lastTable(hostSocket).find((r) => r.id === GUEST.id)?.state).toBe('online');
+
+    guest.leave();
+    host.leave();
+  });
+
+  it('没用心跳的老调用方：一条探测、一张连线表都不发（J1/J2 的行为不许被本刀带跑）', async () => {
+    const relay = new FakeRelay();
+    const tables: NetLinkRow[][] = [];
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    await nextTick();
+    const guest = joinRoom(
+      { role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id, socketFactory: relay.factory, onTable: (rows) => tables.push(rows) },
+      () => {},
+    );
+    await nextTick();
+
+    expect(framesFrom(relay.created[0], 'ping')).toHaveLength(0);
+    expect(framesFrom(relay.created[0], 'netstatus')).toHaveLength(0);
+    expect(framesFrom(relay.created[1], 'pong')).toHaveLength(0);
+    expect(tables).toHaveLength(0);
+
+    guest.leave();
+    host.leave();
+  });
+
+  it('客人自己离开（发 bye）⇒ 表上那一行跟着销账，不是留在原地喊他掉线', async () => {
+    const relay = new FakeRelay();
+    const clock = fakeClock();
+    const ticks = manualTicks();
+    const host = joinRoom(
+      {
+        role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id,
+        socketFactory: relay.factory, heartbeat: { now: clock.now, schedule: ticks.deps.schedule, cancel: ticks.deps.cancel },
+      },
+      () => {},
+    );
+    await nextTick();
+    const guest = joinRoom(
+      { role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    await nextTick();
+
+    guest.leave();
+    await nextTick();
+    expect(lastTable(relay.created[0]).map((r) => r.id)).toEqual([HOST.id]);
+
+    host.leave();
   });
 });

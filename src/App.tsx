@@ -16,6 +16,7 @@ import AiBattleWindow from './components/AiBattleWindow';
 import AiBattleDock from './components/AiBattleDock';
 import AiDirector from './components/AiDirector';
 import NetRoomBridge from './components/NetRoomBridge';
+import NetPingOverlay from './components/NetPingPanel';
 import { factionColors } from './data/generals';
 
 // Hash route for the background AI-battle window opened by developer mode.
@@ -79,6 +80,8 @@ export default function App() {
       <AiDirector />
       {/* J2 发快照的接线住在屏幕上，不住在大厅弹窗里：房主关掉大厅去开局，连线也得继续发。 */}
       <NetRoomBridge />
+      {/* J3 左上角那张公开连线表同理：房主关了大厅、客人只开着牌桌，也得看得见谁掉线。 */}
+      <NetPingOverlay />
       <DeveloperOverlay />
       <AiBattleDock />
     </div>

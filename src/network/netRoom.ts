@@ -7,8 +7,10 @@
  * 变了就通知订阅者。没有规则、没有状态转移。
  */
 import type { EngineState } from '../core/GameState';
+import type { NetLinkRow } from './netProtocol';
 import type { NetRole, RoomConnection } from './netSession';
 import { isRestorableEngineState } from '../store/gameStateAdapter';
+import { sameRows } from './netHeartbeat';
 
 export type ActiveRoom = {
   role: NetRole;
@@ -22,6 +24,11 @@ export type ActiveRoom = {
 
 let active: ActiveRoom | null = null;
 let guestSnapshot: EngineState | null = null;
+/**
+ * J3：房间里左上角那张连线表（名字＋ping＋状态）。
+ * 房主那份是自己算的、客人那份是房主发来的——两边都只住这一格，界面照抄，不再各算一遍。
+ */
+let netStatus: NetLinkRow[] | null = null;
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -32,6 +39,7 @@ export function attachRoom(room: ActiveRoom): void {
   if (active && active !== room) active.connection.leave();
   active = room;
   guestSnapshot = null;
+  netStatus = null;
   notify();
 }
 
@@ -39,6 +47,7 @@ export function attachRoom(room: ActiveRoom): void {
 export function detachRoom(): void {
   active = null;
   guestSnapshot = null;
+  netStatus = null;
   notify();
 }
 
@@ -48,6 +57,21 @@ export function getActiveRoom(): ActiveRoom | null {
 
 export function getGuestSnapshot(): EngineState | null {
   return guestSnapshot;
+}
+
+export function getNetStatus(): NetLinkRow[] | null {
+  return netStatus;
+}
+
+/**
+ * 收下这张表。内容一模一样时保留原来那个引用并返回 false——界面上每秒都在重画
+ * 一张没变的表是白费劲（`useSyncExternalStore` 也要求"没变就得给同一个引用"）。
+ */
+export function receiveNetStatus(rows: NetLinkRow[]): boolean {
+  if (sameRows(netStatus, rows)) return false;
+  netStatus = rows;
+  notify();
+  return true;
 }
 
 /**

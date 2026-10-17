@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NETWORK_SNAPSHOT_VERSION } from './StateSerializer';
 import {
   MAX_NAME_LENGTH,
+  MAX_TRUSTED_PING_MS,
   MAX_WIRE_BYTES,
   NET_PROTOCOL_VERSION,
   checkPeerName,
@@ -87,7 +88,7 @@ describe('版本握手：不一致就明确拒，绝不静默半连', () => {
   });
 });
 
-describe('线上证人：信封只认这五种形状', () => {
+describe('线上证人：信封只认这九种形状', () => {
   it('往返一致', () => {
     const envelope = { t: 'hello', from: 'a', name: '张三', v: STAMP } as const;
     expect(parseEnvelope(encodeEnvelope(envelope))).toEqual(envelope);
@@ -150,5 +151,73 @@ describe('J2 快照信封：协议层只认形状，看不懂的内容不在这�
     const huge = JSON.stringify({ t: 'snapshot', from: 'a', state: { pad: 'x'.repeat(MAX_WIRE_BYTES) } });
     expect(huge.length).toBeGreaterThan(MAX_WIRE_BYTES);
     expect(parseEnvelope(huge)).toBeNull();
+  });
+});
+
+describe('J3 心跳三枚信封：探测、回话、连线表', () => {
+  const ROWS = [
+    { id: 'a', name: '房主', pingMs: null, state: 'online' as const },
+    { id: 'b', name: '客人甲', pingMs: 37, state: 'online' as const },
+    { id: 'c', name: '客人乙', pingMs: null, state: 'lost' as const },
+  ];
+
+  it('ping／pong 往返一致（时刻原样带过去，两端都只当它是个数）', () => {
+    const ping = { t: 'ping', from: 'a', to: 'b', at: 1_700_000_000_000 } as const;
+    const pong = { t: 'pong', from: 'b', to: 'a', at: ping.at } as const;
+    expect(parseEnvelope(encodeEnvelope(ping))).toEqual(ping);
+    expect(parseEnvelope(encodeEnvelope(pong))).toEqual(pong);
+  });
+
+  it('0 毫秒是个合法读数（同一刻回话＝真快，不是缺字段）', () => {
+    expect(parseEnvelope('{"t":"pong","from":"b","to":"a","at":0}')).toEqual({ t: 'pong', from: 'b', to: 'a', at: 0 });
+  });
+
+  it('探测／回话缺收件人、时刻是字符串／负数／非有限值 ⇒ 整条拒（拿一条坏时刻算出来的毫秒数会污染全桌那张表）', () => {
+    expect(parseEnvelope('{"t":"ping","from":"a","at":1}')).toBeNull();
+    expect(parseEnvelope('{"t":"ping","from":"a","to":"","at":1}')).toBeNull();
+    expect(parseEnvelope('{"t":"ping","from":"a","to":"b","at":"1"}')).toBeNull();
+    expect(parseEnvelope('{"t":"ping","from":"a","to":"b","at":-5}')).toBeNull();
+    expect(parseEnvelope('{"t":"pong","from":"a","to":"b","at":null}')).toBeNull();
+    expect(parseEnvelope('{"t":"pong","from":"a","to":"b"}')).toBeNull();
+    const nan = parseEnvelope('{"t":"ping","from":"a","to":"b","at":1e999}');
+    expect(nan).toBeNull();
+  });
+
+  it('时刻可以是任意正数（它只是那台机器自己的钟，协议层不要求它是"现在"）', () => {
+    expect(parseEnvelope('{"t":"ping","from":"a","to":"b","at":123.5}')).toEqual({ t: 'ping', from: 'a', to: 'b', at: 123.5 });
+  });
+
+  it('连线表原样收下：null 与数字两种 ping 值、在线与掉线两种状态都认', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows: ROWS })))
+      .toEqual({ t: 'netstatus', from: 'a', rows: ROWS });
+  });
+
+  it('表里混进一个坏字段就整条拒（不半收：宁可这张表晚一轮回，也不能显示一条猜出来的行）', () => {
+    expect(parseEnvelope('{"t":"netstatus","from":"a","rows":[]}')).toBeNull();
+    expect(parseEnvelope('{"t":"netstatus","from":"a"}')).toBeNull();
+    expect(parseEnvelope('{"t":"netstatus","rows":[]}')).toBeNull();
+    expect(parseEnvelope('{"t":"netstatus","from":"a","rows":[{"id":"b","name":"甲","state":"online","pingMs":-1}]}')).toBeNull();
+    expect(parseEnvelope('{"t":"netstatus","from":"a","rows":[{"id":"b","name":"甲","state":"online","pingMs":1.5}]}')).toBeNull();
+    expect(parseEnvelope('{"t":"netstatus","from":"a","rows":[{"id":"b","name":"甲","state":"offline","pingMs":null}]}')).toBeNull();
+    expect(parseEnvelope('{"t":"netstatus","from":"a","rows":[{"id":"b","name":"","state":"online","pingMs":null}]}')).toBeNull();
+    expect(parseEnvelope('{"t":"netstatus","from":"a","rows":[{"id":"b","state":"online","pingMs":null}]}')).toBeNull();
+    expect(parseEnvelope('{"t":"netstatus","from":"a","rows":[{"id":"b","name":"甲","state":"online"}]}')).toBeNull();
+  });
+
+  it('ping 数字超过可信上限 ⇒ 整条拒（对面随便填一个天文数字也进不了这张表）', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows: [{ id: 'b', name: '甲', pingMs: MAX_TRUSTED_PING_MS, state: 'online' }] }))?.t).toBe('netstatus');
+    expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows: [{ id: 'b', name: '甲', pingMs: MAX_TRUSTED_PING_MS + 1, state: 'online' }] }))).toBeNull();
+  });
+
+  it('名字超过界面那格的上限 ⇒ 拒（连线表里也不能塞进一个超长名字）', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows: [{ id: 'b', name: '一'.repeat(MAX_NAME_LENGTH), pingMs: null, state: 'online' }] }))?.t).toBe('netstatus');
+    expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows: [{ id: 'b', name: '一'.repeat(MAX_NAME_LENGTH + 1), pingMs: null, state: 'online' }] }))).toBeNull();
+  });
+
+  it('行数超过房间上限同样整条拒，且未知类型照旧不收', () => {
+    const rows = Array.from({ length: 8 }, (_, i) => ({ id: `p${i}`, name: `玩家${i}`, pingMs: null, state: 'online' as const }));
+    expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows }))?.t).toBe('netstatus');
+    expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows: [...rows, { id: 'p9', name: '九', pingMs: null, state: 'online' }] }))).toBeNull();
+    expect(parseEnvelope('{"t":"heartbeat","from":"a","to":"b","at":1}')).toBeNull();
   });
 });

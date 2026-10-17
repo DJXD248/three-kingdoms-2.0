@@ -7,10 +7,13 @@ import {
   detachRoom,
   getActiveRoom,
   getGuestSnapshot,
+  getNetStatus,
   receiveGuestSnapshot,
+  receiveNetStatus,
   subscribeNetRoom,
 } from '../network/netRoom';
 import NetSpectator from './NetSpectator';
+import { NetPingPanel } from './NetPingPanel';
 
 const DEFAULT_ADDRESS = 'ws://127.0.0.1:8787';
 const PHASE_LABEL: Record<SessionState['phase'], string> = {
@@ -23,8 +26,9 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
 
 /**
  * J1 做到"连得上、版本对得上、看得见谁在场"；J2（v2.9.2）再加上"客人看得见
- * 房主那一局的牌桌"——发出去的是遮蔽过的局面，客人这一侧只看不能动。
- * 左上角 ping 表与掉线判定＝J3，客人动手与座位绑定＝J4，都还没做。
+ * 房主那一局的牌桌"——发出去的是遮蔽过的局面，客人这一侧只看不能动；
+ * J3（本刀）再加上"左上角公开连线表＋15 秒掉线判定"（判定只有房主做，客人只照抄那张表）。
+ * 剩下：客人动手与座位绑定＝J4、掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。
@@ -36,6 +40,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const [formError, setFormError] = useState<string | null>(null);
 
   const guestSnapshot = useSyncExternalStore(subscribeNetRoom, getGuestSnapshot, getGuestSnapshot);
+  const netRows = useSyncExternalStore(subscribeNetRoom, getNetStatus, getNetStatus);
 
   const start = () => {
     setFormError(null);
@@ -55,6 +60,11 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         selfId: newPeerId(),
         onSnapshot: (snapshot) => {
           if (receiveGuestSnapshot(snapshot)) bumpNetRoom();
+        },
+        // J3：这条连线用心跳那一套（房主探测＋15 秒判定；客人只回话、只照抄房主发来的表）。
+        heartbeat: {},
+        onTable: (rows) => {
+          receiveNetStatus(rows);
         },
       },
       (next) => {
@@ -85,7 +95,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           <div>
             <h2 className="text-xl font-bold text-amber-300">🌐 联网对战</h2>
             <p className="text-xs text-amber-200/50 mt-1">
-              牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人还能看见房主那一局的牌桌"。
+              牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌，全桌还共用一张公开连线表"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -177,6 +187,14 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
+            {netRows !== null && netRows.length > 0 && (
+              <NetPingPanel
+                rows={netRows}
+                selfId={session.selfId}
+                hostId={session.peers.find(p => p.role === 'host')?.id ?? session.selfId}
+              />
+            )}
+
             {session.phase === 'refused' && (
               <div className="rounded-lg border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-200">
                 没让进房，原因是：{session.note}
@@ -202,8 +220,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         )}
 
         <p className="mt-3 text-[11px] leading-relaxed text-amber-200/40">
-          先关掉这个窗不会退房——连线还在，房主那边继续发局面。真要断线请点「离开房间」。
-          还没做的：左上角 ping 表与掉线判定（J3）、客人动手与座位绑定（J4）。
+          先关掉这个窗不会退房——连线还在，房主那边继续发局面，左上角那张连线表也会继续刷新。真要断线请点「离开房间」。
+          谁掉线由房主那台机器判（15 秒收不到某人任何一条消息才算），客人这边只照抄房主发来的表；探测约 2 秒一次，所以判定最多比真正断线晚约两秒显示出来。
+          还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、客人动手与座位绑定＝J4。
           客人这一格仍然只是"看见同一局"，动不了牌。
         </p>
       </div>

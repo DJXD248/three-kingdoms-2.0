@@ -12,6 +12,12 @@ export const MAX_NAME_LENGTH = 12;
 
 export type VersionStamp = { app: string; proto: number; snapshot: number };
 export type NetPeer = { id: string; name: string; role: 'host' | 'guest' };
+/** J3 连线表里的一行：房主算出来的，客人只是照抄显示（判定权不在客人手里）。 */
+export type NetLinkState = 'online' | 'lost';
+export type NetLinkRow = { id: string; name: string; pingMs: number | null; state: NetLinkState };
+
+/** 往返耗时的可信上限：超过就当没量到（对面时钟被改、或攒了很久的一条回话）。 */
+export const MAX_TRUSTED_PING_MS = 600_000;
 
 export type NetEnvelope =
   | { t: 'hello'; from: string; name: string; v: VersionStamp }
@@ -21,6 +27,12 @@ export type NetEnvelope =
   /** J2：房主每次局面变化后发的一份**已遮蔽**快照。协议层只当它是未知对象——
    *  看懂它是快照层的事（`isRestorableEngineState` 在客人端把关）。 */
   | { t: 'snapshot'; from: string; state: Record<string, unknown> }
+  /** J3：房主探测某个连接。`at`＝房主自己那台机器的发出时刻，客人**原样抄回来**，
+   *  往返耗时由房主算——全程只用房主一个时钟，绝不去比两边的表。 */
+  | { t: 'ping'; from: string; to: string; at: number }
+  | { t: 'pong'; from: string; to: string; at: number }
+  /** J3：房主算出来的那张连线表，随探测广播给全桌⇒所有人看同一张表。 */
+  | { t: 'netstatus'; from: string; rows: NetLinkRow[] }
   | { t: 'bye'; from: string };
 
 export function ourVersionStamp(): VersionStamp {
@@ -60,7 +72,7 @@ export function encodeEnvelope(envelope: NetEnvelope): string {
   return JSON.stringify(envelope);
 }
 
-/** 线上证人：解析器只认这六种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
+/** 线上证人：解析器只认这九种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
 export function parseEnvelope(text: string): NetEnvelope | null {
   if (typeof text !== 'string' || text.length === 0 || text.length > MAX_WIRE_BYTES) return null;
   let parsed: unknown;
@@ -72,6 +84,11 @@ export function parseEnvelope(text: string): NetEnvelope | null {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const raw = parsed as Record<string, unknown>;
   const isId = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 64;
+  /** 心跳那个 `at` 是**发话那台机器自己的钟**：只要求它是个安全的正数，不要求它是"现在"。 */
+  const isClock = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= Number.MAX_SAFE_INTEGER;
+  const isPing = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 0;
   const isStamp = (v: unknown): v is VersionStamp => {
     if (!v || typeof v !== 'object') return false;
     const s = v as Record<string, unknown>;
@@ -108,6 +125,28 @@ export function parseEnvelope(text: string): NetEnvelope | null {
       const state = raw.state;
       if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
       return { t: 'snapshot', from: raw.from, state: state as Record<string, unknown> };
+    }
+    case 'ping':
+      return isId(raw.from) && isId(raw.to) && isClock(raw.at)
+        ? { t: 'ping', from: raw.from, to: raw.to, at: raw.at }
+        : null;
+    case 'pong':
+      return isId(raw.from) && isId(raw.to) && isClock(raw.at)
+        ? { t: 'pong', from: raw.from, to: raw.to, at: raw.at }
+        : null;
+    case 'netstatus': {
+      // 空表也拒：房主那一行永远在表上，收到一张"谁都没有"的表只可能是坏消息，
+      // 收下来等于把界面上那张公开的表清空。
+      if (!isId(raw.from) || !Array.isArray(raw.rows) || raw.rows.length === 0 || raw.rows.length > 8) return null;
+      const rows = (raw.rows as unknown[]).map((r) => {
+        if (!r || typeof r !== 'object') return null;
+        const o = r as Record<string, unknown>;
+        if (!isId(o.id) || typeof o.name !== 'string' || o.name.length === 0 || o.name.length > MAX_NAME_LENGTH) return null;
+        if (o.state !== 'online' && o.state !== 'lost') return null;
+        if (o.pingMs !== null && (!isPing(o.pingMs) || o.pingMs > MAX_TRUSTED_PING_MS)) return null;
+        return { id: o.id, name: o.name, pingMs: (o.pingMs as number | null) ?? null, state: o.state };
+      });
+      return rows.every(Boolean) ? { t: 'netstatus', from: raw.from, rows: rows as NetLinkRow[] } : null;
     }
     default:
       return null;

@@ -185,15 +185,80 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     expect(text()).toContain('我开房间');
   });
 
-  it('界面上写明还没做的两格（ping 表／客人动手），不假装已能开局', async () => {
+  it('界面上写明还没做的格子（掉线后两选一／客人动手），不假装已能开局', async () => {
     render(<OnlineLobby onClose={() => {}} />);
-    expect(text()).toContain('ping 表与掉线判定（J3）');
-    expect(text()).toContain('客人动手与座位绑定（J4）');
+    expect(text()).toContain('掉线之后那两选一');
+    expect(text()).toContain('客人动手与座位绑定＝J4');
+    expect(text()).not.toContain('ping 表与掉线判定（J3）');
     expect(text()).not.toContain('牌桌画面同步（J2）');
 
     await clickButton(/^🏠 开房间/);
     await settle();
-    expect(text()).toContain('ping 表与掉线判定（J3）');
+    expect(text()).toContain('客人动手与座位绑定＝J4');
+  });
+
+  it('J3：客人收到探测 ⇒ 原样把时刻抄回去，且自己一条探测/连线表也不发', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('PPPPPP');
+    const me = myId(socket);
+    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }] });
+    socket.sent.length = 0;
+
+    await receive(socket, { t: 'ping', from: 'host-9', to: me, at: 1_700_000_000_456 });
+    expect(socket.sent).toEqual([encodeEnvelope({ t: 'pong', from: me, to: 'host-9', at: 1_700_000_000_456 })]);
+
+    // 别人（不是房主）的探测也不代答——两个人同名不能互相顶缸。
+    socket.sent.length = 0;
+    await receive(socket, { t: 'ping', from: 'guest-x', to: 'someone-else', at: 1 });
+    expect(socket.sent).toEqual([]);
+  });
+
+  it('J3：房主算好的那张表在客人屏上原样显示，含"这是往返时间"那句如实话', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('QQQQQQ');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: myId(socket), name: '玩家', role: 'guest' }] });
+
+    expect(text()).not.toContain('连线情况');
+    await receive(socket, {
+      t: 'netstatus', from: 'host-9',
+      rows: [
+        { id: 'host-9', name: '房主乙', pingMs: null, state: 'online' },
+        { id: myId(socket), name: '玩家', pingMs: 42, state: 'online' },
+      ],
+    });
+    expect(text()).toContain('连线情况（2 人·全桌公开）');
+    expect(text()).toContain('42 毫秒');
+    // 还没量到写成"还没回话"，不能写成 0 毫秒（没测到 ≠ 测到 0）。
+    expect(text()).toContain('还没回话');
+    expect(text()).toContain('房主那台机器');
+
+    // 房主判出来的掉线，客人这边只是照抄：写明谁、并说清那两选一还没做。
+    await receive(socket, {
+      t: 'netstatus', from: 'host-9',
+      rows: [
+        { id: 'host-9', name: '房主乙', pingMs: null, state: 'online' },
+        { id: myId(socket), name: '玩家', pingMs: null, state: 'lost' },
+      ],
+    });
+    expect(text()).toContain('掉线了（15 秒没收到他任何一条消息）');
+    expect(text()).toContain('J5');
+    expect(text()).not.toContain('42 毫秒');
+  });
+
+  it('J3：不是房主发来的表不上屏（谁都能喊一句"某某掉线了"就成了假通告）', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('RRRRRR');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: myId(socket), name: '玩家', role: 'guest' }] });
+
+    await receive(socket, {
+      t: 'netstatus', from: 'guest-x',
+      rows: [{ id: 'host-9', name: '房主乙', pingMs: null, state: 'lost' }],
+    });
+    expect(text()).not.toContain('连线情况');
+    expect(text()).toContain('收到不是房主发来的连线表，已忽略');
   });
 
   it('J2：客人收到房主的遮蔽局面 ⇒ 屏幕上出现同一局的牌桌，写着"只看不动"', async () => {
