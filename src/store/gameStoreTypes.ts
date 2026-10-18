@@ -210,6 +210,9 @@ export interface GameState {
   toggleDisabledGeneral:(id:string)=>EditDecision;
   batchToggleDisabled:(ids:string[],disabled:boolean)=>{applied:string[];rejected:string[];deniedLock:string[]};
   importSkillEditsFromText:(text:string)=>{count:number;rejected:string[];deniedLock:string[];applied:string[]};
+  // v2.9.12 内容包：一次写全或一张不写（原子性在 store 这一层自己再把一道关，
+  // 不靠界面自觉）；被挡下的记录逐条点名，绝不静默。
+  installAuthoredGenerals:(generals:General[])=>{installed:string[];refused:string[]};
   getGeneralWithEdits:(general:General)=>General;
   // v2.8.6 地基刀2 (§H3 layer ③): assembly reads the policy-filtered view and
   // the report, never the raw save-file. Blocked overlays stay on disk.

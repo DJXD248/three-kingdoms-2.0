@@ -14,6 +14,7 @@ import {
 } from './editorPersistence';
 import {
   createAuthoredGeneral,
+  isAcceptableAuthoredRecord,
   isAuthoredId,
   type AuthoredGeneralInput,
 } from '../domain/generalProvenance';
@@ -53,6 +54,7 @@ export function buildEditorActions(
   | 'updateGeneralEdit'
   | 'addAuthoredGeneral'
   | 'removeAuthoredGeneral'
+  | 'installAuthoredGenerals'
   | 'toggleGeneralLock'
   | 'batchToggleLocked'
   | 'isGeneralLocked'
@@ -165,6 +167,29 @@ export function buildEditorActions(
       persistLockedGenerals(lockedGeneralIds);
       set({ authoredGenerals, skillEdits, generalEdits, disabledGenerals, lockedGeneralIds });
       return { ok: true, denial: null };
+    },
+
+    // v2.9.12 内容包 (§G 第 11 项)：把一包玩家自制将领一次写进本机清单。
+    // 安装动作自己守原子性——任何一条认账不过（编号/来源不成对，或本机已有同编号），
+    // 整包一条也不写并把被挡下的逐条点名。这里不问开发者模式：自制记录本来就是
+    // 本机的内容（§H3 只对仓库名册上的官方卡要求授权），而"覆盖已有"根本不允许发生。
+    installAuthoredGenerals: (generals) => {
+      const current = get().authoredGenerals;
+      const known = new Set(current.map(g => g.id));
+      const refused: string[] = [];
+      for (const g of generals) {
+        const label = typeof g?.id === 'string' && g.id !== '' ? g.id : '（没有编号的一条）';
+        if (!isAcceptableAuthoredRecord(g)) {
+          refused.push(label);
+          continue;
+        }
+        if (known.has(g.id)) refused.push(`${g.name}（这台机器上已经有一张同编号的）`);
+      }
+      if (refused.length > 0) return { installed: [], refused };
+      const authoredGenerals = [...current, ...generals];
+      persistAuthoredGenerals(authoredGenerals);
+      set({ authoredGenerals });
+      return { installed: generals.map(g => `${g.name}（${g.id}）`), refused: [] };
     },
 
     // §H8 N2: the white-lock switch itself. Guarded by the SYSTEM layer only

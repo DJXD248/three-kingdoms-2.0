@@ -45,6 +45,7 @@ import {
   type ImportSummaryEntry, type SummarySnapshot,
 } from './skillEditor/importSummary';
 import { ImportSummaryPanel } from './skillEditor/ImportSummaryPanel';
+import { ContentPackPanel } from './ContentPackPanel';
 import { describeLockKey, findIdentityConflicts } from '../domain/identity';
 import { TriggerEditor } from './skillEditor/TriggerEditor';
 import { RuntimeEditor } from './skillEditor/RuntimeEditor';
@@ -126,6 +127,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const [newIdentityName, setNewIdentityName] = useState('');
   const [identityNotice, setIdentityNotice] = useState('');
   const [showImport, setShowImport] = useState(false);
+  /** v2.9.12 内容包：导出/导入玩家自制将领那面板的开关。 */
+  const [showPack, setShowPack] = useState(false);
   const [importText, setImportText] = useState('');
   const [importResult, setImportResult] = useState('');
   /** 导入时 Excel 里没看懂的原文（门槛栏/触发栏），逐条常驻显示（不自动消失，必须人工处理）。 */
@@ -929,6 +932,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all ${showImport ? 'bg-purple-700/60 border-purple-500/40 text-purple-100' : 'bg-purple-800/40 border-purple-700/30 text-purple-200 hover:bg-purple-700/40'}`}>
               📄 导入
             </button>
+            <button onClick={() => setShowPack(v => !v)}
+              className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all ${showPack ? 'bg-amber-700/60 border-amber-500/40 text-amber-100' : 'bg-purple-800/40 border-purple-700/30 text-purple-200 hover:bg-purple-700/40'}`}>
+              📦 内容包
+            </button>
             <button onClick={handleExport}
               className="px-3 py-1.5 rounded-lg border bg-green-800/40 border-green-700/30 text-green-200 text-sm font-bold hover:bg-green-700/40 transition-all active:scale-95">
               📤 导出Excel
@@ -944,6 +951,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </div>
+
+        {/* v2.9.12 内容包：导出/导入玩家自制将领（独立功能，与开房、联机无关） */}
+        {showPack && <ContentPackPanel />}
 
         {/* v2.8.8 N2 (§H8): 两把锁一眼可分——金锁是系统禁改的可视化（关不掉），
             白锁是玩家自己点的保护（随时可解）。非开发者第一次进来要知道自己
