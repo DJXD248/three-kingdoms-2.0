@@ -6,7 +6,9 @@ import {
   versionMismatch,
   type NetEnvelope,
   type NetLinkRow,
+  type NetMoveItem,
   type NetPeer,
+  type NetSeatRow,
 } from './netProtocol';
 import {
   DISCONNECT_SILENCE_MS,
@@ -56,6 +58,17 @@ export type StepResult = {
    * 所以快照、名册、回话、任何一条都算数。
    */
   saw?: { from: string; kind: NetEnvelope['t']; at?: number };
+  /**
+   * J4（客人侧）：房主宣布的席位表。客人照抄，自己不在这里绑座——绑定只有房主能算，
+   * 客人算出来的那份会让两边读着不同的座次动手。
+   */
+  seatMap?: NetSeatRow[];
+  /** J4（客人侧）：房主当场算给**我这一席**的那张清单。指名发给别人的不收。 */
+  moves?: { seat: number; items: NetMoveItem[]; omitted: number };
+  /** J4（客人侧）：房主没让走那一步，附的那句话。 */
+  refusal?: { key: string; reason: string };
+  /** J4（房主侧）：某位客人交回来的一步。这里只搬运，合法性由接线那头当场重算再判。 */
+  action?: { peer: string; seat: number; key: string };
 };
 
 export function newPeerId(): string {
@@ -151,6 +164,26 @@ export function stepSession(
     }
     return { state, sends: [], snapshot: envelope.state, saw };
   }
+  // ── J4：客人这边收到三样，全部只认房主那一份 ──
+  if (envelope.t === 'seatmap') {
+    const fromHost = state.peers.some((p) => p.id === envelope.from && p.role === 'host');
+    if (!fromHost) {
+      return { state: { ...state, note: '收到不是房主发来的席位表，已忽略' }, sends: [], saw };
+    }
+    return { state, sends: [], seatMap: envelope.seats, saw };
+  }
+  if (envelope.t === 'moves') {
+    const fromHost = state.peers.some((p) => p.id === envelope.from && p.role === 'host');
+    // 清单是指名发给某一席的（传话线也会把它递给房间里其他人）⇒ 不是给我的那份就丢掉，
+    // 绝不拿别人的清单去点别人的座。
+    if (!fromHost || envelope.to !== state.selfId) return { state, sends: [], saw };
+    return { state, sends: [], moves: { seat: envelope.seat, items: envelope.items, omitted: envelope.omitted }, saw };
+  }
+  if (envelope.t === 'actno') {
+    const fromHost = state.peers.some((p) => p.id === envelope.from && p.role === 'host');
+    if (!fromHost || envelope.to !== state.selfId) return { state, sends: [], saw };
+    return { state, sends: [], refusal: { key: envelope.key, reason: envelope.reason }, saw };
+  }
   return { state, sends: [], saw };
 }
 
@@ -182,6 +215,15 @@ function hostStep(state: SessionState, envelope: NetEnvelope): StepResult {
     if (!state.peers.some((p) => p.id === envelope.from)) return { state, sends: [] };
     const peers = state.peers.filter((p) => p.id !== envelope.from);
     return { state: { ...state, peers, note: '有人离开了房间' }, sends: [{ t: 'roster', from: state.selfId, peers }] };
+  }
+
+  // J4：客人交回来的一步。房主这边只做两句把关——这条是指名发给我的、发信人确实在名册里
+  // 是位客人——**合法性一个字也不在这里判**（那是接线那头拿房主当下的局面当场重算的事，
+  // 见 components/NetRoomBridge）。客人字节里那句"我认为这是合法的"不作数。
+  if (envelope.t === 'act') {
+    if (envelope.to !== state.selfId) return { state, sends: [] };
+    if (!state.peers.some((p) => p.id === envelope.from && p.role === 'guest')) return { state, sends: [] };
+    return { state, sends: [], action: { peer: envelope.from, seat: envelope.seat, key: envelope.key } };
   }
 
   // 客人之间互发的消息、以及发给别人的 welcome/refuse/roster，房主一概不当名册用。
@@ -227,6 +269,17 @@ export function joinRoom(
     heartbeat?: HeartbeatDeps;
     /** 连线表变了回调一次：房主那边是自己算出来的，客人那边是房主发来的那一份。 */
     onTable?: (rows: NetLinkRow[]) => void;
+    /**
+     * J4（房主侧）：某位客人交回来的一步。到这里为止线上传的只有"席位＋编号"，
+     * 接线那头拿房主当下的局面**当场重算**这张清单，对得上才走，对不上退回并说明。
+     */
+    onAction?: (msg: { peer: string; seat: number; key: string }) => void;
+    /** J4（客人侧）：房主宣布的席位表（我坐哪一席、别人坐哪一席）。 */
+    onSeatMap?: (rows: NetSeatRow[]) => void;
+    /** J4（客人侧）：房主算给**我这一席**的那张清单（含"还有几条没列出来"那个数）。 */
+    onMoves?: (msg: { seat: number; items: NetMoveItem[]; omitted: number }) => void;
+    /** J4（客人侧）：房主退回那一步时附的那句话。 */
+    onRefusal?: (msg: { key: string; reason: string }) => void;
   },
   onChange: (state: SessionState) => void,
 ): RoomConnection {
@@ -292,6 +345,7 @@ export function joinRoom(
     for (const envelope of next.sends) link?.send(encodeEnvelope(envelope));
     if (event.type === 'close') stopHeartbeat();
     // 房主侧的记账：来信任意一条都刷新那个人的时钟（判据原文＝15 秒未收到该人**任何**消息）。
+    // 这一步也顺带证明"那台机器还活着"——客人动手比心跳更硬，掉线判定因此只会更早露相。
     if (hb && state.role === 'host' && next.saw) {
       const at = hbNow();
       model = next.saw.kind === 'pong' && next.saw.at !== undefined
@@ -302,6 +356,11 @@ export function joinRoom(
     publish();
     if (next.snapshot) args.onSnapshot?.(next.snapshot);
     if (next.table) args.onTable?.(next.table);
+    // J4：席位表与清单都是房主算好发出来的，客人这边照抄进注册表；动手那一步交给接线重算。
+    if (next.seatMap) args.onSeatMap?.(next.seatMap);
+    if (next.moves) args.onMoves?.(next.moves);
+    if (next.refusal) args.onRefusal?.(next.refusal);
+    if (next.action) args.onAction?.(next.action);
   };
 
   link = openNetLink(args.url, {

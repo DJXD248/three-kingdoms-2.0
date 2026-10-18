@@ -149,3 +149,22 @@ export function passReactionStore(
 export function resetReactionWindowStore(): void {
   container?.engine.reactions.clear();
 }
+
+/**
+ * J4 只读探针（v2.9.11）：“这一席此刻能走哪些步”。
+ *
+ * 房主给远端那一席发清单、以及收到编号后**当场重算**再对，都走这里。三条硬边界：
+ *  - **绝不碰常驻容器**：新造一个 `recordHistory:false` 的一次性引擎，探针与生产
+ *    执行路（dispatchStoreAction）各用各的容器，互不推进对方的状态。
+ *  - **绝不推进对局**：合法性判定靠的是纯函数（validate + resolver 双重裁决，见
+ *    rules/legalActions 的 purity 注记），既不抽牌也不动 `rngState`——那颗游标
+ *    一旦被探针推一格，房主下一次真抽就不是客人刚才看到的那张了。
+ *  - **绝不进录像**：`recordLiveDispatch` 只属于生产 dispatch 路，探针不是 dispatch。
+ * 输入走 `toEngineState` 的克隆语义，调用方（store 快照）那个对象一个字节都不动。
+ */
+export function probeSeatActions(storeState: unknown, playerId: number): GameAction[] {
+  const engineState = toEngineState(storeState);
+  const engine = new GameEngine(engineState, { recordHistory: false });
+  syncPlayerSkills(engine, engineState);
+  return engine.legalActions(playerId);
+}

@@ -4,15 +4,24 @@ import { joinRoom, newPeerId, type NetRole, type SessionState } from '../network
 import {
   attachRoom,
   bumpNetRoom,
+  clearRefusal,
+  deliverHostAction,
   detachRoom,
   getActiveRoom,
   getGuestSnapshot,
   getNetStatus,
+  getRefusal,
+  getSeatMap,
+  getSeatMoves,
   receiveGuestSnapshot,
   receiveNetStatus,
+  receiveRefusal,
+  receiveSeatMap,
+  receiveSeatMoves,
   subscribeNetRoom,
 } from '../network/netRoom';
 import NetSpectator from './NetSpectator';
+import { NetSeatPanel } from './NetSeatPanel';
 import { NetPingPanel } from './NetPingPanel';
 
 const DEFAULT_ADDRESS = 'ws://127.0.0.1:8787';
@@ -26,9 +35,11 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
 
 /**
  * J1 做到"连得上、版本对得上、看得见谁在场"；J2（v2.9.2）再加上"客人看得见
- * 房主那一局的牌桌"——发出去的是遮蔽过的局面，客人这一侧只看不能动；
- * J3（本刀）再加上"左上角公开连线表＋15 秒掉线判定"（判定只有房主做，客人只照抄那张表）。
- * 剩下：客人动手与座位绑定＝J4、掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
+ * 房主那一局的牌桌"——发出去的是遮蔽过的局面；J3（v2.9.10）再加上
+ * "左上角公开连线表＋15 秒掉线判定"（判定只有房主做，客人只照抄那张表）；
+ * J4（本刀）再加上"客人能动自己那一席"：椅子由房主绑，按钮由房主算，
+ * 客人交回来的只是席位号与编号，合法性与执行全在房主那台机器。
+ * 剩下：掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。
@@ -41,6 +52,19 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
 
   const guestSnapshot = useSyncExternalStore(subscribeNetRoom, getGuestSnapshot, getGuestSnapshot);
   const netRows = useSyncExternalStore(subscribeNetRoom, getNetStatus, getNetStatus);
+  // J4：席位表、给我这一席的清单、上一次没走成的那句话——三样都是房主发来的，这里只照抄。
+  const seatMap = useSyncExternalStore(subscribeNetRoom, getSeatMap, getSeatMap);
+  const seatMoves = useSyncExternalStore(subscribeNetRoom, getSeatMoves, getSeatMoves);
+  const refusal = useSyncExternalStore(subscribeNetRoom, getRefusal, getRefusal);
+
+  const hostId = session?.peers.find((p) => p.role === 'host')?.id ?? session?.selfId ?? '';
+
+  /** 客人交回一步：线上只走「第几席＋编号」，动作本体与牌面内容一个都不发。 */
+  const playMove = (item: { key: string; label: string }) => {
+    const room = getActiveRoom();
+    if (!room || !seatMoves || !session) return;
+    room.connection.send({ t: 'act', from: session.selfId, to: hostId, seat: seatMoves.seat, key: item.key });
+  };
 
   const start = () => {
     setFormError(null);
@@ -65,6 +89,20 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         heartbeat: {},
         onTable: (rows) => {
           receiveNetStatus(rows);
+        },
+        // J4：席位表与清单都是房主算好发来的，客人只照抄；清单一换，上一句退回说明跟着作废。
+        onSeatMap: (rows) => {
+          receiveSeatMap(rows);
+        },
+        onMoves: (msg) => {
+          if (receiveSeatMoves(msg)) clearRefusal();
+        },
+        onRefusal: (msg) => {
+          receiveRefusal(msg);
+        },
+        // 客人交回来的那一条只有房主那台机器会收到（发话人自己听不见）。
+        onAction: (msg) => {
+          deliverHostAction(msg);
         },
       },
       (next) => {
@@ -95,7 +133,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           <div>
             <h2 className="text-xl font-bold text-amber-300">🌐 联网对战</h2>
             <p className="text-xs text-amber-200/50 mt-1">
-              牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌，全桌还共用一张公开连线表"。
+              牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌、
+              还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -203,6 +242,15 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
 
             {session.role === 'guest' && <NetSpectator snapshot={guestSnapshot} />}
 
+            <NetSeatPanel
+              seatMap={seatMap}
+              moves={seatMoves}
+              refusal={refusal}
+              selfId={session.selfId}
+              isHost={session.role === 'host'}
+              onPick={session.role === 'host' ? undefined : playMove}
+            />
+
             <div className="flex gap-2">
               <button
                 onClick={leave}
@@ -222,8 +270,11 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         <p className="mt-3 text-[11px] leading-relaxed text-amber-200/40">
           先关掉这个窗不会退房——连线还在，房主那边继续发局面，左上角那张连线表也会继续刷新。真要断线请点「离开房间」。
           谁掉线由房主那台机器判（15 秒收不到某人任何一条消息才算），客人这边只照抄房主发来的表；探测约 2 秒一次，所以判定最多比真正断线晚约两秒显示出来。
-          还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、客人动手与座位绑定＝J4。
-          客人这一格仍然只是"看见同一局"，动不了牌。
+          客人动手（J4）现在做到：椅子由房主按进房顺序排（房主占第一把，全是电脑在打就没有能坐的椅子），
+          按钮上那几句是房主按当下的局面算给那一席的清单，客人点出去只交回「第几席＋编号」，
+          房主重算对得上才走、对不上退回并说明；清单一次最多列 32 步，没列出的条数会写在下面。
+          这一版不防作弊：清单虽然只指名发给那一席，传话程序只认房间不认人，同桌理论上看得见别人那几行的文字。
+          还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
         </p>
       </div>
     </div>

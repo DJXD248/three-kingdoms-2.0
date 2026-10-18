@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { NETWORK_SNAPSHOT_VERSION } from './StateSerializer';
 import {
   MAX_NAME_LENGTH,
+  MAX_MOVE_ITEMS,
+  MAX_OMITTED_MOVES,
+  MAX_SEAT_ROWS,
   MAX_TRUSTED_PING_MS,
   MAX_WIRE_BYTES,
   NET_PROTOCOL_VERSION,
@@ -219,5 +222,117 @@ describe('J3 心跳三枚信封：探测、回话、连线表', () => {
     expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows }))?.t).toBe('netstatus');
     expect(parseEnvelope(encodeEnvelope({ t: 'netstatus', from: 'a', rows: [...rows, { id: 'p9', name: '九', pingMs: null, state: 'online' }] }))).toBeNull();
     expect(parseEnvelope('{"t":"heartbeat","from":"a","to":"b","at":1}')).toBeNull();
+  });
+});
+
+describe('J4 四枚信封：席位表、能走的清单、客人交回的编号、退回说明', () => {
+  const SEATS = [
+    { peer: 'a', seat: 0, name: '房主' },
+    { peer: 'b', seat: 1, name: '客人甲' },
+    { peer: null, seat: 2, name: '玩家3' },
+  ];
+  const ITEMS = [
+    { key: 'END_TURN|0|a1b2c3d4', label: '结束这一回合' },
+    { key: 'ATTACK|0|99ff00aa', label: '用 关羽 打 玩家3' },
+  ];
+
+  it('席位表原样收下：有人坐的格、空着的格（peer:null）都认', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'seatmap', from: 'a', seats: SEATS })))
+      .toEqual({ t: 'seatmap', from: 'a', seats: SEATS });
+  });
+
+  it('空席位表整条拒（房主那一格永远在表上，"谁都不坐"只可能是坏消息）', () => {
+    expect(parseEnvelope('{"t":"seatmap","from":"a","seats":[]}')).toBeNull();
+    expect(parseEnvelope('{"t":"seatmap","from":"a"}')).toBeNull();
+    expect(parseEnvelope('{"t":"seatmap","seats":[]}')).toBeNull();
+  });
+
+  it('席位行里少一样、席位号不是整数或离谱、peer 是空串、名字超长或带控制字符 ⇒ 整条拒', () => {
+    const bad = [
+      '{"t":"seatmap","from":"a","seats":[{"seat":0,"name":"房主"}]}',
+      '{"t":"seatmap","from":"a","seats":[{"peer":"a","name":"房主"}]}',
+      '{"t":"seatmap","from":"a","seats":[{"peer":"a","seat":0}]}',
+      '{"t":"seatmap","from":"a","seats":[{"peer":"a","seat":1.5,"name":"房主"}]}',
+      '{"t":"seatmap","from":"a","seats":[{"peer":"a","seat":-1,"name":"房主"}]}',
+      '{"t":"seatmap","from":"a","seats":[{"peer":"a","seat":65,"name":"房主"}]}',
+      '{"t":"seatmap","from":"a","seats":[{"peer":"","seat":0,"name":"房主"}]}',
+      '{"t":"seatmap","from":"a","seats":[{"peer":"a","seat":0,"name":""}]}',
+      `{"t":"seatmap","from":"a","seats":[{"peer":"a","seat":0,"name":"${'一'.repeat(MAX_NAME_LENGTH + 1)}"}]}`,
+      '{"t":"seatmap","from":"a","seats":[{"peer":"a","seat":0,"name":"甲\\u0001"}]}',
+    ];
+    for (const text of bad) expect(parseEnvelope(text)).toBeNull();
+    const nine = Array.from({ length: 9 }, (_, i) => ({ peer: `p${i}`, seat: i, name: `玩家${i}` }));
+    expect(parseEnvelope(encodeEnvelope({ t: 'seatmap', from: 'a', seats: nine.slice(0, MAX_SEAT_ROWS) })))
+      .toEqual({ t: 'seatmap', from: 'a', seats: nine.slice(0, MAX_SEAT_ROWS) });
+    expect(parseEnvelope(encodeEnvelope({ t: 'seatmap', from: 'a', seats: nine }))).toBeNull();
+  });
+
+  it('清单原样收下，且**空清单是一条真话**（这一席此刻一步也走不了，界面要显示这句而不是留着旧按钮）', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'moves', from: 'a', to: 'b', seat: 1, items: ITEMS, omitted: 0 })))
+      .toEqual({ t: 'moves', from: 'a', to: 'b', seat: 1, items: ITEMS, omitted: 0 });
+    expect(parseEnvelope('{"t":"moves","from":"a","to":"b","seat":1,"items":[],"omitted":0}')).toEqual({ t: 'moves', from: 'a', to: 'b', seat: 1, items: [], omitted: 0 });
+  });
+
+  it('封顶后"还有几步没列出来"必须是个安全的非负整数——缺了它、负数、小数、离谱大数都整条拒', () => {
+    // 挤掉条数是界面上那句真话的分母；没有分母的"这是全部"＝骗人。
+    expect(parseEnvelope('{"t":"moves","from":"a","to":"b","seat":1,"items":[],"omitted":57}'))
+      .toEqual({ t: 'moves', from: 'a', to: 'b', seat: 1, items: [], omitted: 57 });
+    for (const text of [
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[]}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[],"omitted":-1}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[],"omitted":1.5}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[],"omitted":"3"}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[],"omitted":10001}',
+    ]) expect(parseEnvelope(text)).toBeNull();
+    expect(parseEnvelope(`{"t":"moves","from":"a","to":"b","seat":1,"items":[],"omitted":${MAX_OMITTED_MOVES}}`)).not.toBeNull();
+  });
+
+  it('清单缺收件人／席位号不对／编号或句子是空的、超长、带控制字符 ⇒ 整条拒', () => {
+    const bad = [
+      '{"t":"moves","from":"a","seat":1,"items":[],"omitted":0}',
+      '{"t":"moves","from":"a","to":"","seat":1,"items":[],"omitted":0}',
+      '{"t":"moves","from":"a","to":"b","items":[],"omitted":0}',
+      '{"t":"moves","from":"a","to":"b","seat":"1","items":[],"omitted":0}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"omitted":0}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[{"key":"","label":"结束这一回合"}],"omitted":0}',
+      `{"t":"moves","from":"a","to":"b","seat":1,"items":[{"key":"k","label":"${'一'.repeat(61)}"}],"omitted":0}`,
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[{"key":"k\\u0007","label":"x"}],"omitted":0}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[{"label":"x"}],"omitted":0}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[{"key":"k"}],"omitted":0}',
+      '{"t":"moves","from":"a","to":"b","seat":1,"items":[{"key":65,"label":"x"}],"omitted":0}',
+    ];
+    for (const text of bad) expect(parseEnvelope(text)).toBeNull();
+    const many = Array.from({ length: MAX_MOVE_ITEMS + 1 }, (_, i) => ({ key: `k${i}`, label: `第${i}步` }));
+    expect(parseEnvelope(encodeEnvelope({ t: 'moves', from: 'a', to: 'b', seat: 1, items: many, omitted: 0 }))).toBeNull();
+    expect(parseEnvelope(encodeEnvelope({ t: 'moves', from: 'a', to: 'b', seat: 1, items: many.slice(0, 32), omitted: 1 })))
+      .toEqual({ t: 'moves', from: 'a', to: 'b', seat: 1, items: many.slice(0, 32), omitted: 1 });
+  });
+
+  it('客人交回的只有席位与编号——牌面内容压根没有地方放', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'act', from: 'b', to: 'a', seat: 1, key: ITEMS[0].key })))
+      .toEqual({ t: 'act', from: 'b', to: 'a', seat: 1, key: ITEMS[0].key });
+    const extra = parseEnvelope('{"t":"act","from":"b","to":"a","seat":1,"key":"k","payload":{"general":{"name":"关羽"}}}');
+    expect(extra).toEqual({ t: 'act', from: 'b', to: 'a', seat: 1, key: 'k' });
+    for (const text of [
+      '{"t":"act","from":"b","to":"a","seat":1}',
+      '{"t":"act","from":"b","seat":1,"key":"k"}',
+      '{"t":"act","from":"b","to":"a","seat":1,"key":""}',
+      `{"t":"act","from":"b","to":"a","seat":1,"key":"${'k'.repeat(65)}"}`,
+      '{"t":"act","from":"b","to":"a","seat":null,"key":"k"}',
+    ]) expect(parseEnvelope(text)).toBeNull();
+  });
+
+  it('退回必须带一句人读的原因；空原因、超长原因都整条拒（只说不行不说为什么＝让人瞎猜）', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'actno', from: 'a', to: 'b', key: 'k', reason: '这一席现在不是你的回合' })))
+      .toEqual({ t: 'actno', from: 'a', to: 'b', key: 'k', reason: '这一席现在不是你的回合' });
+    expect(parseEnvelope('{"t":"actno","from":"a","to":"b","key":"k","reason":""}')).toBeNull();
+    expect(parseEnvelope('{"t":"actno","from":"a","to":"b","key":"k"}')).toBeNull();
+    expect(parseEnvelope(encodeEnvelope({ t: 'actno', from: 'a', to: 'b', key: 'k', reason: '一'.repeat(121) }))).toBeNull();
+    expect(parseEnvelope(encodeEnvelope({ t: 'actno', from: 'a', to: 'b', key: 'k', reason: '一'.repeat(120) }))).not.toBeNull();
+  });
+
+  it('协议版本仍为 1：这四枚是同版本内的新形状，不是把老信封改了样子', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(1);
+    expect(ourVersionStamp().proto).toBe(1);
   });
 });

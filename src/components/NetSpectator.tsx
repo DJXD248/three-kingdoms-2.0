@@ -8,12 +8,13 @@ import { hiddenCount } from '../network/snapshotView';
  * 这里刻意不复用 GameBoard：那张牌桌是为热座设计的（它画的是"当前那一席的手牌"），
  * 客人拿到的快照里手牌只有数量、没有内容。观战面只读房间里公开的事实——
  * 谁在场面上、谁剩多少体力、轮到谁、营地还剩多少、将池还剩几员。
- * 全程没有任何按钮：客人动手＝J4。
+ * 全程没有任何按钮：这一格只画局面本身。客人动手（J4＝v2.9.11）在下面的席位表那一格，
+ * 按的是房主算好发来的那一份清单，牌桌这一格仍然一处也不可点。
  */
 export default function NetSpectator({ snapshot }: { snapshot: EngineState | null }) {
   return (
     <div className="rounded-lg border border-sky-800/35 bg-black/30 px-3 py-2.5">
-      <p className="text-xs font-bold text-sky-300/85 mb-0.5">👀 观战 · 这一局由房主算牌，你这边只看不动</p>
+      <p className="text-xs font-bold text-sky-300/85 mb-0.5">👀 牌桌 · 这一局由房主算牌，这里只画局面，要动手看下面席位表</p>
 
       {!snapshot || snapshot.players.length === 0 ? (
         <p className="text-xs text-amber-200/45">

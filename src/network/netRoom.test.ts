@@ -6,12 +6,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   attachRoom,
   bumpNetRoom,
+  clearRefusal,
   detachRoom,
   getActiveRoom,
   getGuestSnapshot,
   getNetStatus,
+  getRefusal,
+  getSeatMap,
+  getSeatMoves,
   receiveGuestSnapshot,
   receiveNetStatus,
+  receiveRefusal,
+  receiveSeatMap,
+  receiveSeatMoves,
   subscribeNetRoom,
 } from './netRoom';
 import { joinRoom } from './netSession';
@@ -149,5 +156,93 @@ describe('J3 连线表也住这一格（房主关了大厅、客人只开牌桌�
     receiveNetStatus(ROWS);
     detachRoom();
     expect(getNetStatus()).toBeNull();
+  });
+});
+
+/**
+ * J4 那三格也住这一格：房主离开大厅去开局、客人一直盯着牌桌，席位表与清单就得在。
+ * 纪律与连线表那一格一模一样——**内容没变就保留同一个引用并说"没变"**，
+ * 因为房主每次局面变化都会把这两份重发一遍，而多数时候它们根本没动。
+ */
+describe('J4 席位表、清单与退回说明也住这一格', () => {
+  const SEATS = [
+    { peer: 'h', seat: 1, name: '房主' },
+    { peer: 'g', seat: 2, name: '客人甲' },
+  ];
+  const SEATS_AFTER = [
+    { peer: 'h', seat: 1, name: '房主' },
+    { peer: null, seat: 2, name: '空位' },
+  ];
+  const MOVES = { seat: 2, items: [{ key: '0-END_TURN:aa', label: '⏭️结束回合' }], omitted: 0 };
+  const REFUSAL = { key: '0-END_TURN:aa', reason: '这一步已经不成立' };
+
+  it('没收过就是空的：界面据此什么都不画，不画一份猜出来的席位表', () => {
+    expect(getSeatMap()).toBeNull();
+    expect(getSeatMoves()).toBeNull();
+    expect(getRefusal()).toBeNull();
+  });
+
+  it('同一份内容换个对象再来＝没变（不重绘、不换引用）；真变了才通知', () => {
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+
+    expect(receiveSeatMap(SEATS)).toBe(true);
+    expect(getSeatMap()).toBe(SEATS);
+    expect(receiveSeatMap(SEATS.map((r) => ({ ...r })))).toBe(false);
+    expect(getSeatMap()).toBe(SEATS);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    expect(receiveSeatMap(SEATS_AFTER)).toBe(true);
+    expect(getSeatMap()).toEqual(SEATS_AFTER);
+    expect(seen).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it('清单：换座、换条数、换任一个编号或句子、封顶数字变了都算变；原样重发不算', () => {
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+
+    expect(receiveSeatMoves(MOVES)).toBe(true);
+    expect(getSeatMoves()).toBe(MOVES);
+    expect(receiveSeatMoves({ seat: 2, items: MOVES.items.map((i) => ({ ...i })), omitted: 0 })).toBe(false);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    expect(receiveSeatMoves({ seat: 3, items: MOVES.items, omitted: 0 })).toBe(true);
+    expect(receiveSeatMoves({ seat: 3, items: MOVES.items, omitted: 4 })).toBe(true);
+    expect(receiveSeatMoves({ seat: 3, items: [{ key: '1-ATTACK:bb', label: '🏹攻击' }], omitted: 4 })).toBe(true);
+    expect(seen).toHaveBeenCalledTimes(4);
+    unsubscribe();
+  });
+
+  it('退回说明是一次性告示：原样再来不重绘，清掉它才算翻篇', () => {
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+
+    expect(receiveRefusal(REFUSAL)).toBe(true);
+    expect(getRefusal()).toBe(REFUSAL);
+    expect(receiveRefusal({ ...REFUSAL })).toBe(false);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    clearRefusal();
+    expect(getRefusal()).toBeNull();
+    expect(seen).toHaveBeenCalledTimes(2);
+    // 已经空了再清一次不该再惊动界面。
+    expect(receiveRefusal(null)).toBe(false);
+    expect(seen).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it('attach／detach 把这三格一起清掉：换房不能留着上一屋的座位与人', () => {
+    receiveSeatMap(SEATS);
+    receiveSeatMoves(MOVES);
+    receiveRefusal(REFUSAL);
+    attachRoom({ role: 'guest', name: '甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    expect(getSeatMap()).toBeNull();
+    expect(getSeatMoves()).toBeNull();
+    expect(getRefusal()).toBeNull();
+
+    receiveSeatMap(SEATS);
+    detachRoom();
+    expect(getSeatMap()).toBeNull();
   });
 });

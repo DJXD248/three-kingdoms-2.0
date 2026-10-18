@@ -25,7 +25,7 @@ import type { GameAction } from '../action/ActionTypes';
 import { GameEngine } from '../core/GameEngine';
 import type { EngineState } from '../core/GameState';
 import { syncPlayerSkills } from '../skills/skillCompiler';
-import { getReactionAsk, type ReactionAsk } from '../skills/reactionChain';
+import { applyCanonicalAction, liveReactionAsk } from '../store/applyCanonicalAction';
 import { createStrategyPolicy, parseTier } from './policies/strategyPolicy';
 import { randomPolicy, type AiPolicy } from './policies/randomPolicy';
 import type { AiSeatTier } from '../setup/runtimeSetup';
@@ -64,18 +64,6 @@ function allSeatsAi(state: GameState): boolean {
   return state.players.length > 0 && state.players.every(p => p.isAi === true);
 }
 
-/**
- * v2.8.22 响应链执法刀 (#71)：此刻状态里有没有待答的响应问句。
- * 先做便宜的槽位闸再算问句——司机每一拍都走这里，不能每次都把候选枚举一遍；
- * 而"队列非空"与"有问句"等价（结算后扫描会把问完的格一律收掉）。
- */
-function liveReactionAsk(state: GameState): ReactionAsk | null {
-  const engineState = state.engineState as EngineState;
-  const queue = engineState?.pendingReaction;
-  if (!queue || queue.nodes.length === 0) return null;
-  return getReactionAsk(engineState);
-}
-
 /** Ask the seat's policy what it would do, with the repeat guard applied. */
 function pickPolicyAction(state: GameState, playerId: number, tier: AiSeatTier): GameAction | null {
   const engine = new GameEngine(state.engineState as EngineState, { recordHistory: false });
@@ -96,47 +84,6 @@ function pickPolicyAction(state: GameState, playerId: number, tier: AiSeatTier):
   return picked;
 }
 
-interface DrawPayload { fromGeneralPool?: number; fromCardPool?: number }
-
-/** Translate one engine GameAction chosen by the policy into a store call. */
-function applyPolicyAction(state: GameState, playerId: number, action: GameAction): boolean {
-  const p = action.payload as Record<string, any> | undefined;
-  switch (action.type) {
-    case 'DRAW': {
-      const d = (p ?? {}) as DrawPayload;
-      const ok = state.executeDraw(Number(d.fromGeneralPool) || 0, Number(d.fromCardPool) || 0);
-      if (!ok) state.confirmDraw();
-      return true;
-    }
-    case 'CONFIRM_DRAW': state.confirmDraw(); return true;
-    case 'RESOLVE_BASE_LOSS': state.resolvePendingDrawLoss(); return true;
-    case 'DEPLOY_GENERAL': return state.deployGeneral(p?.general, Number(p?.slot) || 0, p?.consumeCards ?? []);
-    case 'MOVE_GENERAL': state.moveGeneral(p?.generalId, p?.target, p?.consumeCard); return true;
-    case 'ATTACK': state.attackTarget(p?.attackerId, p?.targetId, p?.ranged === true, p?.consumeCard); return true;
-    case 'SUPPLY': state.supplyGeneral(p?.generalId, p?.consumeCards ?? []); return true;
-    case 'EQUIP_ARMOR': return state.armGeneral(p?.generalId, p?.armorCards ?? []);
-    // 2.3.1: AI seats activate turn-end skills exactly like humans decide in
-    // the ask window — one canonical ACTIVATE_SKILL action, no direct state
-    // edits. Consumption drops the candidate from the next legalActions, so
-    // the stagnation guard cannot loop on it.
-    case 'ACTIVATE_SKILL': {
-      const ask = liveReactionAsk(state);
-      // #71：响应问句挂着时，策略挑到的这一枚就是那一格的选项，走响应出口；
-      // 没有问句才是回合结束询问那条路。两条路各自都只认一条 canonical 动作。
-      if (ask) return state.activateReactionSkill(String(p?.skillId ?? ''), String(p?.generalId ?? ''));
-      return state.activateTurnEndSkill(String(p?.skillId ?? ''), String(p?.generalId ?? ''));
-    }
-    // #71 的另一个出口：跳过＝SKIP_REACTION，出口恒常存在，永不失败到锁死队列。
-    case 'SKIP_REACTION': return state.skipReaction();
-    // 2.6.3: the frozen world leaves the debtor's policy exactly the recorded
-    // options to pick from — the choice arrives as a canonical CHOOSE_OPTION.
-    case 'CHOOSE_OPTION': return state.chooseOption(Number(p?.optionIndex) || 0);
-    case 'END_TURN': state.endTurn(); return true;
-    case 'SURRENDER': state.surrender(playerId); return true;
-    default: return false;
-  }
-}
-
 function stepDrawing(state: GameState): boolean {
   const draw = state.engineState.drawState;
   if (!draw) return false; // UnifiedDraw owns the (rare) empty-window confirm
@@ -149,7 +96,7 @@ function stepDrawing(state: GameState): boolean {
   }
   const action = pickPolicyAction(state, draw.playerId, tier);
   if (action) {
-    if (applyPolicyAction(state, draw.playerId, action)) return true;
+    if (applyCanonicalAction(state, draw.playerId, action)) return true;
   }
   // Nothing (legal|safe) to draw with → close the window (always legal).
   state.confirmDraw();
@@ -169,7 +116,7 @@ function stepPlaying(state: GameState): boolean {
   }
   const tier: AiSeatTier = seat.aiTier ?? 'balanced';
   const action = pickPolicyAction(state, seat.id, tier);
-  if (action && applyPolicyAction(state, seat.id, action)) return true;
+  if (action && applyCanonicalAction(state, seat.id, action)) return true;
   state.endTurn(); // END_TURN is always legal for the active seat
   return true;
 }
@@ -188,7 +135,7 @@ export function runAiStep(state: GameState): boolean {
     if (!seat) return false;
     const tier: AiSeatTier = seat.aiTier ?? 'balanced';
     const action = pickPolicyAction(state, pending.playerId, tier);
-    if (action?.type === 'CHOOSE_OPTION' && applyPolicyAction(state, pending.playerId, action)) return true;
+    if (action?.type === 'CHOOSE_OPTION' && applyCanonicalAction(state, pending.playerId, action)) return true;
     // 刀2 (v2.8.11)：兜底不再固定取 0——门槛可以把 0 号置灰，硬点灰项会被
     // 解析器拒绝，这一步就成了死循环。取记录顺序上的第一个可选项；一个都
     // 没有⇒不动作（桥接层根本不造这种全灰窗，出现即状态异常）。
@@ -207,7 +154,7 @@ export function runAiStep(state: GameState): boolean {
     if (!seat) return false;
     const tier: AiSeatTier = seat.aiTier ?? 'balanced';
     const action = pickPolicyAction(state, reactionAsk.playerId, tier);
-    if (action && applyPolicyAction(state, reactionAsk.playerId, action)) return true;
+    if (action && applyCanonicalAction(state, reactionAsk.playerId, action)) return true;
     // 兜底＝跳过：那一格永远有这个出口（§12-61），队列不会卡在一席沉默上。
     return state.skipReaction();
   }

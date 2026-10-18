@@ -185,16 +185,17 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     expect(text()).toContain('我开房间');
   });
 
-  it('界面上写明还没做的格子（掉线后两选一／客人动手），不假装已能开局', async () => {
+  it('界面上写明做到哪儿、哪儿还没做：客人动手（J4）已落地，剩掉线两选一＝J5 与局外投票＝J6', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     expect(text()).toContain('掉线之后那两选一');
-    expect(text()).toContain('客人动手与座位绑定＝J4');
+    expect(text()).toContain('客人动手（J4）现在做到');
+    expect(text()).not.toContain('客人动手与座位绑定＝J4');
     expect(text()).not.toContain('ping 表与掉线判定（J3）');
     expect(text()).not.toContain('牌桌画面同步（J2）');
 
     await clickButton(/^🏠 开房间/);
     await settle();
-    expect(text()).toContain('客人动手与座位绑定＝J4');
+    expect(text()).toContain('客人动手（J4）现在做到');
   });
 
   it('J3：客人收到探测 ⇒ 原样把时刻抄回去，且自己一条探测/连线表也不发', async () => {
@@ -261,7 +262,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     expect(text()).toContain('收到不是房主发来的连线表，已忽略');
   });
 
-  it('J2：客人收到房主的遮蔽局面 ⇒ 屏幕上出现同一局的牌桌，写着"只看不动"', async () => {
+  it('J2：客人收到房主的遮蔽局面 ⇒ 屏幕上出现同一局的牌桌，牌桌那一格只画局面', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('DDDDDD');
     await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
@@ -271,7 +272,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     await receive(socket, { t: 'snapshot', from: 'host-9', state: maskedView() as unknown as Record<string, unknown> });
     await settle();
 
-    expect(text()).toContain('这一局由房主算牌，你这边只看不动');
+    expect(text()).toContain('这一局由房主算牌，这里只画局面');
     expect(text()).toContain('第 4 轮');
     expect(text()).toContain('轮到房主乙');
     expect(text()).toContain('🏯6');
@@ -301,6 +302,81 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     await clickButton(/^离开房间/);
     expect(socket.lastSent?.t).toBe('bye');
     expect(getActiveRoom()).toBeNull();
+  });
+
+  it('J4：客人屏上出现房主发来的席位表与清单 ⇒ 点出去的那一条线上只有席位号与编号', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('JJJJJJ');
+    const me = myId(socket);
+    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, {
+      t: 'roster', from: 'host-9',
+      peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }],
+    });
+
+    // 席位表还没来 ⇒ 一个能按的按钮都不许有
+    expect(text()).toContain('还没收到席位表');
+    expect(screen.queryAllByRole('button', { name: /结束回合/ })).toHaveLength(0);
+
+    await receive(socket, {
+      t: 'seatmap', from: 'host-9',
+      seats: [{ peer: 'host-9', seat: 1, name: '房主乙' }, { peer: me, seat: 2, name: '玩家' }],
+    });
+    expect(text()).toContain('你坐第 2 席');
+
+    // 清单没来之前同样没有按钮：椅子排到了不等于现在有事可做。
+    expect(screen.queryAllByRole('button', { name: /结束回合/ })).toHaveLength(0);
+
+    await receive(socket, {
+      t: 'moves', from: 'host-9', to: me, seat: 2,
+      items: [{ key: '0-END_TURN:1a2b3c4d', label: '⏭️结束回合' }], omitted: 0,
+    });
+    socket.sent.length = 0;
+    await clickButton(/^⏭️结束回合$/);
+    expect(socket.sent).toEqual([
+      encodeEnvelope({ t: 'act', from: me, to: 'host-9', seat: 2, key: '0-END_TURN:1a2b3c4d' }),
+    ]);
+
+    // 房主退回的那句话原文上屏。
+    await receive(socket, {
+      t: 'actno', from: 'host-9', to: me, key: '0-END_TURN:1a2b3c4d',
+      reason: '现在轮不到这一席动手（或者局面已经走到下一步了）',
+    });
+    expect(text()).toContain('现在轮不到这一席动手');
+
+    // 清单换新 ⇒ 上一句作废（不然人以为那句还挂着）。
+    await receive(socket, {
+      t: 'moves', from: 'host-9', to: me, seat: 2,
+      items: [{ key: '0-BEGIN_DRAW:99887766', label: '🃏开始抽牌' }], omitted: 0,
+    });
+    expect(text()).not.toContain('现在轮不到这一席动手');
+    expect(text()).toContain('🃏开始抽牌');
+  });
+
+  it('J4：不是房主发来的席位表与清单不上屏（谁都能喊一句"你坐第二席"就成了假绑座）', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('KKKKKK');
+    const me = myId(socket);
+    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, {
+      t: 'roster', from: 'host-9',
+      peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }, { id: 'guest-x', name: '路人', role: 'guest' }],
+    });
+
+    socket.sent.length = 0;
+    await receive(socket, {
+      t: 'seatmap', from: 'guest-x',
+      seats: [{ peer: me, seat: 5, name: '玩家' }],
+    });
+    await receive(socket, {
+      t: 'moves', from: 'guest-x', to: me, seat: 5,
+      items: [{ key: '0-END_TURN:deadbeef', label: '⏭️结束回合' }], omitted: 0,
+    });
+
+    expect(text()).toContain('还没收到席位表');
+    expect(screen.queryAllByRole('button', { name: /结束回合/ })).toHaveLength(0);
+    // 客人这一格一条线也不发（连"我要点第五席"都不发出去）。
+    expect(socket.sent).toHaveLength(0);
   });
 });
 

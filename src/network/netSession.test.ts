@@ -9,6 +9,8 @@ import {
   parseEnvelope,
   type NetEnvelope,
   type NetLinkRow,
+  type NetMoveItem,
+  type NetSeatRow,
   type VersionStamp,
 } from './netProtocol';
 import { initialSessionState, joinRoom, stepSession, type SessionState } from './netSession';
@@ -582,6 +584,133 @@ describe('J3 两端接线：房主探测＋算毫秒＋广播表，客人回话�
     await nextTick();
     expect(lastTable(relay.created[0]).map((r) => r.id)).toEqual([HOST.id]);
 
+    host.leave();
+  });
+});
+
+/**
+ * J4 的会话层证人。这一层只回答一个问题：**这三样谁该收、那一条谁该理**。
+ * 合法性不在这里判（那要拿房主当下的局面当场重算，是接线那头的活），
+ * 所以这里能钉死的全是"谁的份"：客人只认房主那三份、而且只认指名给自己的那两份；
+ * 房主只把"指名给我＋发信人是名册里的客人"的请求交给接线。
+ */
+describe('J4 座位与请求：各人的份各人收', () => {
+  const SEATS: NetSeatRow[] = [
+    { peer: HOST.id, seat: 1, name: HOST.name },
+    { peer: GUEST.id, seat: 2, name: GUEST.name },
+  ];
+  const ITEMS: NetMoveItem[] = [{ key: '0-END_TURN:3f2a1c9d', label: '⏭️结束回合' }];
+  const OTHER = 'guest-2';
+  const inRoom = () => guestState({ phase: 'in-room', peers: [HOST, GUEST] });
+  const twoGuests = () => guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: OTHER, name: '客人乙', role: 'guest' }] });
+  const hostWithGuest = () => hostState({ phase: 'in-room', peers: [HOST, GUEST] });
+
+  it('房主的席位表照抄交出去：名册、状态一个也不动（谁坐哪一席是房主定的，客人只负责显示）', () => {
+    const before = inRoom();
+    const step = stepSession(before, text({ t: 'seatmap', from: HOST.id, seats: SEATS }));
+    expect(step.seatMap).toEqual(SEATS);
+    expect(step.state).toBe(before);
+    expect(step.sends).toEqual([]);
+  });
+
+  it('清单与退回说明只认指名给我那一份（传话线也会把别人的那份递到我这儿，拿去点就串座了）', () => {
+    const before = twoGuests();
+    const forOther = stepSession(before, text({ t: 'moves', from: HOST.id, to: OTHER, seat: 3, items: ITEMS, omitted: 0 }));
+    expect(forOther.moves).toBeUndefined();
+    expect(forOther.state).toBe(before);
+    const mine = stepSession(before, text({ t: 'moves', from: HOST.id, to: GUEST.id, seat: 2, items: ITEMS, omitted: 17 }));
+    expect(mine.moves).toEqual({ seat: 2, items: ITEMS, omitted: 17 });
+
+    const refusalToOther = stepSession(before, text({ t: 'actno', from: HOST.id, to: OTHER, key: 'k', reason: '这一步已经不成立' }));
+    expect(refusalToOther.refusal).toBeUndefined();
+    const refusalToMe = stepSession(before, text({ t: 'actno', from: HOST.id, to: GUEST.id, key: 'k', reason: '这一步已经不成立' }));
+    expect(refusalToMe.refusal).toEqual({ key: 'k', reason: '这一步已经不成立' });
+  });
+
+  it('客人冒充房主发席位表 ⇒ 不收并且写清为什么没动静；冒充发清单／退回 ⇒ 安静丢掉', () => {
+    const before = twoGuests();
+    const fakeSeat = stepSession(before, text({ t: 'seatmap', from: OTHER, seats: [{ peer: OTHER, seat: 1, name: '客人乙' }] }));
+    expect(fakeSeat.seatMap).toBeUndefined();
+    expect(fakeSeat.state.note).toContain('不是房主发来');
+    // 清单与退回这两格不写那句话：它们本来就是指名通信，收不到是常态，写出来只会刷屏。
+    const fakeMoves = stepSession(before, text({ t: 'moves', from: OTHER, to: GUEST.id, seat: 2, items: ITEMS, omitted: 0 }));
+    expect(fakeMoves.moves).toBeUndefined();
+    expect(fakeMoves.state).toBe(before);
+    const fakeRefusal = stepSession(before, text({ t: 'actno', from: OTHER, to: GUEST.id, key: 'k', reason: 'r' }));
+    expect(fakeRefusal.refusal).toBeUndefined();
+    expect(fakeRefusal.state).toBe(before);
+  });
+
+  it('还没进房（名册里根本没有房主）时收到的席位表也不收——没有"谁说的算"就没有可抄的', () => {
+    const step = stepSession(guestState(), text({ t: 'seatmap', from: HOST.id, seats: SEATS }));
+    expect(step.seatMap).toBeUndefined();
+  });
+
+  it('收到清单不回话、不确认（动手是界面上那一次点击的事，不是"收到清单"的事）', () => {
+    const step = stepSession(inRoom(), text({ t: 'moves', from: HOST.id, to: GUEST.id, seat: 2, items: ITEMS, omitted: 0 }));
+    expect(step.sends).toEqual([]);
+  });
+
+  it('房主把来路对得上的 act 交给接线，自己一个字节也不改（合法性这里一个字也不判）', () => {
+    const before = hostWithGuest();
+    const step = stepSession(before, text({ t: 'act', from: GUEST.id, to: HOST.id, seat: 2, key: '0-END_TURN:3f2a1c9d' }));
+    expect(step.action).toEqual({ peer: GUEST.id, seat: 2, key: '0-END_TURN:3f2a1c9d' });
+    expect(step.state).toBe(before);
+    expect(step.sends).toEqual([]);
+  });
+
+  it('发给别人的、不认识的、以及房主自己发的 act ⇒ 房主一概不理', () => {
+    const before = hostWithGuest();
+    expect(stepSession(before, text({ t: 'act', from: GUEST.id, to: OTHER, seat: 2, key: 'k' })).action).toBeUndefined();
+    expect(stepSession(before, text({ t: 'act', from: 'ghost', to: HOST.id, seat: 2, key: 'k' })).action).toBeUndefined();
+    // 名册里那位房主自己不算"客人交回来的请求"（他要动手走的是本机点击那条路）。
+    // "发信人是不是那一席绑着的人"这一条归接线——席位表只有它手里有。
+    expect(stepSession(before, text({ t: 'act', from: HOST.id, to: HOST.id, seat: 1, key: 'k' })).action).toBeUndefined();
+    expect(stepSession(before, text({ t: 'act', from: GUEST.id, to: HOST.id, seat: 2, key: 'k' })).state).toBe(before);
+  });
+
+  it('房主一侧不采纳席位表／清单／退回（那三份是给客人看的，房主自己就是出处）', () => {
+    const before = hostWithGuest();
+    const step = stepSession(before, text({ t: 'seatmap', from: GUEST.id, seats: SEATS }));
+    expect(step.seatMap).toBeUndefined();
+    expect(step.state).toBe(before);
+    expect(stepSession(before, text({ t: 'moves', from: GUEST.id, to: HOST.id, seat: 1, items: ITEMS, omitted: 0 })).moves).toBeUndefined();
+  });
+
+  it('接上假传话线：房主发席位表与清单 ⇒ 客人那两头收到；客人发 act ⇒ 房主的 onAction 收到', async () => {
+    const relay = new FakeRelay();
+    const maps: NetSeatRow[][] = [];
+    const movesIn: { seat: number; items: NetMoveItem[]; omitted: number }[] = [];
+    const acts: { peer: string; seat: number; key: string }[] = [];
+
+    const host = joinRoom(
+      {
+        role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id,
+        socketFactory: relay.factory, onAction: (a) => acts.push(a),
+      },
+      () => {},
+    );
+    await nextTick();
+    const guest = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id,
+        socketFactory: relay.factory, onSeatMap: (r) => maps.push(r), onMoves: (m) => movesIn.push(m),
+      },
+      () => {},
+    );
+    await nextTick();
+
+    expect(host.send({ t: 'seatmap', from: HOST.id, seats: SEATS })).toBe(true);
+    expect(host.send({ t: 'moves', from: HOST.id, to: GUEST.id, seat: 2, items: ITEMS, omitted: 3 })).toBe(true);
+    await nextTick();
+    expect(maps).toEqual([SEATS]);
+    expect(movesIn).toEqual([{ seat: 2, items: ITEMS, omitted: 3 }]);
+
+    expect(guest.send({ t: 'act', from: GUEST.id, to: HOST.id, seat: 2, key: '0-END_TURN:3f2a1c9d' })).toBe(true);
+    await nextTick();
+    expect(acts).toEqual([{ peer: GUEST.id, seat: 2, key: '0-END_TURN:3f2a1c9d' }]);
+
+    guest.leave();
     host.leave();
   });
 });

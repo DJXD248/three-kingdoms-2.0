@@ -15,9 +15,28 @@ export type NetPeer = { id: string; name: string; role: 'host' | 'guest' };
 /** J3 连线表里的一行：房主算出来的，客人只是照抄显示（判定权不在客人手里）。 */
 export type NetLinkState = 'online' | 'lost';
 export type NetLinkRow = { id: string; name: string; pingMs: number | null; state: NetLinkState };
+/** J4 席位表里的一行：哪一席（引擎的 playerId）交给哪个人。`peer:null`＝这一席现在没人，
+ *  由房主那台机器自己点（或本来就是 AI 席）。名单只有房主能发，客人照抄。 */
+export type NetSeatRow = { peer: string | null; seat: number; name: string };
+/** J4 清单里的一条：房主当场算出来的"这一席现在能走的一步"。
+ *  线上只走编号与人读的那句话，**动作本体绝不上线**。 */
+export type NetMoveItem = { key: string; label: string };
 
 /** 往返耗时的可信上限：超过就当没量到（对面时钟被改、或攒了很久的一条回话）。 */
 export const MAX_TRUSTED_PING_MS = 600_000;
+export const MAX_SEAT_ROWS = 8;
+export const MAX_MOVE_ITEMS = 32;
+/** 封顶后"还有多少步没列出"的可信上界：合法集现实中到不了这个数，超过即坏消息。 */
+export const MAX_OMITTED_MOVES = 10_000;
+/** 编号／句子／退回说明各自的线上上界（界面与判据都读这三个数收口，别各写一份）。 */
+export const MAX_MOVE_KEY_LENGTH = 64;
+export const MAX_MOVE_LABEL_LENGTH = 60;
+export const MAX_REFUSAL_LENGTH = 120;
+
+/** 席位号就是引擎的 playerId；给个硬上界免得一个荒谬的数钻进界面。 */
+function isSeatNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 64;
+}
 
 export type NetEnvelope =
   | { t: 'hello'; from: string; name: string; v: VersionStamp }
@@ -33,6 +52,18 @@ export type NetEnvelope =
   | { t: 'pong'; from: string; to: string; at: number }
   /** J3：房主算出来的那张连线表，随探测广播给全桌⇒所有人看同一张表。 */
   | { t: 'netstatus'; from: string; rows: NetLinkRow[] }
+  /** J4：房主宣布"哪一席坐的是谁"。全桌广播（客人要知道自己坐哪一席，也要知道别人在动哪一席）。 */
+  | { t: 'seatmap'; from: string; seats: NetSeatRow[] }
+  /** J4：房主当场算给**某一席**的那张"现在能走哪些步"清单。
+   *  空清单是一句真话（这一席此刻一步也走不了），所以 items 允许为空。
+   *  `omitted`＝被封顶挤掉的条数（一桌人多时合法集能上百条，线上与界面都装不下）：
+   *  界面要照这个数字说一句真话，别让客人以为自己看到的就全部。 */
+  | { t: 'moves'; from: string; to: string; seat: number; items: NetMoveItem[]; omitted: number }
+  /** J4：客人交回来的一步——只有席位与编号，没有任何牌面内容。
+   *  房主拿它去对自己**当场重算**的那张清单，对得上才走。 */
+  | { t: 'act'; from: string; to: string; seat: number; key: string }
+  /** J4：房主没让走这一步，附一句人读的原因（界面原文显示，不二次加工）。 */
+  | { t: 'actno'; from: string; to: string; key: string; reason: string }
   | { t: 'bye'; from: string };
 
 export function ourVersionStamp(): VersionStamp {
@@ -72,7 +103,7 @@ export function encodeEnvelope(envelope: NetEnvelope): string {
   return JSON.stringify(envelope);
 }
 
-/** 线上证人：解析器只认这九种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
+/** 线上证人：解析器只认这十三种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
 export function parseEnvelope(text: string): NetEnvelope | null {
   if (typeof text !== 'string' || text.length === 0 || text.length > MAX_WIRE_BYTES) return null;
   let parsed: unknown;
@@ -89,6 +120,10 @@ export function parseEnvelope(text: string): NetEnvelope | null {
     typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= Number.MAX_SAFE_INTEGER;
   const isPing = (v: unknown): v is number =>
     typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  /** 清单的编号与标签都是房主自己生成、原样交回的一小串字符：
+   *  限长、非空、不含控制字符——客人往上叠字节没有意义，房主认的是自己重算的那张清单。 */
+  const isBounded = (v: unknown, max: number): v is string =>
+    typeof v === 'string' && v.length > 0 && v.length <= max && ![...v].some((c) => c.charCodeAt(0) < 0x20);
   const isStamp = (v: unknown): v is VersionStamp => {
     if (!v || typeof v !== 'object') return false;
     const s = v as Record<string, unknown>;
@@ -148,6 +183,41 @@ export function parseEnvelope(text: string): NetEnvelope | null {
       });
       return rows.every(Boolean) ? { t: 'netstatus', from: raw.from, rows: rows as NetLinkRow[] } : null;
     }
+    case 'seatmap': {
+      // 与 netstatus 同一把闸：空表只可能是坏消息。房主那一席永远在表上，
+      // 一张"谁都不坐"的席位表收下来等于把界面上那张表清空。
+      if (!isId(raw.from) || !Array.isArray(raw.seats) || raw.seats.length === 0 || raw.seats.length > MAX_SEAT_ROWS) return null;
+      const seats = (raw.seats as unknown[]).map((s) => {
+        if (!s || typeof s !== 'object') return null;
+        const o = s as Record<string, unknown>;
+        if (!isSeatNumber(o.seat) || !isBounded(o.name, MAX_NAME_LENGTH)) return null;
+        if (o.peer !== null && !isId(o.peer)) return null;
+        return { peer: (o.peer as string | null) ?? null, seat: o.seat, name: o.name };
+      });
+      return seats.every(Boolean) ? { t: 'seatmap', from: raw.from, seats: seats as NetSeatRow[] } : null;
+    }
+    case 'moves': {
+      // 空清单合法且有意义＝"这一席此刻一步也走不了"，界面上要看得见这句真话。
+      if (!isId(raw.from) || !isId(raw.to) || !isSeatNumber(raw.seat) || !Array.isArray(raw.items) || raw.items.length > MAX_MOVE_ITEMS) return null;
+      if (!isPing(raw.omitted) || raw.omitted > MAX_OMITTED_MOVES) return null;
+      const items = (raw.items as unknown[]).map((m) => {
+        if (!m || typeof m !== 'object') return null;
+        const o = m as Record<string, unknown>;
+        if (!isBounded(o.key, MAX_MOVE_KEY_LENGTH) || !isBounded(o.label, MAX_MOVE_LABEL_LENGTH)) return null;
+        return { key: o.key, label: o.label };
+      });
+      return items.every(Boolean)
+        ? { t: 'moves', from: raw.from, to: raw.to, seat: raw.seat, items: items as NetMoveItem[], omitted: raw.omitted }
+        : null;
+    }
+    case 'act':
+      return isId(raw.from) && isId(raw.to) && isSeatNumber(raw.seat) && isBounded(raw.key, MAX_MOVE_KEY_LENGTH)
+        ? { t: 'act', from: raw.from, to: raw.to, seat: raw.seat, key: raw.key }
+        : null;
+    case 'actno':
+      // 原因必须非空：退回而不说为什么，等于让客人对着一张不亮的按钮瞎猜。
+      if (!isId(raw.from) || !isId(raw.to) || !isBounded(raw.key, MAX_MOVE_KEY_LENGTH) || !isBounded(raw.reason, MAX_REFUSAL_LENGTH)) return null;
+      return { t: 'actno', from: raw.from, to: raw.to, key: raw.key, reason: raw.reason };
     default:
       return null;
   }
