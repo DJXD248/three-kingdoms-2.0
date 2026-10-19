@@ -116,8 +116,22 @@ export function matchesSkillEvent(
       return generalMatches(deployedId || undefined, data.playerId);
     }
     case 'onDamageTaken': {
+      // v2.9.14 营地刀的分界（§12-130）：营地掉血那一身**不是**任何一员将受到伤害。
+      // 扩面前这条靠"将键对不上"天然挡住（`base_2` 不等于任何一枚将），但 `others`
+      // ／`field`／`enemySeat` 这几档不比将那一层，于是营地那一身会顺着席位层混进来
+      // ⇒ 本轮把 `isBase` 显式挡掉，让「受到伤害后」只管人、营地交给新那一格。
+      if (data.isBase === true) return false;
       if (!playerMatches(data.targetPlayerId)) return false;
       if (!generalMatches(data.targetId ?? data.target, data.targetPlayerId)) return false;
+      if (damageFilter && data.damageType !== damageFilter) return false;
+      return true;
+    }
+    case 'onBaseDamaged': {
+      // 营地这一格没有将领层，也**不认**「我听谁」：`supportsListenerScope` 对它＝false
+      // （界面上那格下拉压根不出现），编译器另有一道点名拒绝兜住从 Excel／旧存档
+      // 塞进来的值（`TRIGGER_SUBTYPE_UNSUPPORTED`）。所以这里只认自家席位的那一声。
+      if (data.isBase !== true) return false;
+      if (!idEq(ownerId, data.targetPlayerId)) return false;
       if (damageFilter && data.damageType !== damageFilter) return false;
       return true;
     }

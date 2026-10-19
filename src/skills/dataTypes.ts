@@ -20,6 +20,11 @@ export type DataSkillTrigger =
   | 'onBecomingTarget'
   | 'onCardLost'
   | 'onCardGained'
+  /** v2.9.14 营地刀：这一席的**营地**真的掉血了才响。它和 `onDamageTaken` 听的是
+   *  同一声 `INJURY`（那一声只在血量真实下降时才发，所以"只有掉血才算受到伤害"
+   *  在两侧都是结构性成立）；分开靠的是那一声里的 `isBase` 那一格，不造第二份事件。
+   *  判据与两族的分界写在 `skillEventMatch.ts`。 */
+  | 'onBaseDamaged'
   /** v2.8 刀4（#25）在场即生效：它**不是发动**，所以不监听任何事件、不进问窗、
    *  不耗"回合限 1 次"、也不依赖 `forced`。它的账由登场那一刻的
    *  `skills/passiveModifiers.ts` 单点落笔、离场单点销笔（§H5-2 第 3 条）。

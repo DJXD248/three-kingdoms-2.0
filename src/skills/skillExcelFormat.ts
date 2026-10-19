@@ -141,7 +141,13 @@ function normaliseLegacySubLabel(s: string): string {
   if (whole) return whole;
   const i = s.indexOf('→');
   if (i < 0) return s;
+  const head = s.slice(0, i).trim();
   const sub = s.slice(i + 1).trim();
+  // 旧**主名**带着细分一起出现时（老 `.xlsx` 里那三格营地系时机导出的是旧叫法，后面还挂着「→攻击伤害」）：
+  // 别名表只写了裸主名，不补这一刀就会把整格判成"没看懂"——技能照进、照显示、只是不再响。
+  // `成为攻击目标时` 那条别名自带细分，故只在别名值不含「→」时换头。
+  const headAlias = LEGACY_TRIGGER_CELL_ALIASES[head];
+  if (headAlias && !headAlias.includes('→')) return `${headAlias}→${sub}`;
   const mapped = LEGACY_CARD_SUB_LABELS[sub];
   return mapped ? `${s.slice(0, i)}→${cardSubLabels[mapped]}` : s;
 }

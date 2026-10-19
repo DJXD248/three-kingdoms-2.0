@@ -31,10 +31,11 @@ describe('营地叫法统一', () => {
   });
 
   it('src 下再无"本营"二字（含注释与界面文案）', () => {
-    // 合法残留只有两处：Excel 读入侧那三枚旧格（`skillExcelFormat.ts`）与钉住它的证人。
+    // 合法残留只有读入侧那一处（`skillExcelFormat.ts` 的那三枚旧格）与钉住它的两份证人
+    // （含 v2.9.14 营地刀那份"旧写法照样认得"的对照用例）。
     // 界面、写出侧、日志、规则页——一处都不许有。
     const self = path.basename(fileURLToPath(import.meta.url));
-    const allowed = ['skillExcelFormat.ts', 'skillExcelFormat.test.ts'].sort();
+    const allowed = ['skillExcelFormat.ts', 'skillExcelFormat.test.ts', 'baseDamageTrigger.test.ts'].sort();
     const files = walk(srcRoot).filter(file => path.basename(file) !== self);
     expect(files.length).toBeGreaterThan(100);
     const offenders = files

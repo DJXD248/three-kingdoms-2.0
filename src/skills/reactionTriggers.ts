@@ -47,6 +47,11 @@ export const TRIGGER_EVENTS: Partial<Record<DataSkillTrigger, readonly GameEvent
   // 再判断一次"这次算不算受到了伤害"。决斗的收官那一笔也是这一声（带 `duelStage:
   // 'injury'`），逐轮那些"打"不发这一声（`chainedConsequences` 显式排除 `duelRound`）。
   onDamageTaken: ['INJURY'],
+  // v2.9.14 营地刀：**同一声**，分族靠载荷里的 `isBase`（判据在 `skillEventMatch.ts`）。
+  // 营地掉血派生的那一声由 `chainedConsequences` 在血量差>0 时才发，所以"只有真掉血
+  // 才算受到伤害"这一条在营地这一侧同样是结构性成立，没有任何一处再判断一次。
+  // 它**不进** `REACTION_TRIGGERS`（问答链仍只有受击／受伤两型）⇒ 到点自动响。
+  onBaseDamaged: ['INJURY'],
   onDamageDealt: ['AFTER_DAMAGE'],
   onKill: ['DEATH'],
   onDeath: ['DEATH'],

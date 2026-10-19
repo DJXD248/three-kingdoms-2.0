@@ -8,8 +8,10 @@
  *     Built-in generals keep descriptive text only, so nothing fires until a
  *     designer attaches real numbers — the compiler never invents gameplay.
  *   - Only the event-backed triggers are supported; the remaining
- *     trigger kinds (modify*, onBase*, active*, untilExpire, …) are
- *     skipped with an explicit reason. onTurnEnd (2.3.1) is the exception
+ *     trigger kinds (modify*, onBaseTargeted*, active*, untilExpire, …) are
+ *     skipped with an explicit reason. onBaseDamaged (v2.9.14) is the onBase*
+ *     kind that IS event-backed — it hears the same INJURY event the general
+ *     side hears, narrowed by the `isBase` fact already recorded on it. onTurnEnd (2.3.1) is the exception
  *     that proves the rule: it compiles, but NEVER auto-fires — TURN_END is
  *     deliberately absent from TRIGGER_EVENTS, and its sole activation
  *     path is the canonical ACTIVATE_SKILL action (ask-window driven).
@@ -83,6 +85,9 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   // emission sources — see PROJECT_ARCH_MAP §F twelve-cell tables).
   onCardLost: 'onCardLost',
   onCardGained: 'onCardGained',
+  // v2.9.14 营地刀：这一型听的是**已经存在的那一声** `INJURY`（营地掉血时由
+  // `chainedConsequences` 派生，血量差>0 才发），没有新事件类型、没有新发射点。
+  onBaseDamaged: 'onBaseDamaged',
   // 2.3.1: compiles for the ACTIVATE_SKILL path only — deliberately NOT in
   // TRIGGER_EVENTS, so TURN_END never auto-fires it (single activation
   // path, double-fire ban).
@@ -298,6 +303,11 @@ export function judgeSkillEffect(
   // v2.6.2：与触发方向相反的牌类细分没有发射源（只有 GIVE 会导出 CARD_GAINED，
   // 所以"获得"侧的装备/手牌细分与"失去"侧的任意获得都不会响），宁可点名不悄悄空转。
   if (mapped === 'onCardLost' && triggerConfig.cardSubType === 'anyGained') return 'TRIGGER_SUBTYPE_UNSUPPORTED';
+  // v2.9.14 营地刀：营地是**席位**那一格东西，它不是任何一员将，所以"我听谁的营地"
+  // 这一维今天没有实现（界面上那格下拉对这一型压根不出现＝`supportsListenerScope`
+  // 返回 false）。从 Excel／旧存档塞进来的一格不能悄悄当成"只听自家"——点名跳过，
+  // 与上面那几档"写了但没有发射器"同一纪律（§12-55：记录而未消费＝假账）。
+  if (mapped === 'onBaseDamaged' && triggerConfig.listenerScope) return 'TRIGGER_SUBTYPE_UNSUPPORTED';
   if (mapped === 'onCardGained') {
     const lostOnly = triggerConfig.cardSubType === 'equipmentLost'
       || triggerConfig.cardSubType === 'lastHandLost' || triggerConfig.cardSubType === 'handLost';
@@ -383,7 +393,7 @@ export function compileSkill(
     }
     const mapped = SUPPORTED_TRIGGER_MAP[triggerConfig.type] as DataSkillTrigger;
     let damageTypeFilter: DataSkillDefinition['damageTypeFilter'];
-    if ((mapped === 'onDamageTaken' || mapped === 'onDamageDealt') && triggerConfig.damageSubType) {
+    if ((mapped === 'onDamageTaken' || mapped === 'onDamageDealt' || mapped === 'onBaseDamaged') && triggerConfig.damageSubType) {
       if (triggerConfig.damageSubType === 'attackDamage') damageTypeFilter = 'attack';
       else if (triggerConfig.damageSubType === 'skillDamage') damageTypeFilter = 'skill';
     }
