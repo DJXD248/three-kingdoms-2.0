@@ -190,7 +190,7 @@ export function readTriggerCell(s: unknown): { trigger?: SkillTriggerConfig; unr
 /** 固定列名＝技能级那一栏；效果组第 8 列名是 `效果N我听谁`。 */
 export const LISTENER_SCOPE_HEADER = '我听谁';
 
-/** 写出侧：三档都写现行标签，没填＝「无」（＝只听自己＝扩面前的逐字行为）。 */
+/** 写出侧：五档都写现行标签，没填＝「无」（＝只听自己＝扩面前的逐字行为）。 */
 export function listenerScopeToStr(scope?: ListenerScope): string {
   return scope ? listenerScopeLabels[scope] : EMPTY;
 }
@@ -213,14 +213,19 @@ export function readListenerScopeCell(raw: unknown): ListenerScopeRead {
   return scope ? { scope } : { unknown: cell };
 }
 
-/** 三档的 Excel 下拉内容（「无」＝不填＝只听自己）。 */
+/** 五档的 Excel 下拉内容（「无」＝不填＝只听自己）。 */
 export const LISTENER_SCOPE_LIST = [EMPTY, ...Object.values(listenerScopeLabels)].join(',');
 
-/** 贴在这两列（技能级「我听谁」＋「效果N我听谁」）表头批注上的一句话。 */
+/**
+ * 贴在这两列（技能级「我听谁」＋「效果N我听谁」）表头批注上的一句话。
+ * v2.9.13（甲档）：档位名单与"哪些时机认这一栏"一律**现取**（词表加了档、时机
+ * 加了认这一栏的，这里跟着走；过去手抄三档＋一串时机名，加档那轮就会静默过期）。
+ */
 export const LISTENER_SCOPE_HINT =
-  '「我听谁」＝这一声响的时候，技能听多宽：只听自己／听己方（同一席位）／听场上（所有玩家）。'
-  + '留空＝只听自己（与今天对局一致）。'
-  + '只有部署、回合开始、成为目标、受到伤害、造成伤害、击杀、阵亡、失去牌、获得牌这些时机认这一栏；'
+  '「我听谁」＝这一声响的时候，技能听多宽：'
+  + Object.values(listenerScopeLabels).join('／')
+  + '。留空＝只听自己（与今天对局一致）。'
+  + `只有${allTriggerTypes.filter(supportsListenerScope).map(t => triggerTypeLabels[t]).join('、')}这些时机认这一栏；`
   + '别的时机填了会按没填处理，并在导入报告里点名（不会静默收下）。';
 
 // ── 「效果模式」（Excel 侧的词表） ─────────────────────────────────────────

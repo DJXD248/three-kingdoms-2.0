@@ -51,6 +51,13 @@ export class TriggerEngine {
     rootEventId = event.id ?? `${event.type}:${event.timestamp ?? Date.now()}`,
     /** v2.8.32：同一条展开链里已落账的「一局一次」额度键（见 `TriggerContext.quotaSpent`）。 */
     quotaSpent?: Set<string>,
+    /** v2.9.13（按需池第一刀）：只让这一批 id 的监听听这一声。用途＝部署步的
+     *  补注册重放（v2.5.1，§12-26）：那一步的事件**已经喂给派发前的链一次**了，
+     *  重放只为"这一步刚上册的那几位"而存在。缺省＝不限（其余调用点逐字不变）。
+     *  不这么做的实测后果＝挂了「听场上／听除自身以外／听敌方」的登场技，别人登场
+     *  那一步响两遍（派发前一遍＋重放一遍）；`self` 档因为身份键只认自己那一员，
+     *  结构上撞不到这条，所以两锚至今看不见它。 */
+    restrictToIds?: ReadonlySet<string>,
   ): TriggerProcessResult {
     if (depth >= MAX_TRIGGER_DEPTH) {
       return { events: [], depth, truncated: true };
@@ -61,6 +68,7 @@ export class TriggerEngine {
     const matching = orderReactionCandidates(
       this.getAll()
         .filter(trigger => trigger.enabled !== false && trigger.eventType === event.type)
+        .filter(trigger => restrictToIds === undefined || restrictToIds.has(trigger.id))
         .map(trigger => ({
           trigger,
           ownerId: trigger.ownerId ?? '',

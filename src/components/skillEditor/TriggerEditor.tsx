@@ -7,7 +7,7 @@ import {
   TurnSubType, turnSubLabels,
   DamageSubType, damageSubLabels,
   TargetSubType, targetSubLabels,
-  ListenerScope, listenerScopeLabels,
+  ListenerScope, listenerScopeLabels, deployTimingWithIntent,
   KillSubType, killSubLabels,
   CardSubType, cardSubLabels,
   ExpireCondition, expireLabels,
@@ -200,6 +200,14 @@ export function TriggerEditor({ trigger, onChange }: { trigger?: SkillTriggerCon
             不选＝只听自己（与今天对局逐字一致）。手牌、回合这类事件本来就记在玩家身上，
             所以这类时机里「只听自己」与「听己方（同一席位）」是同一回事。
           </p>
+          {currentType === 'onDeploy' && (
+            <p className="text-[9px] text-cyan-500/50 leading-tight">
+              「登场时」卡面上那么写也认得（同一份词表，两种写法同一个值）：
+              {(Object.keys(listenerScopeLabels) as ListenerScope[])
+                .map(s => `「${deployTimingWithIntent(s)}」＝${listenerScopeLabels[s]}`)
+                .join('；')}。
+            </p>
+          )}
         </div>
       )}
 

@@ -87,8 +87,15 @@ export type TargetSubType = 'attackTarget' | 'skillTarget' | 'anyTarget';
  *  缺省（undefined）＝`self`＝监听只认发生在自己身上的事，即扩面前的逐字行为。
  *  注意：手牌与回合这两类事件天生挂在**玩家**身上（将领不持牌），所以
  *  `onCardLost`／`onCardGained`／`onTurnStart` 三档里 `self` 与 `allySeat`
- *  是同一个意思，只有 `field` 真的扩面。 */
-export type ListenerScope = 'self' | 'allySeat' | 'field';
+ *  是同一个意思，只有 `field` 真的扩面。
+ * v2.9.13（按需池第一刀·甲档）补两档，用户口径逐字照抄（2026-10-18）：
+ * 「其他角色＝自身以外」「敌方角色＝己方玩家外的所有玩家的角色」。这两档按
+ * **席位＋将领实例两维联合**判（唯一实现＝`skills/skillEventMatch.ts`）：
+ * `others`＝除"我这一员"以外（同席位别的将也算），`enemySeat`＝别的席位。
+ * 档位措辞刻意只说「自身／席位」，不说「角色」：手牌、回合那三型的事件记在玩家
+ * 身上（用户同日更正术语＝本作没有「角色摸牌」，摸上来的是玩家的手牌），把
+ * "角色"写进那一格的生成句里＝界面替引擎说一句它不成立的话。 */
+export type ListenerScope = 'self' | 'allySeat' | 'others' | 'enemySeat' | 'field';
 export type ExpireCondition =
   | 'untilSelfTurnStart' | 'untilSelfTurnEnd'
   | 'untilOtherTurnStart' | 'untilOtherTurnEnd'
@@ -158,8 +165,28 @@ export const targetSubLabels: Record<TargetSubType, string> = {
   attackTarget: '成为攻击目标', skillTarget: '成为技能目标', anyTarget: '成为目标（两种都算）',
 };
 export const listenerScopeLabels: Record<ListenerScope, string> = {
-  self: '只听自己', allySeat: '听己方（同一席位）', field: '听场上（所有玩家）',
+  self: '只听自己', allySeat: '听己方（同一席位）', others: '听除自身以外',
+  enemySeat: '听敌方（其他席位）', field: '听场上（所有玩家）',
 };
+/**
+ * v2.9.13（按需池第一刀·甲档）：同一批档位的**第二种写法**＝用户在卡面描述里
+ * 会写的那个定语（他的原话：「其他角色＝自身以外、己方角色＝包括自身的己方玩家
+ * 的角色、敌方角色＝己方玩家外的所有玩家的角色」）。
+ * 它只服务两处：①「登场时」这一格的反解（`skillTextParse` 拿 `deployTimingWithIntent`
+ * 现拼用户那种写法，全仓不许有人手抄拼好的整串），②编辑器里那句"你的说法对应哪一档"的提示。
+ * 与上面那张下拉/Excel 用词表**同键同序**（都是 `Record<ListenerScope, string>`，
+ * 少一档 TS 就报错），所以"一处词两份写法"这一条仍然是闭合的：新增档位只需
+ * 在这两张表各加一行，别处一律现取。
+ */
+export const listenerScopeIntentWords: Record<ListenerScope, string> = {
+  self: '自身', allySeat: '己方角色', others: '其他角色', enemySeat: '敌方角色',
+  field: '场上所有角色',
+};
+
+/** 「将领登场时」把主语换成用户写的那个定语（唯一拼法，反解与提示同读它）。 */
+export function deployTimingWithIntent(scope: ListenerScope): string {
+  return triggerTypeLabels.onDeploy.replace(/^将领/, listenerScopeIntentWords[scope]);
+}
 export const expireLabels: Record<ExpireCondition, string> = {
   untilSelfTurnStart: '到下个己方回合开始前', untilSelfTurnEnd: '到下个己方回合结束前',
   untilOtherTurnStart: '到下个其他玩家回合开始前', untilOtherTurnEnd: '到下个其他玩家回合结束前',

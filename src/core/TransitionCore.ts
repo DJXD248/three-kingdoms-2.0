@@ -114,16 +114,24 @@ export function transition(
   // the container, so a general deployed by THIS action had no listener when
   // the pre-dispatch chain above ran. Resync against the settled state, then
   // replay only this step's GENERAL_DEPLOYED events through the chain.
-  // No double-fire: every compiled onDeploy definition pins sourceGeneralId
-  // and the bridge condition matches it against the deployed general's
-  // runtime id, so a replayed deploy event can only hit the listener owned
-  // by that very general — which did not exist before the resync.
+  // v2.9.13（按需池第一刀）：重放**只让这一步刚上册的监听听**。原注释那句
+  // "No double-fire" 靠的是「登场技都把 sourceGeneralId 钉在自己那一员上」⇒ 重放的
+  // 登场事件只可能命中它自己的监听；那对 `self` 档成立，对扩面档（v2.8.21 的
+  // `field`、本刀的 `others`／`enemySeat`）不成立——实测老 bug：席1 挂「听场上」
+  // 的登场技，席2 登场那一步响两遍（派发前链一遍＋重放一遍）。旧监听在派发前那条
+  // 链里已经听过这些登场事件，重放的存在理由从头到尾只有一条：补上新上册的那几位。
   // settleable excludes DEATH/TRIGGERED echoes for the same reason as the
   // death-reentry loop below; deploy-derived DEATHs fold into it via derived.
   const deployedEvents = events.filter(event => event.type === 'GENERAL_DEPLOYED');
   if (deployedEvents.length > 0 && ctx.resyncSkills) {
+    const beforeIds = new Set(ctx.triggers.getAll().map(trigger => trigger.id));
     ctx.resyncSkills(next);
-    const expanded = resolveTriggerChain(next, ctx.triggers, deployedEvents);
+    const freshlyRegistered = new Set(
+      ctx.triggers.getAll()
+        .map(trigger => trigger.id)
+        .filter(id => !beforeIds.has(id)),
+    );
+    const expanded = resolveTriggerChain(next, ctx.triggers, deployedEvents, freshlyRegistered);
     const fresh = expanded.filter(event => !deployedEvents.includes(event));
     events.push(...fresh);
     const settleable = fresh.filter(event => event.type !== 'DEATH' && event.type !== 'TRIGGERED');

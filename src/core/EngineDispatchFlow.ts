@@ -14,6 +14,8 @@ export function resolveTriggerChain(
   state: EngineState,
   triggers: TriggerEngine,
   initialEvents: GameEvent[],
+  /** v2.9.13：只让这些监听 id 听（部署步补注册重放专用，见 `TriggerEngine.process`）。 */
+  restrictToIds?: ReadonlySet<string>,
 ): GameEvent[] {
   const result: GameEvent[] = [];
   const queue = [...initialEvents];
@@ -30,7 +32,7 @@ export function resolveTriggerChain(
 
     result.push(next);
 
-    const triggerResult = triggers.process(state, next, depth, next.id, quotaSpent);
+    const triggerResult = triggers.process(state, next, depth, next.id, quotaSpent, restrictToIds);
     if (triggerResult.truncated) {
       result.push({ type: 'CUSTOM', data: { kind: 'TRIGGER_CHAIN_LIMIT', sourceEvent: next } });
     }

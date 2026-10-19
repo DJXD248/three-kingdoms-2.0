@@ -59,10 +59,22 @@ describe('自己写效果：生成 → 确认 → 进积木', () => {
 
   it('看不懂的那一段逐段点名，并且一句也不半收', () => {
     openFirstPlainSkill();
+    // v2.9.13：例子从「其他角色摸两张牌」换成「其他玩家摸两张牌」——用户裁定前者是
+    // **用词错误**（本作没有「角色摸牌」），单独归了一档，见下面那一条。
+    writeAndGenerate('其他玩家摸两张牌。');
+    const line = screen.getByText(/不支持的一段/).textContent ?? '';
+    expect(line).toContain('其他玩家摸两张牌');
+    expect(line).toContain('还没做');
+    expect(screen.getByText(/一句也没生成/)).toBeTruthy();
+    expect(screen.queryByText(/^✔ 采用这/)).toBeNull();
+  });
+
+  it('「其他角色摸两张牌」＝用词错误：界面讲的是"角色没有手牌这一格"，不是"内容还没做"', () => {
+    openFirstPlainSkill();
     writeAndGenerate('其他角色摸两张牌。');
     const line = screen.getByText(/不支持的一段/).textContent ?? '';
-    expect(line).toContain('其他角色摸两张牌');
-    expect(line).toContain('还没做');
+    expect(line).toContain('没有手牌');
+    expect(line).toContain('其他玩家摸两张牌');
     expect(screen.getByText(/一句也没生成/)).toBeTruthy();
     expect(screen.queryByText(/^✔ 采用这/)).toBeNull();
   });

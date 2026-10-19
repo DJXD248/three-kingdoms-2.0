@@ -59,8 +59,9 @@ export type {
   SkillConditionMetric,
   SkillConditionOperator,
   SkillConditionSubject,
+  ListenerScope,
 } from '../data/generals';
-import type { SkillCondition } from '../data/generals';
+import type { SkillCondition, ListenerScope } from '../data/generals';
 
 export interface SkillEffectData {
   type: DataSkillEffectType;
@@ -125,8 +126,11 @@ export interface DataSkillDefinition {
   /** v2.8.21 监听扩面刀·「我听谁」：发生在别人身上的事算不算我的触发。
    *  缺省 `'self'`＝扩面前行为（只认自己身上）。`'allySeat'`＝同一玩家席位的
    *  全部将领（§H9 第七轮②的"己方"＝席位，不是势力）；`'field'`＝全场任一席。
-   *  手牌／回合开始这类事件本来就挂在玩家身上，那里 `self` 与 `allySeat` 同义。 */
-  listenerScope?: 'self' | 'allySeat' | 'field';
+   *  手牌／回合开始这类事件本来就挂在玩家身上，那里 `self` 与 `allySeat` 同义。
+   *  v2.9.13（甲档）再起两档：`'others'`＝除自身那一员以外、`'enemySeat'`＝别的
+   *  席位。词表与判据各只有一份（`data/generals.ts` 的标签表＋
+   *  `skills/skillEventMatch.ts` 的联合谓词），这里不再抄字面量。 */
+  listenerScope?: ListenerScope;
   /** v2.6.2: restrict onCardLost triggers to an emission-source predicate
    * (equipment strip / hand paths with a remainingHand fact / any source).
    * CARD_GAINED has no source variety yet — the filter never narrows it. */

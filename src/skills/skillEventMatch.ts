@@ -11,8 +11,9 @@ import type { SkillOwnerBinding } from './SkillTriggerBridge';
  *      其余全部触发型走这里）；
  *   ② `skills/reactionChain.ts`＝响应链问答的候选枚举（受击／受伤两型走这里）。
  *
- * 本文件从 `SkillTriggerBridge.ts` 原样搬出（v2.8.22 响应链执法刀），**一条判
- * 定都没改**：三档「我听谁」（self／allySeat／field）、来源两档（攻击／技能）、
+ * 本文件从 `SkillTriggerBridge.ts` 原样搬出（v2.8.22 响应链执法刀），搬出时**一条
+ * 判定都没改**。「我听谁」过去三档（self／allySeat／field），v2.9.13 按需池甲档
+ * 扩到五档（补 others／enemySeat）；来源两档（攻击／技能）、
  * `damageTypeFilter`、`cardFilter` 的 via/remainingHand 事实读法全部逐字。
  * 门槛谓词（`conditions`）不在这里——它要读 state，由两个消费方各自在同一点
  * 之后调用同一个 `evaluateSkillConditions`（先身份、再门槛，顺序也不变）。
@@ -41,20 +42,50 @@ export function matchesSkillEvent(
   const scope = skill.listenerScope ?? 'self';
   const targetSource = skill.targetSource ?? 'attack';
 
-  /** 「我听谁」的玩家那一层。`field` 档不比玩家键，但**事件必须带着这个键**：
-   *  缺键＝这件事根本没落到某一位玩家身上（打营地的 BEFORE_DAMAGE 就是这种），
-   *  那是"没有受击者"，不是"受击者不是我"⇒ 三档都不响。这条保住了扩面前
-   *  "打营地不会触发将领的受击类技能"那一既有事实。 */
-  const playerMatches = (playerKey: unknown): boolean =>
-    scope === 'field'
-      ? playerKey !== undefined && playerKey !== null
-      : idEq(ownerId, playerKey);
+  const data = asRecord(event.data);
+  /** 某一维的键在不在。缺键的读法各档不同（见上面两段注释），这里只回答"有没有记这一维"。 */
+  const hasKey = (key: unknown): boolean => key !== undefined && key !== null;
 
-  /** 「我听谁」的将领那一层：只有 `self` 档认这一层（扩面门的严格写法——
-   *  知道将Id 时键必须对得上，缺键＝对不上＝不响）。手牌／回合开始这类事件的键
-   *  本来就只有玩家一维（将领不持牌），那里 `self` 与 `allySeat` 是同一件事。 */
-  const generalMatches = (generalKey: unknown): boolean =>
-    scope !== 'self' || !generalId || idEq(generalId, generalKey);
+  /** 「我听谁」的玩家那一层。`field`／`others` 档不比玩家键，但**事件必须带着这个键**：
+   *  缺键＝这件事根本没落到某一位玩家身上（打营地的 BEFORE_DAMAGE 就是这种），
+   *  那是"没有受击者"，不是"受击者不是我"⇒ 所有档都不响。这条保住了扩面前
+   *  "打营地不会触发将领的受击类技能"那一既有事实。
+   *  `enemySeat`（敌方角色＝己方玩家外的所有玩家）同样在这一层判：键必须在，
+   *  而且必须**不是**我的席位。 */
+  const playerMatches = (playerKey: unknown): boolean => {
+    const has = hasKey(playerKey);
+    switch (scope) {
+      case 'field':
+      case 'others':
+        // `others` 的"除自身以外"要连将领那一维一起看，故这里只要求有玩家键，
+        // 剩下那一刀在 `generalMatches` 里补（两维分开判会漏掉"同席别的将"这一类）。
+        return has;
+      case 'enemySeat':
+        return has && !idEq(ownerId, playerKey);
+      default:
+        return idEq(ownerId, playerKey);
+    }
+  };
+
+  /** 「我听谁」的将领那一层。
+   *  `self`：只有认这一层的档（扩面前的逐字行为——知道将Id 时键必须对得上，
+   *  缺键＝对不上＝不响）。
+   *  `others`（其他角色＝自身以外）＝**席位与将领两维的联合判据**：别的席位那一员
+   *  必然不是"我这一员"⇒ 响；同一席位要认将的键——看得见是哪一员、且不是我这员
+   *  才算"其他角色"，缺将键或技能本身说不出自己是哪一员＝说不清⇒不响（fail-closed，
+   *  与 `self` 档同一口径，绝不把"不知道"读成"是别人"）。
+   *  `allySeat`／`enemySeat`／`field`：这一层不比（扩面前 `scope !== 'self'` 就放行，
+   *  一字未动）。手牌／回合这类事件的键本来就只有玩家一维（将领不持牌）。 */
+  const generalMatches = (generalKey: unknown, playerKey: unknown): boolean => {
+    if (scope === 'self') return !generalId || idEq(generalId, generalKey);
+    if (scope === 'others') {
+      if (!hasKey(playerKey)) return false;
+      if (!idEq(ownerId, playerKey)) return true;
+      if (!generalId) return false;
+      return hasKey(generalKey) && !idEq(generalId, generalKey);
+    }
+    return true;
+  };
 
   /** 「这事是谁引起的」（v2.8.21 第二维）：读通知事件**已经记下**的那个字段，
    *  不在这里重新推断伤害数学。缺 `damageType`＝普攻那一刀（`core/attackBlow.ts`
@@ -66,33 +97,37 @@ export function matchesSkillEvent(
     return kind === targetSource;
   };
 
-  const data = asRecord(event.data);
   switch (trigger) {
     case 'onTurnStart':
       return playerMatches(data.playerId);
     case 'onDeploy': {
+      const deployedId = data.general && typeof data.general === 'object'
+        ? getRuntimeCardId(data.general as never)
+        : data.general === undefined ? '' : String(data.general);
       if (!playerMatches(data.playerId)) return false;
-      if (generalId && scope === 'self') {
-        const deployedId = data.general && typeof data.general === 'object'
-          ? getRuntimeCardId(data.general as never)
-          : data.general === undefined ? '' : String(data.general);
-        if (deployedId && deployedId !== String(generalId)) return false;
+      if (scope === 'self') {
+        // 逐字照旧：`self` 认将这一层，但**缺将键＝放行**（扩面前的写法就是
+        // `if (deployedId && deployedId !== …)`）；本刀不碰这一档。
+        if (generalId && deployedId && deployedId !== String(generalId)) return false;
+        return true;
       }
-      return true;
+      // `others` 在这一档才有活干（同席位别的将登场也算）；`allySeat`／`enemySeat`／
+      // `field` 的将层不比，与扩面前"非 self 一律放行"逐字一致。
+      return generalMatches(deployedId || undefined, data.playerId);
     }
     case 'onDamageTaken': {
       if (!playerMatches(data.targetPlayerId)) return false;
-      if (!generalMatches(data.targetId ?? data.target)) return false;
+      if (!generalMatches(data.targetId ?? data.target, data.targetPlayerId)) return false;
       if (damageFilter && data.damageType !== damageFilter) return false;
       return true;
     }
     case 'onDamageDealt': {
       const action = asRecord(data.action);
       if (!playerMatches(action.playerId)) return false;
-      if (generalId) {
-        const payload = asRecord(action.payload);
-        if (!generalMatches(payload.attackerId ?? action.attackerId)) return false;
-      }
+      // 将层：`self` 档没 generalId 时放行（＝扩面前那个 `if (generalId)` 外壳的
+      // 同一句话），`others` 档要看"造成这一下的是不是我这一员"。
+      const payload = asRecord(action.payload);
+      if (!generalMatches(payload.attackerId ?? action.attackerId, action.playerId)) return false;
       // AFTER_DAMAGE is currently emitted only by attack resolution, so a
       // skill-damage filter can never match here (documented engine fact).
       if (damageFilter === 'skill') return false;
@@ -101,7 +136,7 @@ export function matchesSkillEvent(
     }
     case 'onKill': {
       if (!playerMatches(data.attackerPlayerId)) return false;
-      if (!generalMatches(data.attackerId)) return false;
+      if (!generalMatches(data.attackerId, data.attackerPlayerId)) return false;
       return true;
     }
     case 'onDeath': {
@@ -111,7 +146,7 @@ export function matchesSkillEvent(
       // `onKill` 分支永远键不上）。
       if (data.deathCause === 'MAX_HP_ZERO') return false;
       if (!playerMatches(data.targetPlayerId)) return false;
-      if (!generalMatches(data.targetId)) return false;
+      if (!generalMatches(data.targetId, data.targetPlayerId)) return false;
       return true;
     }
     case 'onBecomingTarget': {
@@ -120,7 +155,7 @@ export function matchesSkillEvent(
       // base is not "a general becoming a target"（`field` 档同样不响：那里
       // 缺的是"受击者"这个人，不是"受击者不是我"）。
       if (!playerMatches(data.targetPlayerId)) return false;
-      if (!generalMatches(data.targetId ?? data.target)) return false;
+      if (!generalMatches(data.targetId ?? data.target, data.targetPlayerId)) return false;
       return sourceMatches(data);
     }
     case 'onCardLost':

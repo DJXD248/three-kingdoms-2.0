@@ -18,6 +18,7 @@
 import {
   SkillCondition, SkillEffect, SkillEffectMode, SkillRuntimeEffect, SkillTriggerConfig,
   ListenerScope, allTriggerTypes, getTriggerSubOptions, supportsListenerScope,
+  listenerScopeLabels, deployTimingWithIntent,
   deploySubLabels, turnSubLabels, damageSubLabels, targetSubLabels,
   killSubLabels, cardSubLabels, expireLabels, statModifierKeyLabels, allSkillTags,
 } from '../data/generals';
@@ -107,8 +108,12 @@ const TRIGGER_INDEX: Map<string, SkillTriggerConfig> = (() => {
   const map = new Map<string, SkillTriggerConfig>();
   for (const type of allTriggerTypes) {
     const axis = getTriggerSubOptions(type);
+    // 档位名单一律从 `listenerScopeLabels` 现场取键（词表加了档而这里抄旧名单＝
+    // 那一档永远反解不出来，正是"一处词两份写法迟早分叉"的那条）。
     const scopeOptions: (ListenerScope | undefined)[] =
-      supportsListenerScope(type) ? [undefined, 'self', 'allySeat', 'field'] : [undefined];
+      supportsListenerScope(type)
+        ? [undefined, ...(Object.keys(listenerScopeLabels) as ListenerScope[])]
+        : [undefined];
     const subKeys: (string | undefined)[] = axis ? [undefined, ...Object.keys(SUB_TABLES[axis].labels)] : [undefined];
     for (const sub of subKeys) {
       for (const listenerScope of scopeOptions) {
@@ -117,6 +122,14 @@ const TRIGGER_INDEX: Map<string, SkillTriggerConfig> = (() => {
         if (listenerScope) cfg.listenerScope = listenerScope;
         const text = triggerPhrase(cfg);
         if (text && !map.has(text)) map.set(text, cfg);
+        // v2.9.13（甲档）：只有「登场时」这一格额外收用户自己的那种带定语的写法
+        // （拼法只有一个出处＝`deployTimingWithIntent`，这里不手抄）。别的时机的定语
+        // 主语不是"谁登场"，替用户造句子超出这一刀，档位仍可从「我听谁」那一格与
+        // Excel 第 8 列录入。
+        if (type === 'onDeploy' && listenerScope) {
+          const intent = deployTimingWithIntent(listenerScope);
+          if (!map.has(intent)) map.set(intent, cfg);
+        }
       }
     }
   }
@@ -382,6 +395,13 @@ function whyBadge(tag: string): string {
 }
 
 function whyUnread(fragment: string): string {
+  // v2.9.13 术语裁定（用户 2026-10-18 原话：「我的游戏里没有『角色摸牌』，只有『玩家
+  // 摸牌』，摸牌摸上来的是手牌，角色是没有手牌这个概念的」）：先判**用词**，再判
+  // "这一句做不做得出来"。「××角色摸 N 张牌」不是"将来能做的内容"，是一句写错了的
+  // 话——把它原样登记成待办＝替用户把一个不成立的说法留成合法的样子。
+  if (/摸\s*\S{0,4}\s*(手)?牌/.test(fragment) && /角色(?:摸|失去|获得|打出)/.test(fragment)) {
+    return '「角色摸牌」在本作不成立：摸上来的牌进的是玩家的手牌，将领（角色）没有手牌这一格。请改写"玩家"——例如「其他玩家摸两张牌」。顺带说一句：让别的玩家摸牌这类效果今天还没接线（"目标"那一格就是留给它的），所以改完仍然只会记下、不会响。';
+  }
   if (/(其他|别的|别家|任意|所有|一名|一位)(玩家|角色|人)/.test(fragment) || /其他席位/.test(fragment)) {
     return '这一句要作用在"别人"身上：现在效果只认 自身／伤害来源／目标 三档（摸牌、看牌堆顶、放回牌堆这三档更是只归卡牌的那位玩家自己）。想让别的玩家执行的那类内容还没做出来，所以这里先不收——"目标"那一格保留着，等的就是它。';
   }

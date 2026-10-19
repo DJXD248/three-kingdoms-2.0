@@ -14,6 +14,7 @@ import {
   VALUELESS_RUNTIME_TYPES,
   SETTLEABLE_RUNTIME_TYPES,
   LISTENER_SCOPE_HEADER,
+  LISTENER_SCOPE_HINT,
   LISTENER_SCOPE_LIST,
   listenerScopeToStr,
   readListenerScopeCell,
@@ -53,6 +54,9 @@ import {
 import type { SkillCondition, SkillEffect, SkillTriggerConfig } from '../data/generals';
 import {
   allGenerals,
+  allTriggerTypes,
+  supportsListenerScope,
+  triggerTypeLabels,
   listenerScopeLabels,
   expireLabels,
   statModifierKeyLabels,
@@ -561,7 +565,7 @@ describe('skillExcelFormat: 监听扩面（v2.8.21 「我听谁」＋「成为�
       .toBeGreaterThan(0);
   });
 
-  it('「我听谁」三档认得、留空＝没填、认不出的原文交回', () => {
+  it('「我听谁」五档认得、留空＝没填、认不出的原文交回', () => {
     for (const label of Object.values(listenerScopeLabels)) {
       expect(readListenerScopeCell(label).scope).toBeTruthy();
     }
@@ -570,7 +574,46 @@ describe('skillExcelFormat: 监听扩面（v2.8.21 「我听谁」＋「成为�
     expect(readListenerScopeCell('听全队').unknown).toBe('听全队');
     expect(readListenerScopeCell(undefined).scope).toBeUndefined();
     expect(listenerScopeToStr(undefined)).toBe('无');
-    expect(LISTENER_SCOPE_LIST.split(',')).toHaveLength(4);
+    expect(LISTENER_SCOPE_LIST.split(',')).toHaveLength(Object.keys(listenerScopeLabels).length + 1);
+  });
+
+  /**
+   * v2.9.13（按需池第一刀·甲档）加了两档（听除自身以外／听敌方（其他席位）），
+   * 表头批注那句话过去是**手抄**的三档名单＋一串时机简称——加了档、批注还写三档，
+   * 玩家照着下拉数不着、照着批注又认不出，正是"一处词两份写法迟早分叉"。
+   * 这一条钉住：批注里的档位名单与"哪些时机认这一栏"必须与词表逐字一致。
+   */
+  it('表头批注的档位与时机名单＝从词表现取，一档一个都不漏', () => {
+    for (const label of Object.values(listenerScopeLabels)) {
+      expect(LISTENER_SCOPE_HINT).toContain(label);
+    }
+    for (const type of allTriggerTypes) {
+      if (!supportsListenerScope(type)) continue;
+      expect(LISTENER_SCOPE_HINT).toContain(triggerTypeLabels[type]);
+    }
+  });
+
+  /**
+   * v2.9.13 甲档：两档新写法在 Excel 里必须**逐字往返**（写出标签→读回同一个键），
+   * 且与旧三档一样走同一格——这一维只有一列，没有第二种拼法。
+   */
+  it('新增两档（听除自身以外／听敌方（其他席位））在 Excel 逐字往返', () => {
+    for (const scope of ['others', 'enemySeat'] as const) {
+      const label = listenerScopeLabels[scope];
+      expect(readListenerScopeCell(label).scope).toBe(scope);
+      expect(listenerScopeToStr(scope)).toBe(label);
+    }
+    // 同一格认这一栏的时机里包含「将领登场时」：导出→导入带回整块触发。
+    const original: SkillEffect = {
+      id: 'e1', label: '甲档', trigger: { type: 'onDeploy', listenerScope: 'enemySeat' },
+      runtime: { type: 'DRAW_CARD', value: 1 },
+    };
+    const cells = serializeEffectGroup(original, 8);
+    expect(cells[7]).toBe('听敌方（其他席位）');
+    const back = parseEffectGroup(cells, 0, 8)!;
+    expect(back.fields.trigger).toEqual(original.trigger);
+    expect(back.scopeIgnored).toBeUndefined();
+    expect(back.scopeUnknown).toBeUndefined();
   });
 
   /**

@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { allGenerals, General, Skill, SkillEffect } from '../data/generals';
+import { allGenerals, General, ListenerScope, Skill, SkillEffect } from '../data/generals';
 import { effectSentence, skillSentence } from './skillSentence';
 import { parseSkillText, canAdopt } from './skillTextParse';
 import { compileGeneralSkills } from './skillCompiler';
@@ -111,11 +111,16 @@ describe('skillTextParse：生成出来的那句话必须能原样解回来', ()
 });
 
 describe('skillTextParse：读不懂的一律逐段点名，绝不猜', () => {
+  /**
+   * 这一条原本拿「其他角色摸两张牌」当例子；v2.9.13 用户裁定那句是**用词错误**
+   * （本作没有「角色摸牌」），它归到专门那一档去了（见下面甲档那组）。
+   * 这里换成说法成立的「其他玩家」，"作用在别人身上"这一族钉子照常存在。
+   */
   it('要作用在"别人"身上 ⇒ 点名退回，并说明那一格是留给未来的', () => {
-    const draft = parseSkillText('其他角色摸两张牌。');
+    const draft = parseSkillText('其他玩家摸两张牌。');
     expect(draft.effects).toHaveLength(0);
     expect(draft.issues).toHaveLength(1);
-    expect(draft.issues[0].raw).toContain('其他角色摸两张牌');
+    expect(draft.issues[0].raw).toContain('其他玩家摸两张牌');
     expect(draft.issues[0].reason).toContain('还没做');
   });
 
@@ -259,5 +264,75 @@ describe('skillTextParse 的产物进了真编译路（不是只有形状对）'
     const draft = parseSkillText('与伤害来源将领决斗');
     expect(draft.effects[0].runtime).toEqual({ type: 'DUEL', target: 'ATTACKER' });
     expect(draft.effects[0].runtime!.value).toBeUndefined();
+  });
+});
+
+/**
+ * v2.9.13 按需池第一刀·甲档。两块内容各自一颗钉：
+ *   ①「将领登场时」多了"听谁"这一维，用户在卡面上会写的是**定语主语**
+ *     （「其他角色登场时」），而下拉/Excel 里住的是档位名（「听除自身以外」），
+ *     两种写法必须解到**同一块积木**；
+ *   ②用户 2026-10-18 的术语裁定：本作没有「角色摸牌」，只有「玩家摸牌」——
+ *     所以「其他角色摸两张牌」不是"将来的内容"，是一句**写错了的话**（✕ 退回、
+ *     并说清为什么），而「其他玩家摸两张牌」说法成立、只是内容还没接线。
+ */
+describe('v2.9.13 甲档：登场那一格"听谁"的两种写法＋「角色摸牌」用词裁定', () => {
+  const SCOPE_WRITINGS: [string, ListenerScope][] = [
+    ['自身登场时', 'self'],
+    ['己方角色登场时', 'allySeat'],
+    ['其他角色登场时', 'others'],
+    ['敌方角色登场时', 'enemySeat'],
+    ['场上所有角色登场时', 'field'],
+  ];
+
+  it('五档都有用户那句写法，且各自解成同一块积木（与档位名解出来的一模一样）', () => {
+    for (const [text, scope] of SCOPE_WRITINGS) {
+      const draft = parseSkillText(`${text}，摸 1 张牌。`);
+      expect(draft.issues.map(i => `${i.raw} → ${i.reason}`), text).toEqual([]);
+      expect(draft.effects, text).toHaveLength(1);
+      expect(draft.effects[0].trigger, text).toEqual({ type: 'onDeploy', listenerScope: scope });
+      // 与档位名那条路必须汇成同一块：解回来的积木再生成一次＝逐字同一句。
+      expect(effectSentence(draft.effects[0]), text).toBe(
+        effectSentence({ trigger: { type: 'onDeploy', listenerScope: scope }, runtime: { type: 'DRAW_CARD', value: 1 } }),
+      );
+    }
+  });
+
+  it('生成侧那句「（听×）」五档都能原样解回来；缺省那格不带括号＝旧卡面一字不变', () => {
+    for (const [, scope] of SCOPE_WRITINGS) {
+      const effect: SkillEffect = {
+        id: `d-${scope}`, trigger: { type: 'onDeploy', listenerScope: scope },
+        runtime: { type: 'DRAW_CARD', value: 1 },
+      };
+      expect(expectRoundTrip(effect).trigger?.listenerScope).toBe(scope);
+    }
+    const plain: SkillEffect = { id: 'd0', trigger: { type: 'onDeploy' }, runtime: { type: 'DRAW_CARD', value: 1 } };
+    expect(effectSentence(plain)).not.toContain('（听');
+    expect(expectRoundTrip(plain).trigger?.listenerScope).toBeUndefined();
+  });
+
+  it('定语只加在"登场"这一格：别的时机不替用户造句（「其他角色受到伤害后」照样退回）', () => {
+    const draft = parseSkillText('其他角色受到伤害后，获得 1 点护甲。');
+    expect(draft.effects).toHaveLength(0);
+    expect(draft.issues.map(i => i.raw)).toContain('其他角色受到伤害后');
+  });
+
+  it('「其他角色摸两张牌」＝用词错误：✕ 退回、说清"角色没有手牌这一格"，不当成待办内容', () => {
+    const draft = parseSkillText('受到伤害后，其他角色摸两张牌。');
+    expect(draft.effects).toHaveLength(0);
+    const reason = draft.issues.map(i => i.reason).join('\n');
+    expect(reason).toContain('角色摸牌');
+    expect(reason).toContain('没有手牌');
+    // 同一条里给出让改的正确写法，并且不许这句被算进"能采用"。
+    expect(reason).toContain('其他玩家摸两张牌');
+    expect(canAdopt(draft)).toBe(false);
+  });
+
+  it('「其他玩家摸两张牌」＝说法成立、内容还没接线 ⇒ 退回理由讲的是"别人"不是"用词"', () => {
+    const draft = parseSkillText('受到伤害后，其他玩家摸两张牌。');
+    expect(draft.effects).toHaveLength(0);
+    const reason = draft.issues.map(i => i.reason).join('\n');
+    expect(reason).toContain('别人');
+    expect(reason).not.toContain('角色摸牌');
   });
 });
