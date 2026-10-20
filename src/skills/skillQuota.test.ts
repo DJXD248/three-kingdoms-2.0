@@ -6,8 +6,12 @@
  *  ④ 没发动成功不消耗（宁可不发，绝不空耗）。
  *
  * 同时钉本刀的另一半：**发动记录三条路共用同一个生产点**。回合结束路今天照旧每
- * 回合落一笔；响应问答路与自动触发路只对**带额度**的定义多落这一笔，所以既有内容
- * 的事件流一字未变（最后一格用不带徽章的对照组钉住这一点）。
+ * 回合落一笔。
+ *
+ * v2.9.15 乙档刀更正：响应问答路与自动触发路从"只对带额度的定义多落这一笔"改成
+ * **每次真发动都出声**，只是不带额度的那一身不带 `stableId`＝纯通知、台账一字不记
+ * （判据见下面两处"对照"格：出声了，账仍然空）。多出来的这一声就是
+ * 「其他将领技能发动时」那一格听的东西。
  */
 import { describe, it, expect } from 'vitest';
 import { GameEngine } from '../core/GameEngine';
@@ -21,7 +25,7 @@ import { listTurnEndAskItems } from './turnEndSkills';
 import { getReactionAsk } from './reactionChain';
 import {
   LIMIT_EXHAUSTED_TEXT,
-  limitedActivationEvent,
+  activationRecordEvent,
   limitedQuotaAvailable,
   skillActivatedEvent,
 } from './skillQuota';
@@ -235,11 +239,26 @@ describe('skillQuota · 判据单点与发动账形状', () => {
     );
   });
 
-  it('该不该落账的两条豁免（裁决④＝什么都没产出就不消耗）', () => {
+  it('该不该落账的两条例外（裁决④＝什么都没产出就不消耗；v2.9.15＝每次真发动都出声）', () => {
     const ctx = { playerId: 1, generalId: 'g1', turn: 5 };
-    expect(limitedActivationEvent(def, ctx, 1)).toBeNull();
-    expect(limitedActivationEvent({ ...def, limitKey: 'g1:守夜' }, ctx, 0)).toBeNull();
-    expect(limitedActivationEvent({ ...def, limitKey: 'g1:守夜' }, ctx, 2)?.type).toBe('SKILL_ACTIVATED');
+    // 空发＝零产出⇒连出声都不出
+    expect(activationRecordEvent(def, ctx, 0)).toBeNull();
+    expect(activationRecordEvent({ ...def, limitKey: 'g1:守夜' }, ctx, 0)).toBeNull();
+    // 带额度：出声且进账（键序逐字沿用 v2.8.31 那一身）
+    const booked = activationRecordEvent({ ...def, limitKey: 'g1:守夜' }, ctx, 2);
+    expect(Object.keys((booked?.data ?? {}) as object)).toEqual(
+      ['skillId', 'skillName', 'effectId', 'generalId', 'playerId', 'stableId', 'limitKey'],
+    );
+    // v2.9.15 乙档刀：不带额度的**也出声**了（旧口径是 null），但那一身没有 stableId⇒纯通知
+    const notify = activationRecordEvent(def, ctx, 1);
+    expect(notify?.type).toBe('SKILL_ACTIVATED');
+    expect(Object.keys((notify?.data ?? {}) as object)).toEqual(
+      ['skillId', 'skillName', 'effectId', 'generalId', 'playerId'],
+    );
+    // 防套娃那一键只在为真时出现（键在不在就是意思的一部分）
+    expect('viaActivation' in ((activationRecordEvent(def, { ...ctx, viaActivation: false }, 1)?.data ?? {}) as object)).toBe(false);
+    expect(Object.keys((activationRecordEvent(def, { ...ctx, viaActivation: true }, 1)?.data ?? {}) as object))
+      .toEqual(['skillId', 'skillName', 'effectId', 'generalId', 'playerId', 'viaActivation']);
   });
 });
 
@@ -392,14 +411,18 @@ describe('响应问答路 · 发动也进同一本账（本刀更正的那半句
     expect(events.some(e => e.type === 'SKILL_ACTIVATED')).toBe(false);
   });
 
-  it('对照：不带徽章的响应技仍然一字不记 SKILL_ACTIVATED（既有事件流不动）', () => {
+  it('对照（v2.9.15 乙档刀重开）：不带徽章的响应技**也出声**，但那一身不带 stableId⇒台账一字不记', () => {
     const engine = attackTwice(makeGeneral('g2', [hurtDraw('奸雄')]));
     const ask = getReactionAsk(engine.state)!;
     const events = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
       skillId: ask.options[0].skillId, generalId: ask.generalId,
     }));
-    expect(events.some(e => e.type === 'SKILL_ACTIVATED')).toBe(false);
+    const activation = events.find(e => e.type === 'SKILL_ACTIVATED');
+    expect(activation?.data).toMatchObject({ skillId: 'g2:奸雄:e1', playerId: 2 });
+    expect('stableId' in (activation?.data as object)).toBe(false);
+    // 出声了、账仍然是空的——这一句才是"既有对局状态转移一字未动"的证人
     expect(engine.state.consumedSkills ?? []).toHaveLength(0);
+    expect(handOf(engine, 2)).toBe(1);
   });
 });
 
@@ -425,13 +448,17 @@ describe('自动触发路 · 一局一次', () => {
     expect(engine.state.consumedSkills).toHaveLength(1);
   });
 
-  it('对照：不带徽章的强制技照旧每一声都响、也不落账', () => {
+  it('对照：不带徽章的强制技照旧每一声都响、也不落账（v2.9.15 起每一声各出一句公告）', () => {
     const engine = attackTwice(makeGeneral('g2', [hurtDraw('刚烈', { forced: true })]));
-    const firstHand = handOf(engine, 2);
-    expect(firstHand).toBe(1);
+    expect(handOf(engine, 2)).toBe(1);
     expect(engine.state.consumedSkills ?? []).toHaveLength(0);
-    secondAttack(engine);
+    const events = secondAttack(engine);
     expect(handOf(engine, 2)).toBe(2);
+    // 自动路每次真发动都出声，但这一身不带 stableId⇒"账本空"这一句仍然成立
+    const announcements = events.filter(e => e.type === 'SKILL_ACTIVATED');
+    expect(announcements).toHaveLength(1);
+    expect('stableId' in ((announcements[0]?.data ?? {}) as object)).toBe(false);
+    expect(engine.state.consumedSkills ?? []).toHaveLength(0);
   });
 });
 
@@ -475,6 +502,10 @@ describe('同一条触发链内两声命中只结一次', () => {
     const engine = buildEngine(state);
     const expanded = resolveTriggerChain(engine.state, engine.triggers, [injury('g2', 1), injury('g2', 2)]);
     expect(expanded.filter(e => e.type === 'DRAW')).toHaveLength(2);
-    expect(expanded.filter(e => e.type === 'SKILL_ACTIVATED')).toHaveLength(0);
+    // v2.9.15 乙档刀：这一格从"0 声公告"改成"两声公告、零笔账"——守卫拦的是带额度的
+    // 第二次**发动**，不是发动过的事实；两声都没进台账（判据见上面那格"账本空"）。
+    const announcements = expanded.filter(e => e.type === 'SKILL_ACTIVATED');
+    expect(announcements).toHaveLength(2);
+    expect(announcements.every(e => !('stableId' in ((e.data ?? {}) as object)))).toBe(true);
   });
 });

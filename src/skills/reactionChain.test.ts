@@ -524,15 +524,22 @@ describe('响应链 · 冻结世界四方一致（校验器／合法动作／解
     expect((events[0].data as { reason?: string }).reason).toBe('INVALID_SKIP_REACTION_PAYLOAD');
   });
 
-  it('发动＝REACTION_ANSWERED＋效果事件（自带 skillId/skillName），且绝不写 SKILL_ACTIVATED——与自动路逐字同一套账', () => {
+  it('发动＝纯通知的 SKILL_ACTIVATED＋REACTION_ANSWERED＋效果事件（自带 skillId/skillName），台账一字不记', () => {
     const engine = askedEngine();
     const ask = getReactionAsk(engine.state)!;
     const events = engine.dispatch(createAction('ACTIVATE_SKILL', 2, {
       skillId: ask.options[0].skillId, generalId: ask.generalId,
     }));
     expect(events.some(e => e.type === 'REACTION_ANSWERED')).toBe(true);
-    expect(events.some(e => e.type === 'SKILL_ACTIVATED')).toBe(false);
-    const carried = events.find(e => (e.data as { skillId?: string } | undefined)?.skillId === 'g2:奸雄:e1');
+    // v2.9.15 乙档刀改的就是这一句。旧口径"问答路绝不写 SKILL_ACTIVATED"随
+    // 「其他将领技能发动时」接电而作废——它听的就是这一声。写的是**不带 stableId
+    // 的纯通知**，所以状态转移仍然一字未动，下面两行就是这一句的证人。
+    const activation = events.find(e => e.type === 'SKILL_ACTIVATED');
+    expect(activation?.data).toMatchObject({ skillId: 'g2:奸雄:e1', skillName: '奸雄', playerId: 2 });
+    expect('stableId' in ((activation?.data ?? {}) as object)).toBe(false);
+    expect(engine.state.consumedSkills ?? []).toHaveLength(0);
+    const carried = events.find(e => e.type !== 'SKILL_ACTIVATED'
+      && (e.data as { skillId?: string } | undefined)?.skillId === 'g2:奸雄:e1');
     expect(carried).toBeDefined();
     expect((carried!.data as { skillName?: string }).skillName).toBe('奸雄');
     // 搬出来的那一摸一张牌，在玩家点头之后照常落地。

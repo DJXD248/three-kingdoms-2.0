@@ -124,6 +124,17 @@ export interface RandomOutcomeData {
  * 生产点＝`skills/skillQuota.ts` 的 `skillActivatedEvent`），但自动触发路与响应问
  * 答路只在定义**带一局一次额度**时才落这一笔——台账唯一的消费者就是这个额度，与其
  * 他定义多落一条事件＝凭空改事件流而没人读，两个锚池也会白漂。
+ *
+ * v2.9.15 乙档刀（「其他将领技能发动时」接电）更正上面那句"only"的**当代含义**：
+ * 这一声从今天起是**每一次真发动都出**的（三条路同一形状、同一个生产点，空发不出＝
+ * 裁决④），因为有人听它了。但**进不进台账还是只由 `stableId` 那一键决定**——
+ * `applySkillActivatedEvent` 读到缺这一键恒等返回⇒回合结束路（必进账，"每回合限一次"
+ * 查的就是它）与带额度的定义照旧逐字不变，其余每一身是**纯通知**：事件流多一条、
+ * state 一个字不动。所以这一枚事件同时是两件事，靠一个键分：
+ *   带 `stableId`＝台账里的一笔；不带＝只宣布"发动过了"。
+ * `viaActivation`（只在为真时出现）＝"这一次发动是由「其他将领技能发动时」那一声引起
+ *  的"，那一格的判据读到它就闭嘴——否则两员"别人用技能我就摸牌"的将可以互相喂到
+ *  牌堆抽干（防套娃，判据与取证见 `skillEventMatch.ts` 与 HANDOFF §12-131）。
  */
 export interface SkillActivationEventData {
   skillId: string;
@@ -131,10 +142,14 @@ export interface SkillActivationEventData {
   effectId: string;
   generalId: string;
   playerId: number;
-  stableId: string;
+  /** 缺这一键＝这一身不进台账（纯通知）。见上面 v2.9.15 那一段。 */
+  stableId?: string;
   /** v2.8.32：带「一局一次」额度的定义才落这一键＝这枚技能的额度身份。见
    *  `EngineState.consumedSkills` 上的同名键。 */
   limitKey?: string;
+  /** v2.9.15：只在为真时出现＝"这一次发动是由「其他将领技能发动时」那一声引起的"。
+   *  那一格读到它就不响（防套娃）；除此之外没有任何消费者。 */
+  viaActivation?: true;
 }
 
 /**

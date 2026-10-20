@@ -1,5 +1,6 @@
 import type { DataSkillTrigger } from './dataTypes';
 import type { GameEvent } from '../core/Event';
+import type { ListenerScope } from '../data/generals';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import type { SkillOwnerBinding } from './SkillTriggerBridge';
 /**
@@ -46,19 +47,22 @@ export function matchesSkillEvent(
   /** 某一维的键在不在。缺键的读法各档不同（见上面两段注释），这里只回答"有没有记这一维"。 */
   const hasKey = (key: unknown): boolean => key !== undefined && key !== null;
 
-  /** 「我听谁」的玩家那一层。`field`／`others` 档不比玩家键，但**事件必须带着这个键**：
+  /** 「我听谁」的玩家那一层。**档位是参数**：绝大多数时机读定义自己那一档（`scope`），
+   *  而「其他将领技能发动时」（v2.9.15）把档位**钉死**成 `others` 传进来——它的名号已经
+   *  替玩家选好了听谁，绝不允许再为它另抄一份"什么算别人"。
+   *  `field`／`others` 档不比玩家键，但**事件必须带着这个键**：
    *  缺键＝这件事根本没落到某一位玩家身上（打营地的 BEFORE_DAMAGE 就是这种），
    *  那是"没有受击者"，不是"受击者不是我"⇒ 所有档都不响。这条保住了扩面前
    *  "打营地不会触发将领的受击类技能"那一既有事实。
    *  `enemySeat`（敌方角色＝己方玩家外的所有玩家）同样在这一层判：键必须在，
    *  而且必须**不是**我的席位。 */
-  const playerMatches = (playerKey: unknown): boolean => {
+  const playerMatchesFor = (who: ListenerScope, playerKey: unknown): boolean => {
     const has = hasKey(playerKey);
-    switch (scope) {
+    switch (who) {
       case 'field':
       case 'others':
         // `others` 的"除自身以外"要连将领那一维一起看，故这里只要求有玩家键，
-        // 剩下那一刀在 `generalMatches` 里补（两维分开判会漏掉"同席别的将"这一类）。
+        // 剩下那一刀在 `generalMatchesFor` 里补（两维分开判会漏掉"同席别的将"这一类）。
         return has;
       case 'enemySeat':
         return has && !idEq(ownerId, playerKey);
@@ -67,7 +71,7 @@ export function matchesSkillEvent(
     }
   };
 
-  /** 「我听谁」的将领那一层。
+  /** 「我听谁」的将领那一层（同样按参数取档，理由见上面那一段）。
    *  `self`：只有认这一层的档（扩面前的逐字行为——知道将Id 时键必须对得上，
    *  缺键＝对不上＝不响）。
    *  `others`（其他角色＝自身以外）＝**席位与将领两维的联合判据**：别的席位那一员
@@ -76,9 +80,9 @@ export function matchesSkillEvent(
    *  与 `self` 档同一口径，绝不把"不知道"读成"是别人"）。
    *  `allySeat`／`enemySeat`／`field`：这一层不比（扩面前 `scope !== 'self'` 就放行，
    *  一字未动）。手牌／回合这类事件的键本来就只有玩家一维（将领不持牌）。 */
-  const generalMatches = (generalKey: unknown, playerKey: unknown): boolean => {
-    if (scope === 'self') return !generalId || idEq(generalId, generalKey);
-    if (scope === 'others') {
+  const generalMatchesFor = (who: ListenerScope, generalKey: unknown, playerKey: unknown): boolean => {
+    if (who === 'self') return !generalId || idEq(generalId, generalKey);
+    if (who === 'others') {
       if (!hasKey(playerKey)) return false;
       if (!idEq(ownerId, playerKey)) return true;
       if (!generalId) return false;
@@ -86,6 +90,10 @@ export function matchesSkillEvent(
     }
     return true;
   };
+
+  const playerMatches = (playerKey: unknown): boolean => playerMatchesFor(scope, playerKey);
+  const generalMatches = (generalKey: unknown, playerKey: unknown): boolean =>
+    generalMatchesFor(scope, generalKey, playerKey);
 
   /** 「这事是谁引起的」（v2.8.21 第二维）：读通知事件**已经记下**的那个字段，
    *  不在这里重新推断伤害数学。缺 `damageType`＝普攻那一刀（`core/attackBlow.ts`
@@ -134,6 +142,25 @@ export function matchesSkillEvent(
       if (!idEq(ownerId, data.targetPlayerId)) return false;
       if (damageFilter && data.damageType !== damageFilter) return false;
       return true;
+    }
+    case 'onOtherSkillActivated': {
+      // v2.9.15 乙档刀（「别人使用技能时」）。三条判据，一条一句：
+      // ①**防套娃**：这一声如果是"替这一格而响"的（`viaActivation`＝它本身就是由某声
+      //   发动公告引起的发动），这一格闭嘴。少了这一句，两员「别人发动技能我就摸牌」
+      //   的将能互相喂到牌堆抽干（引擎侧只有深度 32／链上 256 那种兜底闸，不是判据）。
+      // ②**"什么算别人"不另写一份**：档位钉死 `others`，与上一刀（v2.9.13）那五档共用
+      //   同一个席位＋将领联合谓词——同席位另一员将也算"别人"（用户 2026-10-18 口径
+      //   逐字＝「其他角色＝自身以外」）。
+      // ③**说不清是谁的发动不算**：那一身只有座次、说不出哪一员（`generalId` 空）时，
+      //   `others` 在同席位上判不成"别的将"⇒ fail-closed，与 `self` 档同一口径。
+      // 这一格不认「我听谁」那一栏（`supportsListenerScope` 对它＝false⇒界面上不出现），
+      // 从 Excel／旧存档硬塞进来的档位由编译器点名拒绝（`TRIGGER_SUBTYPE_UNSUPPORTED`）。
+      if (data.viaActivation === true) return false;
+      const actorGeneral = typeof data.generalId === 'string' && data.generalId !== ''
+        ? data.generalId
+        : undefined;
+      if (!playerMatchesFor('others', data.playerId)) return false;
+      return generalMatchesFor('others', actorGeneral, data.playerId);
     }
     case 'onDamageDealt': {
       const action = asRecord(data.action);

@@ -9,7 +9,7 @@ import { capDamageToBase } from '../core/baseDamage';
 import { evaluateSkillConditions } from './skillConditions';
 import { gateConditionsToText } from './skillGateText';
 import { matchesSkillEvent } from './skillEventMatch';
-import { limitedActivationEvent, limitedQuotaAvailable } from './skillQuota';
+import { activationRecordEvent, limitedQuotaAvailable } from './skillQuota';
 import { eventsHeardBy, isReactionTrigger } from './reactionTriggers';
 import {
   enumerateHandCardCandidates,
@@ -199,16 +199,20 @@ export class SkillTriggerBridge {
         condition: buildCondition(binding.skill.trigger, binding),
         createEvents: (context) => {
           const effectEvents = SkillTriggerBridge.createSkillEvents(binding, context.state, context.event);
-          // v2.8.32 限定技额度刀·自动路的发动账。只有带额度的定义才多落这一笔
-          // （`limitedActivationEvent` 里两条不落账的场合见该文件），并且当场把额度
-          // 键记进这条链的已用集合——整条展开读的是落账前的同一个 state，不记这一笔
-          // 就有"一条链上两声命中、技能结两遍而台账只扣一次"的洞。
-          const activation = limitedActivationEvent(binding.skill, {
+          // v2.9.15 乙档刀：这一笔从本刀起**每次真发动都落**（旧名 `limitedActivationEvent`，
+          // 那时只有带额度的定义出声）。带额度的照旧进台账，其余是不进台账的纯通知⇒
+          // 既有那些"带额度的那一身"逐字不变。空发仍不出声＝裁决④"没发动成功不消耗"。
+          // `viaActivation`＝这一声是替「其他将领技能发动时」那一声而响的⇒同一格不许再响
+          // 第二层（防套娃），键只在这一句为真时出现。
+          const activation = activationRecordEvent(binding.skill, {
             playerId: binding.ownerId,
             generalId: binding.skill.sourceGeneralId ?? '',
             turn: context.state.turn ?? 0,
+            viaActivation: context.event.type === 'SKILL_ACTIVATED',
           }, effectEvents.length);
           if (!activation) return effectEvents;
+          // 当场把额度键记进**这条链**的已用集合：整条展开读的是落账前的同一个 state，
+          // 不记这一笔就有"一条链上两声命中、技能结两遍而台账只扣一次"的洞（v2.8.32）。
           if (binding.skill.limitKey) context.quotaSpent?.add(binding.skill.limitKey);
           return [activation, ...effectEvents];
         },

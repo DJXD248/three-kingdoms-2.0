@@ -1923,8 +1923,10 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(duels[0].data).toMatchObject({
       sourcePlayerId: 1, sourceGeneralId: 'du_elj', targetPlayerId: 2, targetId: 'du_vic', effectType: 'DUEL',
     });
-    expect(flat.slice(duelIdx, duelIdx + 9).map(e => e.type))
-      .toEqual(['DUEL', 'BEFORE_DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'INJURY', 'GAIN_ARMOR']);
+    expect(flat.slice(duelIdx, duelIdx + 10).map(e => e.type))
+      // v2.9.15 乙档刀：块尾多出来的那一声＝"这一条定义刚刚发动了"的公告（纯通知、
+      // 不带台账键），它照旧排在效果事件前面⇒状态位移仍然是零，只是事件流多一句。
+      .toEqual(['DUEL', 'BEFORE_DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'INJURY', 'SKILL_ACTIVATED', 'GAIN_ARMOR']);
     // 开局那一声＝"成为**技能**目标"：带 damageType:'skill'（所以"成为攻击目标"那一档听不到），
     // 这里当场没人有得说⇒标 `settled`、逐轮紧跟着就打了（第七轮开局格的另一档见刀2 专测）。
     expect(flat[duelIdx + 1].data).toMatchObject({
@@ -1957,7 +1959,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     // ③ 同技能后序效果在整块之后落账，且决斗算学时读不到它
     const followIdx = flat.findIndex(e => e.type === 'GAIN_ARMOR' && String(e.data?.skillId ?? '').includes('挑战:e2'));
-    expect(followIdx).toBe(duelIdx + 8);
+    expect(followIdx).toBe(duelIdx + 9);
     expect(fieldHp(engine.state, 1, 'du_elj')).toEqual({ hp: 6, armor: 1 });
 
     // ④ 决斗每一"打"不响任何监听（第九轮 d) 显式重钉）：du_vic 死在这一场的第 5 轮，

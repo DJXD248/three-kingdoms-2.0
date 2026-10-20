@@ -88,6 +88,10 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   // v2.9.14 营地刀：这一型听的是**已经存在的那一声** `INJURY`（营地掉血时由
   // `chainedConsequences` 派生，血量差>0 才发），没有新事件类型、没有新发射点。
   onBaseDamaged: 'onBaseDamaged',
+  // v2.9.15 乙档刀（「别人使用技能时」）：听的是**已经存在的那一声** `SKILL_ACTIVATED`。
+  // 它以前只在定义带"一局一次"额度时才发⇒这一格今天没东西可听；本刀起每次真发动都发
+  // （唯一生产点 `skills/skillQuota.ts`，不带台账键的那一身＝纯通知、零状态位移）。
+  onOtherSkillActivated: 'onOtherSkillActivated',
   // 2.3.1: compiles for the ACTIVATE_SKILL path only — deliberately NOT in
   // TRIGGER_EVENTS, so TURN_END never auto-fires it (single activation
   // path, double-fire ban).
@@ -303,11 +307,14 @@ export function judgeSkillEffect(
   // v2.6.2：与触发方向相反的牌类细分没有发射源（只有 GIVE 会导出 CARD_GAINED，
   // 所以"获得"侧的装备/手牌细分与"失去"侧的任意获得都不会响），宁可点名不悄悄空转。
   if (mapped === 'onCardLost' && triggerConfig.cardSubType === 'anyGained') return 'TRIGGER_SUBTYPE_UNSUPPORTED';
-  // v2.9.14 营地刀：营地是**席位**那一格东西，它不是任何一员将，所以"我听谁的营地"
-  // 这一维今天没有实现（界面上那格下拉对这一型压根不出现＝`supportsListenerScope`
-  // 返回 false）。从 Excel／旧存档塞进来的一格不能悄悄当成"只听自家"——点名跳过，
-  // 与上面那几档"写了但没有发射器"同一纪律（§12-55：记录而未消费＝假账）。
-  if (mapped === 'onBaseDamaged' && triggerConfig.listenerScope) return 'TRIGGER_SUBTYPE_UNSUPPORTED';
+  // v2.9.14 营地刀／v2.9.15 乙档刀同一纪律：这两型的**名号已经替玩家说清了听谁**
+  // （营地不是任何一员将⇒"我听谁的营地"没有；「其他将领」＝名号里就写了"其他"），
+  // 所以「我听谁」那一栏对它们不出现（`supportsListenerScope` 返回 false）。
+  // 从 Excel／旧存档塞进来的一格不能悄悄当成"只听自家"、也不能悄悄覆盖名号里那句
+  // "其他"——点名跳过，与上面那几档"写了但没有发射器"同一纪律（§12-55：记录而未消费＝假账）。
+  if ((mapped === 'onBaseDamaged' || mapped === 'onOtherSkillActivated') && triggerConfig.listenerScope) {
+    return 'TRIGGER_SUBTYPE_UNSUPPORTED';
+  }
   if (mapped === 'onCardGained') {
     const lostOnly = triggerConfig.cardSubType === 'equipmentLost'
       || triggerConfig.cardSubType === 'lastHandLost' || triggerConfig.cardSubType === 'handLost';

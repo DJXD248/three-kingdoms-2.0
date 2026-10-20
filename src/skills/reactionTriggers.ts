@@ -52,6 +52,11 @@ export const TRIGGER_EVENTS: Partial<Record<DataSkillTrigger, readonly GameEvent
   // 才算受到伤害"这一条在营地这一侧同样是结构性成立，没有任何一处再判断一次。
   // 它**不进** `REACTION_TRIGGERS`（问答链仍只有受击／受伤两型）⇒ 到点自动响。
   onBaseDamaged: ['INJURY'],
+  // v2.9.15 乙档刀：又一声**已经存在**的事件——`SKILL_ACTIVATED`。本刀之前它只在定义
+  // 带"一局一次"额度时才发，所以这一格压根没东西可听；本刀起每次真发动都发（生产点
+  // 仍是 `skills/skillQuota.ts` 那唯一一处），不带台账键的那一身＝纯通知、零状态位移。
+  // 它同样**不进** `REACTION_TRIGGERS`⇒到点自己响，不停下来问人（与营地那一格同一族）。
+  onOtherSkillActivated: ['SKILL_ACTIVATED'],
   onDamageDealt: ['AFTER_DAMAGE'],
   onKill: ['DEATH'],
   onDeath: ['DEATH'],

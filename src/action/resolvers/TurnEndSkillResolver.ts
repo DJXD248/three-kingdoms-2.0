@@ -5,7 +5,7 @@ import type { GameEvent, ReactionAnsweredData } from '../../core/Event';
 import { SkillTriggerBridge } from '../../skills/SkillTriggerBridge';
 import { evaluateSkillConditions } from '../../skills/skillConditions';
 import {
-  limitedActivationEvent,
+  activationRecordEvent,
   limitedQuotaAvailable,
   skillActivatedEvent,
 } from '../../skills/skillQuota';
@@ -44,10 +44,13 @@ interface ActivateSkillPayload {
  * `ResolverRegistry.getResolver` 取第一个 `canResolve` 命中的，而 `canResolve`
  * 看不见状态。
  *
- * 两条路的记账（v2.8.32 限定技额度刀更正）：过去这里写着"响应那次只记
- * `REACTION_ANSWERED`、与自动路逐字同一套账"，本刀起**带「一局一次」额度的定义三条
- * 路都记同一笔 `SKILL_ACTIVATED`**——额度要跨回合、跨发动路查，账不落就管不住。
- * 不带额度的定义一字未变（两条路仍只记各自那一句），所以既有对局的事件流逐字节不动。
+ * 两条路的记账（v2.8.32 限定技额度刀更正那一句、v2.9.15 乙档刀再更正一次）：过去这里
+ * 写着"响应那次只记 `REACTION_ANSWERED`"，v2.8.32 起**带「一局一次」额度的定义三条路都
+ * 记同一笔 `SKILL_ACTIVATED`**——额度要跨回合、跨发动路查，账不落就管不住。
+ * **v2.9.15 起两条路每一次真发动都出这一声**（「其他将领技能发动时」那一格要听），
+ * 但**进不进台账仍只由 `stableId` 那一键决定**（见 `skills/skillQuota.ts` 与
+ * `core/Event.ts` 上那两段）：不带额度的定义出的是**纯通知**那一身⇒既有对局的**状态**
+ * 逐字不动，事件流里多出来的每一身都不落账。
  * `stableId` 的形状也统一由 `skills/skillQuota.ts` 单点生产；回合结束那一路的每回合
  * 一次门查的仍是同一个键。
  */
@@ -156,10 +159,10 @@ function resolveReactionActivation(
   if (option.definition.choiceMode && effectEvents.length === 0) {
     return [rejected(action, 'SKILL_CONDITION_UNMET')];
   }
-  // v2.8.32 限定技额度刀：问答路的这一次点头**也是一次发动**，所以带额度的定义
-  // 在这里落同一笔账（形状仍走唯一生产点）。不带额度的定义一字未变——只多出来的
-  // 那一笔才是本刀的账，其余定义的事件流逐字节不动。
-  const activation = limitedActivationEvent(option.definition, {
+  // v2.9.15 乙档刀：问答路这一点头**也是一次发动**，所以每一次都出声（形状仍走唯一
+  // 生产点）；带额度的那一身照旧进台账，其余是不动状态的那一声⇒「其他将领技能发动时」
+  // 听得到玩家亲手发动的每一次。不带 `viaActivation`＝这是人自己点的，不是替那一格响的。
+  const activation = activationRecordEvent(option.definition, {
     playerId: action.playerId,
     generalId: ask.generalId,
     turn: state.turn ?? 0,
