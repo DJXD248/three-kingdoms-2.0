@@ -27,7 +27,7 @@ import { triggerPhrase } from './skillSentence';
 import { parseSkillText } from './skillTextParse';
 import { getReactionAsk } from './reactionChain';
 import { matchesSkillEvent } from './skillEventMatch';
-import { eventsHeardBy, TRIGGER_EVENTS } from './reactionTriggers';
+import { eventsHeardBy, isReactionTrigger, REACTION_EVENT_TYPES, REACTION_TRIGGERS, TRIGGER_EVENTS } from './reactionTriggers';
 import type { DataSkillDefinition } from './dataTypes';
 
 const ATTACK_COST = { id: 'cost_1', name: '粮草', type: '粮草' };
@@ -370,11 +370,20 @@ describe('其他将领技能发动时 · 编译与词源', () => {
     expect(Object.values(TRIGGER_EVENTS).flat()).not.toContain('SKILL_USED');
   });
 
+  it('问话路的两道门都把它挡在外面＝到点自己响、绝不开问窗（结构保证，不是一句注释）', () => {
+    // 问话窗的门槛有两层：①这一**型**在不在 `REACTION_TRIGGERS` 里（在＝停下来问人）；
+    // ②这一**声**在不在 `REACTION_EVENT_TYPES` 的扫描面里（不在＝根本不会有候选）。
+    // 本刀刻意只挂第②层之外的 `TRIGGER_EVENTS`，所以两道门都不开。只测①是不够的：
+    // 现场把 `isReactionTrigger` 单独改坏，这一格照样不弹窗＝证人必须落在门上。
+    expect([...REACTION_TRIGGERS]).toEqual(['onBecomingTarget', 'onDamageTaken']);
+    expect(isReactionTrigger('onOtherSkillActivated')).toBe(false);
+    expect(Object.values(REACTION_EVENT_TYPES).flat()).not.toContain('SKILL_ACTIVATED');
+  });
+
   it('它**不认**「我听谁」那一栏（界面上整格不出现＝与营地那一格同一条诚实口径）', () => {
     expect(supportsListenerScope('onOtherSkillActivated')).toBe(false);
     expect(supportsListenerScope('onBaseDamaged')).toBe(false);
   });
-
   it('卡面那句话由同一份时机词表生成，本刀不新增第二套说法', () => {
     expect(triggerTypeLabels.onOtherSkillActivated).toBe('其他将领技能发动时');
     expect(triggerPhrase({ type: 'onOtherSkillActivated' })).toBe('其他将领技能发动时');
