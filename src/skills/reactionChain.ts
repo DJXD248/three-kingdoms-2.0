@@ -297,22 +297,35 @@ export function getReactionAsk(state: EngineState): ReactionAsk | null {
   return null;
 }
 
-function generalNameOf(state: EngineState, playerId: number, generalId: string): string {
-  const player = state.players.find(p => p.id === playerId);
-  for (const fg of fieldGeneralsOf(player ?? state.players[0])) {
+/** 席位＋运行时实例 id ⇒ 那一份卡面本体：在场优先，其次坟场。
+ *
+ * v2.9.16 询问制刀补的第二趟查找（坟场）留在这里当唯一入口：「自身被击杀时」那一格的
+ * 将领**已经不在场**——候选是从坟场捞的（`collectListeners` 走 `graveyardOf`），只认在场
+ * 名单会把内部运行时 id（`du_vic`）当将名念给玩家看。v2.9.17 的发动通知读的是同一份，
+ * 所以"这一员将叫什么、卡面那句话怎么写"全库没有第二处实现。 */
+export function generalCardOf(
+  state: EngineState,
+  playerId: number,
+  generalId: string,
+): General | null {
+  const player = state.players.find(p => p.id === playerId) ?? state.players[0];
+  if (!player) return null;
+  for (const fg of fieldGeneralsOf(player)) {
     const general = fg?.general as General | undefined;
     if (!general) continue;
     const runtimeId = getRuntimeCardId(general as never) || general.id;
-    if (String(runtimeId) === generalId) return String(general.name ?? generalId);
+    if (String(runtimeId) === generalId) return general;
   }
-  // v2.9.16 询问制刀：「自身被击杀时」那一格的将领**已经不在场**——候选是从坟场捞的
-  // （`collectListeners` 走 `graveyardOf`），问句却只认在场名单，于是问窗把内部运行时
-  // id（`du_vic`）当名字念给玩家看。补同一条路的第二次查找：认坟场那一份卡面。
-  for (const general of graveyardOf(player ?? state.players[0])) {
+  for (const general of graveyardOf(player)) {
     const runtimeId = getRuntimeCardId(general as never) || general.id;
-    if (String(runtimeId) === generalId) return String(general.name ?? generalId);
+    if (String(runtimeId) === generalId) return general;
   }
-  return generalId;
+  return null;
+}
+
+function generalNameOf(state: EngineState, playerId: number, generalId: string): string {
+  const general = generalCardOf(state, playerId, generalId);
+  return general ? String(general.name ?? generalId) : generalId;
 }
 
 /** 效果翻译的唯一入口：响应链与触发链共用桥接层那一份静态翻译，绝不第二份。

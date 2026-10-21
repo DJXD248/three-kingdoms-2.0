@@ -18,7 +18,7 @@ import type { EngineState } from '../core/GameState';
 import type { General } from '../data/generals';
 import { __resetResidentEngineContainer } from './engineExecutionBridge';
 import { storeStateToEngineState } from './gameStateAdapter';
-import { resetLiveReplay } from '../replay/liveReplayRecorder';
+import { resetLiveReplay, getLiveReplayEntryCount } from '../replay/liveReplayRecorder';
 
 function watchGeneral(id: string, skillName: string): General {
   return {
@@ -388,6 +388,276 @@ describe('gameStore · 技能提示两档 (2.8.17 #42)', () => {
     expect(candidates[0].skillId).toBe('g_watch:守夜:e1');
     expect(candidates[0].activatable).toBe(true);
     expect(candidates[0].disabledReason).toBeNull();
+  });
+});
+
+/**
+ * v2.9.17「强制发动·全覆盖」刀。用户 2026-10-21 两句裁决原文＝
+ *   「强制发动永远是强制发动，无论什么节点，但是一定要通知玩家有什么技能发动了」
+ *   「哪些官方卡是强制发动，这部分由我自己来填写」
+ * 前半句把最后一格交回技能身上：回合结束那扇窗从 v2.3.1 起是"逢人就问、一个都不放过"，
+ * 与「强制发动不问」正面相撞；从今天起勾了这一格的定义**不进窗**，由系统在同一次
+ * `ACTIVATE_SKILL` 规范动作里替这一席发动（人席／AI 席／热座／沙盒一律，判据不看座位）。
+ * 后半句是配套的硬义务＝不问可以、看不见不行⇒自动那一路也必须飘出"谁【哪枚技能】发动了"，
+ * 由 `store/activationNotices.ts` 从事件流单点推导（三条发动路共用一处，见该文件注释）。
+ *
+ * 后半句还钉住"到点自己响"发生在**别的那一格**的情形：`TurnResolver` 在 END_TURN 那一次
+ * dispatch 里发 `TURN_START`，所以下一席的强制发动回合开始技能正是在提交结束回合那一刻
+ * 自己响⇒通知必须接得上（本轮施工时先写了一句"这一身压根不可能产出 SKILL_ACTIVATED"的
+ * 错注释，被这条证人当场逮到）。
+ */
+describe('gameStore · 强制发动不进询问窗＋每一次发动都要通知 (v2.9.17)', () => {
+  /** 录入面那一格（`Skill.forced`）＝结算侧唯一的"问不问"开关，这里就勾它。 */
+  function forcedGeneral(general: General): General {
+    return {
+      ...general,
+      skills: general.skills.map(skill => ({ ...skill, forced: true })),
+    } as General;
+  }
+
+  /** 门槛写在效果上（编译后成为该定义的 conditions）——强制发动也不放宽合法判定。 */
+  function gatedForcedGeneral(id: string, skillName: string): General {
+    return forcedGeneral({
+      ...watchGeneral(id, skillName),
+      skills: [{
+        name: skillName,
+        description: '体力充沛时补充手牌',
+        effects: [{
+          id: 'e1',
+          trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+          runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+          conditions: [{ metric: 'GENERAL_HP', op: 'GTE', value: 99 }],
+        }],
+      }],
+    } as unknown as General);
+  }
+
+  /** 「回合开始时」那一型：只在 END_TURN 那一次 dispatch 内（`TURN_START`）才有机会响。 */
+  function turnStartGeneral(id: string, forced: boolean): General {
+    return {
+      ...watchGeneral(id, '迎晓'),
+      skills: [{
+        name: '迎晓',
+        description: '回合开始时抽一张',
+        ...(forced ? { forced: true } : {}),
+        effects: [{
+          id: 'e1',
+          trigger: { type: 'onTurnStart' },
+          runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+        }],
+      }],
+    } as unknown as General;
+  }
+
+  /** 两席都摆上将领：`makeEngineState` 只给第一席，第二席要自己接。 */
+  function installTwoSeats(first: General[], second: General[]) {
+    const engineState = makeEngineState(first);
+    engineState.players[1].fieldGenerals = second.map((general, slot) => fieldGeneral(general, 2, slot));
+    installStoreState(engineState);
+  }
+
+  const setMode = (skillPromptMode: 'smart' | 'full') =>
+    useGameStore.setState(st => ({ settings: { ...st.settings, skillPromptMode } }));
+
+  beforeEach(() => {
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+  });
+
+  afterEach(() => setMode('smart'));
+
+  it('人类座位＋只有强制发动：不开窗、替玩家发动、同一次按键就把回合结束掉', () => {
+    installStoreState(makeEngineState([forcedGeneral(watchGeneral('g_forced', '夜袭'))]));
+    get().endTurn();
+
+    const state = get();
+    expect(state.turnEndAsk).toBeNull();
+    expect(state.reactionWindow).toBeNull();
+    // 发动与结束回合都出自这一次按键，走的是同一本账（consumedSkills 落笔）
+    expect(state.engineState.consumedSkills).toEqual([{
+      stableId: '5:g_forced:夜袭:e1',
+      skillId: 'g_forced:夜袭:e1',
+      turn: 5,
+      playerId: 1,
+    }]);
+    expect(state.engineState.players[0].hand).toHaveLength(1); // 效果照旧结算
+    expect(state.engineState.turn).toBe(6);
+    // 硬义务：不问可以，看不见不行
+    expect(state.skillActivations).toHaveLength(1);
+    expect(state.skillActivations[0]).toMatchObject({
+      id: '5:g_forced:夜袭:e1',
+      generalName: '将g_forced',
+      skillName: '夜袭',
+      message: '回合结束时可发动',
+    });
+  });
+
+  it('AI 座位同一判据（不问靠技能身上那一格，不靠坐在那一席的是谁）', () => {
+    installStoreState(makeEngineState([forcedGeneral(watchGeneral('g_forced', '夜袭'))]), true);
+    get().endTurn();
+
+    const state = get();
+    expect(state.engineState.consumedSkills).toHaveLength(1);
+    expect(state.engineState.turn).toBe(6);
+    expect(state.skillActivations).toHaveLength(1);
+  });
+
+  it('强制＋需人点头混合：窗里只剩后者，绝不把刚替玩家发动的那一枚再问一遍', () => {
+    installStoreState(makeEngineState([
+      forcedGeneral(watchGeneral('g_forced', '夜袭')),
+      watchGeneral('g_watch', '守夜'),
+    ]));
+    get().endTurn();
+
+    const state = get();
+    expect(state.engineState.turn).toBe(5); // 仍停在询问（开窗＝零 dispatch 那条契约没变）
+    expect(state.engineState.consumedSkills).toHaveLength(1);
+    expect(state.skillActivations).toHaveLength(1);
+    const candidates = state.turnEndAsk?.candidates ?? [];
+    expect(candidates.map(c => c.skillId)).toEqual(['g_watch:守夜:e1']);
+    expect(candidates[0]).toMatchObject({ activatable: true, disabledReason: null });
+
+    state.skipTurnEndAsk();
+    expect(get().engineState.turn).toBe(6);
+  });
+
+  it('完整档：刚替玩家发动的那一枚照旧列出、置灰、写明「本回合已发动过」', () => {
+    installStoreState(makeEngineState([
+      forcedGeneral(watchGeneral('g_forced', '夜袭')),
+      watchGeneral('g_watch', '守夜'),
+    ]));
+    setMode('full');
+    get().endTurn();
+
+    const candidates = get().turnEndAsk?.candidates ?? [];
+    expect(candidates.map(c => c.skillId)).toEqual(['g_forced:夜袭:e1', 'g_watch:守夜:e1']);
+    expect(candidates[0]).toMatchObject({ activatable: false, disabledReason: '本回合已发动过' });
+    expect(candidates[1]).toMatchObject({ activatable: true, disabledReason: null });
+  });
+
+  it('两枚都勾强制＝两枚都替玩家发动（发完一枚按新状态重推下一枚）', () => {
+    installStoreState(makeEngineState([
+      forcedGeneral(watchGeneral('g_a', '先手')),
+      forcedGeneral(watchGeneral('g_b', '后手')),
+    ]));
+    get().endTurn();
+
+    const state = get();
+    expect(state.engineState.consumedSkills).toHaveLength(2);
+    expect(state.engineState.players[0].hand).toHaveLength(2);
+    expect(state.skillActivations.map(notice => notice.skillName)).toEqual(['先手', '后手']);
+    expect(state.engineState.turn).toBe(6);
+  });
+
+  it('门槛不满足的强制发动＝照旧不发动、也不通知（强制不放宽合法判定）', () => {
+    installStoreState(makeEngineState([gatedForcedGeneral('g_gate', '蓄锐')]));
+    get().endTurn();
+
+    const state = get();
+    expect(state.engineState.consumedSkills ?? []).toHaveLength(0);
+    expect(state.skillActivations).toHaveLength(0);
+    expect(state.turnEndAsk).toBeNull();
+    expect(state.engineState.turn).toBe(6); // 智能档：没有可发动的＝照常直接提交
+  });
+
+  it('完整档下门槛不满足的强制发动＝置灰写明原因，仍不发动', () => {
+    installStoreState(makeEngineState([gatedForcedGeneral('g_gate', '蓄锐')]));
+    setMode('full');
+    get().endTurn();
+
+    const state = get();
+    expect(state.engineState.consumedSkills ?? []).toHaveLength(0);
+    expect(state.skillActivations).toHaveLength(0);
+    expect(state.turnEndAsk?.candidates[0]).toMatchObject({
+      activatable: false,
+      disabledReason: '不满足发动门槛：体力≥99',
+    });
+  });
+
+  it('自动发动那一路只飘一条通知（两处手写提示已删，不会再与通用推导叠加）', () => {
+    installStoreState(makeEngineState([forcedGeneral(watchGeneral('g_forced', '夜袭'))]));
+    get().endTurn();
+    expect(get().skillActivations).toHaveLength(1);
+  });
+
+  it('下一席勾了强制发动的「回合开始时」＝在提交结束回合那一次里自己响，通知照样接得上', () => {
+    installTwoSeats([], [turnStartGeneral('g_dawn', true)]);
+    get().endTurn();
+
+    const state = get();
+    expect(state.engineState.turn).toBe(6);
+    expect(state.engineState.currentPlayerId).toBe(2);
+    expect(state.engineState.consumedSkills ?? []).toHaveLength(0); // 自动路不带 stableId＝不落账（v2.9.15 口径）
+    expect(state.skillActivations).toHaveLength(1);
+    expect(state.skillActivations[0]).toMatchObject({ generalName: '将g_dawn', skillName: '迎晓' });
+  });
+
+  it('同一格没勾强制发动＝照旧停下来问（这一刀没把回合开始也变成不问）', () => {
+    installTwoSeats([], [turnStartGeneral('g_dawn', false)]);
+    get().endTurn();
+
+    const state = get();
+    expect(state.skillActivations).toHaveLength(0);
+    expect(state.engineState.pendingReaction?.nodes ?? []).toHaveLength(1);
+  });
+
+  it('勾了强制发动但择一逐项门槛全不过＝一次诚实退回就收手（绝不空耗，也不谎报发动）', () => {
+    // 定义级门槛过（所以窗里照旧列得出来），拦下的是引擎里那一道逐项门槛⇒解析器
+    // 如实报 `SKILL_CONDITION_UNMET`。这一条钉的是循环里的 `declined`：同一枚被反复
+    // 重试＝往录像里灌 64 笔一模一样的空动作（重置后首笔只开文档，所以 0 笔才是对的）。
+    const general = {
+      ...watchGeneral('g_choice', '二选一'),
+      skills: [{
+        name: '二选一',
+        description: '回合结束时二选一',
+        forced: true,
+        effectMode: 'choice',
+        effects: [
+          {
+            id: 'a',
+            trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+            runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+            conditions: [{ metric: 'HAND_COUNT', subject: 'SELF', op: 'GTE', value: 99 }],
+          },
+          {
+            id: 'b',
+            trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+            runtime: { type: 'GAIN_ARMOR', value: 1, target: 'SELF' },
+            conditions: [{ metric: 'HAND_COUNT', subject: 'SELF', op: 'GTE', value: 99 }],
+          },
+        ],
+      }],
+    } as unknown as General;
+    installStoreState(makeEngineState([general]));
+    get().endTurn();
+
+    const state = get();
+    expect(state.engineState.consumedSkills ?? []).toHaveLength(0);
+    expect(state.skillActivations).toHaveLength(0);
+    expect(getLiveReplayEntryCount()).toBe(0); // 只有那一次被退回的尝试，没有第二十三次
+    // 仍然照旧问人：合法判定一位没放宽，也没因为"自动试过"就把它藏起来
+    expect(state.turnEndAsk?.candidates.map(c => c.skillId)).toEqual(['g_choice:二选一:choice']);
+    expect(state.engineState.turn).toBe(5);
+    state.skipTurnEndAsk();
+    expect(get().engineState.turn).toBe(6);
+  });
+
+  it('发动完已经是终局＝到此为止，绝不再多提交一次结束回合（录像里不多那一笔空动作）', () => {
+    // 引擎侧那一格先落成终局（`deriveResultState` 读的就是这个键）：这一条钉的是
+    // 出口守卫本身＝"替玩家发动完、再一看已经结束了，就到此为止"。真对局里触发它的
+    // 是那几发自己响的效果把最后一席打死，这里用一个已是终局的局面复现同一个出口条件。
+    const engineState = makeEngineState([forcedGeneral(watchGeneral('g_forced', '夜袭'))]);
+    engineState.phase = 'gameOver';
+    installStoreState(engineState);
+    get().endTurn();
+
+    const state = get();
+    expect(state.engineState.consumedSkills).toHaveLength(1);
+    expect(state.skillActivations).toHaveLength(1);
+    // 重置后第一笔 dispatch 只开录像文档、不记步；多提交一次 END_TURN 就会变成 1 步。
+    expect(getLiveReplayEntryCount()).toBe(0);
+    expect(state.engineState.turn).toBe(5);
+    expect(state.phase).toBe('gameOver');
   });
 });
 

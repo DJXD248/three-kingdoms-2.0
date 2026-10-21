@@ -164,6 +164,27 @@ export function listTurnEndSkillCandidates(
     }));
 }
 
+/**
+ * 这一刻该**替这一席自动发动**的回合结束定义＝合法集合里打了「强制发动」的那几枚。
+ *
+ * 用户 2026-10-21 裁决原文＝「强制发动永远是强制发动，无论什么节点，但是一定要通知
+ * 玩家有什么技能发动了」。前半句终结了这条格与「回合结束时」那扇窗从 v2.3.1 就有的
+ * 相撞（窗是逢人就问、一个都不放过）：勾了这一格的定义从此不进窗，由系统替玩家发动。
+ * 判据与 `SkillTriggerBridge.defersToReactionQueue` 同一根轴＝**问不问由技能自己说了算，
+ * 不由时机说了算**（v2.9.16 询问制刀的立刀判据，这里只是把最后一格也交回技能身上）。
+ *
+ * 形状上没有任何新机制：这就是同一个合法集合（`listTurnEndSkillCandidates`）的一个过滤
+ * 视图，发动走的仍是同一条 `ACTIVATE_SKILL` 规范动作⇒与玩家亲手点逐字同形、进录像、
+ * 扣同一本账。没有一条定义勾着这一格时，本函数恒返回空＝既有内容零影响。
+ */
+export function listForcedTurnEndActivations(
+  state: EngineState,
+  playerId: number,
+): TurnEndSkillCandidate[] {
+  return listTurnEndSkillCandidates(state, playerId)
+    .filter(candidate => candidate.definition.forced === true);
+}
+
 /** Resolve an ACTIVATE_SKILL payload back to a live candidate (or null). */
 export function findTurnEndSkillCandidate(
   state: EngineState,

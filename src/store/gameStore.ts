@@ -25,9 +25,10 @@ import { clearLocalGameSnapshot, saveLocalGameSnapshot } from './localGameSnapsh
 import { resetLiveReplay } from '../replay/liveReplayRecorder';
 import { loadReplaySettings, persistReplaySettings } from '../replay/replayStorage';
 import type { GamePhase, DrawContext, Player, GameState, TurnEndAsk, TurnEndAskCandidate, SkillPromptMode } from './gameStoreTypes';
-import { listTurnEndSkillCandidates, listTurnEndAskItems, type TurnEndAskItem } from '../skills/turnEndSkills';
+import { listTurnEndAskItems, listForcedTurnEndActivations, type TurnEndAskItem } from '../skills/turnEndSkills';
 import { getReactionAsk } from '../skills/reactionChain';
-import type { ReactionAnsweredData } from '../core/Event';
+import { activationNoticesFrom } from './activationNotices';
+import type { GameEvent, ReactionAnsweredData } from '../core/Event';
 
 // Store-level types live in gameStoreTypes.ts (stage B split); re-exported
 // here so existing consumers keep importing them from this module.
@@ -107,14 +108,56 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     return mode === 'full' ? items : items.filter(item => item.activatable);
   };
 
+  // 发动通知的唯一接线处（v2.9.17＝用户「一定要通知玩家有什么技能发动了」）。判据一句＝
+  // 这一次 dispatch 的事件流里有没有那一身 `SKILL_ACTIVATED`；三条发动路都从
+  // `skills/skillQuota.ts` 同一个生产点出声，所以"到点自己响、压根不问人"的那一路
+  // 从此也照样飘得出来。B 类展示事实⇒不进状态、不进录像、不动两把锚。
+  const noticePatch = (
+    state: GameState,
+    engineState: EngineState,
+    events: GameEvent[],
+  ): Pick<GameState, 'skillActivations'> | Record<string, never> => {
+    const notices = activationNoticesFrom(events, engineState);
+    return notices.length === 0
+      ? {}
+      : { skillActivations: [...state.skillActivations, ...notices] };
+  };
+
+  // 强制发动·回合结束（v2.9.17＝用户「强制发动永远是强制发动，无论什么节点」）：
+  // 轮到结束这一刻，勾了那一格的定义**不进那扇逢人就问的窗**，由系统替这一席发动。
+  // 走的是同一条规范动作 `ACTIVATE_SKILL`⇒与玩家亲手点逐字同形、进录像、扣同一本账，
+  // 通知也照样从上面那一处飘出来。放在席位判断**之前**＝人席／AI 席／热座／沙盒一律
+  // 先过这一步："不问"靠技能自己身上那一格，不靠坐在那一席的是谁。
+  const autoFireForcedTurnEndSkills = (playerId: number) => {
+    // 一枚发动会改状态（抽牌、甚至终局），所以每发完一枚都从新状态重推一次候选，
+    // 绝不一开始就抓一份快照清单。`declined` 只防一种如实的失败（引擎按"宁可不发，
+    // 绝不空耗"退回，如择一逐项门槛全不过），防的是同一枚被反复重试。
+    const declined = new Set<string>();
+    for (let step = 0; step < 64; step += 1) {
+      const current = get();
+      if (current.engineState.currentPlayerId !== playerId) return;
+      const next = listForcedTurnEndActivations(current.engineState, playerId)
+        .find(candidate => !declined.has(candidate.definition.id));
+      if (!next) return;
+      if (!get().activateTurnEndSkill(next.definition.id, next.generalId)) {
+        declined.add(next.definition.id);
+      }
+    }
+  };
+
   // The real END_TURN commit, shared verbatim by the ungated endTurn path and
   // skipTurnEndAsk — exactly one place ever dispatches END_TURN in the store.
   const commitEndTurn = () => {
-    const{currentPlayerIndex,currentRound,isTestMode}=get();
-    const activePlayer=get().players[currentPlayerIndex];
+    const state = get();
+    const{currentPlayerIndex,currentRound,isTestMode}=state;
+    const activePlayer=state.players[currentPlayerIndex];
     if(!activePlayer) return;
 
-    const { engineState } = dispatchStoreAction(
+    // 这一次 dispatch 里会出「回合开始时」那一声（`TurnResolver` 发 `TURN_START`），
+    // 所以下一席那些勾了「强制发动」的回合开始技能正是在这儿自己响的⇒通知必须接得上。
+    // 本回合结束那几枚勾了强制发动的定义则由上面 `autoFireForcedTurnEndSkills` 在这一次
+    // 提交**之前**替这一席发动，不会跑到这里来。
+    const { engineState, events } = dispatchStoreAction(
       get(),
       createAction('END_TURN', activePlayer.id),
     );
@@ -128,6 +171,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         ...testArenaState,
         phase: testArenaState.engineState.phase === 'gameOver' ? 'gameOver' : 'testArena',
         turnPhase: testArenaState.engineState.phase === 'gameOver' ? 'end' : 'main',
+        ...noticePatch(state, engineState, events),
       });
       return;
     }
@@ -152,6 +196,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         pendingTurnTransition:null,
         turnEndAsk:null,
         phase:'gameOver',
+        ...noticePatch(state, engineState, events),
       });
       clearLocalGameSnapshot();
       return;
@@ -174,6 +219,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       phase: outcome.phase,
       turnPhase: outcome.turnPhase,
       winnerId: outcome.winnerId,
+      ...noticePatch(state, engineState, events),
     });
     if (get().settings.autoSave) {
       saveLocalGameSnapshot(get().createSerializedSnapshot(get().roomName));
@@ -203,7 +249,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     if (!answered) return false;
 
     if (state.isTestMode) {
-      set({ ...buildTestArenaState(state, engineState) });
+      set({ ...buildTestArenaState(state, engineState), ...noticePatch(state, engineState, events) });
       return true;
     }
 
@@ -227,17 +273,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         : state.defeatEvent,
       drawContext: pendingDraw ? buildDrawContext(engineState, pendingDraw) : null,
       revealedDrawCards: pendingDraw ? [] : state.revealedDrawCards,
-      // 只有真发动才飘一条：跳过是"什么都没发生"，不该有一条像发动过的提示。
-      ...(option ? {
-        skillActivations: [...state.skillActivations, {
-          id: `${engineState.turn}:${answered.nodeKey}:${answered.subjectKey}:${option.skillId}`,
-          generalName: answered.generalName,
-          skillName: answered.skillName ?? option.skillName,
-          message: option.label || `${option.skillName}已响应`,
-          color: '#38bdf8',
-          timestamp: Date.now(),
-        }],
-      } : {}),
+      // 只有真发动才飘一条：跳过那一手压根没有 `SKILL_ACTIVATED` 那一身⇒自然一条都不飘
+      // （旧口径里那句"跳过不是发动"如今由事件流自己保证，界面不再需要认路）。
+      ...noticePatch(state, engineState, events),
     });
     return true;
   };
@@ -459,13 +497,15 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       cardDeck:engineState.deck as GameCard[],
       discardPile:engineState.discardPile as GameCard[],
       revealedDrawCards:revealed,
+      ...noticePatch(state, engineState, events),
     });
     return true;
   },
 
   // ── unified draw: confirm and transition ──
   confirmDraw:()=>{
-    const{drawContext}=get();
+    const state = get();
+    const{drawContext}=state;
     if(!drawContext)return;
     const{engineState,events}=dispatchStoreAction(
       get(),
@@ -494,6 +534,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
           ? nextIndex
           : 0,
       isFirstTurn:engineState.isFirstTurn ?? get().isFirstTurn,
+      // 回合开始那一声就落在这一次 dispatch 里⇒勾了「强制发动」的回合开始技能在这里
+      // 自己响，玩家不会被动静骗过去。
+      ...noticePatch(state, engineState, events),
     });
   },
 
@@ -501,17 +544,20 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const state = get();
     const draw = state.drawContext;
     if (!draw?.baseLossPending) return;
-    const { engineState } = dispatchStoreAction(
+    const { engineState, events } = dispatchStoreAction(
       state,
       createAction('RESOLVE_BASE_LOSS', draw.playerId, { reason: draw.reason }),
     );
     let finalEngineState = engineState;
+    const allEvents = [...events];
     const nextDraw = engineState.drawState;
     if (nextDraw && nextDraw.reason === 'turnStart' && nextDraw.totalCards === 0 && !nextDraw.baseLossPending) {
-      finalEngineState = dispatchStoreAction(
+      const followUp = dispatchStoreAction(
         { ...state, engineState },
         createAction('CONFIRM_DRAW', nextDraw.playerId, { reason: nextDraw.reason }),
-      ).engineState;
+      );
+      finalEngineState = followUp.engineState;
+      allEvents.push(...followUp.events);
     }
     const currentPlayerIndex = finalEngineState.players.findIndex(player => player.id === finalEngineState.currentPlayerId);
     set({
@@ -532,6 +578,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         : null,
       phase: finalEngineState.phase === 'gameOver' ? 'gameOver' : finalEngineState.drawState ? 'drawing' : 'playing',
       turnPhase: finalEngineState.timelinePhase === 'DRAW' ? 'draw' : finalEngineState.timelinePhase === 'ACTION' ? 'main' : state.turnPhase,
+      ...noticePatch(state, finalEngineState, allEvents),
     });
   },
 
@@ -555,13 +602,15 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       cardDeck:engineState.deck as GameCard[],
       discardPile:engineState.discardPile as GameCard[],
       currentPlayerIndex: currentPlayerIndex >= 0 ? currentPlayerIndex : state.currentPlayerIndex,
+      // 登场那一刻正是「将领登场时」那一格的发声点⇒到点自己响的强制发动也在这里飘出来。
+      ...noticePatch(state, engineState, result.events),
     });
     return true;
   },
 
   moveGeneral:(generalId,target,consumeCard,sandboxAllowArming)=>{
     const state=get();
-    const {engineState}=dispatchStoreAction(
+    const {engineState, events}=dispatchStoreAction(
       state,
       createAction('MOVE_GENERAL', state.players[state.currentPlayerIndex]?.id ?? 0, {
         generalId,
@@ -578,6 +627,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       cardDeck:engineState.deck as GameCard[],
       discardPile:engineState.discardPile as GameCard[],
       currentPlayerIndex: currentPlayerIndex >= 0 ? currentPlayerIndex : state.currentPlayerIndex,
+      ...noticePatch(state, engineState, events),
     });
   },
 
@@ -600,7 +650,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       ? engineState.players.find(player => player.id === defeatedPlayerId)
       : undefined;
     if(state.isTestMode){
-      set(buildTestArenaState(state, engineState));
+      set({ ...buildTestArenaState(state, engineState), ...noticePatch(state, engineState, events) });
       return;
     }
 
@@ -623,6 +673,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         : state.defeatEvent,
       drawContext: pendingDraw ? buildDrawContext(engineState, pendingDraw) : null,
       revealedDrawCards: pendingDraw ? [] : state.revealedDrawCards,
+      ...noticePatch(state, engineState, events),
     });
   },
 
@@ -637,6 +688,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     if (!events.some(event => event.type === 'SUPPLY_RESOLVED')) return;
     set({
       ...engineStateToStoreProjection(engineState, state.currentPlayerIndex),
+      ...noticePatch(state, engineState, events),
     });
   },
 
@@ -652,13 +704,14 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     if(!success)return false;
     set({
       ...engineStateToStoreProjection(engineState, state.currentPlayerIndex),
+      ...noticePatch(state, engineState, events),
     });
     return true;
   },
 
   surrender:(id)=>{
     const state = get();
-    const { engineState } = dispatchStoreAction(state, createAction('SURRENDER', id));
+    const { engineState, events } = dispatchStoreAction(state, createAction('SURRENDER', id));
 
     // Test arena is an instrumentation sandbox: surrender should immediately
     // advance to the next live player without leaving the arena or opening the
@@ -669,6 +722,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         ...buildTestArenaState(state, engineState),
         phase:'testArena',
         turnPhase:'main',
+        ...noticePatch(state, engineState, events),
       });
       if (get().settings.autoSave && engineState.phase !== 'gameOver') {
         saveLocalGameSnapshot(get().createSerializedSnapshot(get().roomName));
@@ -689,6 +743,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         subtitle: describeDrawSubtitle(engineState, nextDraw),
       }) : null,
       revealedDrawCards: [],
+      ...noticePatch(state, engineState, events),
     });
   },
 
@@ -726,6 +781,14 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     // then commit. Never a silent bypass leaving a stale ask behind.
     if(state.turnEndAsk){ get().skipTurnEndAsk(); return; }
 
+    // v2.9.17：先替这一席把勾了「强制发动」的回合结束定义发动掉（同一条规范动作），
+    // 再决定要不要开窗问剩下的。窗子从此只问"需要人点头"的那些。
+    autoFireForcedTurnEndSkills(activePlayer.id);
+    // 那几发自己响的效果有可能把这一局直接打死：终局了就到此为止，绝不再提交一次
+    // 结束回合（那只会往录像里多一笔被引擎退回的空动作）。
+    const afterAutoFire=get();
+    if(afterAutoFire.phase==='gameOver') return;
+
     // 回合结束询问门 (2.3.1, HANDOFF §4 "回合结束如存在可发动的将领技能，应进入
     // 询问/结算窗口"): a human seat with still-activatable onTurnEnd skills does
     // NOT dispatch END_TURN yet — a container-layer ask opens instead (class B,
@@ -737,11 +800,14 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     // policy-picked ACTIVATE_SKILL actions), and the test arena stays ungated.
     // 2.8.17 两档：智能＝有可发动的才开窗；完整＝场上只要有回合结束技能就开窗，
     // 不可发动的一律置灰写明原因。合法集合仍是 listTurnEndSkillCandidates。
-    if(!state.isTestMode && !activePlayer.isAi && !state.turnEndAsk
-       && state.phase==='playing' && state.engineState.currentPlayerId===activePlayer.id){
-      const visible=visibleTurnEndAskItems(state.engineState, activePlayer.id, state.settings.skillPromptMode);
+    // 判定读的是**上面那几发自己响之后**的新状态（`afterAutoFire`）：没有勾强制发动的
+    // 定义时那一步一位不动，这个对象与 `state` 是同一个；动了的话，窗必须按新世界列，
+    // 否则刚替玩家发动的那一枚会以"还能发动"的样子再问一遍。
+    if(!afterAutoFire.isTestMode && !activePlayer.isAi && !afterAutoFire.turnEndAsk
+       && afterAutoFire.phase==='playing' && afterAutoFire.engineState.currentPlayerId===activePlayer.id){
+      const visible=visibleTurnEndAskItems(afterAutoFire.engineState, activePlayer.id, afterAutoFire.settings.skillPromptMode);
       if(visible.length>0){
-        const turn=state.engineState.turn ?? 0;
+        const turn=afterAutoFire.engineState.turn ?? 0;
         const win=get().openReactionWindow(
           { type:'CUSTOM', data:{ reason:'turn-end-ask', playerId:activePlayer.id, stableId:`turn-end-ask:${turn}:${activePlayer.id}` } },
           [activePlayer.id],
@@ -771,8 +837,6 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       ?? state.engineState.currentPlayerId
       ?? state.players[state.currentPlayerIndex]?.id;
     if(typeof actorId!=='number') return false;
-    const offered=listTurnEndSkillCandidates(state.engineState, actorId)
-      .find(c=>c.definition.id===skillId && c.generalId===String(generalId));
 
     const { engineState, events } = dispatchStoreAction(
       state,
@@ -782,7 +846,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     if(!activated) return false;
 
     if(state.isTestMode){
-      set({ ...buildTestArenaState(state, engineState), turnEndAsk:null });
+      set({ ...buildTestArenaState(state, engineState), turnEndAsk:null, ...noticePatch(state, engineState, events) });
       return true;
     }
 
@@ -820,14 +884,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       drawContext: pendingDraw ? buildDrawContext(engineState, pendingDraw) : null,
       revealedDrawCards: pendingDraw ? [] : state.revealedDrawCards,
       turnEndAsk: nextAsk,
-      skillActivations:[...state.skillActivations, {
-        id:String((activated.data as any)?.stableId ?? `${engineState.turn}:${skillId}:${generalId}`),
-        generalName:offered?.generalName ?? '',
-        skillName:String((activated.data as any)?.skillName ?? ''),
-        message:offered?.definition.description || '回合结束技能已发动',
-        color:'#f59e0b',
-        timestamp:Date.now(),
-      }],
+      // 发动通知（v2.9.17）：这一路的手工出口与"强制发动自己响"共用同一处推导，
+      // 所以替玩家发动的那几发照样飘得出来，措辞与玩家亲手点完全一样。
+      ...noticePatch(state, engineState, events),
     });
     if(wasAsked && nextAsk===null){
       get().passReaction(actorId); // no candidates left → close the container window
@@ -852,7 +911,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     if(!events.some(event=>event.type==='CHOICE_RESOLVED')) return false;
 
     if(state.isTestMode){
-      set({ ...buildTestArenaState(state, engineState) });
+      set({ ...buildTestArenaState(state, engineState), ...noticePatch(state, engineState, events) });
       return true;
     }
 
@@ -874,6 +933,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
         : state.defeatEvent,
       drawContext: pendingDraw ? buildDrawContext(engineState, pendingDraw) : null,
       revealedDrawCards: pendingDraw ? [] : state.revealedDrawCards,
+      ...noticePatch(state, engineState, events),
     });
     return true;
   },
