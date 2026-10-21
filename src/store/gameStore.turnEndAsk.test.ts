@@ -592,6 +592,20 @@ describe('gameStore · 强制发动不进询问窗＋每一次发动都要通知
     expect(state.skillActivations[0]).toMatchObject({ generalName: '将g_dawn', skillName: '迎晓' });
   });
 
+  it('那一声通知活得过下一席的抽卡窗口＝换人不消音（界面只有两条清除路，都不在这条路上）', () => {
+    installTwoSeats([], [turnStartGeneral('g_dawn', true)]);
+    get().endTurn();
+    expect(get().skillActivations).toHaveLength(1);
+    expect(get().drawContext).not.toBeNull(); // 下一席的回合开始抽卡窗口开着
+
+    get().executeDraw([], []);
+    get().confirmDraw();
+
+    const state = get();
+    expect(state.phase).toBe('playing');
+    expect(state.skillActivations.map(item => item.skillName)).toContain('迎晓');
+  });
+
   it('同一格没勾强制发动＝照旧停下来问（这一刀没把回合开始也变成不问）', () => {
     installTwoSeats([], [turnStartGeneral('g_dawn', false)]);
     get().endTurn();
