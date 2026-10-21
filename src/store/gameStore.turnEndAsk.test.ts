@@ -593,12 +593,24 @@ describe('gameStore · 强制发动不进询问窗＋每一次发动都要通知
   });
 
   it('那一声通知活得过下一席的抽卡窗口＝换人不消音（界面只有两条清除路，都不在这条路上）', () => {
-    installTwoSeats([], [turnStartGeneral('g_dawn', true)]);
+    // 下一席一进回合先扣营地损耗、再抽 5 张；`makeEngineState` 那 4 张牌不够，
+    // `executeDraw` 会诚实回 false⇒这一条要真的走完抽卡窗口，所以现场把牌堆加厚。
+    const engineState = makeEngineState([]);
+    engineState.deck = [...engineState.deck, ...Array.from(
+      { length: 10 },
+      (_, i) => ({ id: `deck_extra_${i}`, name: '粮草', type: '粮草' }),
+    )] as EngineState['deck'];
+    engineState.players[1].fieldGenerals = [fieldGeneral(turnStartGeneral('g_dawn', true), 2, 0)];
+    installStoreState(engineState);
+
     get().endTurn();
     expect(get().skillActivations).toHaveLength(1);
     expect(get().drawContext).not.toBeNull(); // 下一席的回合开始抽卡窗口开着
+    get().resolvePendingDrawLoss(); // 界面上那一步由「抽卡确认」页自己点，先按顺序走
 
-    get().executeDraw([], []);
+    const total = get().drawContext?.totalCards ?? 0;
+    expect(total).toBeGreaterThan(0);
+    expect(get().executeDraw(0, total)).toBe(true);
     get().confirmDraw();
 
     const state = get();
