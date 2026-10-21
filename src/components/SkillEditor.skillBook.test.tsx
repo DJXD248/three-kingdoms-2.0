@@ -2,10 +2,12 @@
  * v2.9.18 技能册·录入面那三格"看得见"的证人。
  *
  * 用户这一刀的原文：「把自己编辑过的 DIY 卡放进『获得技能』那张册子、并且册子里要区分好
- * DIY 技能与官方技能」＋「增加一个现在还看不见的刷新按钮」。所以下面钉三件事：
+ * DIY 技能与官方技能」＋「增加一个现在还看不见的刷新按钮」。所以下面钉四件事：
  * ① 下拉里每个名字后面带着它的出处（官方／玩家自制），自制卡真的出现在这张册子里；
  * ② 那句小计说的是此刻册子里的数量，不是抄下来的死数字；
- * ③ 刷新那颗按钮**今天不出现**，只有把自动重算关掉那天才出现（这一套随时能拿出来用）。
+ * ③ 下拉里有这个名字⇒警告那句"表上没有"就不出现＝候选清单与警告是同一次计算的两半，
+ *    界面不许自己再拿另一把尺量一遍（那正是本项目反复登记的"两处各说一套"）；
+ * ④ 刷新那颗按钮**今天不出现**，只有把自动重算关掉那天才出现（这一套随时能拿出来用）。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { act, render, fireEvent, screen, cleanup } from '@testing-library/react';
@@ -105,7 +107,19 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
       .toMatch(/此刻册子里 \d+ 枚官方 · 1 枚玩家自制/);
   });
 
-  it('③ 今天自动重算开着⇒那颗刷新按钮不出现；关掉自动重算它就在（用户要留的那一套）', () => {
+  it('③ 下拉里有这个名字⇒那句"表上没有"就不出现（候选与警告是同一份算出来的两半）', () => {
+    act(() => {
+      useGameStore.getState().addAuthoredGeneral(
+        { name: '册子试验将', faction: '群', hp: 4, identity: '册子试验身份', skills: [settledSkill('自创摸一张')] },
+        'DIY',
+      );
+    });
+    fireEvent.change(gainNameInput(), { target: { value: '自创摸一张' } });
+    expect(bookOptions().some(o => o.value === '自创摸一张')).toBe(true);
+    expect(screen.queryByText(/技能表里暂时没有「自创摸一张」/)).toBeNull();
+  });
+
+  it('④ 今天自动重算开着⇒那颗刷新按钮不出现；关掉自动重算它就在（用户要留的那一套）', () => {
     expect(screen.queryByRole('button', { name: '刷新技能册' })).toBeNull();
 
     setSkillBookAutoRecompute(false);
