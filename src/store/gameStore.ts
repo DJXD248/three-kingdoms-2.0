@@ -27,6 +27,7 @@ import { loadReplaySettings, persistReplaySettings } from '../replay/replayStora
 import type { GamePhase, DrawContext, Player, GameState, TurnEndAsk, TurnEndAskCandidate, SkillPromptMode } from './gameStoreTypes';
 import { listTurnEndAskItems, listForcedTurnEndActivations, type TurnEndAskItem } from '../skills/turnEndSkills';
 import { getReactionAsk } from '../skills/reactionChain';
+import { setSkillBookRosterSource } from '../skills/skillNameIndex';
 import { activationNoticesFrom } from './activationNotices';
 import type { GameEvent, ReactionAnsweredData } from '../core/Event';
 
@@ -1022,3 +1023,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   ...buildTestArenaActions(get, set, shuffle),
 });
 });
+
+// v2.9.18 技能册：这台机器此刻真在用的那份将领＝册子的进料（仓库名册＋自制卡，都过一遍
+// 卡面编辑合并，也就是 `poolGenerals` 那条已被 §H3 策略过滤过的路）。这里只交进料，
+// 判据一律住在 `skills/skillNameIndex.ts`；AI 对战与 CLI 那条路不接这一行⇒两池对局的
+// 进料一字没变（这一句是两锚钉得住的前提）。
+setSkillBookRosterSource(() => useGameStore.getState().poolGenerals());

@@ -16,6 +16,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import {
   knownSkillNames,
   lookupSkillByName,
+  refreshSkillBook,
+  setSkillBookAutoRecompute,
+  skillBookCandidates,
   __resetSkillNameIndexForTests,
   __setSkillNameRosterForTests,
   __setSkillNameTableForTests,
@@ -67,6 +70,10 @@ function cardCensus() {
 const G = (name: string, skills: Skill[]): General =>
   ({ id: `t_${name}`, name, faction: '群', hp: 4, type: '武将', meleeAtk: 2, rangedAtk: 1, armor: 0, skills });
 
+/** 自制那一头的假将：号在 `D-` 名下、`source` 钉成 DIY＝这台机器上玩家自己建的卡。 */
+const Gdiy = (name: string, skills: Skill[]): General =>
+  ({ ...G(name, skills), id: `D-${name}`, source: 'DIY' });
+
 describe('skillNameIndex · 技能表是唯一来源（2.9.7 刀）', () => {
   afterEach(() => __resetSkillNameIndexForTests());
 
@@ -107,7 +114,10 @@ describe('skillNameIndex · 技能表是唯一来源（2.9.7 刀）', () => {
     if (found.status !== 'found') return;
     expect(found.skill).toBe(printed);
     // 同名同内容印在两员将卡上＝同一枚，owners 两个都留（归属那一格不丢信息）。
-    expect(found.owners).toEqual(['邓艾（魏）', '邓艾（晋）']);
+    expect(found.owners.map(o => o.label)).toEqual(['邓艾（魏）', '邓艾（晋）']);
+    // v2.9.18：仓库名册上每一位的来源都是官方——这一句钉的是"来源不是猜的"，
+    // 它读的就是记录身上那枚建卡时钉死的 `source`（缺省＝官方，与 §H2 同一判据）。
+    expect(found.owners.map(o => o.origin)).toEqual(['official', 'official']);
     expect(lookupSkillByName('屯田').status).toBe('found');
   });
 
@@ -140,7 +150,7 @@ describe('skillNameIndex · 技能表是唯一来源（2.9.7 刀）', () => {
     ]);
     const found = lookupSkillByName('观澜');
     expect(found.status).toBe('ambiguous');
-    if (found.status === 'ambiguous') expect(found.owners).toEqual(['甲（群）', '乙（群）']);
+    if (found.status === 'ambiguous') expect(found.owners.map(o => o.label)).toEqual(['甲（群）', '乙（群）']);
     // 丙那张只有描述、没有载荷⇒压根没进表，歧义名单里不该有它（门槛只放行有真内容的）。
   });
 });
@@ -157,7 +167,7 @@ describe('skillNameIndex · 表上自建的那一枚（怒斩）', () => {
     const found = lookupSkillByName('怒斩');
     expect(found.status).toBe('found');
     if (found.status !== 'found') return;
-    expect(found.owners).toEqual([SKILL_TABLE_OWNER_LABEL]);
+    expect(found.owners).toEqual([{ label: SKILL_TABLE_OWNER_LABEL, origin: 'official' }]);
     expect(found.skill.effects?.[0].runtime?.stat).toBe('DAMAGE_DEALT');
     expect(knownSkillNames()).toContain('怒斩');
     expect(authoredSkillTableEntries.map(s => s.name)).toEqual(['怒斩']);
@@ -165,8 +175,8 @@ describe('skillNameIndex · 表上自建的那一枚（怒斩）', () => {
 
   it('自建清单换一枚＝表跟着换（这一支唯一能抵达歧义／缺席的入口）', () => {
     __setSkillNameTableForTests([
-      { skill: { name: '新技', effects: [{ id: 'e1', runtime: { type: 'REVEAL', value: 1 } }] }, owners: ['技能表'] },
-      { skill: { name: '新技', effects: [{ id: 'e1', runtime: { type: 'REVEAL', value: 2 } }] }, owners: ['技能表'] },
+      { skill: { name: '新技', effects: [{ id: 'e1', runtime: { type: 'REVEAL', value: 1 } }] }, owners: [{ label: '技能表', origin: 'official' }] },
+      { skill: { name: '新技', effects: [{ id: 'e1', runtime: { type: 'REVEAL', value: 2 } }] }, owners: [{ label: '技能表', origin: 'official' }] },
     ]);
     expect(knownSkillNames()).toEqual(['新技']);
     const found = lookupSkillByName('新技');
@@ -198,7 +208,7 @@ describe('skillNameIndex · 表上自建的那一枚（怒斩）', () => {
       ]),
     ], []);
     expect(rows.map(r => r.skill.name)).toEqual(['有货']);
-    expect(rows[0].owners).toEqual(['甲（群）']);
+    expect(rows[0].owners).toEqual([{ label: '甲（群）', origin: 'official' }]);
   });
 
   /** "进表"不是我把这批名字抄进一张名单，而是**当场投影**的结果：同一份假名册，
@@ -215,12 +225,95 @@ describe('skillNameIndex · 表上自建的那一枚（怒斩）', () => {
     expect(lookupSkillByName('空壳').status).toBe('unknown');
     expect(knownSkillNames()).not.toContain('空壳');
 
-    // 只动这一枚的载荷，别的一个字不改：它自己就进表了（表上没有第二份名单要人维护）。
+    // 只动这一枚的载荷，别的一个字不改、**也不重新递交名册**：v2.9.18 起册子每问一次
+    // 就算一次，所以它自己就进表了（表上没有第二份名单要人维护）。
     shell.effects = [{ id: 'e1', runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' } }];
-    __setSkillNameRosterForTests(roster);
     expect(knownSkillNames()).toContain('空壳');
     const found = lookupSkillByName('空壳');
     expect(found.status).toBe('found');
     if (found.status === 'found') expect(found.skill).toBe(shell);
+  });
+});
+
+/**
+ * v2.9.18 技能册那一刀：用户 2026-10-21 两句原话各钉一件——
+ * ①「区分官方和DIY的最简单方式就是看是不是开发者模式下新增和改动的，所以要定义成
+ *    开发者模式下改动的就是官方卡」⇒ 册子上每一行都带着出处，出处读记录自己身上那枚
+ *    `source`（不新写第二套判据）；
+ * ②「现在就按每次重算来做……留一个关闭自动重算的接口和增加一个现在还看不见的刷新按钮」
+ *    ⇒ 默认每问一次算一次，开关与刷新一经接上就立刻能用（下面第三条把那一路整体验一遍）。
+ */
+describe('skillNameIndex · 技能册的进料与重算（v2.9.18）', () => {
+  afterEach(() => __resetSkillNameIndexForTests());
+
+  const withContent = (name: string): Skill =>
+    ({ name, effects: [{ id: 'e1', runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }] });
+
+  it('自制卡上有真内容的技能进册：查得到、出处写的是玩家自制', () => {
+    __setSkillNameRosterForTests([G('官将', [withContent('官方货')]), Gdiy('自创将', [withContent('自创货')])]);
+    const diy = lookupSkillByName('自创货');
+    expect(diy.status).toBe('found');
+    if (diy.status !== 'found') return;
+    expect(diy.owners).toEqual([{ label: '自创将（群）', origin: 'DIY' }]);
+    expect(skillBookCandidates().map(c => c.name)).toEqual(['官方货', '自创货', '怒斩']);
+    expect(skillBookCandidates().find(c => c.name === '自创货')?.origins).toEqual(['DIY']);
+  });
+
+  it('门槛还是那一把尺：自制卡上只印了名字的空壳照样不进册（没有第二套"算不算有内容"）', () => {
+    __setSkillNameRosterForTests([Gdiy('自创将', [{ name: '自创空壳', description: '只有一段话' }])]);
+    expect(lookupSkillByName('自创空壳').status).toBe('unknown');
+    // 册子上只剩表上自建那一枚（怒斩），自制空壳没进来。
+    expect(knownSkillNames()).toEqual(['怒斩']);
+  });
+
+  it('同名不同内容横跨两头⇒照样报歧义，而且把两家的出处逐个点名（引擎绝不猜）', () => {
+    __setSkillNameRosterForTests([
+      G('官将', [withContent('撞名')]),
+      Gdiy('自创将', [{ name: '撞名', effects: [{ id: 'e1', runtime: { type: 'DRAW_CARD', value: 5, target: 'SELF' } }] }]),
+    ]);
+    const found = lookupSkillByName('撞名');
+    expect(found.status).toBe('ambiguous');
+    if (found.status !== 'ambiguous') return;
+    expect(found.owners).toEqual([
+      { label: '官将（群）', origin: 'official' },
+      { label: '自创将（群）', origin: 'DIY' },
+    ]);
+    // 同名**同内容**印在两头上＝还是同一枚，两行并一行、出处两个都列。
+    const shared = withContent('同货');
+    __setSkillNameRosterForTests([G('官将', [shared]), Gdiy('自创将', [shared])]);
+    const merged = lookupSkillByName('同货');
+    expect(merged.status).toBe('found');
+    if (merged.status !== 'found') return;
+    expect(merged.owners.map(o => o.origin)).toEqual(['official', 'DIY']);
+    expect(skillBookCandidates().find(c => c.name === '同货')?.origins).toEqual(['official', 'DIY']);
+  });
+
+  it('自动重算＝默认档（每问一次算一次）；关掉它册子冻住，点刷新才跟着走', () => {
+    const roster: General[] = [G('甲', [withContent('甲货')])];
+    __setSkillNameRosterForTests(roster);
+    expect(knownSkillNames()).toEqual(['甲货', '怒斩']);
+
+    // ① 今天的档：进料自己长出一枚新技能，册子下一问就有了（不必重新递交名册）。
+    roster.push(Gdiy('乙', [withContent('乙货')]));
+    expect(knownSkillNames()).toEqual(['甲货', '乙货', '怒斩']);
+
+    // ② 用户要留的那一路：开关拨到手动⇒先问一次把快照存下，此后同一份进料不再重算。
+    setSkillBookAutoRecompute(false);
+    expect(knownSkillNames()).toEqual(['甲货', '乙货', '怒斩']);
+    roster.push(Gdiy('丙', [withContent('丙货')]));
+    expect(knownSkillNames()).toEqual(['甲货', '乙货', '怒斩']);
+    expect(lookupSkillByName('丙货').status).toBe('unknown');
+
+    // ③ 那颗今天还看不见的按钮＝这个函数：点一下，册子当场重算，新内容立刻进来。
+    refreshSkillBook();
+    expect(knownSkillNames()).toEqual(['甲货', '乙货', '丙货', '怒斩']);
+    expect(lookupSkillByName('丙货').status).toBe('found');
+  });
+
+  it('普查：仓库名册身上一个"玩家自制"都没有⇒今天册子里的出处全属官方', () => {
+    expect(skillTable.every(row => row.owners.every(owner => owner.origin === 'official'))).toBe(true);
+    expect(skillTable.length).toBeGreaterThan(0);
+    // 表上自建那一类（怒斩）也归官方：它住在仓库里，＝开发者写进去的内容。
+    expect(authoredSkillTableEntries).toHaveLength(1);
   });
 });

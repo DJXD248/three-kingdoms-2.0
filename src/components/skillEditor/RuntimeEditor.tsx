@@ -2,12 +2,13 @@
 import {
   SkillRuntimeEffect, StatModifierKeyType, StatModifyModeType, StatModifierDurationType,
   statModifierKeyLabels, statModifyModeLabels, statModifierDurationLabels, STAT_DURATION_DEFAULT_LABEL,
+  sourceLabels,
 } from '../../data/generals';
 import {
   runtimeEffectTypeLabels, runtimeTargetLabels, SETTLEABLE_RUNTIME_TYPES,
   WHOLE_HAND_RUNTIME_TYPES, WHOLE_HAND_LABEL, VALUELESS_RUNTIME_TYPES,
 } from '../../skills/skillExcelFormat';
-import { knownSkillNames } from '../../skills/skillNameIndex';
+import { isSkillBookAutoRecompute, refreshSkillBook, skillBookCandidates } from '../../skills/skillNameIndex';
 import { runtimeEffectPhrases } from '../../skills/skillSentence';
 
 // ── Structured runtime effect editor (类型 + 数值 + 目标) ──
@@ -35,7 +36,11 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
   const isGainSkill = runtime?.type === 'GAIN_SKILL';
   const isSelfOnly = isModifyStat || isGainSkill;
   const gainName = String(runtime?.skillName ?? '').trim();
-  const gainKnown = knownSkillNames().includes(gainName);
+  // v2.9.18：册子（＝技能表）一次算好，这一屏两处都读它——候选清单与"这个名字在不在册"
+  // 必须是同一次计算的结果，否则会出现下拉里有、警告却说没有的那一格分叉。
+  // 只有「获得技能」这一档读它，别的类型不必去算这张表。
+  const gainBook = isGainSkill ? skillBookCandidates() : [];
+  const gainKnown = gainBook.some(candidate => candidate.name === gainName);
 
   const handleTypeChange = (val: string) => {
     if (!val) { onChange(undefined); return; }
@@ -209,15 +214,37 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
               placeholder="填一枚技能的名字，例如「屯田」"
               onChange={e => onChange({ ...runtime, skillName: e.target.value })}
               className={`${runtimeSelectCls} flex-1`} />
-            {/* 技能表上的名字全部列成候选（下拉只给"选得出"的词，而这个格子允许你写一枚
-                还没进表的技能——写了会被点名跳过，不会悄悄生效一半）。 */}
+            {/* 册子上的名字全部列成候选，每个名字后面跟着它的出处（官方／玩家自制）。
+                下拉只给"选得出"的词，而这个格子允许你写一枚还没进册的技能——
+                写了会被点名跳过，不会悄悄生效一半。 */}
             <datalist id="tk-gain-skill-names">
-              {knownSkillNames().map(name => <option key={name} value={name} />)}
+              {gainBook.map(candidate => (
+                <option key={candidate.name} value={candidate.name}>
+                  {candidate.origins.map(origin => sourceLabels[origin]).join('／')}
+                </option>
+              ))}
             </datalist>
+            {/* v2.9.18 用户要留的那一颗：今天册子每问一次就重算一次，所以这颗按钮**不出现**；
+                哪天把 `setSkillBookAutoRecompute(false)` 接上（改成手动重算），它就跟着这个格子
+                出现在界面上，点一下＝当场照这台机器现在的内容重算一遍。 */}
+            {!isSkillBookAutoRecompute() && (
+              <button
+                type="button"
+                aria-label="刷新技能册"
+                onClick={() => refreshSkillBook()}
+                className={`${runtimeSelectCls} whitespace-nowrap`}>
+                ↻ 刷新技能册
+              </button>
+            )}
           </div>
           <p className="text-[9px] text-emerald-300/40">
-            判据只有一个：这里写的名字。引擎拿它去查技能表（＝卡上有真结算内容的技能自动在册，
-            加上不印在任何将卡上的那几枚），查到了才把那一枚添进这一员将身上；从下一次发动起他就听得见这枚新技能。
+            判据只有一个：这里写的名字。引擎拿它去查技能册＝这台机器上所有卡（官方的、玩家自制的、
+            你编辑过的）里带真结算内容的那些，加上不印在任何将卡上的那几枚；查到了才把那一枚添进
+            这一员将身上；从下一次发动起他就听得见这枚新技能。
+          </p>
+          <p className="text-[9px] text-emerald-300/40">
+            下拉里名字后面那半截写的是出处：此刻册子里 {gainBook.filter(c => c.origins.includes('official')).length} 枚官方 ·{' '}
+            {gainBook.filter(c => c.origins.includes('DIY')).length} 枚玩家自制（同一个名字两头都有＝两边都列）。
           </p>
           {!gainName && (
             <p className="text-[9px] text-rose-400/80">

@@ -58,6 +58,7 @@ import {
 } from '../data/generals';
 import { parseGateText, gateConditionsToText } from './skillGateText';
 import { lookupSkillByName } from './skillNameIndex';
+import { ownerDescriptions } from '../data/skillTable';
 
 const EMPTY = '无';
 
@@ -796,7 +797,7 @@ export function parseEffectGroup(
           + `只印了名字、还没挂上可结算内容的技能不进表）：填了也添不进去，编译时会点名跳过。`
           + '卡上那枚技能哪天挂上内容，它自动进表、这一条就跟着生效');
       } else if (found.status === 'ambiguous') {
-        gainIssues.push(`「${gainName}」在技能表里不止一份、而且内容不同（${found.owners.join('、')}）：`
+        gainIssues.push(`「${gainName}」在技能表里不止一份、而且内容不同（${ownerDescriptions(found.owners).join('、')}）：`
           + '引擎不知道该拿哪一份，所以编译时会点名跳过。请给它们改成两个名字');
       }
     }

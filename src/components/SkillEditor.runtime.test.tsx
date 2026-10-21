@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/react';
 import SkillEditor from './SkillEditor';
 import { allGenerals } from '../data/generals';
+import { hasSettleableContent } from '../data/skillTable';
 import { useGameStore } from '../store/gameStore';
 import { compileGeneralSkills } from '../skills/skillCompiler';
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
@@ -317,6 +318,8 @@ describe('SkillEditor: structured runtime entry', () => {
    * 唯独界面那个名字框零证人）。它同时钉四件"看得见"的事：没有数字框（这一档不读数）、
    * 目标只写"自己"（不给下拉）、技能表查不到时当场说、写了名字之后 `runtime.skillName`
    * 真的存进 store 并被编译器解析成那枚技能。
+   * v2.9.18 这一档多两条：编辑过的那枚技能当场自己进册（册子是活的），
+   * 而还没挂内容的老形态空壳照样不在册（那句"表上没有"不许变成"能获得"）。
    */
   it('v2.9.3 刀A：效果类型切到「获得技能」——没有数字框、目标只有"自己"、名字存得下、表外的名字当场说', () => {
     const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
@@ -358,12 +361,26 @@ describe('SkillEditor: structured runtime entry', () => {
       { target: { value: '还没有这一枚' } });
     expect(screen.getByText(/技能表里暂时没有「还没有这一枚」/)).toBeTruthy();
 
-    // ⑥ 2.9.7 用户裁「技能表只做有真内容的」⇒卡上只印了名字的那 123 枚老形态技能
-    // **也不在表上**：界面不能对它说"能获得"（那正是上一版的说法，与引擎行为分叉）。
+    /**
+     * ⑥ v2.9.18 换进料之后这一条才露出来：上面 ④ 保存的那枚技能，卡上原本只印着名字，
+     * 挂上内容之后**自己就进了册**——册子读的是这台机器此刻真在用的那份卡面，不是仓库里的
+     * 死名册。所以回头再问它的名字，那句"表上没有"已经没了。
+     */
+    const editedName = target.skills[0].name;
     fireEvent.change(document.querySelector('input[aria-label="获得技能名"]') as HTMLInputElement,
-      { target: { value: '突袭' } });
-    const shellWarning = screen.getByText(/技能表里暂时没有「突袭」/) as HTMLElement;
-    expect(shellWarning.textContent).toContain('只有名字、还没挂上可结算内容的技能不进表');
+      { target: { value: editedName } });
+    expect(screen.queryByText(/技能表里暂时没有/)).toBeNull();
+
+    // ⑦ 但今天仍然只印了名字、没挂内容的老形态技能不在表上：界面对它说"表上没有"，
+    //    绝不说"能获得"（§12-112＝v2.9.7 用户那句「技能表只做有真内容的」的界面证人）。
+    const stillShell = allGenerals.flatMap(g => g.skills)
+      .find(s => s.name !== editedName && !hasSettleableContent(s))!;
+    fireEvent.change(document.querySelector('input[aria-label="获得技能名"]') as HTMLInputElement,
+      { target: { value: stillShell.name } });
+    const shellWarning = Array.from(document.querySelectorAll('p'))
+      .find(el => (el.textContent ?? '').includes(`技能表里暂时没有「${stillShell.name}」`));
+    expect(shellWarning).toBeTruthy();
+    expect(shellWarning!.textContent).toContain('只有名字、还没挂上可结算内容的技能不进表');
   });
 });
 
