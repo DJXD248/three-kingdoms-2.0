@@ -168,6 +168,22 @@ function answerResident(engine: GameEngine, steps: string[][]): void {
   }
 }
 
+/** 同一条走法的另一种记账：答复的事件**并进当前这一步**（`sink`），返回点头条数。
+ *  按步点名"某个效果落在哪一步"的证人用这一种；录像条目数＝派发次数（动作＋每一答），
+ *  所以计数要一并拿到。撞到 `ACTION_REJECTED` 收手＝这一格此刻答不了。 */
+function drainResidentIntoStep(engine: GameEngine, sink: string[]): number {
+  let entries = 0;
+  for (let guard = 0; guard < 16; guard += 1) {
+    const answer = reactionAnswerOf(engine.state);
+    if (!answer) return entries;
+    const answered = engine.dispatch(answer);
+    sink.push(...rawEvents(answered));
+    entries += 1;
+    if (answered.some(e => e.type === 'ACTION_REJECTED')) return entries;
+  }
+  return entries;
+}
+
 type StoreDispatcher = (
   holder: { engineState: EngineState },
   action: GameAction,
@@ -190,11 +206,57 @@ function answerViaStore(
   return current;
 }
 
+/** 与上面同一条循环，但把答复的事件**并进当前这一步**（`sink`）：有的对账口径要说的是
+ *  "这一派发引出的全部表态仍算同一步"（枭姬／连营那条按步数点名效果落在哪一步），
+ *  有的要说"一问一答各成一步"（`answerViaStore`）。两者只是同一条走法的两种记账。 */
+function answerIntoStepViaStore(
+  state: EngineState,
+  sink: string[],
+  dispatch: StoreDispatcher,
+): { state: EngineState; entries: number } {
+  let current = state;
+  let entries = 0;
+  for (let guard = 0; guard < 16; guard += 1) {
+    const answer = reactionAnswerOf(current);
+    if (!answer) return { state: current, entries };
+    const result = dispatch({ engineState: current }, answer);
+    current = result.engineState;
+    sink.push(...rawEvents(result.events));
+    entries += 1;
+    if (result.events.some(e => e.type === 'ACTION_REJECTED')) return { state: current, entries };
+  }
+  return { state: current, entries };
+}
+
+/**
+ * 单发探针的"派发＋把欠的每一格点头"合并读数（v2.9.16 询问制刀）。
+ *
+ * 本文件里几十条 `const events = engine.dispatch(ATTACK)` 然后在**这一份读数**上
+ * 找技能那一身（`skillId` 含「苦肉:e1」之类）的探针：询问制之后"追加那一刀／那两张牌"
+ * 落在**答完的那一趟**，不在第一趟的事件流里了。让这些探针逐条改成"各成一步"会把
+ * 它们全炸掉，所以这里把一问一答并成同一份读数。**脚本对账那几条不动**——
+ * `playResident`／`playViaStore`／`playResidentAll` 照旧把答复单独成步，
+ * 四路逐事件对账与录像逐条回放一点没松。
+ *
+ * 撞到 `ACTION_REJECTED` 就收手：那是"这一格此刻答不了"（牌局已终／额度已尽），
+ * 继续点头只会在同一格上原地打转。
+ */
+function dispatchAndAnswer(engine: GameEngine, action: GameAction): GameEvent[] {
+  const out = [...engine.dispatch(action)];
+  for (let guard = 0; guard < 16; guard += 1) {
+    const answer = reactionAnswerOf(engine.state);
+    if (!answer) break;
+    const answered = engine.dispatch(answer);
+    out.push(...answered);
+    if (answered.some(e => e.type === 'ACTION_REJECTED')) break;
+  }
+  return out;
+}
+
 /** 脚本循环：一路（给 dispatch 函数）跑完整个脚本并顺带答完每一格。 */
 function playViaStore(
   initial: EngineState,
-  script: readonly GameAction[],
-  dispatch: StoreDispatcher,
+  script: readonly GameAction[],  dispatch: StoreDispatcher,
 ): { steps: string[][]; final: EngineState } {
   let state = cloneEngineState(initial);
   const steps: string[][] = [];
@@ -266,6 +328,7 @@ function playResident(initial: EngineState): { steps: string[][]; final: EngineS
   for (const action of SCRIPT) {
     syncPlayerSkills(engine, engine.state);
     steps.push(rawEvents(engine.dispatch(action)));
+    answerResident(engine, steps);
   }
   return { steps, final: engine.state, engine };
 }
@@ -277,6 +340,7 @@ function playReconcile(initial: EngineState): { steps: string[][]; final: Engine
     const result = dispatchStoreActionReconcile({ engineState: state }, action);
     state = result.engineState;
     steps.push(rawEvents(result.events));
+    state = answerViaStore(state, steps, dispatchStoreActionReconcile);
   }
   return { steps, final: state };
 }
@@ -290,19 +354,29 @@ function playBridgeResident(initial: EngineState): { steps: string[][]; final: E
     const result = dispatchStoreAction({ engineState: state }, action);
     state = result.engineState;
     steps.push(rawEvents(result.events));
+    state = answerViaStore(state, steps, dispatchStoreAction);
   }
   return { steps, final: state };
 }
 
 describe('TransitionCore · 常驻 === 重建 (decision D-1)', () => {
-  it('script guards: the match really contains a skill-kill reentry and a rejected action', () => {
+  it('script guards: the match really kills via the ask road (no auto trigger) and holds a rejected action', () => {
     const { steps } = playResident(buildInitial());
-
-    const killChain = steps[0].map(raw => JSON.parse(raw) as { type: string });
-    expect(killChain.some(e => e.type === 'DEATH')).toBe(true);
-    expect(killChain.some(e => e.type === 'TRIGGERED')).toBe(true);
-    expect(steps[2]).toHaveLength(1);
-    expect(JSON.parse(steps[2][0]).type).toBe('ACTION_REJECTED');
+    // v2.9.16 询问制刀：这一局挂的四枚（烈攻／枭斩／遗志／奸雄）**全都不打「强制发动」**
+    // ⇒它们压根不进触发链（`SkillTriggerBridge.registerSkill` 里那句 `defersToReactionQueue`），
+    // 于是整条击杀链改由问答路一步一步走：第一趟只有那一刀本体＋开格，追加的那一点伤
+    // 与随之而来的阵亡落在"点头"那一趟。所以这里读的是平铺后的整局事件流。
+    const flat = steps.flat().map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+    const death = flat.find(e => e.type === 'DEATH');
+    expect(death).toBeTruthy();
+    // 反空转：那一声阵亡确实是**技能追加伤害**打出来的（不是普通攻击直接砍死）。
+    expect(death!.data).toMatchObject({ skillKill: true });
+    // 自动路一声不发＝"同一枚绝不允许既自动响又停下来问"这条纪律在这局成立。
+    expect(flat.some(e => e.type === 'TRIGGERED')).toBe(false);
+    // 被拒那两声确实来自脚本里那两趟 END_TURN（补偿摸牌窗还开着），不是别处。
+    expect(flat.filter(e => e.type === 'ACTION_REJECTED')).toHaveLength(2);
+    expect(steps.some(step => step.length === 1 && JSON.parse(step[0]).type === 'ACTION_REJECTED'))
+      .toBe(true);
   });
 
   it('direct engine, resident store bridge and rebuild reconciliation emit identical events and end in identical state', () => {
@@ -325,7 +399,10 @@ describe('TransitionCore · 常驻 === 重建 (decision D-1)', () => {
     expect(document).not.toBeNull();
 
     const playback = new ReplayPlayer().play(document!);
-    expect(playback.processed).toBe(SCRIPT.length);
+    // v2.9.16 询问制刀：一问一答各成一条录像条目（答复是 canonical `ACTIVATE_SKILL`，
+    // 与脚本动作同一条 dispatch 路），所以条目数＝实况步数，比脚本长度多 out 那几格。
+    expect(playback.processed).toBe(resident.steps.length);
+    expect(playback.processed).toBeGreaterThan(SCRIPT.length);
     const playedSteps = playback.events.map(entry => rawEvents(entry.events));
     expect(playedSteps).toEqual(resident.steps);
     expect(JSON.stringify(playback.state)).toBe(JSON.stringify(resident.final));
@@ -431,9 +508,25 @@ describe('store resident container (decision D-1, v2.2.21 second cut)', () => {
   });
 
   it('skill registry is re-synced every step: a general killed last step leaves the resident registry', () => {
-    const initial = buildInitial();
-    // Step 1 kills g2 (烈攻 chain). The registry was synced from the PRE-dispatch
-    // state, so g2's 遗志 binding exists until the next resync.
+    // v2.9.16 询问制刀：`buildInitial()` 里那几枚都不打「强制发动」⇒它们**根本不进**
+    // 触发链注册表（`SkillTriggerBridge.registerSkill` 里那句 `defersToReactionQueue`），
+    // 这一条要读的那张表因此是空的。本条钉的是"注册表每趟重推导、上一趟离场的那员
+    // 跟着掉出去"，与"谁自动响、谁被问"无关⇒就地搭同型场面，只把两枚挂成自动路
+    // （`forced`）：同一刀、同一个阵亡、同一句"这一趟还在、下一趟没了"。
+    const killer = makeGeneral('g1', 4, [{
+      name: '烈攻', forced: true,
+      effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DAMAGE', value: 1, target: 'TARGET' } }],
+    }]);
+    const victim = makeGeneral('g2', 3, [{
+      name: '遗志', forced: true,
+      effects: [{ id: 'e1', trigger: { type: 'onDeath' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+    }]);
+    const initial = makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(killer, 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
+    ]);
+    // Step 1 kills g2 (烈攻 chain, still the auto road). The registry was synced from
+    // the PRE-dispatch state, so g2's 遗志 binding exists until the next resync.
     const first = dispatchStoreAction({ engineState: initial }, SCRIPT[0]);
     const afterKill = __residentEngineProbe().engine!;
     expect(afterKill.triggers.getAll().some(t => t.id.includes(':g2:'))).toBe(true);
@@ -728,7 +821,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(fieldHp(engine.state, 1, 'g1')).toEqual({ hp: 2, armor: 1 }); // 4-2 攻伤，+1 甲
   });
 
-  it('哨兵①实证：苦肉在 TURN_START 自动自伤 1 点并摸 2（合成 DAMAGE 的 SELF 受击路径被引擎接受）', () => {
+  it('哨兵①实证：苦肉在 TURN_START 被问一句、点头后自伤 1 点并摸 2（合成 DAMAGE 的 SELF 受击路径被引擎接受）', () => {
     const state = makeState([
       makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g_plain', 4, []), 1)] }),
       makePlayer(2, {
@@ -746,7 +839,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     yh.currentHp = 2; // 半血让清德的回血可观察
     const engine = new GameEngine(state);
     syncPlayerSkills(engine, engine.state);
-    const events = engine.dispatch(createAction('END_TURN', 1));
+    const events = dispatchAndAnswer(engine, createAction('END_TURN', 1));
 
     // 自伤：target 与 source 同为玩家 2 的拥有者本体
     const kurouDmg = events.filter(e => e.type === 'DAMAGE'
@@ -780,7 +873,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     wy.currentHp = 2;
     const e1 = new GameEngine(s1);
     syncPlayerSkills(e1, e1.state);
-    const ev1 = e1.dispatch(attack('a1', 'wy', 0));
+    const ev1 = dispatchAndAnswer(e1, attack('a1', 'wy', 0));
     expect(ev1.some(e => e.type === 'DEATH' && (e.data as any)?.targetId === 'wy')).toBe(true);
     const tongming = ev1.find(e => e.type === 'DAMAGE' && String((e.data as any)?.skillId ?? '').includes('同命:e1'));
     expect(tongming).toBeTruthy();
@@ -797,7 +890,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     (s2.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 2;
     const e2 = new GameEngine(s2);
     syncPlayerSkills(e2, e2.state);
-    const ev2 = e2.dispatch(attack('a2', 'bls', 0));
+    const ev2 = dispatchAndAnswer(e2, attack('a2', 'bls', 0));
     const zhuiyi = ev2.find(e => e.type === 'DRAW' && String((e.data as any)?.skillId ?? '').includes('追忆:e1'));
     expect(zhuiyi).toBeTruthy();
     expect((zhuiyi!.data as any).playerId).toBe(2);
@@ -814,7 +907,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     (s3.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 1;
     const e3 = new GameEngine(s3);
     syncPlayerSkills(e3, e3.state);
-    const ev3 = e3.dispatch(attack('sym3', 'zgd', 0));
+    const ev3 = dispatchAndAnswer(e3, attack('sym3', 'zgd', 0));
     expect(ev3.some(e => e.type === 'GAIN_ARMOR' && String((e.data as any)?.skillId ?? '').includes('并吞:e1'))).toBe(true);
     expect(ev3.some(e => e.type === 'DAMAGE' && String((e.data as any)?.skillId ?? '').includes('死节:e1'))).toBe(true);
     expect(fieldHp(e3.state, 1, 'sym3')).toEqual({ hp: 1, armor: 2 });
@@ -830,7 +923,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     (s4.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 1;
     const e4 = new GameEngine(s4);
     syncPlayerSkills(e4, e4.state);
-    const ev4 = e4.dispatch(attack('jnf', 'bls4', 0));
+    const ev4 = dispatchAndAnswer(e4, attack('jnf', 'bls4', 0));
     expect(ev4.some(e => e.type === 'HEAL' && String((e.data as any)?.skillId ?? '').includes('戮杀:e1'))).toBe(true);
     expect(fieldHp(e4.state, 1, 'jnf')?.hp).toBe(3); // 满血封顶
   });
@@ -846,7 +939,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     (s.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 3;
     const engine = new GameEngine(s);
     syncPlayerSkills(engine, engine.state);
-    const events = engine.dispatch(attack('lc5', 'bls5', 0)); // 2+1 奋威 → 0
+    const events = dispatchAndAnswer(engine, attack('lc5', 'bls5', 0)); // 2+1 奋威 → 0
     const death = events.find(e => e.type === 'DEATH' && (e.data as any)?.targetId === 'bls5');
     expect(death).toBeTruthy();
     expect((death!.data as any).skillKill).toBe(true);
@@ -920,7 +1013,9 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     (s.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 1;
     const engine = new GameEngine(s);
     syncPlayerSkills(engine, engine.state);
-    const events = engine.dispatch(attack('killer', 'cwj', 0));
+    // v2.9.16 询问制刀：断肠挂在「自身被击杀时」，没打强制发动⇒那一格现在先问蔡文姬
+    // 那一边，点头之后才弃光。本条钉的是"人离场了账照结、count=0＝整手弃光"，与谁点头无关。
+    const events = dispatchAndAnswer(engine, attack('killer', 'cwj', 0));
     expect(events.some(e => e.type === 'DEATH' && (e.data as any)?.targetId === 'cwj')).toBe(true);
     const duanchang = events.filter(e => e.type === 'DISCARD' && String((e.data as any)?.skillId ?? '').includes('断肠:e1'));
     expect(duanchang).toHaveLength(1);
@@ -992,7 +1087,9 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     ]);
     const engine = new GameEngine(s);
     syncPlayerSkills(engine, engine.state); // 场上无人 → 派发前注册表里确实没有英慧
-    const events = engine.dispatch(createAction('DEPLOY_GENERAL', 1, {
+    // v2.9.16 询问制刀：「登场时」这一型没打强制发动⇒部署那一步先问一句，效果落在
+    // 答完的那一趟。本条钉的是"补注册+重放只响一次、绝不双触发"，与谁点头无关。
+    const events = dispatchAndAnswer(engine, createAction('DEPLOY_GENERAL', 1, {
       general: wyj, slot: 0, consumeCards: [{ ...COSTS[0] }],
     }));
     expect(events.some(e => e.type === 'GENERAL_DEPLOYED')).toBe(true);
@@ -1041,6 +1138,9 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     for (const action of script) {
       syncPlayerSkills(engine, engine.state);
       residentSteps.push(rawEvents(engine.dispatch(action)));
+      // v2.9.16 询问制刀：「登场时」现在先问一句，答完那一趟自成一步。四路都按同一条
+      // "每派发一次就把欠的格答完"走，这一条才仍判"四路逐事件一致"。
+      answerResident(engine, residentSteps);
     }
     const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
     expect(fieldHp(engine.state, 1, 'g_armor')).toEqual({ hp: 1, armor: 1 }); // 1 成本进场 1 血 + 登锋登场甲
@@ -1055,6 +1155,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       const result = dispatchStoreAction({ engineState: bridgeState }, action);
       bridgeState = result.engineState;
       bridgeSteps.push(rawEvents(result.events));
+      bridgeState = answerViaStore(bridgeState, bridgeSteps, dispatchStoreAction);
     }
     expect(bridgeSteps).toEqual(residentSteps);
     expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
@@ -1065,6 +1166,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       const result = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
       reconcileState = result.engineState;
       reconcileSteps.push(rawEvents(result.events));
+      reconcileState = answerViaStore(reconcileState, reconcileSteps, dispatchStoreActionReconcile);
     }
     expect(reconcileSteps).toEqual(residentSteps);
     expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
@@ -1072,7 +1174,8 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     const document = engine.replay.getDocument();
     expect(document).not.toBeNull();
     const playback = new ReplayPlayer().play(document!);
-    expect(playback.processed).toBe(script.length);
+    // 一问一答各是一条录像条目⇒条目数＝步数，不再等于脚本长度（同一判据见主对账那条）。
+    expect(playback.processed).toBe(residentSteps.length);
     expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(residentSteps);
     expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
@@ -1085,7 +1188,9 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     ]);
     const engine = new GameEngine(s);
     syncPlayerSkills(engine, engine.state);
-    const events = engine.dispatch(createAction('DEPLOY_GENERAL', 1, {
+    // v2.9.16 询问制刀：登场那一型现在先问一句（同上两条），这条钉的是"真实模板的
+    // 载荷值＝摸两张、当步恰一次"，读的是答完之后的合并流水。
+    const events = dispatchAndAnswer(engine, createAction('DEPLOY_GENERAL', 1, {
       general: wyj, slot: 0, consumeCards: [{ ...COSTS[0] }],
     }));
     const yinghui = events.filter(e => e.type === 'DRAW'
@@ -1121,11 +1226,21 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     for (const action of script) {
       syncPlayerSkills(engine, engine.state);
       residentSteps.push(rawEvents(engine.dispatch(action)));
+      answerResident(engine, residentSteps); // v2.9.16：登场那一型现在先问一句
     }
     const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
     const flat = residentSteps.flat();
-    // 事件数据中不出现原始技能名——用 compiled skill key（runtimeId:effectIndex）做精确匹配
-    expect(flat.filter(e => e.includes('dy_deploy_test') && e.includes(':e1') && e.includes('GAIN_ARMOR')).length).toBe(1);
+    // 事件数据中不出现原始技能名——用 compiled skill key（runtimeId:effectIndex）做精确匹配。
+    // v2.9.16 询问制刀把这一句从"整串里同时出现三个词"改成**只数结算那一身**
+    // （type＝GAIN_ARMOR 且 skillId 对得上）：问答路多出来的那一趟 `ACTIVATE_SKILL` 会把
+    // `STATE_CHANGED` 信封（里面回显了动作载荷里的 skillId，快照又带着效果名）送进同一个
+    // 子串过滤器，那条"恰好一次"就会数成两次。判据说的是"甲2只落一次"，从来不是"全字符串
+    // 里只出现一次"——按类型数才是它本来的意思，且比子串更严。
+    const armorSettlements = flat
+      .map(entry => JSON.parse(entry) as { type: string; data?: Record<string, unknown> })
+      .filter(event => event.type === 'GAIN_ARMOR'
+        && String(event.data?.skillId ?? '').includes('dy_deploy_test:拓略:e1'));
+    expect(armorSettlements).toHaveLength(1);
     expect(fieldHp(engine.state, 1, 'dy_deploy_test')).toEqual({ hp: 1, armor: 2 }); // 1 成本进场 1 血 + 拓略登场甲2
     const p1 = engine.state.players.find(p => p.id === 1)!;
     expect(p1.hand).toHaveLength(0); // 2 -打出 -成本
@@ -1138,6 +1253,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       const result = dispatchStoreAction({ engineState: bridgeState }, action);
       bridgeState = result.engineState;
       bridgeSteps.push(rawEvents(result.events));
+      bridgeState = answerViaStore(bridgeState, bridgeSteps, dispatchStoreAction);
     }
     expect(bridgeSteps).toEqual(residentSteps);
     expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
@@ -1148,6 +1264,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       const result = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
       reconcileState = result.engineState;
       reconcileSteps.push(rawEvents(result.events));
+      reconcileState = answerViaStore(reconcileState, reconcileSteps, dispatchStoreActionReconcile);
     }
     expect(reconcileSteps).toEqual(residentSteps);
     expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
@@ -1155,7 +1272,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     const document = engine.replay.getDocument();
     expect(document).not.toBeNull();
     const playback = new ReplayPlayer().play(document!);
-    expect(playback.processed).toBe(script.length);
+    expect(playback.processed).toBe(residentSteps.length);
     expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(residentSteps);
     expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
@@ -1320,7 +1437,9 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     (duanState.players[1].fieldGenerals as unknown as Array<{ currentHp: number }>)[0].currentHp = 1;
     const engine = new GameEngine(duanState);
     syncPlayerSkills(engine, engine.state);
-    const duanEvents = engine.dispatch(createAction('ATTACK', 1, {
+    // v2.9.16 询问制刀：断肠挂在「自身被击杀时」，现在先问一句才弃光⇒读的是答完的合并
+    // 流水；本条判的是"DISCARD 结算派生 CARD_LOST、count=0＝整手"这一串事实，一字未松。
+    const duanEvents = dispatchAndAnswer(engine, createAction('ATTACK', 1, {
       attackerId: 'kd53', targetId: 'cwj53', ranged: false, consumeCard: { ...COSTS[0] },
     }));
     expect(duanEvents.some(e => e.type === 'DISCARD' && String((e.data as Record<string, unknown>)?.skillId ?? '').includes('断肠:e1'))).toBe(true);
@@ -1574,26 +1693,29 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     const engine = new GameEngine(build());
     syncPlayerSkills(engine, engine.state);
+    // v2.9.16 询问制刀：强袭／枭姬／断肠／连营这四枚今天全在问答路上，所以每一步
+    // 派发完还要把欠的格答完。本条的记账口径是"一次派发＋它引出的全部表态算同一步"
+    // （下面按步点名效果落在哪一步就是这个原因），四路照同一口径写。
+    const drainResident = (sink: string[]): number => {
+      let entries = 0;
+      for (let guard = 0; guard < 16; guard += 1) {
+        const answer = reactionAnswerOf(engine.state);
+        if (!answer) return entries;
+        const answered = engine.dispatch(answer);
+        sink.push(...rawEvents(answered));
+        entries += 1;
+        if (answered.some(e => e.type === 'ACTION_REJECTED')) return entries;
+      }
+      return entries;
+    };
     // 第一步：强袭剥离 → 枭姬摸2
-    const stepAEvents = rawEvents(engine.dispatch(stepA));
-    let allStepA = [...stepAEvents];
-    while (true) {
-      const ask = getReactionAsk(engine.state);
-      if (!ask) break;
-      const answered = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, { skillId: ask.options[0].skillId, generalId: ask.generalId }));
-      allStepA = [...allStepA, ...rawEvents(answered)];
-    }
-    
+    const allStepA = [...rawEvents(engine.dispatch(stepA))];
+    let residentEntries = 1 + drainResident(allStepA);
+
     // 第二步：击杀断肠将 → 弃光 → 连营摸1
-    const stepBEvents = rawEvents(engine.dispatch(stepB));
-    let allStepB = [...stepBEvents];
-    while (true) {
-      const ask = getReactionAsk(engine.state);
-      if (!ask) break;
-      const answered = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, { skillId: ask.options[0].skillId, generalId: ask.generalId }));
-      allStepB = [...allStepB, ...rawEvents(answered)];
-    }
-    
+    const allStepB = [...rawEvents(engine.dispatch(stepB))];
+    residentEntries += 1 + drainResident(allStepB);
+
     const steps = [allStepA, allStepB];
     const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
     const flat = steps.flat().map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
@@ -1630,12 +1752,16 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     };
     let bridgeState = rebuild();
     const bridgeSteps: string[][] = [];
+    let bridgeEntries = 0;
     for (const action of [stepA, stepB]) {
       const stepEvents: string[] = [];
       const r = dispatchStoreAction({ engineState: bridgeState }, action);
       bridgeState = r.engineState;
       stepEvents.push(...rawEvents(r.events));
-      bridgeState = answerViaStore(bridgeState, [stepEvents], dispatchStoreAction);
+      bridgeEntries += 1;
+      const drained = answerIntoStepViaStore(bridgeState, stepEvents, dispatchStoreAction);
+      bridgeState = drained.state;
+      bridgeEntries += drained.entries;
       bridgeSteps.push(stepEvents);
     }
     expect(bridgeSteps).toEqual(steps);
@@ -1643,12 +1769,16 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     let reconcileState = rebuild();
     const reconcileSteps: string[][] = [];
+    let reconcileEntries = 0;
     for (const action of [stepA, stepB]) {
       const stepEvents: string[] = [];
       const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
       reconcileState = r.engineState;
       stepEvents.push(...rawEvents(r.events));
-      reconcileState = answerViaStore(reconcileState, [stepEvents], dispatchStoreActionReconcile);
+      reconcileEntries += 1;
+      const drained = answerIntoStepViaStore(reconcileState, stepEvents, dispatchStoreActionReconcile);
+      reconcileState = drained.state;
+      reconcileEntries += drained.entries;
       reconcileSteps.push(stepEvents);
     }
     expect(reconcileSteps).toEqual(steps);
@@ -1663,7 +1793,8 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
       const r = dispatchStoreActionReconcile({ engineState: reconcileState2 }, action);
       reconcileState2 = r.engineState;
       stepEvents.push(...rawEvents(r.events));
-      reconcileState2 = answerViaStore(reconcileState2, [stepEvents], dispatchStoreActionReconcile);
+      const drained = answerIntoStepViaStore(reconcileState2, stepEvents, dispatchStoreActionReconcile);
+      reconcileState2 = drained.state;
       reconcileSteps2.push(stepEvents);
     }
     expect(reconcileSteps2).toEqual(steps);
@@ -1672,9 +1803,12 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     const document = engine.replay.getDocument();
     expect(document).not.toBeNull();
     const playback = new ReplayPlayer().play(document!);
-    expect(playback.processed).toBe(2);
-    // Playback produces one entry per action; compare directly with resident's steps array
-    expect(playback.events.map(entry => rawEvents(entry.events))).toEqual(steps);
+    // 录像条目＝派发次数（一次派发＋它的每一句表态各成一条），比"步"多；
+    // 三路（桥接／重建／录像）读到的条目数与事件流都应与常驻那一份同账。
+    expect(playback.processed).toBe(residentEntries);
+    expect(bridgeEntries).toBe(residentEntries);
+    expect(reconcileEntries).toBe(residentEntries);
+    expect(playback.events.flatMap(entry => rawEvents(entry.events))).toEqual(steps.flat());
     expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
 
@@ -1903,15 +2037,12 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     const engine = new GameEngine(build());
     syncPlayerSkills(engine, engine.state);
-    const initialEvents = rawEvents(engine.dispatch(actions[0]));
-    let allRaw = [...initialEvents];
-    // #71：受击/受伤技能进反应队列——先答完再检查
-    while (true) {
-      const ask = getReactionAsk(engine.state);
-      if (!ask) break;
-      const answered = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, { skillId: ask.options[0].skillId, generalId: ask.generalId }));
-      allRaw = [...allRaw, ...rawEvents(answered)];
-    }
+    // v2.9.16 询问制刀：本条原来的读数口径是"一次派发＋它引出的全部表态算同一步"，
+    // 而答完才结的那些效果正是要按步点名的东西（`GAIN_ARMOR` 落在哪、忍创响不响），
+    // 所以这一步仍把答复并进同一步里记账；四路照同一口径写，`residentEntries` 供
+    // 录像那条点名"处理了几条"——一问一答各是一条，条数＝派发次数，不再"跳过严格检查"。
+    const allRaw = [...rawEvents(engine.dispatch(actions[0]))];
+    const residentEntries = 1 + drainResidentIntoStep(engine, allRaw);
     const steps = [allRaw];
     const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
     const flat = steps[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
@@ -1923,10 +2054,13 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(duels[0].data).toMatchObject({
       sourcePlayerId: 1, sourceGeneralId: 'du_elj', targetPlayerId: 2, targetId: 'du_vic', effectType: 'DUEL',
     });
-    expect(flat.slice(duelIdx, duelIdx + 10).map(e => e.type))
-      // v2.9.15 乙档刀：块尾多出来的那一声＝"这一条定义刚刚发动了"的公告（纯通知、
-      // 不带台账键），它照旧排在效果事件前面⇒状态位移仍然是零，只是事件流多一句。
-      .toEqual(['DUEL', 'BEFORE_DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'INJURY', 'SKILL_ACTIVATED', 'GAIN_ARMOR']);
+    // v2.9.16 询问制刀：「造成攻击伤害后」那一型没打强制发动⇒公告那一身与 DUEL 本体
+    // 现在落在**答完的那一步**里（`SKILL_ACTIVATED`＋`REACTION_ANSWERED` 紧贴块首），
+    // 块内仍是"开局一声＋逐轮紧挨＋收官一笔"，中间没有插进任何别的流程——这一条判的
+    // 就是那件事，逐轮那一段一字未改。后序 `GAIN_ARMOR` 由同一次表态带出，照旧排在块尾。
+    expect(flat.slice(duelIdx - 2, duelIdx).map(e => e.type)).toEqual(['SKILL_ACTIVATED', 'REACTION_ANSWERED']);
+    expect(flat.slice(duelIdx, duelIdx + 9).map(e => e.type))
+      .toEqual(['DUEL', 'BEFORE_DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'DAMAGE', 'INJURY', 'GAIN_ARMOR']);
     // 开局那一声＝"成为**技能**目标"：带 damageType:'skill'（所以"成为攻击目标"那一档听不到），
     // 这里当场没人有得说⇒标 `settled`、逐轮紧跟着就打了（第七轮开局格的另一档见刀2 专测）。
     expect(flat[duelIdx + 1].data).toMatchObject({
@@ -1959,7 +2093,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     // ③ 同技能后序效果在整块之后落账，且决斗算学时读不到它
     const followIdx = flat.findIndex(e => e.type === 'GAIN_ARMOR' && String(e.data?.skillId ?? '').includes('挑战:e2'));
-    expect(followIdx).toBe(duelIdx + 9);
+    expect(followIdx).toBe(duelIdx + 8);
     expect(fieldHp(engine.state, 1, 'du_elj')).toEqual({ hp: 6, armor: 1 });
 
     // ④ 决斗每一"打"不响任何监听（第九轮 d) 显式重钉）：du_vic 死在这一场的第 5 轮，
@@ -1984,36 +2118,69 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     resetLiveReplay();
     let bridgeState = build();
     const bridgeSteps: string[][] = [];
+    let bridgeEntries = 0;
     for (const action of actions) {
+      const stepEvents: string[] = [];
       const r = dispatchStoreAction({ engineState: bridgeState }, action);
       bridgeState = r.engineState;
-      bridgeSteps.push(rawEvents(r.events));
+      stepEvents.push(...rawEvents(r.events));
+      bridgeEntries += 1;
+      const drained = answerIntoStepViaStore(bridgeState, stepEvents, dispatchStoreAction);
+      bridgeState = drained.state;
+      bridgeEntries += drained.entries;
+      bridgeSteps.push(stepEvents);
     }
     expect(bridgeSteps).toEqual(steps);
+    expect(bridgeEntries).toBe(residentEntries);
     expect(JSON.stringify(normalize(bridgeState as unknown as Record<string, unknown>))).toBe(residentFinal);
 
     let reconcileState = build();
     const reconcileSteps: string[][] = [];
+    let reconcileEntries = 0;
     for (const action of actions) {
+      const stepEvents: string[] = [];
       const r = dispatchStoreActionReconcile({ engineState: reconcileState }, action);
       reconcileState = r.engineState;
-      reconcileSteps.push(rawEvents(r.events));
+      stepEvents.push(...rawEvents(r.events));
+      reconcileEntries += 1;
+      const drained = answerIntoStepViaStore(reconcileState, stepEvents, dispatchStoreActionReconcile);
+      reconcileState = drained.state;
+      reconcileEntries += drained.entries;
+      reconcileSteps.push(stepEvents);
     }
     expect(reconcileSteps).toEqual(steps);
+    expect(reconcileEntries).toBe(residentEntries);
     expect(JSON.stringify(normalize(reconcileState as unknown as Record<string, unknown>))).toBe(residentFinal);
 
     const document = engine.replay.getDocument();
     expect(document).not.toBeNull();
     const playback = new ReplayPlayer().play(document!);
-    // expect(playback.processed).toBe(...) // Action count varies by test; skip strict check
-    // Playback produces one entry per action; flatten to compare with resident's combined array
-    expect([playback.events.flatMap(entry => rawEvents(entry.events))]).toEqual(steps);
+    // 一问一答各进录像一条⇒"处理了几条"＝派发次数，不是脚本长度（v2.9.16 询问制刀）。
+    expect(playback.processed).toBe(residentEntries);
+    expect(playback.events.flatMap(entry => rawEvents(entry.events)))
+      .toEqual(steps.flat());
     expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
 
     // 同配置两跑逐字节一致：决斗零新增随机面（轮数规则定死、逐轮算术读定死的状态）
     const againEngine = new GameEngine(build());
     syncPlayerSkills(againEngine, againEngine.state);
-    expect(actions.map(a => rawEvents(againEngine.dispatch(a)))).toEqual(steps);
+    const againSteps: string[][] = [];
+    let againEntries = 0;
+    for (const action of actions) {
+      const stepEvents = [...rawEvents(againEngine.dispatch(action))];
+      againEntries += 1;
+      for (let guard = 0; guard < 16; guard += 1) {
+        const answer = reactionAnswerOf(againEngine.state);
+        if (!answer) break;
+        const answered = againEngine.dispatch(answer);
+        stepEvents.push(...rawEvents(answered));
+        againEntries += 1;
+        if (answered.some(e => e.type === 'ACTION_REJECTED')) break;
+      }
+      againSteps.push(stepEvents);
+    }
+    expect(againSteps).toEqual(steps);
+    expect(againEntries).toBe(residentEntries);
     expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
 
@@ -2024,7 +2191,12 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
         effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'TARGET' } }],
       },
       {
+        // v2.9.16 询问制刀：同一员将、同一格里的两枚非强制技能＝**玩家择一**
+        // （§H9 第九轮⑤：表态单位是"这一席这一员"，点一个键吃掉整格）。这条证人要的同场
+        // 是**两条 DUEL**（搦战满六轮＋自斗对自己空转），所以自斗这一枚勾上强制发动、
+        // 走自动路，才不撞在同一个表态位上——被吞掉的那一条本身另立证人（见下）。
         name: '自斗',
+        forced: true,
         effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'SELF' } }],
       },
     ]);
@@ -2050,25 +2222,22 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     const engine = new GameEngine(build());
     syncPlayerSkills(engine, engine.state);
-    const initialEvents = rawEvents(engine.dispatch(action));
-    // 分发/剥离等是受伤类技能，现在进反应队列——先答完再拿结算结果
-    let allRaw = [...initialEvents];
-    while (true) {
-      const ask = getReactionAsk(engine.state);
-      if (!ask) break;
-      const answered = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, { skillId: ask.options[0].skillId, generalId: ask.generalId }));
-      allRaw = [...allRaw, ...rawEvents(answered)];
-    }
+    // v2.9.16：搦战没勾强制发动⇒普攻那一趟只问一声，决斗本体在答完的那一趟里。
+    // 本条仍按"一次派发＋它引出的全部表态算同一步"记账⇒两条 DUEL 在同一份读数里点名。
+    const allRaw = [...rawEvents(engine.dispatch(action))];
+    drainResidentIntoStep(engine, allRaw);
     const steps = [allRaw];
     const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
     const flat = steps[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
 
-    // 两条 DUEL：搦战逐轮入队，自斗（aId===bId）零轮次、不占状态
+    // 两条 DUEL：自斗（勾了强制发动）随普攻那一趟自动响、aId===bId⇒零轮次不占状态；
+    // 搦战（问答路）答完才开打。两条同场＝两条路各走一条，正好也是"一员将两枚技能
+    // 分走两条路"的现场形状。
     const duels = flat.filter(e => e.type === 'DUEL');
-    expect(duels.map(e => String(e.data?.skillId ?? ''))).toEqual(['du_long:搦战:e1', 'du_long:自斗:e1']);
-    expect(duels[1].data).toMatchObject({ sourceGeneralId: 'du_long', targetId: 'du_long' });
+    expect(duels.map(e => String(e.data?.skillId ?? ''))).toEqual(['du_long:自斗:e1', 'du_long:搦战:e1']);
+    expect(duels[0].data).toMatchObject({ sourceGeneralId: 'du_long', targetId: 'du_long' });
 
-    const duelIdx = flat.findIndex(e => e.type === 'DUEL');
+    const duelIdx = flat.findIndex(e => e.type === 'DUEL' && String(e.data?.skillId ?? '').includes('搦战'));
     expect(flat[duelIdx + 1].type).toBe('BEFORE_DAMAGE');
     expect(flat[duelIdx + 1].data).toMatchObject({ duelStage: 'settled' });
     const rounds = flat.slice(duelIdx + 2, duelIdx + 8);
@@ -2096,15 +2265,9 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     const againEngine = new GameEngine(build());
     syncPlayerSkills(againEngine, againEngine.state);
-    const againInitialEvents = rawEvents(againEngine.dispatch(action));
-    let againAllRaw = [...againInitialEvents];
-    // #71：againEngine 也要答完反应问窗
-    while (true) {
-      const ask = getReactionAsk(againEngine.state);
-      if (!ask) break;
-      const answered = againEngine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, { skillId: ask.options[0].skillId, generalId: ask.generalId }));
-      againAllRaw = [...againAllRaw, ...rawEvents(answered)];
-    }
+    const againAllRaw = [...rawEvents(againEngine.dispatch(action))];
+    // 同配置两跑：答同一格、点同一个键（`options[0]`）⇒逐字节同一条流
+    drainResidentIntoStep(againEngine, againAllRaw);
     expect(againAllRaw).toEqual(steps[0]);
     expect(JSON.stringify(normalize(againEngine.state as unknown as Record<string, unknown>))).toBe(residentFinal);
   });
@@ -2139,30 +2302,43 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     };
     const action = attack('dl_atk', 'dl_tgt', 0);
 
-    // ① 常驻路第一趟：开局那一层有人有得说⇒块里只有 `opening` 一声，逐轮还没打
+    // ① 常驻路第一趟：v2.9.16 询问制刀把"造成攻击伤害后"这一型也搬进了问答路，
+    //    而搦战没勾强制发动⇒这一趟里连 `DUEL` 本体都还没有：世界先停下来问发起方一声。
     const engine = new GameEngine(build());
     syncPlayerSkills(engine, engine.state);
     const live: string[][] = [rawEvents(engine.dispatch(action))];
     const first = live[0].map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
-    const duelIdx = first.findIndex(e => e.type === 'DUEL');
-    expect(duelIdx).toBeGreaterThanOrEqual(0);
-    expect(first[duelIdx + 1].type).toBe('BEFORE_DAMAGE');
-    expect(first[duelIdx + 1].data).toMatchObject({ duelStage: 'opening', damageType: 'skill' });
+    expect(first.filter(e => e.type === 'DUEL')).toHaveLength(0);
     expect(first.filter(e => typeof e.data?.duelRound === 'number')).toHaveLength(0);
+    const firstAsk = getReactionAsk(engine.state);
+    expect(firstAsk).toMatchObject({ playerId: 1, generalId: 'dl_atk', trigger: 'onDamageDealt' });
+    expect(firstAsk?.options.map(o => o.skillId)).toEqual(['dl_atk:搦战:e1']);
     // 刀5：普攻那一刀真掉了 2 点体力⇒这一趟就带着那一声明（`INJURY`）。它不带
-    // `duelStage`＝不是决斗形状；逐轮还没打⇒决斗收官那一笔此刻还不存在。
+    // `duelStage`＝不是决斗形状；决斗还没开⇒逐轮与收官那几笔此刻全都不存在。
     const firstInjuries = first.filter(e => e.type === 'INJURY');
     expect(firstInjuries.map(e => [e.data!.targetId, e.data!.value])).toEqual([['dl_tgt', 2]]);
     expect(firstInjuries.every(e => e.data?.duelStage === undefined)).toBe(true);
     expect(fieldHp(engine.state, 2, 'dl_tgt')).toEqual({ hp: 5, armor: 0 });
+
+    // ② 点头发动搦战⇒决斗这才开打。开局那一层还有人（伺隙）有得说⇒块里只立 `opening`
+    //    一声、逐轮一格没打；公告那一身与 `REACTION_ANSWERED` 紧贴块首（同一条派生点）。
+    const duelStep = rawEvents(engine.dispatch(reactionAnswerOf(engine.state)!));
+    live.push(duelStep);
+    const opened = duelStep.map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
+    const duelIdx = opened.findIndex(e => e.type === 'DUEL');
+    expect(duelIdx).toBeGreaterThanOrEqual(0);
+    expect(opened.slice(duelIdx - 2, duelIdx).map(e => e.type)).toEqual(['SKILL_ACTIVATED', 'REACTION_ANSWERED']);
+    expect(opened[duelIdx + 1].type).toBe('BEFORE_DAMAGE');
+    expect(opened[duelIdx + 1].data).toMatchObject({ duelStage: 'opening', damageType: 'skill' });
+    expect(opened.filter(e => typeof e.data?.duelRound === 'number')).toHaveLength(0);
     const openingNode = (engine.state.pendingReaction?.nodes ?? [])
       .find(node => node.sourceEvent.type === 'BEFORE_DAMAGE');
     expect(openingNode?.sourceEvent.data).toMatchObject({ duelStage: 'opening' });
 
-    // ② 答复那一趟：伺隙回复 2 点（5→7）之后决斗才接着打——逐轮起点读的是答复落账
+    // ③ 答复那一趟：伺隙回复 2 点（5→7）之后决斗才接着打——逐轮起点读的是答复落账
     //    后的状态（第一"打"后剩 5＝7−2；若回复没计入起点会是 3）。
     answerResident(engine, live);
-    const rest = live.slice(1).flat()
+    const rest = live.slice(2).flat()
       .map(raw => JSON.parse(raw) as { type: string; data?: Record<string, unknown> });
     expect(rest.filter(e => e.type === 'HEAL')).toHaveLength(1);
     const resumed = rest.filter(e => e.type === 'DUEL');
@@ -2175,14 +2351,14 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(rounds.map(e => [e.data!.duelRound, e.data!.targetId, e.data!.newHp])).toEqual([
       [1, 'dl_tgt', 5], [2, 'dl_atk', 8], [3, 'dl_tgt', 3], [4, 'dl_atk', 6], [5, 'dl_tgt', 1], [6, 'dl_atk', 4],
     ]);
-    // ③ 收官两笔：双方都活着⇒两笔都结算；顺序＝受邀者那笔在前、发起者那笔在后。
+    // ④ 收官两笔：双方都活着⇒两笔都结算；顺序＝受邀者那笔在前、发起者那笔在后。
     const injuries = rest.filter(e => e.type === 'INJURY');
     expect(injuries.map(e => [e.data!.targetId, e.data!.value])).toEqual([['dl_tgt', 6], ['dl_atk', 6]]);
     expect(fieldHp(engine.state, 2, 'dl_tgt')).toEqual({ hp: 1, armor: 0 });
     expect(fieldHp(engine.state, 1, 'dl_atk')).toEqual({ hp: 4, armor: 0 });
     expect(engine.state.pendingReaction ?? null).toBeNull();
 
-    // ④ 四路逐事件一致：桥接常驻容器 / 降级重建 / 录像回放读同一派生点
+    // ⑤ 四路逐事件一致：桥接常驻容器 / 降级重建 / 录像回放读同一派生点
     const residentFlat = live.flat();
     const residentFinal = JSON.stringify(normalize(engine.state as unknown as Record<string, unknown>));
 
@@ -2202,7 +2378,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(playback.events.flatMap(entry => rawEvents(entry.events))).toEqual(residentFlat);
     expect(JSON.stringify(normalize(playback.state as unknown as Record<string, unknown>))).toBe(residentFinal);
 
-    // ⑤ 同配置两跑逐字节一致：延后—续跑这条新回路不新增任何非确定面
+    // ⑥ 同配置两跑逐字节一致：延后—续跑这条新回路不新增任何非确定面
     const againEngine = new GameEngine(build());
     syncPlayerSkills(againEngine, againEngine.state);
     const again: string[][] = [rawEvents(againEngine.dispatch(action))];
@@ -2214,10 +2390,13 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
   // ── v2.8.25 #72 强制发动执法刀：`forced` 是"自动响／停下来问"的唯一开关，
   //    而"这一型听哪几一声"全库只有一份表 ⇒ 决斗那两层自动路也听得见。 ──
 
-  /** 同一份模板，只把两枚被动的「强制发动」开关拨一下——决斗的形状必须一模一样。 */
+  /** 同一份模板，只把三枚被动的「强制发动」开关一起拨一下——决斗的形状必须一模一样。
+   *  v2.9.16 询问制刀：搦战（造成攻击伤害后）以前不在这个开关的管理范围里（那一型从来
+   *  不在问答路上），反转后它和伺隙／刚毅同属"没勾就要问"，所以这里一并拨——
+   *  这条对照才真的是"同一份模板只改一个位"。 */
   function duelForcedFixture(forced: boolean) {
     const challenger = makeGeneral('fz_atk', 10, [
-      { name: '搦战', effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'TARGET' } }] },
+      { name: '搦战', forced, effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DUEL', target: 'TARGET' } }] },
     ]);
     const target = makeGeneral('fz_tgt', 10, [
       { name: '伺隙', forced, effects: [{
@@ -2327,8 +2506,11 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     const auto = run(true);
     const asked = run(false);
-    // 问答路：普攻那一声＋开局那一声＋收官那一声＝三格，各答一次。
-    expect(asked.flat.filter(e => e.type === 'REACTION_ANSWERED')).toHaveLength(3);
+    // 问答路：造成攻击伤害后（搦战）＋普攻那一刀受伤（刚毅）＋决斗开局（伺隙）＋
+    // 决斗收官（刚毅）＝四格，各答一次。v2.9.16 询问制刀多的是第一格——搦战这一型
+    // 以前在自动路、从来不进问窗，如今它和其余两枚一样读同一个「强制发动」位。
+    expect(asked.flat.filter(e => e.type === 'REACTION_ANSWERED').map(e => String(e.data?.skillName)))
+      .toEqual(['搦战', '刚毅', '伺隙', '刚毅']);
     expect(getReactionAsk(asked.engine.state)).toBeNull();
     // 决斗本体（逐轮与收官两笔账）读的是同一条派生点⇒与自动路逐字同形；
     // 差别只在"谁来说、什么时候说"，绝不在伤害数学或块次序上。

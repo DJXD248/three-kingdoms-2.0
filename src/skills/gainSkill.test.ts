@@ -18,6 +18,7 @@ import type { GameEvent } from '../core/Event';
 import type { General, Skill } from '../data/generals';
 import { allGenerals } from '../data/generals';
 import { compileSkill, syncPlayerSkills } from './skillCompiler';
+import { getReactionAsk } from './reactionChain';
 import { __resetSkillNameIndexForTests, __setSkillNameRosterForTests } from './skillNameIndex';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 
@@ -104,9 +105,29 @@ function playAwaken(gainedName: string) {
     makePlayer(1, { fieldGenerals: [] }),
     makePlayer(2, { fieldGenerals: [makeFieldGeneral(bearer, 2)] }),
   ]);
+  // v2.9.16 询问制刀：「回合开始时」到点先问一句（觉醒、封赏都是这一型），效果落在
+  // 答完那句的那一趟 dispatch 里。这里如实把一问一答并成同一次读数——本文件钉的是
+  // "名字⇒解析⇒定义⇒SKILL_GAINED⇒卡面长出那一枚⇒下一趟听得见"这条链，与谁点头无关。
+  //
+  // 点名答**被拿的那一枚**，不是随手取 `options[0]`：一格里同一员并排的几个候选是
+  // "选一个"的形状（表态单位＝`席位:将领`，一次表态吃掉整格，见
+  // `reactionChain.ts:241-248` 与 `eventProcessors/reactionEvents.ts` 的台账）。
+  // 第三趟那一格同时站着「觉醒」与「封赏」，取 `options[0]` 会把这一格让给「觉醒」，
+  // 「封赏」就此没机会响——那不是"新技能听不见"，是"问到了却没点它"。
   const step = (playerId: number): GameEvent[] => {
     syncPlayerSkills(engine, engine.state);
-    return engine.dispatch(createAction('END_TURN', playerId));
+    const out = [...engine.dispatch(createAction('END_TURN', playerId))];
+    for (let guard = 0; guard < 8; guard += 1) {
+      const ask = getReactionAsk(engine.state);
+      if (!ask) break;
+      const picked = ask.options.find(o => o.skillName === gainedName) ?? ask.options[0];
+      const answered = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+        skillId: picked.skillId, generalId: ask.generalId,
+      }));
+      out.push(...answered);
+      if (answered.some(e => e.type === 'ACTION_REJECTED')) break;
+    }
+    return out;
   };
   const firstDispatch = step(1);
   const handAtGain = handOf(engine.state, 2);

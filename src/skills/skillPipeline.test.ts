@@ -110,10 +110,14 @@ function buildEngine(players: EnginePlayer[]): GameEngine {
 }
 
 /**
- * v2.8.22 响应链执法刀（#71）：受击／受伤两型已搬出自动结算链，效果落在"答完那句"
- * 的那一次 dispatch 里。本文件这批端到端测钉的正是"技能的效果照旧落地"，所以每次
- * 触发后把当前问句按顺序答完（每格选第一枚），把这些 dispatch 的事件流回给用例。
+ * v2.8.22 响应链执法刀（#71）立、v2.9.16 询问制刀扩到**全部时机**：没打「强制发动」
+ * 的定义都搬出了自动结算链，效果落在"答完那句"的那一次 dispatch 里。本文件这批端到端
+ * 测钉的正是"技能的效果照旧落地"，所以每次触发后把当前问句按顺序答完（每格选第一枚），
+ * 把这些 dispatch 的事件流回给用例。
  * 问答本身的形状（谁先答、跳过、冻结世界）由 skills/reactionChain.test.ts 钉。
+ *
+ * 撞到 `ACTION_REJECTED` 就收手：那意味着这一句在当前场面里答不动（例如牌局已终），
+ * 继续空转只会白派发一轮，不会改变读数。
  */
 function answerReactions(engine: GameEngine, pick: 'first' | 'skip' = 'first'): GameEvent[] {
   const out: GameEvent[] = [];
@@ -125,7 +129,9 @@ function answerReactions(engine: GameEngine, pick: 'first' | 'skip' = 'first'): 
       : createAction('ACTIVATE_SKILL', ask.playerId, {
         skillId: ask.options[0].skillId, generalId: ask.generalId,
       });
-    out.push(...engine.dispatch(action));
+    const answered = engine.dispatch(action);
+    out.push(...answered);
+    if (answered.some(e => e.type === 'ACTION_REJECTED')) break;
   }
   return out;
 }
@@ -147,9 +153,15 @@ describe('skill pipeline · end-to-end', () => {
       makePlayer(2, { fieldGenerals: [makeFieldGeneral(p2General, 2)] }),
     ]);
 
-    const events = engine.dispatch(createAction('END_TURN', 1));
+    // v2.9.16 询问制刀：这一型到点先问一句。旧口径里这里见的是触发链那一声
+    // `TRIGGERED`（自动路真的生成了事件才有它）；今天自动路一声不响，发动的那一声
+    // 换成 `SKILL_ACTIVATED`，落在答完那句的那一趟里。两半都是证人，分开钉。
+    const opened = engine.dispatch(createAction('END_TURN', 1));
+    expect(opened.some(e => e.type === 'TRIGGERED')).toBe(false);
+    const answered = answerReactions(engine);
+    expect(answered.some(e => e.type === 'SKILL_ACTIVATED')).toBe(true);
+    const events = [...opened, ...answered];
 
-    expect(events.some(e => e.type === 'TRIGGERED')).toBe(true);
     const draws = events.filter(e => e.type === 'DRAW');
     expect(draws.length).toBeGreaterThanOrEqual(1);
     expect((draws[draws.length - 1].data as any).playerId).toBe(2);
@@ -246,9 +258,9 @@ describe('skill pipeline · end-to-end', () => {
       makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
     ]);
 
-    const events = engine.dispatch(
+    const events = [...engine.dispatch(
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
-    );
+    ), ...answerReactions(engine)];
 
     const skillDamage = events.filter(e => e.type === 'DAMAGE' && (e.data as any).damageType === 'skill');
     expect(skillDamage).toHaveLength(1);
@@ -501,7 +513,7 @@ describe('skill pipeline · Stage C coverage (HEAL / GAIN_ARMOR / skill-kill DEA
       makePlayer(2, { fieldGenerals: [wounded] }),
     ]);
 
-    const events = engine.dispatch(createAction('END_TURN', 1));
+    const events = [...engine.dispatch(createAction('END_TURN', 1)), ...answerReactions(engine)];
 
     expect(events.some(e => e.type === 'HEAL')).toBe(true);
     const p2 = engine.state.players.find(p => p.id === 2)!;
@@ -520,7 +532,7 @@ describe('skill pipeline · Stage C coverage (HEAL / GAIN_ARMOR / skill-kill DEA
       makePlayer(2, { fieldGenerals: [makeFieldGeneral(guarded, 2)] }),
     ]);
 
-    const events = engine.dispatch(createAction('END_TURN', 1));
+    const events = [...engine.dispatch(createAction('END_TURN', 1)), ...answerReactions(engine)];
 
     expect(events.some(e => e.type === 'GAIN_ARMOR')).toBe(true);
     const p2 = engine.state.players.find(p => p.id === 2)!;
@@ -552,18 +564,19 @@ describe('skill pipeline · Stage C coverage (HEAL / GAIN_ARMOR / skill-kill DEA
       makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
     ]);
 
-    const events = engine.dispatch(
+    const events = [...engine.dispatch(
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
-    );
+    ), ...answerReactions(engine)];
 
     const deaths = events.filter(e => e.type === 'DEATH');
     expect(deaths).toHaveLength(1);
     expect((deaths[0].data as any).skillKill).toBe(true);
     expect((deaths[0].data as any).attackerId).toBe('g1');
 
-    // The bounded re-entry round expanded the derived DEATH through the
-    // trigger engine: killer's 枭斩 and the victim's 遗志 each drew a card.
-    // Trigger priority order: onDeath (100) settles before onKill (60).
+    // 追加那一笔（烈攻）如今要点头；点头之后才打死人，于是「自身被击杀时」与
+    // 「击杀时」这两格也各自开了一格（v2.9.16 询问制刀）。上面那一串
+    // `answerReactions` 把三句逐一答完，摸牌才都落地——旧口径里这三声在同一次
+    // dispatch 的链式重入轮里一次结算完。触发优先级照旧：onDeath (100) 先于 onKill (60)。
     const p1 = engine.state.players.find(p => p.id === 1)!;
     const p2 = engine.state.players.find(p => p.id === 2)!;
     expect((p1.hand as any[]).map((c: any) => c.id)).toContain('deck_2');

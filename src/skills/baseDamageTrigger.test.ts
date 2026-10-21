@@ -100,7 +100,7 @@ function drawWhenBaseHurt(sub?: SkillTriggerConfig['damageSubType']): Skill {
   };
 }
 
-/** 受伤摸一张（问答路形态＝不打「强制发动」），用来钉"营地那一格不开问窗"。 */
+/** 受伤摸一张（问答路形态＝不打「强制发动」），用来钉"营地那一格照样开问窗"。 */
 function askWhenBaseHurt(): Skill {
   return { ...drawWhenBaseHurt(), forced: false };
 }
@@ -224,9 +224,30 @@ describe('营地受到伤害时 · 真链路（打自己营地）', () => {
     expect(r.handSize).toBe(0);
   });
 
-  it('营地那一格**永远到点自动响、绝不开问窗**（问答路只认受击／受伤两型；与登场、回合开始那几型同一条分流），也绝不"又响又被问"', () => {
+  it('营地那一格也**停下来问人**（v2.9.16 询问制：问不问由技能自己定，与时机是哪一族无关），且绝不"又响又被问"', () => {
     const r = attackOwnBaseWith(askWhenBaseHurt());
-    expect(r.handSize).toBe(1); // 没打「强制发动」也一样自动响＝既有分流的逐字行为
+    // 问窗开着、这一趟里一个字没落＝"又响又被问"这条路结构上不存在：自动路压根不
+    // 注册没打「强制发动」的定义（`SkillTriggerBridge.defersToReactionQueue` 单点）。
+    expect(r.handSize).toBe(0);
+    const ask = getReactionAsk(r.engine.state);
+    expect(ask?.trigger).toBe('onBaseDamaged');
+    expect(ask?.playerId).toBe(2);
+    expect(ask?.generalId).toBe('g2');
+    expect(ask?.options.map(o => o.skillName)).toEqual(['守营']);
+    // 点头之后才摸，且只摸一次。
+    const answered = r.engine.dispatch(createAction('ACTIVATE_SKILL', 2, {
+      skillId: ask!.options[0].skillId, generalId: ask!.generalId,
+    }));
+    expect(answered.filter(e => e.type === 'DRAW' && (e.data as any).playerId === 2)).toHaveLength(1);
+    expect(handOf(r.engine, 2)).toBe(1);
+    expect(getReactionAsk(r.engine.state)).toBeNull();
+  });
+
+  it('同一枚勾上「强制发动」＝回到自动路：当场自己响、连格都不开', () => {
+    const forced = { ...drawWhenBaseHurt(), forced: true };
+    const r = attackOwnBaseWith(forced);
+    expect(r.drew).toBe(true);
+    expect(r.handSize).toBe(1);
     expect(getReactionAsk(r.engine.state)).toBeNull();
   });
 });

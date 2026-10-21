@@ -97,12 +97,16 @@ function awakeningKill(name: string, extra: Partial<Skill> = {}): Skill {
   } as Skill;
 }
 
-/** 对照组：同一声击杀，但没挂徽章⇒今天既有的自动路（也是两锚不动的结构证人）。 */
-function plainKill(name: string): Skill {
+/** 对照组：同一声击杀，但**没挂徽章**。v2.9.16 询问制刀起，这一组钉的是"徽章从来不是
+ *  那把开关"——用户裁决原文：「在场即生效和强制发动不问。勾选了强制发动的觉醒技不问」，
+ *  反过来讲＝没勾强制发动的一律问，挂没挂觉醒技徽章与"问不问"无关。开关只有一个：
+ *  定义上的 `forced`。 */
+function plainKill(name: string, extra: Partial<Skill> = {}): Skill {
   return {
     name,
     description: `${name}：击杀后摸一张牌`,
     effects: [{ id: 'e1', trigger: { type: 'onKill' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+    ...extra,
   } as Skill;
 }
 
@@ -312,7 +316,7 @@ describe('觉醒技 · 达成条件当场问（用户 2026-10-08 裁「觉醒达
     expect(events.some(e => e.type === 'SKILL_ACTIVATED')).toBe(false);
     expect(quotaEntries(engine.state)).toEqual([]);
     expect(getReactionAsk(engine.state)).toBeNull();
-    expect(limitedQuotaAvailable(engine.state, ask.options[0].definition)).toBe(true);
+    expect(limitedQuotaAvailable(engine.state, ask.options[0].definitions[0])).toBe(true);
 
     // "下一声还问不问"喂的是**这一趟已经记进事件流的那一条真 DEATH**（不是编出来的
     // 输入、也不是造一个行动类型去凑第二刀）：扫描器是纯函数 of（state，事件序列），
@@ -326,7 +330,7 @@ describe('觉醒技 · 达成条件当场问（用户 2026-10-08 裁「觉醒达
     engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
       skillId: ask.options[0].skillId, generalId: ask.generalId,
     }));
-    expect(limitedQuotaAvailable(engine.state, ask.options[0].definition)).toBe(false);
+    expect(limitedQuotaAvailable(engine.state, ask.options[0].definitions[0])).toBe(false);
     expect(syncReactionQueue(engine.state, [deathEventOf(firstKill)]).queue).toBeNull();
     // 问答路没有"置灰列出"的形状（v2.8.32 的如实账：能列出的就是能答的），所以
     // 「本局已用尽」在这一族的表现＝**不再问**；那句文案仍由回合结束那条路消费。
@@ -348,11 +352,24 @@ describe('觉醒技 · 达成条件当场问（用户 2026-10-08 裁「觉醒达
     expect(engine.legalActions(2)).toEqual([]);
   });
 
-  it('对照组＝锚不动的证人：没挂徽章的同型击杀技照旧自动响、不开格', () => {
-    const { engine, firstKill } = sceneWithKill([plainKill('枭斩')]);
-    expect(getReactionAsk(engine.state)).toBeNull();
-    expect(engine.state.pendingReaction ?? null).toBeNull();
-    expect(firstKill.some(e => e.type === 'DRAW')).toBe(true);
+  it('对照组＝徽章不是那把开关（v2.9.16 询问制）：没挂徽章的同型击杀技也停下来问，勾上「强制发动」才自己响', () => {
+    const asked = sceneWithKill([plainKill('枭斩')]);
+    const ask = getReactionAsk(asked.engine.state);
+    expect(ask?.trigger).toBe('onKill');
+    expect(ask?.options.map(o => o.skillName)).toEqual(['枭斩']);
+    // 问窗开着的那一刻，摸牌还没发生——效果落在答完那句的那一趟 dispatch 里。
+    expect(asked.firstKill.some(e => e.type === 'DRAW')).toBe(false);
+    const answered = asked.engine.dispatch(createAction('ACTIVATE_SKILL', ask!.playerId, {
+      skillId: ask!.options[0].skillId, generalId: ask!.generalId,
+    }));
+    expect(answered.some(e => e.type === 'DRAW')).toBe(true);
+
+    // 摘不掉、也不改语义：同一枚只需勾上「强制发动」，它就回到自动路当场自己响、
+    // 连格都不开⇒那把开关从头到尾只有一个，就是定义上的 `forced`。
+    const forcedScene = sceneWithKill([plainKill('枭斩', { forced: true })]);
+    expect(getReactionAsk(forcedScene.engine.state)).toBeNull();
+    expect(forcedScene.engine.state.pendingReaction ?? null).toBeNull();
+    expect(forcedScene.firstKill.some(e => e.type === 'DRAW')).toBe(true);
   });
 });
 

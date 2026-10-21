@@ -1,9 +1,11 @@
 /**
  * v2.8.22 响应链执法刀（#71）——「到点自动响」换成「停下来按规矩问」。
+ * v2.9.16 询问制刀把这一句的覆盖面从"受击／受伤两型"扩到**除「在场即生效」与
+ * 「强制发动」以外的每一型**（用户 2026-10-20 裁）。
  *
  * 这里钉的是六件事，逐条对应 §H9 的裁决原文：
- *   ① 三类分流（第九轮 a/c）：非 forced 的受击／受伤两型搬出结算链、forced 与
- *      其余触发型一字不动（绝不既自动响又问）；
+ *   ① 分流（第九轮 a/c ＋ v2.9.16）：没打强制发动的定义搬出结算链、forced 与
+ *      passive 一字不动（绝不既自动响又问）；
  *   ② 顺序（第十轮①工作例）：A→C→D→B 逐字；
  *   ③ 不插队（第九轮⑨）：应答新开的格只排队尾；
  *   ④ 收格与出口：问完的格被扫描收掉、跳过恒在（§12-61）、没候选不开格；
@@ -14,10 +16,11 @@ import { describe, it, expect } from 'vitest';
 import { GameEngine } from '../core/GameEngine';
 import { createInitialEngineState, cloneEngineState } from '../core/GameState';
 import type { EngineState, EnginePlayer } from '../core/GameState';
-import type { GameEvent } from '../core/Event';
+import type { GameEvent, GameEventType } from '../core/Event';
 import { createAction } from '../action/ActionTypes';
 import { applyReactionAnsweredEvent } from '../core/eventProcessors/reactionEvents';
-import type { General, Skill } from '../data/generals';
+import type { General, Skill, SkillTriggerType } from '../data/generals';
+import { triggerTypeLabels } from '../data/generals';
 import { syncPlayerSkills } from './skillCompiler';
 import {
   getReactionAsk,
@@ -25,11 +28,12 @@ import {
   listReactionCandidates,
   reactionAnsweredOf,
   reactionSubjectKey,
-  isReactionSourceEvent,
+  mayOpenReactionCell,
   syncReactionQueue,
   reactionQueueFingerprint,
 } from './reactionChain';
-import { REACTION_EVENT_TYPES, REACTION_TRIGGERS, eventsHeardBy } from './reactionTriggers';
+import { ANY_TRIGGER_EVENT_TYPES, TRIGGER_EVENTS, eventsHeardBy } from './reactionTriggers';
+import type { DataSkillTrigger } from './dataTypes';
 import { defersToReactionQueue } from './SkillTriggerBridge';
 
 function makeGeneral(id: string, skills: Skill[]): General {
@@ -146,11 +150,27 @@ function attackOnce(victimSkills: Skill[]): GameEngine {
   return engine;
 }
 
+/** 一次真攻击，攻击方带 `attackerSkill`（p1 的 g1 打 p2 的 g2，目标不带技能）。 */
+function attackWith(attackerSkill: Skill): { engine: GameEngine; events: GameEvent[] } {
+  const attackerGeneral = makeGeneral('g1', [attackerSkill]);
+  const victim = makeGeneral('g2', []);
+  const state = makeState([
+    makePlayer(1, { fieldGenerals: [makeFieldGeneral(attackerGeneral, 1)], hand: [ATTACK_COST] }),
+    makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
+  ]);
+  const engine = new GameEngine(state);
+  syncPlayerSkills(engine, state);
+  const events = engine.dispatch(createAction('ATTACK', 1, {
+    attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST,
+  }));
+  return { engine, events };
+}
+
 function typesOf(events: GameEvent[]): string[] {
   return events.map(event => event.type);
 }
 
-describe('响应链 · 三类分流（§H9 第九轮 a/c）', () => {
+describe('响应链 · 分流（§H9 第九轮 a/c ＋ v2.9.16 询问制）', () => {
   it('非 forced 的「受到伤害后」不再自动响——事件流里没有它的效果，改成开格问人', () => {
     const engine = attackOnce([hurtDraw('奸雄')]);
 
@@ -182,31 +202,44 @@ describe('响应链 · 三类分流（§H9 第九轮 a/c）', () => {
     expect((p2.hand ?? []).length).toBeGreaterThan(0);
   });
 
-  it('「成为目标时」也进问答；既不受击也不受伤的那一型（造成伤害后）一字不动', () => {
+  it('「造成伤害后」也进问答（v2.9.16 询问制：问不问不由时机定）；同一枚摘掉强制发动才回到自动路', () => {
     const withCounter = attackOnce([counterSkill('回刺')]);
     const ask = getReactionAsk(withCounter.state);
     expect(ask).not.toBeNull();
     expect(ask!.sourceEvent.type).toBe('BEFORE_DAMAGE');
     expect(ask!.options.map(o => o.skillId)).toEqual(['g2:回刺:e1']);
+    // 措辞念头里这一格自己的时机，不再由组件猜（v2.9.16 新字段）。
+    expect(ask!.trigger).toBe('onBecomingTarget');
 
-    // 攻击方的「造成伤害后」不在响应两型里 ⇒ 自动响、不开格。
+    // 攻击方的「造成伤害后」以前自动响，今天同样停下来问一句。
     const dealt: Skill = {
       name: '烈攻',
       effects: [{ id: 'e1', trigger: { type: 'onDamageDealt' }, runtime: { type: 'DAMAGE', value: 1, target: 'TARGET' } }],
     };
-    const attackerGeneral = makeGeneral('g1', [dealt]);
-    const victim = makeGeneral('g2', []);
-    const state = makeState([
-      makePlayer(1, { fieldGenerals: [makeFieldGeneral(attackerGeneral, 1)], hand: [ATTACK_COST] }),
-      makePlayer(2, { fieldGenerals: [makeFieldGeneral(victim, 2)] }),
-    ]);
-    const engine = new GameEngine(state);
-    syncPlayerSkills(engine, state);
-    const events = engine.dispatch(createAction('ATTACK', 1, {
-      attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST,
-    }));
-    expect(typesOf(events)).toContain('TRIGGERED');
-    expect(getReactionAsk(engine.state)).toBeNull();
+    const asked = attackWith(dealt);
+    expect(getReactionAsk(asked.engine.state)).not.toBeNull();
+    const ask2 = getReactionAsk(asked.engine.state)!;
+    expect(ask2.playerId).toBe(1);
+    expect(ask2.generalId).toBe('g1');
+    expect(ask2.trigger).toBe('onDamageDealt');
+    // 自动路结构性保证：这枚压根没注册进触发链⇒攻击那一趟里没有 TRIGGERED。
+    expect(typesOf(asked.events)).not.toContain('TRIGGERED');
+    expect(defersToReactionQueue({
+      id: 'x', name: '烈攻', trigger: 'onDamageDealt', description: '', effects: [],
+    })).toBe(true);
+
+    // 判据的另一半＝只有「强制发动」能把它放回自动路（单独改坏 `forced` 那一行必红）。
+    const forced = attackWith({ ...dealt, forced: true });
+    expect(getReactionAsk(forced.engine.state)).toBeNull();
+    expect(typesOf(forced.events)).toContain('TRIGGERED');
+  });
+
+  it('「在场即生效」永远不问、永远不响（它不是一次发动，账由修正器单点落笔）', () => {
+    expect(defersToReactionQueue({
+      id: 'x', name: '奋威', trigger: 'passive', description: '', effects: [], passive: true,
+    })).toBe(false);
+    expect(eventsHeardBy('passive')).toEqual([]);
+    expect(mayOpenReactionCell({ id: 'e', type: 'STAT_MODIFY', data: {} } as unknown as GameEvent)).toBe(false);
   });
 
   it('同一格内同一将领只问一次：两枚可响应被动＝三键一问（第九轮⑤）', () => {
@@ -392,9 +425,11 @@ describe('响应链 · 队列规则', () => {
     // `duelRound` 的 `DAMAGE`——**压根不进**那张表，所以"逐轮静默"不再是扫描器里的
     // 一条特例，而是"这一声不存在"。带 `duelRound` 的显式排除仍留着，钉的是万一
     // 有人手工喂一块进来也别开格（§H9 第七轮点名的那道保险）。
-    expect(isReactionSourceEvent(injuryOf('gX', 2))).toBe(true);
-    expect(isReactionSourceEvent(injuryOf('gX', 2, 1))).toBe(false);
-    expect(isReactionSourceEvent({
+    // v2.9.16：这一句的门从"两型专属的开格判据"换成了那张表派生的总集⇒证人跟着换名，
+    // 判据本身一字未动。
+    expect(mayOpenReactionCell(injuryOf('gX', 2))).toBe(true);
+    expect(mayOpenReactionCell(injuryOf('gX', 2, 1))).toBe(false);
+    expect(mayOpenReactionCell({
       type: 'DAMAGE',
       data: { targetPlayerId: 2, targetId: 'gX', damageType: 'attack', value: 1 },
     })).toBe(false);
@@ -446,7 +481,8 @@ describe('响应链 · 表态落账（唯一状态突变入口＝EventProcessor�
     const ask = {
       nodeKey: 'rn:5:0',
       sourceEvent: { type: 'INJURY', data: {} } as GameEvent,
-      playerId: 2, generalId: 'gX', generalName: '响应将gX', options: [],
+      playerId: 2, generalId: 'gX', generalName: '响应将gX',
+      trigger: 'onDamageTaken' as DataSkillTrigger, options: [],
     };
     const data = reactionAnsweredOf(ask, null);
     expect(data.skillId).toBeNull();
@@ -596,14 +632,20 @@ describe('强制发动执法刀 · 两条路同读一份事件表', () => {
     expect(triggers.map(t => t.id)).toEqual(['skill:2:g2:刚毅:e1']);
   });
 
-  it('问答路的两型事件维由那张表派生，不存在第二份写法', () => {
+  it('一张表派生到底：开格总集＝表里所有声的并集，而"问不问"只剩 forced／passive 两个判据', () => {
     expect(eventsHeardBy('onDamageTaken')).toEqual(['INJURY']);
     expect(eventsHeardBy('onBecomingTarget')).toEqual(['BEFORE_DAMAGE']);
-    // 2.3.1 单发动路：回合结束技能压根不在触发面上。
+    // 2.3.1 单发动路：回合结束技能压根不在触发面上（它有自己的窗，永远问）。
     expect(eventsHeardBy('onTurnEnd')).toEqual([]);
-    for (const trigger of REACTION_TRIGGERS) {
-      expect(REACTION_EVENT_TYPES[trigger]).toEqual(eventsHeardBy(trigger));
-    }
+    const fromTable = [...new Set((Object.values(TRIGGER_EVENTS) as (readonly GameEventType[])[]).flat())].sort();
+    expect([...ANY_TRIGGER_EVENT_TYPES].sort()).toEqual(fromTable);
+    // v2.9.16 询问制的正身：**表里每一型**（＝听得懂至少一声）都问，摘掉强制发动才自动。
+    const heard = Object.keys(TRIGGER_EVENTS) as DataSkillTrigger[];
+    expect(heard.length).toBeGreaterThan(0);
+    heard.forEach(trigger => {
+      expect(defersToReactionQueue({ id: 'x', name: 'n', trigger, description: '', effects: [] })).toBe(true);
+      expect(defersToReactionQueue({ id: 'x', name: 'n', trigger, description: '', effects: [], forced: true })).toBe(false);
+    });
   });
 
   it('探针与候选枚举同判据：问答路能开格的那一声，探针必说有听众', () => {
@@ -631,5 +673,235 @@ describe('强制发动执法刀 · 两条路同读一份事件表', () => {
     expect(p2.hand ?? []).toHaveLength(1);
     const ask = getReactionAsk(engine.state);
     expect(ask?.options.map(o => o.skillId)).toEqual(['g2:奸雄:e1']);
+  });
+});
+
+// ── v2.9.16 询问制刀 · 一技能一按钮 ──
+// `compileGeneralSkills` 按**效果**编定义（一枚技能的每个可结算效果＝一条），而问答路的
+// 表态单位是"某一席的某一员将"（§H9 第九轮⑤：点一个键吃掉整格）。两条规则直接相乘＝
+// 按钮按效果开、点下去吃掉整格：黄盖「苦肉」（自伤 1 点＋摸两张）在问窗里排成两个
+// 「发动苦肉」，玩家点第一个只拿到自伤，**摸两张那一半永远没机会响**——既不会再问一次
+// （台账已记这一格），也不会自动补。下面这三条把修法钉住：一次表态结这一枚技能这一刻的
+// **全部**效果；而"一次表态吃掉整格"那条一字未改（不同技能仍是两键、仍是择一）。
+describe('响应链 · 一技能一按钮（v2.9.16 询问制刀，苦肉形状）', () => {
+  /** 苦肉的形状：同一条时机上两个各自独立触发的效果（自伤 1 点＋摸两张）。 */
+  function twoEffectSelf(name: string): Skill {
+    return {
+      name,
+      description: `${name}：成为目标时自伤 1 点，然后摸两张牌`,
+      effects: [
+        { id: 'e1', trigger: { type: 'onBecomingTarget' }, runtime: { type: 'DAMAGE', value: 1, target: 'SELF' } },
+        { id: 'e2', trigger: { type: 'onBecomingTarget' }, runtime: { type: 'DRAW_CARD', value: 2, target: 'SELF' } },
+      ],
+    } as Skill;
+  }
+
+  it('一枚两效果的技能＝问窗里一个按钮，按钮带的是这一刻的全部定义', () => {
+    const engine = attackOnce([twoEffectSelf('苦形')]);
+    const ask = getReactionAsk(engine.state)!;
+    expect(ask.options).toHaveLength(1);
+    expect(ask.options[0].skillName).toBe('苦形');
+    // 寻址键＝头一枚定义（点这一下结的是整枚技能，不需要玩家再点第二次）
+    expect(ask.options[0].skillId).toBe('g2:苦形:e1');
+    expect(ask.options[0].definitions.map(d => d.id)).toEqual(['g2:苦形:e1', 'g2:苦形:e2']);
+    // 派生点自证：每条定义都还认这一声（否则并进来的那半在翻译时会被丢掉）
+    expect(ask.options[0].definitions.every(d => d.trigger === 'onBecomingTarget')).toBe(true);
+  });
+
+  it('点这一下：自伤那一刀与摸两张那一张**同时**落账——少了后半就是这条证人红的', () => {
+    const engine = attackOnce([twoEffectSelf('苦形')]);
+    const before = (engine.state.players.find(p => p.id === 2)!.fieldGenerals as Array<{ currentHp: number }>)[0].currentHp;
+    const ask = getReactionAsk(engine.state)!;
+    const events = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: ask.options[0].skillId, generalId: ask.generalId,
+    }));
+    // 前半：自伤那一刀（点名到 `苦形:e1` 这条定义，不是"随便有一声伤害"）
+    const selfHurt = events.filter(e => e.type === 'DAMAGE'
+      && String((e.data as { skillId?: unknown }).skillId ?? '').includes('苦形:e1'));
+    expect(selfHurt).toHaveLength(1);
+    expect(selfHurt[0].data).toMatchObject({ sourceGeneralId: 'g2', targetId: 'g2', value: 1 });
+    // 后半：摸两张那一张——缺了它，整条证人就是当年那个真缺陷
+    const drawn = events.filter(e => e.type === 'DRAW'
+      && String((e.data as { skillId?: unknown }).skillId ?? '').includes('苦形:e2'));
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].data).toMatchObject({ playerId: 2, count: 2 });
+
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    // 实测：「成为目标时」那一格开在**伤害落地之前**（冻结世界），所以答完这一句之后
+    // 普攻那 2 点才补落——体力 4→1＝自伤 1 ＋普攻 2。少了自伤会停在 2、少了摸两张手牌
+    // 会是 0：两个数一起把住，才证的是"一次表态结这一枚技能的全部效果"。
+    expect((p2.fieldGenerals as Array<{ currentHp: number }>)[0].currentHp).toBe(before - 1 - 2);
+    expect(p2.hand ?? []).toHaveLength(2);
+    // 一次表态吃掉整格：答完不再有第二格等这一员将点第二次（后半**只能**靠这一次结掉）
+    expect(getReactionAsk(engine.state)).toBeNull();
+  });
+
+  it('不同技能仍是两个按钮、仍是一次表态择一（§H9 第九轮⑤ 一字未改）', () => {
+    // 两枚技能挂在**同一声**上（成为目标时）⇒同一格里两个按钮；奸雄那一枚若挂在另一声上
+    // 就是另一格，那是"格与格各答一次"，不是这里要证的择一。
+    const engine = attackOnce([twoEffectSelf('苦形'), counterSkill('反伤')]);
+    const ask = getReactionAsk(engine.state)!;
+    expect(ask.options.map(o => o.skillName)).toEqual(['苦形', '反伤']);
+    const events = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: ask.options[0].skillId, generalId: ask.generalId,
+    }));
+    // 点了苦形⇒反伤在这一格里不响，也不再问第二次：玩家择一，不是"全都响"。
+    expect(events.filter(e => String((e.data as { skillId?: unknown }).skillId ?? '').includes('反伤')))
+      .toHaveLength(0);
+    expect(getReactionAsk(engine.state)).toBeNull();
+  });
+});
+
+// ── v2.9.16 询问制刀 · 阵亡那一格 ──
+// 「自身被击杀时」是询问制新覆盖的一型：候选从**坟场**捞（那一员已经不在场），
+// 而问句的名字原先只在场名单里找⇒界面把内部运行时 id（`du_vic` 这种）当将名念给玩家看。
+// 这是反转之后才新可达的一条路（旧口径下这一格压根不开）。
+describe('响应链 · 阵亡那一格念得出名字（v2.9.16 询问制刀）', () => {
+  /** 「自身被击杀时摸一张」——说话的那一员此刻已经不在场。 */
+  function lastWords(name: string): Skill {
+    return {
+      name,
+      description: `${name}：被击杀时可摸一张牌`,
+      effects: [{ id: 'e1', trigger: { type: 'onDeath' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+    } as Skill;
+  }
+
+  /** 一刀打死：p1 的 g1 斩 p2 那员只剩 1 点体力的将（伤害 2＞1）。 */
+  function killedOnce(victimSkills: Skill[]): GameEngine {
+    const dying = makeGeneral('g2', victimSkills);
+    const dyingField = makeFieldGeneral(dying, 2);
+    Object.assign(dyingField, { currentHp: 1 });
+    const state = makeState([
+      makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g1', []), 1)], hand: [ATTACK_COST] }),
+      makePlayer(2, { fieldGenerals: [dyingField] }),
+    ]);
+    const engine = new GameEngine(state);
+    syncPlayerSkills(engine, state);
+    engine.dispatch(createAction('ATTACK', 1, {
+      attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST,
+    }));
+    return engine;
+  }
+
+  it('问句里的将名取自坟场那一份卡面——不是把内部运行时 id 念给玩家听', () => {
+    const engine = killedOnce([lastWords('遗言')]);
+    const ask = getReactionAsk(engine.state);
+    expect(ask).not.toBeNull();
+    expect(ask!.playerId).toBe(2);
+    expect(ask!.generalId).toBe('g2');
+    expect(ask!.generalName).toBe('响应将g2'); // 坟场回落：这一员已经不在场名单里
+    expect(ask!.trigger).toBe('onDeath');
+    expect(ask!.options.map(o => o.skillId)).toEqual(['g2:遗言:e1']);
+  });
+
+  it('点头⇒阵亡方那一席摸到牌；摇头⇒同一声不再问第二遍（一次表态吃掉这一格）', () => {
+    const nodded = killedOnce([lastWords('遗言')]);
+    const ask = getReactionAsk(nodded.state)!;
+    nodded.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: ask.options[0].skillId, generalId: ask.generalId,
+    }));
+    expect((nodded.state.players.find(p => p.id === 2)!.hand ?? [])).toHaveLength(1);
+    expect(getReactionAsk(nodded.state)).toBeNull();
+
+    const declined = killedOnce([lastWords('遗言')]);
+    const openAsk = getReactionAsk(declined.state)!;
+    declined.dispatch(createAction('SKIP_REACTION', openAsk.playerId, { nodeKey: openAsk.nodeKey }));
+    expect((declined.state.players.find(p => p.id === 2)!.hand ?? [])).toHaveLength(0);
+    expect(getReactionAsk(declined.state)).toBeNull();
+  });
+});
+
+// ── v2.9.16 询问制刀 · 问句措辞的唯一词源 ──
+// 组件原先把两句措辞写死在 JSX 里（`BEFORE_DAMAGE ? '成为目标时' : '受到伤害后'`）。
+// 覆盖面从两型扩到每一型之后，那句写死的 ternary 会把"回合开始时"念成"受到伤害后"，
+// 所以现在措辞改由**这一格自己的时机**去词源取。这里钉的是那条依赖：问句里可能出现
+// 的每一型时机，词源都必给得出一个非空中文名（否则界面念出 `undefined` 给玩家看）。
+describe('响应链 · 问句时机名取自词源（v2.9.16 询问制刀）', () => {
+  it('问答路能问到的每一型时机，在 `triggerTypeLabels` 里都有一个非空中文名', () => {
+    const askable = (Object.keys(TRIGGER_EVENTS) as DataSkillTrigger[])
+      .filter(trigger => eventsHeardBy(trigger).length > 0);
+    expect(askable.length).toBeGreaterThan(0);
+    askable.forEach(trigger => {
+      expect(triggerTypeLabels[trigger as SkillTriggerType], `时机 ${trigger} 没有中文名`).toBeTruthy();
+    });
+    // 问句里出现过的这一格（阵亡那一格）也在同一张表上：不是组件另写的一句
+    expect(triggerTypeLabels.onDeath).toBe('自身被击杀时');
+    expect(triggerTypeLabels.onBecomingTarget).toBe('成为目标时');
+  });
+});
+
+// ── v2.9.16 询问制刀 · 对局结束撞上一格没问完 ──
+// 询问制把"每一型都问"铺开之后，多了一条要当面问清的路：**把对局打死的那一声**
+// 会不会同时开出一格？开出来了就没人能答——校验器在 `phase==='gameOver'` 时不再
+// 走响应闸（`src/rules/ActionValidator.ts:29`），落回普通阶段闸⇒点"发动"一律被
+// 顶回 `ACTION_NOT_ALLOWED_IN_PHASE`，问句却还挂在界面上。
+// 实测结论＝这一型今天**不存在**，两条理由都是结构性的，各配一条证人：
+//   ① 营地那一格（`onBaseDamaged`）不认「我听谁」，只听自家席位那一声
+//      （判据 `src/skills/skillEventMatch.ts:137`）⇒**赢家侧**不可能有候选；
+//   ② 营地掉到 0 的那一笔里，阵亡席位连人带牌当场抹净（`fieldGenerals`／`hand`
+//      清空，`src/core/eventProcessors/damageEvents.ts:14`）⇒**欠答那一席**也没候选，
+//      而扫描发生在这一笔全部事件落账**之后**。
+// 两池各 300 局的现场复量（seed 1..300）：`phase==='gameOver'` 时队列非空＝**0 次**。
+// 所以这里不写防御代码（不给不会发生的场景加闸），只把这两条理由钉成证人：
+// 哪天营地那一格认了「我听谁」、或者营地掉血不再抹掉在场将，第二条证人就会红。
+describe('响应链 · 把对局打死的那一声开不出格子（v2.9.16 询问制刀）', () => {
+  /** 「营地受到伤害时摸一张牌」——v2.9.14 那一型，听的是带 `isBase` 的那一声。 */
+  function campInjuryDraw(name: string): Skill {
+    return {
+      name,
+      description: `${name}：营地受到伤害时可摸一张牌`,
+      effects: [{ id: 'e1', trigger: { type: 'onBaseDamaged' }, runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' } }],
+    } as Skill;
+  }
+
+  /** 打营地那一席，另一席站着一员**也挂营地技**的将（①那条理由的受力点）。 */
+  function hitCamp(p2BaseHp: number, p2Skills: Skill[], p1Skills: Skill[] = []): GameEngine {
+    const rusher = makeFieldGeneral(makeGeneral('g1', p1Skills), 1);
+    rusher.position = { zone: 'front', slot: 0, areaOwnerId: 2 };
+    const state = makeState([
+      makePlayer(1, { fieldGenerals: [rusher], hand: [ATTACK_COST] }),
+      makePlayer(2, {
+        baseHp: p2BaseHp,
+        fieldGenerals: [makeFieldGeneral(makeGeneral('g2', p2Skills), 2)],
+      }),
+    ]);
+    const engine = new GameEngine(state);
+    syncPlayerSkills(engine, state);
+    engine.dispatch(createAction('ATTACK', 1, {
+      attackerId: 'g1', targetId: 'base_2', ranged: false, consumeCard: ATTACK_COST,
+    }));
+    return engine;
+  }
+
+  it('营地**没死**那一笔：这一格照样开、照样问（接线是活的，不是空跑）', () => {
+    const engine = hitCamp(9, [campInjuryDraw('护营')]);
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    expect(p2.baseHp).toBe(8); // 打在营地上的那一下掉 1 点（不是打将的那 2 点）
+    const ask = getReactionAsk(engine.state);
+    expect(ask).not.toBeNull();
+    expect(ask!.playerId).toBe(2);
+    expect(ask!.trigger).toBe('onBaseDamaged');
+    expect(ask!.options.map(o => o.skillId)).toEqual(['g2:护营:e1']);
+    // ①的正面半边：同一笔里**赢家侧**那员也挂着营地技，它不听（自家营地没掉血）⇒
+    // 问句只欠挨打那一席。改坏 `skillEventMatch` 里营地那一格的席位判据，这条先红。
+    expect(listReactionCandidates(engine.state, {
+      key: 'probe', sourceEvent: { type: 'INJURY', data: { targetPlayerId: 2, targetId: 'base_2', isBase: true, hpLost: 1 } },
+      answered: [],
+    }).map(c => `${c.ownerId}:${c.generalId}`)).toEqual(['2:g2']);
+  });
+
+  it('营地**掉到 0**那一笔：对局结束，且这一格根本开不出来', () => {
+    const engine = hitCamp(1, [campInjuryDraw('护营')], [campInjuryDraw('隔营')]);
+    const p2 = engine.state.players.find(p => p.id === 2)!;
+    const p1 = engine.state.players.find(p => p.id === 1)!;
+    expect(engine.state.phase).toBe('gameOver');
+    // 证的是②那条理由本身（不是"恰好没连上电"）：这一席的将在这一笔里已被抹净
+    expect(p2.isAlive).toBe(false);
+    expect(p2.fieldGenerals).toHaveLength(0);
+    // ①：赢家那员将**还在场**、也挂着营地技，但营地那一格不认「我听谁」⇒它不是候选
+    expect(p1.fieldGenerals).toHaveLength(1);
+    // 队列里没有待答格⇒界面不会在胜负已分的牌桌上摆一个点了必被顶回的按钮
+    expect(engine.state.pendingReaction?.nodes.length ?? 0).toBe(0);
+    expect(getReactionAsk(engine.state)).toBeNull();
   });
 });

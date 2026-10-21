@@ -10,7 +10,7 @@ import { evaluateSkillConditions } from './skillConditions';
 import { gateConditionsToText } from './skillGateText';
 import { matchesSkillEvent } from './skillEventMatch';
 import { activationRecordEvent, limitedQuotaAvailable } from './skillQuota';
-import { eventsHeardBy, isReactionTrigger } from './reactionTriggers';
+import { eventsHeardBy } from './reactionTriggers';
 import {
   enumerateHandCardCandidates,
   enumerateTargetCandidates,
@@ -49,38 +49,46 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /**
- * 注册面的**分流开关**（§H9 第九轮 a/c 三类分流，v2.8.22 响应链执法刀）。
- * true＝这枚定义**不进触发链**：它听的那一声（受击／受伤）改成走响应链问答
- * 队列——候选由 `skills/reactionChain.ts` 从 EngineState 枚举，发动经 canonical
- * `ACTIVATE_SKILL`、不发动经 canonical `SKIP_REACTION`。形态与 `onTurnEnd`
- * 故意缺席 `TRIGGER_EVENTS` 一模一样（**同一枚技能绝不允许既自动响又问**）。
+ * 注册面的**分流开关**（§H9 第九轮 a/c 三类分流，v2.8.22 响应链执法刀立，
+ * **v2.9.16 询问制刀反转**）。
  *
- * `forced`（强制发动）＝"满足触发条件与代价后直接响、不用玩家点头"（§H9 用户
- * 更正 c 条），所以它留在自动路上；该字段此前只活在录入面、结算侧零消费
- * （§12-55），本刀起它是唯一的自动发动开关。其余触发型一字未动。
+ * 判据只有一句：**凡是到点需要主人点头的发动，都停下来问；只有两型例外。**
+ * 用户 2026-10-20 裁决原文＝「在场即生效和强制发动不问。勾选了强制发动的觉醒技不问」，
+ * 与同日先前那句「技能触发后需不需要玩家响应发动，是由技能本身决定的，只有强制发动的
+ * 技能才会自己直接发动不问玩家」是同一根轴——**问不问由技能自己说了算，不由时机说了算**。
+ * 所以这一句不再认"哪一声"，只认这一枚定义自己身上的两个字段：
+ *  - `forced`（强制发动）＝满足触发条件与代价后直接响、不用点头⇒不问；
+ *  - `passive`（在场即生效）＝压根不是一次"发动"⇒问它没有意义（它也不在事件面上，
+ *    唯一的写手是 `skills/passiveModifiers.ts`）；
+ *  - `choiceMode`（择一）＝它到点开的是**自己的选择账**（玩家在那一扇窗里挑哪一支），
+ *    已经是"停下来问"，只是问法不是是/否⇒本刀一字不动（§H9 择一契约）。
+ * 余下全部触发型一律进问答路：**同一枚技能绝不允许既自动响又问**（不注册的形状与
+ * `onTurnEnd` 故意缺席 `TRIGGER_EVENTS` 同一套纪律——回合结束那一格本来就永远问，
+ * 走的是 `skills/turnEndSkills.ts` 那扇自己的窗，不进这条队列）。
  *
- * **2.9.3 刀B 加第二族**：打了「觉醒技」徽章的定义（编译器的 `awakening` 位）也进
- * 问答路，**与它听的是哪一声无关**——用户 2026-10-08 裁「觉醒达成条件当场问」，
- * 而"达成条件"那一刻由这枚技能自己的触发时机说（魏关羽「单骑」＝近战击杀后）。
- * 受击／受伤两型、其余既有触发型、以及没打徽章的一切内容判据逐字不变⇒两个锚池
- * 结构上不动（今天官方名册与 DIY 夹具里没有一枚技能挂「觉醒技」，这条普查钉在
- * `skills/awakeningSkill.test.ts`）。
+ * 「觉醒技」徽章从本刀起**不再单独享有"必问"特权**：它以前是第二族（v2.9.3 刀B），
+ * 而反转后它的每一型非强制定义本来就要问，打了强制发动的那一枚则照用户的裁决不问。
+ * 因此这里既不再读 `awakening`，也不再读时机名单。
  */
 export function defersToReactionQueue(skill: DataSkillDefinition): boolean {
   // choiceMode 技能不进反应队列，直接开选择账
   if ((skill as unknown as Record<string, unknown>).choiceMode === true) return false;
   // 「强制发动」＝不用点头⇒压根不该停下来问
   if (skill.forced === true) return false;
-  return isReactionTrigger(skill.trigger) || skill.awakening === true;
+  // 「在场即生效」＝人在就算，不是一次发动⇒没有"要不要发动"可问
+  if (skill.trigger === 'passive') return false;
+  // 其余一律问：这一型在事件面上有声可听⇒开格、停下、等表态
+  return eventsHeardBy(skill.trigger).length > 0;
 }
 
 /**
  * 发动那一刻的**在场资格**（用户 2026-10-03 裁决：「将领不在场上不能发动技能，被砍死了
  * 不算在场上，能发动就是空发，就算是『强制发动』不能发动」）。
  *
- * 只补自动发动路这一边：问答路今天已经结构性成立（`reactionChain.collectListeners` 的候选
- * 只扫在场将），两条路读的是同一句判据＝**发动那一刻主人还在不在场**。放在最前面（先于身份
- * 与门槛）＝主人已离场时连"响了一声"那条事件都不发，账上绝不留下空发。
+ * 只补自动发动路这一边：问答路结构性成立（`reactionChain.collectListeners` 的候选只扫
+ * 在场将，唯一的例外是「自身阵亡时」那一格——它去坟场取**这一声刚死掉的那一员**，别的
+ * 时机一律不看坟场），两条路读的是同一句判据＝**发动那一刻主人还在不在场**。放在最前面
+ * （先于身份与门槛）＝主人已离场时连"响了一声"那条事件都不发，账上绝不留下空发。
  *
  * 这里是**唯一的**执法点（v2.8.31 定义封口刀把 v2.8.30 那半把结算侧的闸拆了）：用户
  * 2026-10-04 把两型定义封死后，"这一刀整个算完之后再看主人在不在场"对**受击**那一型是
@@ -166,15 +174,15 @@ export class SkillTriggerBridge {
   constructor(private readonly triggerEngine: TriggerEngine) {}
 
   registerSkill(binding: SkillOwnerBinding) {
-    // v2.8.22 响应链执法刀：受击／受伤两型的非 forced 定义**根本不注册**到触发
-    // 链上——它们改走响应链问答（`skills/reactionChain.ts`），发动经 canonical
-    // `ACTIVATE_SKILL`。不注册的形态与 `onTurnEnd` 故意缺席 `TRIGGER_EVENTS`
-    // 同一条纪律：同一枚技能绝不允许既自动响又停下来问。
+    // v2.8.22 立、v2.9.16 询问制刀反转：凡是**没打「强制发动」且不是「在场即生效」**
+    // 的定义，一律**根本不注册**到触发链上——它们改走响应链问答（`skills/reactionChain.ts`），
+    // 发动经 canonical `ACTIVATE_SKILL`。不注册的形态与 `onTurnEnd` 故意缺席
+    // `TRIGGER_EVENTS` 同一条纪律：同一枚技能绝不允许既自动响又停下来问。
     if (defersToReactionQueue(binding.skill)) return [];
-    // v2.8.25 强制发动执法刀：一型可以听好几声（「受到伤害后」＝普通伤害＋决斗
-    // 收官那笔累计受伤），所以逐个事件各注册一次。第一枚的 id 保持原样
-    // （`skill:<席>:<定义>`）⇒既有单事件技能在触发链／事件流里的读数逐字不变，
-    // 只有真需要多听一声的定义才多出带事件名后缀的那一枚。
+    // v2.8.25 强制发动执法刀：一型可以听好几声，所以逐个事件各注册一次。第一枚的 id
+    // 保持原样（`skill:<席>:<定义>`）⇒既有单事件技能在触发链／事件流里的读数逐字不变，
+    // 只有真需要多听一声的定义才多出带事件名后缀的那一枚。今天表里每一型各一声，
+    // 这一圈因此恒只跑一次——留着是因为"哪一型听几声"由那张表说了算，这里不假设。
     const eventTypes = eventsHeardBy(binding.skill.trigger);
     if (eventTypes.length === 0) return [];
 

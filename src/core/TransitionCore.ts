@@ -404,7 +404,7 @@ function scanReaction(
   resumedAttacks: GameEvent[];
 } {
   const before = state.pendingReaction ?? null;
-  const hasSource = dispatchEvents.some(event => mayOpenReactionCell(state, event));
+  const hasSource = dispatchEvents.some(event => mayOpenReactionCell(event));
   let next = state;
   let after = before;
   if (hasSource || before) {

@@ -229,7 +229,11 @@ describe('怒斩的两条腿在真对局里各管各的场合', () => {
 
   /** 决斗那一路今天官方池还没有会挑它的卡⇒入场用合成件（搦战），
    *  但**账本里那两笔是真怒斩编译出来的**（`passiveEntriesOfGeneral`）。
-   *  受方带 2 点护甲：这样"近战那条腿要是被当成决斗也算"就会当场多冒 1 点。 */
+   *  受方带 2 点护甲：这样"近战那条腿要是被当成决斗也算"就会当场多冒 1 点。
+   *
+   *  v2.9.16 询问制刀：「造成伤害后」不再到点自己响⇒搦战那一枚先被问一句，决斗是
+   *  **答完那句**才开起来的。这里如实把问答两趟的事件并起来读，而不是给合成件打
+   *  「强制发动」——本文件钉的是决斗每一轮算哪条腿，"谁点头"不是它的证人。 */
   function duelWith(ledgerEntries: 'both' | 'duel_only') {
     const entries = passiveEntriesOfGeneral(
       { ...makeGeneral('x1'), skills: [nuzhan] } as General, 'gC', 1)
@@ -247,9 +251,16 @@ describe('怒斩的两条腿在真对局里各管各的场合', () => {
       makePlayer(2, { fieldGenerals: [makeFieldGeneral(makeGeneral('gD', 12), 2, 0, 'front',
         { armor: 2, currentArmor: 2 })] }),
     ], entries);
-    const events = engine.dispatch(createAction('ATTACK', 1, {
+    const events = [...engine.dispatch(createAction('ATTACK', 1, {
       attackerId: 'gC', targetId: 'gD', ranged: false, consumeCard: COST(1),
-    }));
+    }))];
+    for (let guard = 0; guard < 8; guard += 1) {
+      const ask = getReactionAsk(engine.state);
+      if (!ask) break;
+      events.push(...engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+        skillId: ask.options[0].skillId, generalId: ask.generalId,
+      })));
+    }
     return {
       // 决斗里 gC 打出去的那三轮（第 1、3、5 轮）各算一次 +1。
       rounds: events.filter(e => e.type === 'DAMAGE' && typeof (e.data as any)?.duelRound === 'number')

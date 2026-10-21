@@ -10,6 +10,9 @@
  * 两遍。`self` 档靠身份键天然撞不上别人的登场，所以两锚一直看不见它。修法＝
  * 「重放只让这一步刚上册的监听听」（core/TransitionCore.ts）。
  * 下面这张表每格都是**恰好**的声数，出现 2 就是双响复发。
+ *
+ * v2.9.16 询问制刀：登场类监听（没打「强制发动」）今天先问一句再响，所以这两步各自
+ * 用 `dispatchAndAnswer` 把答完那一趟的事件并回同步计数；档位声数的判据一字未动。
  */
 import { describe, it, expect } from 'vitest';
 import { GameEngine } from './GameEngine';
@@ -18,6 +21,7 @@ import type { GameEvent } from './Event';
 import { createAction } from '../action/ActionTypes';
 import { allGenerals, type General, type ListenerScope, type Skill } from '../data/generals';
 import { syncPlayerSkills } from '../skills/skillCompiler';
+import { getReactionAsk } from '../skills/reactionChain';
 
 const COST = (id: string) => ({ id, name: '粮草', type: '粮草' });
 
@@ -61,6 +65,23 @@ function drawCount(events: GameEvent[]): number {
 }
 
 /**
+ * v2.9.16 询问制刀：登场类监听不再是"到点自动响"，改成停下来问一句，效果落在答完
+ * 那一趟的 dispatch 里。本文件钉的是**每一档恰好听几声**，所以把答完后的事件并回
+ * 同一步——一问一答同属这一步，声数判据一字未动（出现 2 仍是双响复发）。
+ */
+function dispatchAndAnswer(engine: GameEngine, action: ReturnType<typeof createAction>): GameEvent[] {
+  const out = [...engine.dispatch(action)];
+  for (let guard = 0; guard < 8; guard += 1) {
+    const ask = getReactionAsk(engine.state);
+    if (!ask) break;
+    out.push(...engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: ask.options[0].skillId, generalId: ask.generalId,
+    })));
+  }
+  return out;
+}
+
+/**
  * 两步登场：第一步席1 派出带着这枚监听技的那一员将，第二步派另一员
  * （`mateSeat=true`＝同一席位的别的将，否则＝别的席位）。
  * 返回两步各自响的声数。
@@ -75,14 +96,14 @@ function runTwoDeploys(scope?: ListenerScope, mateSeat = true): [number, number]
   ]);
   const engine = new GameEngine(state);
   syncPlayerSkills(engine, engine.state);
-  const first = engine.dispatch(createAction('DEPLOY_GENERAL', 1, {
+  const first = dispatchAndAnswer(engine, createAction('DEPLOY_GENERAL', 1, {
     general: listener, slot: 0, consumeCards: [COST('c1')],
   }));
   syncPlayerSkills(engine, engine.state);
   // 第二步＝`mateSeat` 那一席派出自己手里的那一员将（同席别的将 or 别的席位）。
   const seat = mateSeat ? 1 : 2;
   engine.state.currentPlayerId = seat;
-  const second = engine.dispatch(createAction('DEPLOY_GENERAL', seat, {
+  const second = dispatchAndAnswer(engine, createAction('DEPLOY_GENERAL', seat, {
     general: mateSeat ? mate : foe, slot: mateSeat ? 2 : 0,
     consumeCards: [mateSeat ? COST('c2') : COST('c3')],
   }));

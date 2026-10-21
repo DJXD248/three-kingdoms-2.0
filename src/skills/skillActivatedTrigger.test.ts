@@ -27,7 +27,8 @@ import { triggerPhrase } from './skillSentence';
 import { parseSkillText } from './skillTextParse';
 import { getReactionAsk } from './reactionChain';
 import { matchesSkillEvent } from './skillEventMatch';
-import { eventsHeardBy, isReactionTrigger, REACTION_EVENT_TYPES, REACTION_TRIGGERS, TRIGGER_EVENTS } from './reactionTriggers';
+import { eventsHeardBy, TRIGGER_EVENTS } from './reactionTriggers';
+import { defersToReactionQueue } from './SkillTriggerBridge';
 import type { DataSkillDefinition } from './dataTypes';
 
 const ATTACK_COST = { id: 'cost_1', name: '粮草', type: '粮草' };
@@ -370,14 +371,18 @@ describe('其他将领技能发动时 · 编译与词源', () => {
     expect(Object.values(TRIGGER_EVENTS).flat()).not.toContain('SKILL_USED');
   });
 
-  it('问话路的两道门都把它挡在外面＝到点自己响、绝不开问窗（结构保证，不是一句注释）', () => {
-    // 问话窗的门槛有两层：①这一**型**在不在 `REACTION_TRIGGERS` 里（在＝停下来问人）；
-    // ②这一**声**在不在 `REACTION_EVENT_TYPES` 的扫描面里（不在＝根本不会有候选）。
-    // 本刀刻意只挂第②层之外的 `TRIGGER_EVENTS`，所以两道门都不开。只测①是不够的：
-    // 现场把 `isReactionTrigger` 单独改坏，这一格照样不弹窗＝证人必须落在门上。
-    expect([...REACTION_TRIGGERS]).toEqual(['onBecomingTarget', 'onDamageTaken']);
-    expect(isReactionTrigger('onOtherSkillActivated')).toBe(false);
-    expect(Object.values(REACTION_EVENT_TYPES).flat()).not.toContain('SKILL_ACTIVATED');
+  it('这一格也**停下来问人**（v2.9.16 询问制）：只有「强制发动」能把它放回自动路', () => {
+    // v2.9.15 立这一格时它照旧自动响（那时问答路只认受击／受伤两型，判据是一份时机
+    // 名单）；v2.9.16 起那份名单整个删了，"问不问"只剩这枚定义自己身上的两个字段。
+    // 证人必须落在门上：单独改坏 `defersToReactionQueue` 里 `forced` 那一行必红。
+    expect(defersToReactionQueue({
+      id: 'x', name: '观衅', trigger: 'onOtherSkillActivated', description: '', effects: [],
+    })).toBe(true);
+    expect(defersToReactionQueue({
+      id: 'x', name: '观衅', trigger: 'onOtherSkillActivated', description: '', effects: [], forced: true,
+    })).toBe(false);
+    // 而"绝不一技能两响"照旧成立：进问答路＝不注册进触发链，两路由同一句开关分派。
+    expect(eventsHeardBy('onOtherSkillActivated')).toEqual(['SKILL_ACTIVATED']);
   });
 
   it('它**不认**「我听谁」那一栏（界面上整格不出现＝与营地那一格同一条诚实口径）', () => {

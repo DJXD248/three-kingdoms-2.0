@@ -9,6 +9,9 @@
  *   ① 触发路 SkillTriggerBridge.buildCondition（10 枚触发键同一道闸）；
  *   ② 决策路 turnEndSkills.listTurnEndSkillCandidates 过滤候选 + TurnEndSkillResolver
  *      独立再求值并给诚实拒因 SKILL_CONDITION_UNMET。
+ *  v2.9.16 询问制刀起还有第三家：问答路的候选枚举（skills/reactionChain.ts
+ *  `collectListeners`）读的还是这同一份实现。本文件的探针只喂注册表、不喂数据层，
+ *  在新制度下喂不进问答路，故全部钉在自动路（`forced: true`，见 `condTable` 注释）。
  *
  * 本文件的探针方式仍是编译 seam（vi.mock 包住 compileGeneralSkills），理由是它要
  * 逐条验证两路求值的语义，与录入面无关。v2.8.3 起门槛已有录入面：数据层
@@ -364,7 +367,16 @@ function gatedTurnStart(overrides: Partial<DataSkillDefinition> = {}): DataSkill
   };
 }
 
-/** 座 2 的 onTurnStart 技能：座 1 结束回合即触发；返回派发前快照供纯度对比。 */
+/** 座 2 的 onTurnStart 技能：座 1 结束回合即触发；返回派发前快照供纯度对比。
+ *
+ *  v2.9.16 询问制刀带来一条**探针形状**的约束，本文件必须写明白：问答路的候选是从
+ *  场上那一员将的**数据层** `skills` 现编译出来的（`reactionChain.ts` 调
+ *  `compileGeneralSkills`），而这里的探针走 `engine.registerPlayerSkills`——它只喂
+ *  触发链那份注册表，数据层里那员将依旧一个字不带。旧制度下这没差别（自动路就是
+ *  那份注册表）；新制度下"没打强制发动的定义"会从自动路摘下来、问答路又看不见它，
+ *  于是**一声不响**。所以本文件的探针统一打 `forced: true` 留在自动路（与下面
+ *  `attackTable` 那条 v2.8.22 的既有写法同一条口径），问答路上的同一道闸由
+ *  `skills/reactionChain.test.ts` 钉。 */
 function condTable(conds: SkillCondition[] | undefined, hand: GameCard[] = []) {
   const engine = new GameEngine(makeState([
     makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('sc_plain', '路人', 4), 1, 0)] }),
@@ -373,7 +385,7 @@ function condTable(conds: SkillCondition[] | undefined, hand: GameCard[] = []) {
       fieldGenerals: [makeFieldGeneral(makeGeneral('sc_gate_self', '闸主', 4), 2, 0)],
     }),
   ]));
-  engine.registerPlayerSkills(2, [gatedTurnStart({ conditions: conds })]);
+  engine.registerPlayerSkills(2, [gatedTurnStart({ conditions: conds, forced: true })]);
   const before = JSON.stringify(engine.state);
   const events = engine.dispatch(createAction('END_TURN', 1));
   return { engine, events, before };
@@ -429,9 +441,11 @@ describe('v2.7.3 触发路接线：真引擎门槛闸（身份面之后、效果
         description: '伤害达门槛才反弹 1 点',
         effects: [{ type: 'DAMAGE', value: 1, target: 'ATTACKER' }],
         sourceGeneralId: 'sc_victim', conditions: conds,
-        // v2.8.22 (#71)：本测钉的是**触发路上**的门槛闸。非 forced 的受击/受伤
-        // 两型已搬进问答队列（不在触发链上），故这里显式 forced=true 留在自动路；
-        // 问答路上的同一道闸由 skills/reactionChain.test.ts 钉。
+        // v2.8.22 (#71) 立的这条，v2.9.16 询问制刀把它从"受击／受伤两型"扩到**全部
+        // 时机**：没打强制发动的定义一律从触发链摘进问答队列。这里钉的是**触发路上**
+        // 的门槛闸，且探针喂的只是注册表（数据层那员将不带技能，问答路扫不到），
+        // 故显式 forced=true 留在自动路；问答路上的同一道闸由
+        // skills/reactionChain.test.ts 钉。
         forced: true,
       }]);
       const events = engine.dispatch(createAction('ATTACK', 1, {

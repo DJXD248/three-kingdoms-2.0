@@ -4,7 +4,7 @@ import {
   getValidTargets, getMoveTargets, canFieldGeneralMove,
   hasFreeCampSlot, isInEnemyTerritory,
 } from '../rules/battlefieldRules';
-import { General, factionColors, skillTagColors } from '../data/generals';
+import { General, factionColors, skillTagColors, triggerTypeLabels } from '../data/generals';
 import { skillTagMeanings, tagsOf } from '../domain/skillTags';
 import { GameCard } from '../data/cards';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
@@ -582,13 +582,16 @@ export default function GameBoard(){
             </div>
           </div>
         </div>}
-        {/* 2.8.22 响应链问窗（§H9 第九/十轮）：受击／受伤节点已从自动结算链搬出来
-            开格排队，先开先问、一席一席绕座次。人和 AI 读同一个派生点，只是 AI
+        {/* 2.8.22 响应链问窗（§H9 第九/十轮）：可响应节点已从自动结算链搬出来
+            开格排队，先开先问、一席一席绕座次。v2.9.16 询问制刀把这一扇窗的覆盖面
+            从"受击／受伤两型"扩到**除「在场即生效」与「强制发动」以外的每一型**，
+            所以问句里的时机名取自这一格自己的触发时机（词源＝triggerTypeLabels），
+            组件不再自己猜那两声。人和 AI 读同一个派生点，只是 AI
             由自己的策略立刻作答。问句活着＝冻结世界：只有欠答那一席动手，且只有
             「发动某枚」与「跳过」两种动作（校验器门）。跳过是恒常出口（§12-61）。 */}
         {reactionAsk&&!pendingChoice&&<div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
           <div className="rounded-xl border-2 border-rose-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(244,63,94,0.35)'}}>
-            <p className="text-sm font-black text-rose-300">🔔 响应询问 · {players.find(p=>p.id===reactionAsk.playerId)?.name ?? `玩家${reactionAsk.playerId}`}（{reactionAsk.generalName}），{reactionAsk.sourceEvent.type==='BEFORE_DAMAGE'?'成为目标时':'受到伤害后'}是否发动技能？</p>
+            <p className="text-sm font-black text-rose-300">🔔 响应询问 · {players.find(p=>p.id===reactionAsk.playerId)?.name ?? `玩家${reactionAsk.playerId}`}（{reactionAsk.generalName}），{triggerTypeLabels[reactionAsk.trigger]}是否发动技能？</p>
             <p className="mt-0.5 text-[10px] text-rose-200/60">{reactionAsk.nodeKey}</p>
             <div className="mt-2 flex flex-col gap-1.5">
               {reactionAsk.options.map(o=>(

@@ -10,8 +10,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { GameEngine } from '../core/GameEngine';
-import { createAction } from '../action/ActionTypes';
+import { createAction, type GameAction } from '../action/ActionTypes';
 import type { EngineState, EnginePlayer } from '../core/GameState';
+import type { GameEvent } from '../core/Event';
 import type { General, Skill } from '../data/generals';
 import { allGenerals } from '../data/generals';
 import type { DamageDealtOccasionType } from '../data/generals';
@@ -66,6 +67,26 @@ function buildEngine(players: EnginePlayer[], ledger?: StatModifier[]): GameEngi
   const engine = new GameEngine(state);
   syncPlayerSkills(engine, state);
   return engine;
+}
+
+/**
+ * v2.9.16 询问制刀：没打「强制发动」的定义都先被问一句，效果落在**答完那句**的那一趟
+ * dispatch 里。本文件钉的是账本读数（哪一笔 +1、哪一笔销账、逐轮各吃几笔），与"谁点
+ * 头"无关，所以把一问一答并成同一次读数，各格数字因此逐字保持原样。撞到答不动（例如
+ * 牌局已终）就收手，不空转。问答自身的形状由 skills/reactionChain.test.ts 钉。
+ */
+function dispatchAndAnswer(engine: GameEngine, action: GameAction): GameEvent[] {
+  const out = [...engine.dispatch(action)];
+  for (let guard = 0; guard < 16; guard += 1) {
+    const ask = getReactionAsk(engine.state);
+    if (!ask) break;
+    const answered = engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: ask.options[0].skillId, generalId: ask.generalId,
+    }));
+    out.push(...answered);
+    if (answered.some(e => e.type === 'ACTION_REJECTED')) break;
+  }
+  return out;
 }
 
 const ATTACK_COST = { id: 'cost_1', name: '粮草', type: '粮草' };
@@ -305,10 +326,9 @@ describe('stat modifier ledger · 体力上限那一笔会当场回落', () => {
       makePlayer(1, { fieldGenerals: [makeFieldGeneral(makeGeneral('g1', []), 1)], hand: [ATTACK_COST] }),
       makePlayer(2, { fieldGenerals: [{ ...makeFieldGeneral(martyr as any, 2), currentHp: 1 }] }),
     ]);
-    const events = engine.dispatch(createAction('ATTACK', 1, {
+    const events = dispatchAndAnswer(engine, createAction('ATTACK', 1, {
       attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST,
     }));
-
     const deaths = events.filter(e => e.type === 'DEATH');
     expect(deaths).toHaveLength(1);
     expect(deaths[0].data).toMatchObject({ targetPlayerId: 2, attackerPlayerId: 1 });
@@ -419,7 +439,7 @@ describe('受到伤害那一格 · 真链路（2.8 刀5＝#26）', () => {
       makePlayer(1, { fieldGenerals: [makeFieldGeneral({ ...challenger, hp: 12 } as any, 1)], hand: [ATTACK_COST] }),
       makePlayer(2, { fieldGenerals: [makeFieldGeneral({ ...makeGeneral('gD', []), hp: 12 } as any, 2)] }),
     ], entries);
-    const events = engine.dispatch(createAction('ATTACK', 1, {
+    const events = dispatchAndAnswer(engine, createAction('ATTACK', 1, {
       attackerId: 'gC', targetId: 'gD', ranged: false, consumeCard: ATTACK_COST,
     }));
     const rounds = events.filter(e => e.type === 'DAMAGE' && typeof (e.data as any)?.duelRound === 'number');
@@ -692,7 +712,7 @@ describe('造成伤害那一格 · 真链路（2.9.4 刀＝#54，用户 2026-10-
       makePlayer(2, { fieldGenerals: [makeFieldGeneral({ ...makeGeneral('gD', []), hp: 12 } as any, 2)] }),
     ], [dealtEntry({ id: 'sm:1', seq: 1, targetId: 'gC', occasion: 'duel' }),
         dealtEntry({ id: 'sm:2', seq: 2, targetId: 'gC', occasion: 'meleeVsArmored' })]);
-    const events = engine.dispatch(createAction('ATTACK', 1, {
+    const events = dispatchAndAnswer(engine, createAction('ATTACK', 1, {
       attackerId: 'gC', targetId: 'gD', ranged: false, consumeCard: ATTACK_COST,
     }));
     const rounds = events.filter(e => e.type === 'DAMAGE' && typeof (e.data as any)?.duelRound === 'number');
@@ -832,8 +852,8 @@ describe('stat modifier ledger · 发动笔带周期', () => {
       makePlayer(2, { fieldGenerals: [onField] }),
     ]);
 
-    // 轮到 2 号位：onTurnStart 发动⇒落一笔带周期的发动账。
-    const started = engine.dispatch(createAction('END_TURN', 1));
+    // 轮到 2 号位：onTurnStart 问一句、点头才发动⇒落一笔带周期的发动账。
+    const started = dispatchAndAnswer(engine, createAction('END_TURN', 1));
     expect(started.some(e => e.type === 'STAT_MODIFY')).toBe(true);
     const afterStart = engine.state.statModifiers ?? [];
     expect(afterStart).toHaveLength(1);

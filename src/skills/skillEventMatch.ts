@@ -8,9 +8,9 @@ import type { SkillOwnerBinding } from './SkillTriggerBridge';
  *
  * 两个消费方必须逐字同意，否则会出现"触发链里响了、问答队列里没候选"（或反
  * 过来）这种最难查的分叉：
- *   ① `SkillTriggerBridge.buildCondition`＝触发链上的自动发动路（forced 与
- *      其余全部触发型走这里）；
- *   ② `skills/reactionChain.ts`＝响应链问答的候选枚举（受击／受伤两型走这里）。
+ *   ① `SkillTriggerBridge.buildCondition`＝触发链上的自动发动路（只有打了「强制
+ *      发动」的定义走这里，v2.9.16 询问制刀）；
+ *   ② `skills/reactionChain.ts`＝响应链问答的候选枚举（其余每一型都走这里）。
  *
  * 本文件从 `SkillTriggerBridge.ts` 原样搬出（v2.8.22 响应链执法刀），搬出时**一条
  * 判定都没改**。「我听谁」过去三档（self／allySeat／field），v2.9.13 按需池甲档

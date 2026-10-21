@@ -148,7 +148,9 @@ function resolveReactionActivation(
   if (!option) return [rejected(action, 'REACTION_SKILL_NOT_FOUND')];
   // v2.8.32：候选过滤器已经扣过额度，这一句是解析器侧的独立复核（与上面回合结束
   // 那条同一口径：合法性从 EngineState 重推，绝不信载荷或窗口的陈旧快照）。
-  if (!limitedQuotaAvailable(state, option.definition)) {
+  // 键按技能给（`<将>:<技能>`），所以一组兄弟定义读的是同一本账；逐枚照查＝不假设
+  // "同名必同键"这种数据巧合。
+  if (!option.definitions.every(definition => limitedQuotaAvailable(state, definition))) {
     return [rejected(action, 'SKILL_LIMIT_EXHAUSTED')];
   }
 
@@ -156,13 +158,16 @@ function resolveReactionActivation(
   const answeredEvent: GameEvent = { type: 'REACTION_ANSWERED', data: answeredData };
   const effectEvents = reactionEffectEvents(ask, state, option);
   // 与回合结束那条同一诚实口径：选择组逐项门槛全不过＝宁可不发，绝不空耗。
-  if (option.definition.choiceMode && effectEvents.length === 0) {
+  if (option.definitions.some(definition => definition.choiceMode === true) && effectEvents.length === 0) {
     return [rejected(action, 'SKILL_CONDITION_UNMET')];
   }
   // v2.9.15 乙档刀：问答路这一点头**也是一次发动**，所以每一次都出声（形状仍走唯一
   // 生产点）；带额度的那一身照旧进台账，其余是不动状态的那一声⇒「其他将领技能发动时」
   // 听得到玩家亲手发动的每一次。不带 `viaActivation`＝这是人自己点的，不是替那一格响的。
-  const activation = activationRecordEvent(option.definition, {
+  // v2.9.16 一技能一按钮：点一下结的是这一枚技能的**全部**效果，而玩家听懂的"发动了
+  // 一枚技能"是一次，所以公告只出**一声**（取头一枚定义的形状）。带额度的那一本账
+  // 也据此只落一笔——键本来就按技能给，逐枚落账会让一次表态扣光两格额度。
+  const activation = activationRecordEvent(option.definitions[0], {
     playerId: action.playerId,
     generalId: ask.generalId,
     turn: state.turn ?? 0,

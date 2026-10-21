@@ -2,23 +2,19 @@ import type { DataSkillTrigger } from './dataTypes';
 import type { GameEventType } from '../core/Event';
 
 /**
- * 「可响应节点」登记处（§H9 第八/九/十轮，v2.8.22 响应链执法刀）。
+ * 触发面登记处（§H9 第八/九/十轮，v2.8.22 响应链执法刀；v2.9.16 询问制刀改头）。
  *
- * 用户口径里的"响应链"落在**受击／受伤两型**上：第八轮原话"受击方优先发动"
- * 说的是"这次事件打到谁身上"，而第九轮 b) 点名要接进问窗的正是这两型
- * （`onBecomingTarget`＝成为目标时／`onDamageTaken`＝受到伤害后）。其余触发型
- * 一字不动（登场、回合开始、击杀、遗言、手牌……照旧到点自动响）。
+ * 本文件只回答一个问题：**每一型时机听得懂哪几声**。它不回答"要不要停下来问人"
+ * ——那一维 v2.9.16 起由**技能自己**决定（用户 2026-10-20 裁：除「在场即生效」与
+ * 「强制发动」以外，任何时机到点都要问），判据单点在
+ * `SkillTriggerBridge.defersToReactionQueue`，消费者是响应链问答（`reactionChain.ts`）。
  *
- * 本文件是**叶子模块**：只认类型，不 import 桥接层／编译器，好让"哪些时机算可响应
- * 节点"这一维在触发链（分流开关）与响应链（候选枚举）两处读到同一份表。
+ * 旧的那份"哪几型算可响应节点"的两型名单（受击／受伤）连同它的反查助手已整层删
+ * 除：今天"能听到的型＝要问的型"，两维合流，留一份反而是将来分叉的把手。
+ *
+ * 本文件是**叶子模块**：只认类型，不 import 桥接层／编译器，好让"这型听哪一声"在
+ * 自动发动路（`SkillTriggerBridge` 注册）与问答路（候选枚举）两处读到同一份表。
  */
-export const REACTION_TRIGGERS = ['onBecomingTarget', 'onDamageTaken'] as const;
-
-export type ReactionTrigger = typeof REACTION_TRIGGERS[number];
-
-export function isReactionTrigger(trigger: DataSkillTrigger): trigger is ReactionTrigger {
-  return (REACTION_TRIGGERS as readonly string[]).includes(trigger);
-}
 
 /**
  * **每一型监听听得懂的那几一声——全库唯一一份表**（v2.8.25 强制发动执法刀）。
@@ -50,12 +46,14 @@ export const TRIGGER_EVENTS: Partial<Record<DataSkillTrigger, readonly GameEvent
   // v2.9.14 营地刀：**同一声**，分族靠载荷里的 `isBase`（判据在 `skillEventMatch.ts`）。
   // 营地掉血派生的那一声由 `chainedConsequences` 在血量差>0 时才发，所以"只有真掉血
   // 才算受到伤害"这一条在营地这一侧同样是结构性成立，没有任何一处再判断一次。
-  // 它**不进** `REACTION_TRIGGERS`（问答链仍只有受击／受伤两型）⇒ 到点自动响。
+  // 它**没打**「强制发动」⇒v2.9.16 询问制刀起照样停下来问人（问法与受击／受伤同一
+  // 套）：判据落在这一枚定义身上，不落在这一格上——本文件不再持有任何"哪一型该问"的名单。
   onBaseDamaged: ['INJURY'],
   // v2.9.15 乙档刀：又一声**已经存在**的事件——`SKILL_ACTIVATED`。本刀之前它只在定义
   // 带"一局一次"额度时才发，所以这一格压根没东西可听；本刀起每次真发动都发（生产点
   // 仍是 `skills/skillQuota.ts` 那唯一一处），不带台账键的那一身＝纯通知、零状态位移。
-  // 它同样**不进** `REACTION_TRIGGERS`⇒到点自己响，不停下来问人（与营地那一格同一族）。
+  // 同一族：问不问只看这枚定义有没有打「强制发动」，"这一声是别人的技能发动"这一事实
+  // 不构成豁免（防套娃由 `skillEventMatch.ts` 的 `viaActivation` 那一刀管，与问答无关）。
   onOtherSkillActivated: ['SKILL_ACTIVATED'],
   onDamageDealt: ['AFTER_DAMAGE'],
   onKill: ['DEATH'],
@@ -75,34 +73,10 @@ export function eventsHeardBy(trigger: DataSkillTrigger): readonly GameEventType
 
 /**
  * **任何**触发型听得懂的几声总集（由上面那张表派生，绝不另写一份名单）。
- * 给响应链的免费闸用（v2.9.3 刀B）：觉醒技听哪一声＝它自己的触发时机在那张表里的
- * 那一行，所以"这一声有没有可能轮到觉醒技"只可能落在这几个类型上；表外的一声
+ * 给响应链的开格免费闸用（v2.9.3 刀B 立、v2.9.16 询问制刀扩到全触发面）：表外的一声
  * （摸牌、移动、投降……）压根没有任何时机听得懂，不必进去扫一遍候选。
  * 表扩了新声，这一集自动跟着扩——两处不会分叉。
  */
 export const ANY_TRIGGER_EVENT_TYPES: ReadonlySet<GameEventType> = new Set(
   (Object.values(TRIGGER_EVENTS) as readonly (readonly GameEventType[])[]).flat(),
 );
-
-/**
- * 可响应问答读的"哪一声开一格"——**从上面那张表派生，不再自己写一份**
- * （v2.8.25；§H9 第九轮 d) 与决斗刀 2 的那两条事实原样保留）。
- *
- * 「受到伤害后」听一声：`INJURY`＝每一刀实际掉血派生的那一声明（v2.8 刀5）。决斗打完
- * **按角色累计**的那笔也是同一声（一场决斗只记一笔、只结算一次；逐轮那些"打"压根不发
- * 这一声，派生点显式排除 `duelRound`）。「成为目标时」不扩：决斗开局喂的是"成为
- * **技能**目标"，仍走同一声 `BEFORE_DAMAGE`，由载荷里的 `damageType:'skill'` 与
- * `targetSource` 那一维分档（第五轮⑤：不喂"成为攻击目标"）。
- */
-export const REACTION_EVENT_TYPES: Record<ReactionTrigger, readonly GameEventType[]> = {
-  onBecomingTarget: eventsHeardBy('onBecomingTarget'),
-  onDamageTaken: eventsHeardBy('onDamageTaken'),
-};
-
-/** 反查：这一声事件是哪种可响应节点（不是⇒undefined，扫描器据此跳过）。 */
-export function reactionTriggerOfEvent(type: GameEventType): ReactionTrigger | undefined {
-  for (const trigger of REACTION_TRIGGERS) {
-    if (REACTION_EVENT_TYPES[trigger].includes(type)) return trigger;
-  }
-  return undefined;
-}

@@ -11,10 +11,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import { GameEngine } from './GameEngine';
-import { createAction } from '../action/ActionTypes';
+import { createAction, type GameAction } from '../action/ActionTypes';
 import type { EngineState, EnginePlayer } from './GameState';
 import type { General, Skill } from '../data/generals';
 import { syncPlayerSkills } from '../skills/skillCompiler';
+import { getReactionAsk } from '../skills/reactionChain';
+import type { GameEvent } from './Event';
 import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { capDamageToBase } from './baseDamage';
 
@@ -118,6 +120,23 @@ function baseHpOf(engine: GameEngine, playerId: number): number {
   return Number(engine.state.players.find(p => p.id === playerId)?.baseHp ?? -1);
 }
 
+/**
+ * v2.9.16 询问制刀：「造成伤害后」这类监听不再到点自动响，效果落在答完那句的那一趟
+ * dispatch 里。本文件钉的是**伤害封顶那一个数**，与"谁点头"无关，所以把一问一答的
+ * 事件并回同一次调用返回——两条发射路的读数因此逐字保持原样。
+ */
+function dispatchAndAnswer(engine: GameEngine, action: GameAction): GameEvent[] {
+  const out = [...engine.dispatch(action)];
+  for (let guard = 0; guard < 8; guard += 1) {
+    const ask = getReactionAsk(engine.state);
+    if (!ask) break;
+    out.push(...engine.dispatch(createAction('ACTIVATE_SKILL', ask.playerId, {
+      skillId: ask.options[0].skillId, generalId: ask.generalId,
+    })));
+  }
+  return out;
+}
+
 function hpOf(engine: GameEngine, playerId: number, generalId: string): number {
   const list = (engine.state.players.find(p => p.id === playerId)?.fieldGenerals as any[] | undefined) ?? [];
   const fg = list.find(f => getRuntimeCardId(f?.general as never) === generalId);
@@ -141,7 +160,7 @@ describe('营地封顶 1 点 · 两条发射路（v2.8.29「封」）', () => {
       makePlayer(2, { fieldGenerals: [] }),
     ]);
 
-    const events = engine.dispatch(
+    const events = dispatchAndAnswer(engine,
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'base_2', ranged: false, consumeCard: ATTACK_COST }),
     );
     expect(events.some(e => e.type === 'ACTION_REJECTED')).toBe(false);
@@ -168,7 +187,7 @@ describe('营地封顶 1 点 · 两条发射路（v2.8.29「封」）', () => {
       }),
     ]);
 
-    engine.dispatch(
+    dispatchAndAnswer(engine,
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'g2', ranged: false, consumeCard: ATTACK_COST }),
     );
     // 普攻 2 点＋技能追加 3 点：将领取的是全额，一点没被那个 1 盖住。
@@ -192,7 +211,7 @@ describe('营地封顶 1 点 · 两条发射路（v2.8.29「封」）', () => {
     expect(baseHpOf(engine, 2)).toBe(9);
   });
 
-  it('营地已经破了：追加那一笔仍至多 1 点，且不凭空调出一声"受到伤害"', () => {
+  it('营地已经破了：那一刀把牌局打到结束⇒追加那一笔压根不再落账，血量停在 0 不穿负', () => {
     const engine = buildEngine([
       makePlayer(1, {
         fieldGenerals: [makeFieldGeneral(makeGeneral('g1', [followUp(3)], 5), 1, 0, 'front', 2)],
@@ -201,13 +220,21 @@ describe('营地封顶 1 点 · 两条发射路（v2.8.29「封」）', () => {
       makePlayer(2, { fieldGenerals: [], baseHp: 1 }),
     ]);
 
-    const events = engine.dispatch(
+    const events = dispatchAndAnswer(engine,
       createAction('ATTACK', 1, { attackerId: 'g1', targetId: 'base_2', ranged: false, consumeCard: ATTACK_COST }),
     );
-    // 普攻 1 点把营地打到 0；追加那一笔卡面写 3，封顶后仍至多 1 点，血量停在 0 不穿负。
+    // v2.9.16 询问制刀把这一格的读法改了，而且改得对：普攻 1 点把营地打到 0＝当场分
+    // 胜负，「造成伤害后」那一格虽然开了，但牌局已终⇒`ACTIVATE_SKILL` 一律被拒，
+    // 追加那一笔（卡面 3 点）**结构上再也落不下来**。旧口径里它能落，是因为它塞在同
+    // 一趟 dispatch 的链式追加里、赶在结束判定之前。封顶那条仍由上面「技能伤害打营地」
+    // 那一格钉着，这一格钉的是另一件事：结束后不补刀。
+    expect(engine.state.phase).toBe('gameOver');
+    expect(events.filter(e => e.type === 'DAMAGE').map(e => Number((e.data as any).value))).toEqual([1]);
     expect(baseHpOf(engine, 2)).toBe(0);
-    expect(events.filter(e => e.type === 'DAMAGE').map(e => Number((e.data as any).value))).toEqual([1, 1]);
-    // 刀5 口径顺带钉住：第二笔没让血量再降⇒那一声"受到伤害"根本不存在。
+    // 答不动的证人：问窗确实开着，而且每一句回答都吃了闭门羹。
+    expect(getReactionAsk(engine.state)).not.toBeNull();
+    expect(events.filter(e => e.type === 'ACTION_REJECTED').length).toBeGreaterThan(0);
+    // 刀5 口径顺带钉住：没有第二笔⇒那一声"受到伤害"根本不存在。
     expect(events.filter(e => e.type === 'INJURY')).toHaveLength(1);
   });
 });
