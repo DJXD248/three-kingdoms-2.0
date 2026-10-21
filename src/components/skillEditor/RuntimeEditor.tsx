@@ -1,4 +1,5 @@
 // 结构化运行时效果编辑器 —— 2.2.14 从 SkillEditor.tsx 纯移动拆出（D-6 阶段 F）。
+import { useState } from 'react';
 import {
   SkillRuntimeEffect, StatModifierKeyType, StatModifyModeType, StatModifierDurationType,
   statModifierKeyLabels, statModifyModeLabels, statModifierDurationLabels, STAT_DURATION_DEFAULT_LABEL,
@@ -39,6 +40,8 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
   // v2.9.18：册子（＝技能表）一次算好，这一屏两处都读它——候选清单与"这个名字在不在册"
   // 必须是同一次计算的结果，否则会出现下拉里有、警告却说没有的那一格分叉。
   // 只有「获得技能」这一档读它，别的类型不必去算这张表。
+  // 那一颗刷新按钮按下去只换这个数：册子重算是模块里的事，界面要重新问一次才看得见新名字。
+  const [skillBookEpoch, setSkillBookEpoch] = useState(0);
   const gainBook = isGainSkill ? skillBookCandidates() : [];
   const gainKnown = gainBook.some(candidate => candidate.name === gainName);
 
@@ -217,7 +220,7 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
             {/* 册子上的名字全部列成候选，每个名字后面跟着它的出处（官方／玩家自制）。
                 下拉只给"选得出"的词，而这个格子允许你写一枚还没进册的技能——
                 写了会被点名跳过，不会悄悄生效一半。 */}
-            <datalist id="tk-gain-skill-names">
+            <datalist id="tk-gain-skill-names" key={skillBookEpoch}>
               {gainBook.map(candidate => (
                 <option key={candidate.name} value={candidate.name}>
                   {candidate.origins.map(origin => sourceLabels[origin]).join('／')}
@@ -231,7 +234,7 @@ export function RuntimeEditor({ runtime, onChange }: { runtime?: SkillRuntimeEff
               <button
                 type="button"
                 aria-label="刷新技能册"
-                onClick={() => refreshSkillBook()}
+                onClick={() => { refreshSkillBook(); setSkillBookEpoch(n => n + 1); }}
                 className={`${runtimeSelectCls} whitespace-nowrap`}>
                 ↻ 刷新技能册
               </button>

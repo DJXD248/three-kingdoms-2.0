@@ -7,7 +7,9 @@
  * ② 那句小计说的是此刻册子里的数量，不是抄下来的死数字；
  * ③ 下拉里有这个名字⇒警告那句"表上没有"就不出现＝候选清单与警告是同一次计算的两半，
  *    界面不许自己再拿另一把尺量一遍（那正是本项目反复登记的"两处各说一套"）；
- * ④ 刷新那颗按钮**今天不出现**，只有把自动重算关掉那天才出现（这一套随时能拿出来用）。
+ * ④ 刷新那颗按钮**今天不出现**，只有把自动重算关掉那天才出现（这一套随时能拿出来用）；
+ * ⑤ 关掉自动重算那天，那颗按钮按下去要能在**界面**上看见新名字——只重算模块里的账、界面还是旧的，
+ *    这颗按钮就是假的。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { act, render, fireEvent, screen, cleanup } from '@testing-library/react';
@@ -128,5 +130,21 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
     // 点了不能炸：它就是把册子按这台机器现在的内容重算一遍。
     fireEvent.click(button);
     expect(screen.getByRole('button', { name: '刷新技能册' })).toBeTruthy();
+  });
+
+  it('⑤ 手动档下点那颗按钮＝界面真的换成此刻的册子（不是只把账重算了一遍、界面上看不见）', () => {
+    setSkillBookAutoRecompute(false);
+    fireEvent.change(gainNameInput(), { target: { value: '屯田' } });
+    act(() => {
+      useGameStore.getState().addAuthoredGeneral(
+        { name: '册子试验将', faction: '群', hp: 4, identity: '册子试验身份', skills: [settledSkill('自创摸一张')] },
+        'DIY',
+      );
+    });
+    // 手动档＝册子停在第一次算好的那一份上，所以这个新名字此刻还不在下拉里。
+    expect(bookOptions().some(o => o.value === '自创摸一张')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '刷新技能册' }));
+    // 点一下之后它必须在**界面**上出现：光把模块里的账重算一遍、界面还是旧的，这颗按钮就是假的。
+    expect(bookOptions().some(o => o.value === '自创摸一张')).toBe(true);
   });
 });
