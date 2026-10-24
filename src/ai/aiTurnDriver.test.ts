@@ -16,11 +16,19 @@ import { resetAiControllers, runAiStep } from './aiTurnDriver';
 
 function freshStore() {
   resetAiControllers();
+  // v2.9.19: the reset goes through the store's OWN new-game path. Writing
+  // `engineState: getState().engineState` (as this helper used to) is a no-op,
+  // so an unpaid reaction from the previous test survived into the next one and
+  // its first BEGIN_DRAW came back REACTION_PENDING — the draft then honestly
+  // stayed open and the phase assertion read 'generalDraft'. Random pools made
+  // that fire only now and then: a flake, not a rule.
+  useGameStore.getState().resetGame();
   useGameStore.setState({
     phase: 'menu', players: [], currentPlayerIndex: 0, currentRound: 1,
     roomName: '人机测试房', winnerId: null, isTestMode: false,
     draftPlayerIndex: 0, selectedDraftGenerals: [], draftGenerals: [], draftQunGenerals: [],
-    drawContext: null, revealedDrawCards: [], engineState: useGameStore.getState().engineState,
+    draftDistributed: [], reactionWindow: null, turnEndAsk: null, skillActivations: [],
+    drawContext: null, revealedDrawCards: [],
     seatModes: defaultSeatModes(), skillEdits: {}, generalEdits: {},
   } as Partial<ReturnType<typeof useGameStore.getState>>);
 }
@@ -227,5 +235,39 @@ describe('runAiStep — 择一窗里的置灰项（v2.8.11 刀2）', () => {
     ]);
     expect(runAiStep(useGameStore.getState())).toBe(false);
     expect(picks).toEqual([]);
+  });
+});
+
+// v2.9.19 抖动销案（不是本刀造成的，先在 v2.9.18 那棵树上复现同一枚红才动的手）：
+// 本文件的 freshStore 以前把 `engineState` 原样写回自己＝根本没换，所以上一局那笔
+// "还没答完的响应"会跟到下一局⇒下一局第一声 BEGIN_DRAW 被合法性诚实退回
+// （REACTION_PENDING）、征召相位原地不动，那条按相位下断言的老证人就偶发红。
+// 现在走生产那一条开新局（resetGame），引擎账本与已分发面两处泄漏一起清掉。
+describe('freshStore — 上一局的响应债绝不留到下一局（v2.9.19）', () => {
+  beforeEach(freshStore);
+
+  it('未答完的响应与已分发面都不跨局', () => {
+    const base = useGameStore.getState().engineState;
+    const dirtyGeneral: General = {
+      id: 'g_dirty', name: '脏', faction: '魏', hp: 4, type: '武将',
+      meleeAtk: 2, rangedAtk: 1, armor: 0, skills: [],
+    };
+    useGameStore.setState({
+      engineState: {
+        ...base,
+        pendingReaction: {
+          turn: 1,
+          serial: 1,
+          nodes: [{ key: 'rn:1:1', sourceEvent: { type: 'DAMAGE', data: {} }, answered: [] }],
+        },
+      },
+      draftDistributed: [dirtyGeneral],
+    } as Partial<ReturnType<typeof useGameStore.getState>>);
+    expect(useGameStore.getState().engineState.pendingReaction?.nodes).toHaveLength(1);
+
+    freshStore();
+
+    expect(useGameStore.getState().engineState.pendingReaction?.nodes ?? []).toHaveLength(0);
+    expect(useGameStore.getState().draftDistributed).toHaveLength(0);
   });
 });
