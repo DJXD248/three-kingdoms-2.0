@@ -215,12 +215,20 @@ export function getTriggerSubOptions(type: SkillTriggerType): 'deploy' | 'turn' 
  * 所以它是第二条轴、由录入面与 Excel 各占一列／一格独立往返。
  * `onOtherDeploy` 不在此列：它的细分本来就是"己方他人登场／他人登场"，
  * 再叠一维会互相矛盾；`onTurnEnd` 根本没有自动发动路径（2.3.1 单路径纪律）。
+ * v2.9.13（按需池甲档）扩到五档（补 others／enemySeat）；v2.9.19 营地两格刀把
+ * 「营地成为攻击目标时」／「营地成为技能目标时」也接进同一根轴（用户裁决原文＝
+ * 「选B跟「我听谁」那五档做成同一根轴」）——"打的是哪家营地"从此**没有第二套定语**，
+ * 判据折法写在 `skills/skillEventMatch.ts`（营地不挂在将领身上，故那五档在这一身
+ * 与手牌／回合那一族同样会折叠）。
+ * `onBaseDamaged` 仍**不认**这一栏：它的名号里已经写死了"这一席的营地"（自家那一格
+ * 掉血），再叠一维等于让界面说一句引擎不听的话。
  */
 export function supportsListenerScope(type: SkillTriggerType): boolean {
   switch (type) {
     case 'onDeploy': case 'onTurnStart': case 'onBecomingTarget':
     case 'onDamageTaken': case 'onDamageDealt': case 'onKill': case 'onDeath':
     case 'onCardLost': case 'onCardGained':
+    case 'onBaseTargetedAtk': case 'onBaseTargetedSkill':
       return true;
     default: return false;
   }

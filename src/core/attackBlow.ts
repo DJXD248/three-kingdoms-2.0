@@ -76,8 +76,11 @@ type AttackAim =
     readonly ranged: boolean;
     readonly consumeCard: any;
     readonly baseDamage: number;
-    /** 打的是营地（`base_<座次>`）：那一型压根没有"哪一员将成为了目标"⇒受击那一层
-     *  结构性无人可听（`matchesSkillEvent` 缺受击者键⇒三档都不响），也就永不延后。 */
+    /** 打的是营地（`base_<座次>`）：那一型压根没有"哪一员将成为了目标"⇒**将领**那
+     *  几格结构性听不到这一刀（`skillEventMatch.ts` 的 `isBase` 那一挡，v2.9.19）。
+     *  但营地自己那两格（「营地成为攻击目标时」／「营地成为技能目标时」）认的就是
+     *  这一身，所以延后与否照旧由"有没有听众"说了算——有营地技要表态时，这一刀的
+     *  伤害同样等到那一层走完才落（`hasReactionListeners` 与续跑环一条链都没改）。 */
     readonly isBase: boolean;
     readonly targetPlayerId: number;
     readonly targetGeneral: any | null;
@@ -167,7 +170,10 @@ function aimAttack(state: EngineState, action: GameAction<AttackPayload>): Attac
 }
 
 /** declare 那一拍的载荷：只记下"这一刀瞄上了谁"，伤害数字还没算死。
- *  键与 2.3.0 以来逐字相同（`targetPlayerId` 只有打将领那一型带着）。 */
+ *  `targetPlayerId`（这一刀落到哪一席）自 v2.9.19 起**两型都带**——营地自己那两格
+ *  要读它来认"打的是哪家"（席位归属与「我听谁」共用同一根轴，判据在
+ *  `skillEventMatch.ts`）。打营地那一身另多一个 `isBase`，与 `DAMAGE`／`INJURY`
+ *  里同一个键同一写法；打将领那一身的键与顺序自 2.3.0 以来逐字不变。 */
 function declareNotice(
   aim: Extract<AttackAim, { status: 'aimed' }>,
   action: GameAction,
@@ -178,7 +184,8 @@ function declareNotice(
     targetId: aim.targetId,
     ranged: aim.ranged,
     baseDamage: aim.baseDamage,
-    ...(aim.isBase ? {} : { targetPlayerId: aim.targetPlayerId }),
+    targetPlayerId: aim.targetPlayerId,
+    ...(aim.isBase ? { isBase: true } : {}),
   };
 }
 

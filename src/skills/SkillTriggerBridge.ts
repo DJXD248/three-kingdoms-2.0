@@ -34,6 +34,11 @@ export const PRIORITY: Partial<Record<DataSkillTrigger, number>> = {
   onKill: 60,
   onDeath: 100,
   onBecomingTarget: 50,
+  // v2.9.19 营地两格刀：与「成为目标时」同一档——它们是同一个"伤害还没落"的那一层，
+  // 只是主语从"哪一员将"换成"哪家营地"。档位只给先后，同档内顺序仍由
+  // `triggers/reactionOrder.ts` 那一份比较器决定。
+  onBaseTargetedAtk: 50,
+  onBaseTargetedSkill: 50,
   onCardLost: 50,
   onCardGained: 50
 };
@@ -583,7 +588,7 @@ export class SkillTriggerBridge {
         const targetRef = SkillTriggerBridge.findGeneralRef(state, targetId);
         const isBaseTarget = targetId?.startsWith('base_');
         if (targetRef || isBaseTarget) {
-          result.push(testEvent);
+          result.push(...SkillTriggerBridge.mintBaseTargetNotices([testEvent]));
         } else {
           // 找不到目标也不是营地⇒这一效果是空操作，链断开，后续效果不翻译。
           chainBroken = true;
@@ -592,7 +597,9 @@ export class SkillTriggerBridge {
       return result;
     }
 
-    return binding.skill.effects.map(effect => translateEffect(effect));
+    return SkillTriggerBridge.mintBaseTargetNotices(
+      binding.skill.effects.map(effect => translateEffect(effect)),
+    );
   }
 
   /**
@@ -630,7 +637,7 @@ export class SkillTriggerBridge {
     const options = !template
       ? effects.map(effect => ({
         label: effect.description ?? binding.skill.description ?? binding.skill.name,
-        events: [translate(effect)],
+        events: SkillTriggerBridge.mintBaseTargetNotices([translate(effect)]),
         gate: effect.conditions,
       }))
       : (choiceSource === 'TARGET'
@@ -638,7 +645,7 @@ export class SkillTriggerBridge {
         : enumerateHandCardCandidates(state, Number(sourceId))
       ).map(candidate => ({
         label: candidate.label,
-        events: [translate(template, candidate)],
+        events: SkillTriggerBridge.mintBaseTargetNotices([translate(template, candidate)]),
         gate: template.conditions,
       }));
 
@@ -708,5 +715,38 @@ export class SkillTriggerBridge {
     if (!targetId || !targetId.startsWith('base_')) return undefined;
     const parsed = Number(targetId.slice('base_'.length));
     return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  /**
+   * 「营地成为技能目标时」那一拍（v2.9.19 营地两格刀）：技能要打**哪家**营地，
+   * 在伤害落下之前先喊一声。四句话：
+   *  ‧ **形状与普攻的 declare 那一拍同一身**——`BEFORE_DAMAGE` ＋ `isBase:true` ＋
+   *    `targetPlayerId` ＋ `damageType:'skill'`（攻击那一拍带的是缺省的攻击档）。
+   *    两格读的键、两格分"攻击／技能"族的判据因此在 `skillEventMatch.ts` 里只有
+   *    一份写法，不造第二种事件、不造第二根轴。
+   *  ‧ **纯通知**：`BEFORE_DAMAGE` 在 EventProcessor 里没有分支⇒零状态位移；伤害数值
+   *    照旧由紧跟其后那条 `DAMAGE` 结算，这一声只是"当刻读到的那份事实"。
+   *  ‧ **只补打营地的那一笔**：打将领那一身自 2.3.0 起由攻击/决斗各自的那一声负责，
+   *    本刀一字不动（动了就要重数全部事件流断言，而这一刀不需要）。
+   *  ‧ **只补伤害那一格**：回复／护甲打在营地上不喊这一声——「成为技能目标」按定义
+   *    是"这一下要落下来了"，与它后面那一格「营地受到伤害时」（真掉血才响）分前后两拍。
+   *  问人那一侧的已知边界（本轮如实登记）：这一声不在延后结算的那套机制里（普攻的
+   *  `attackKey`／决斗的 `duelKey` 各有自己的续跑环），所以**没打「强制发动」的这一格
+   *  要到伤害落完才问**；打了「强制发动」的照旧在同一趟自动路里响。
+   */
+  private static mintBaseTargetNotices(events: GameEvent[]): GameEvent[] {
+    const out: GameEvent[] = [];
+    for (const event of events) {
+      if (event.type === 'DAMAGE') {
+        const data = asRecord(event.data);
+        const baseSeat = SkillTriggerBridge.playerIdFromBase(
+          typeof data.targetId === 'string' ? data.targetId : undefined);
+        if (baseSeat !== undefined) {
+          out.push({ type: 'BEFORE_DAMAGE', data: { ...data, targetPlayerId: baseSeat, isBase: true } });
+        }
+      }
+      out.push(event);
+    }
+    return out;
   }
 }

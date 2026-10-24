@@ -8,10 +8,15 @@
  *     Built-in generals keep descriptive text only, so nothing fires until a
  *     designer attaches real numbers — the compiler never invents gameplay.
  *   - Only the event-backed triggers are supported; the remaining
- *     trigger kinds (modify*, onBaseTargeted*, active*, untilExpire, …) are
- *     skipped with an explicit reason. onBaseDamaged (v2.9.14) is the onBase*
- *     kind that IS event-backed — it hears the same INJURY event the general
- *     side hears, narrowed by the `isBase` fact already recorded on it. onTurnEnd (2.3.1) is the exception
+ *     trigger kinds (modify*, active*, untilExpire, …) are
+ *     skipped with an explicit reason. The onBase* family is event-backed
+ *     in full now: onBaseDamaged (v2.9.14) hears the same INJURY event the
+ *     general side hears, narrowed by the `isBase` fact already recorded on
+ *     it, and onBaseTargetedAtk / onBaseTargetedSkill (v2.9.19) hear the same
+ *     BEFORE_DAMAGE the general's onBecomingTarget hears — split by the two
+ *     keys that notice already carries (`isBase` + `damageType`), with the
+ *     seat read through the pre-existing 「我听谁」 axis (no second predicate).
+ *     onTurnEnd (2.3.1) is the exception
  *     that proves the rule: it compiles, but NEVER auto-fires — TURN_END is
  *     deliberately absent from TRIGGER_EVENTS, and its sole activation
  *     path is the canonical ACTIVATE_SKILL action (ask-window driven).
@@ -70,8 +75,13 @@ import { lookupSkillByName } from './skillNameIndex';
  * type, no state change. Since v2.8.31 (§12-102) it is emitted by the attack's
  * FIRST beat (`core/attackBlow.ts`, reached through AttackResolver) and the
  * damage itself is computed only after that layer resolved, so this trigger
- * genuinely means "成为目标时". Base-targeted BEFORE_DAMAGE carries no
- * targetPlayerId, so a general skill legitimately never fires on base attacks. */
+ * genuinely means "成为目标时". Base-targeted BEFORE_DAMAGE now carries the
+ * seat it hit (`isBase` + `targetPlayerId`, v2.9.19), and a general's
+ * becoming-target skill refuses it by `isBase` — so "打营地不触发将领的成为目标
+ * 技" that older comment stated still holds, only the mechanism moved from
+ * "no victim key" to "the victim is a camp". The two camp timings below are
+ * exactly those `isBase` notifications, split by the pre-existing
+ * attack/skill dimension (`damageType`). */
 const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>> = {
   onDeploy: 'onDeploy',
   onTurnStart: 'onTurnStart',
@@ -88,6 +98,12 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   // v2.9.14 营地刀：这一型听的是**已经存在的那一声** `INJURY`（营地掉血时由
   // `chainedConsequences` 派生，血量差>0 才发），没有新事件类型、没有新发射点。
   onBaseDamaged: 'onBaseDamaged',
+  // v2.9.19 营地两格刀：这两型听的都是**已经存在的那一声** `BEFORE_DAMAGE`，
+  // 一型读普攻 declare 那一拍（`core/attackBlow.ts`），一型读技能要打营地时新补的
+  // 那一拍（`SkillTriggerBridge`）。没有新事件类型；分家靠载荷里两格已有的一维
+  // （`isBase`＋`damageType`），判据单点在 `skills/skillEventMatch.ts`。
+  onBaseTargetedAtk: 'onBaseTargetedAtk',
+  onBaseTargetedSkill: 'onBaseTargetedSkill',
   // v2.9.15 乙档刀（「别人使用技能时」）：听的是**已经存在的那一声** `SKILL_ACTIVATED`。
   // 它以前只在定义带"一局一次"额度时才发⇒这一格今天没东西可听；本刀起每次真发动都发
   // （唯一生产点 `skills/skillQuota.ts`，不带台账键的那一身＝纯通知、零状态位移）。

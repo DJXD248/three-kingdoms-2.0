@@ -37,6 +37,14 @@ export const TRIGGER_EVENTS: Partial<Record<DataSkillTrigger, readonly GameEvent
   // cell) BEFORE the blow's damage math is computed against the post-layer
   // state, so a counter hit from this trigger always lands first.
   onBecomingTarget: ['BEFORE_DAMAGE'],
+  // v2.9.19 营地两格刀：**同一条 `BEFORE_DAMAGE`**，分家靠载荷里的两格已有的一维
+  // （`isBase`＝主语是营地不是将；`damageType`＝这一刀是普攻还是技能）。判据全部
+  // 落在 `skillEventMatch.ts`，这里只回答"听得懂哪几声"。
+  //  ‧ 攻击那一格读的是普攻 declare 那一拍（`core/attackBlow.ts`，v2.9.19 起那一身
+  //    也记"打的是哪一席"），所以问人路照旧走延后结算＝伤害还没落就问、答完重瞄。
+  //  ‧ 技能那一格读的是技能要打营地时新补的那一声纯通知（`SkillTriggerBridge`）。
+  onBaseTargetedAtk: ['BEFORE_DAMAGE'],
+  onBaseTargetedSkill: ['BEFORE_DAMAGE'],
   // v2.8 刀5：受伤这一身**只听 `INJURY`**。它是每一刀落账后派生出来的那一声明
   // （"这一员将的体力真实下降了"），护甲全挡、伤害≤0 都压根不发⇒用户 2026-10-03
   // 重新裁定的判据（只有掉血才算受到伤害）在这里是**结构性成立**的，没有任何一处

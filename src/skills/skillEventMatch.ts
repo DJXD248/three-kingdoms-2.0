@@ -51,9 +51,8 @@ export function matchesSkillEvent(
    *  而「其他将领技能发动时」（v2.9.15）把档位**钉死**成 `others` 传进来——它的名号已经
    *  替玩家选好了听谁，绝不允许再为它另抄一份"什么算别人"。
    *  `field`／`others` 档不比玩家键，但**事件必须带着这个键**：
-   *  缺键＝这件事根本没落到某一位玩家身上（打营地的 BEFORE_DAMAGE 就是这种），
-   *  那是"没有受击者"，不是"受击者不是我"⇒ 所有档都不响。这条保住了扩面前
-   *  "打营地不会触发将领的受击类技能"那一既有事实。
+   *  缺键＝这件事根本没落到某一位玩家身上（v2.9.19 之前"打营地"的那一声就是这种，
+   *  所以那一身所有档都不响），那是"没有受击者"，不是"受击者不是我"。
    *  `enemySeat`（敌方角色＝己方玩家外的所有玩家）同样在这一层判：键必须在，
    *  而且必须**不是**我的席位。 */
   const playerMatchesFor = (who: ListenerScope, playerKey: unknown): boolean => {
@@ -95,14 +94,16 @@ export function matchesSkillEvent(
   const generalMatches = (generalKey: unknown, playerKey: unknown): boolean =>
     generalMatchesFor(scope, generalKey, playerKey);
 
-  /** 「这事是谁引起的」（v2.8.21 第二维）：读通知事件**已经记下**的那个字段，
-   *  不在这里重新推断伤害数学。缺 `damageType`＝普攻那一刀（`core/attackBlow.ts`
+  /** 「这事是谁引起的」那一维的**唯一**读法（v2.8.21 第二维）：读通知事件**已经记下**
+   *  的那个字段，不在这里重新推断伤害数学。缺 `damageType`＝普攻那一刀（`core/attackBlow.ts`
    *  的 declare 那一拍是唯一不带这个字段的生产者）⇒ 记为攻击引起。
-   *  技能指定目标的那一档由 #70/#71 的发射器显式带 `damageType:'skill'`。 */
-  const sourceMatches = (data: Record<string, unknown>): boolean => {
+   *  技能指定目标的那一档由 #70/#71 的发射器与 v2.9.19 营地那一拍显式带 `damageType:'skill'`。 */
+  const sourceKindOf = (eventData: Record<string, unknown>): 'attack' | 'skill' =>
+    eventData.damageType === 'skill' ? 'skill' : 'attack';
+
+  const sourceMatches = (eventData: Record<string, unknown>): boolean => {
     if (targetSource === 'any') return true;
-    const kind = data.damageType === 'skill' ? 'skill' : 'attack';
-    return kind === targetSource;
+    return sourceKindOf(eventData) === targetSource;
   };
 
   switch (trigger) {
@@ -142,6 +143,29 @@ export function matchesSkillEvent(
       if (!idEq(ownerId, data.targetPlayerId)) return false;
       if (damageFilter && data.damageType !== damageFilter) return false;
       return true;
+    }
+    case 'onBaseTargetedAtk':
+    case 'onBaseTargetedSkill': {
+      // v2.9.19 营地两格刀。四句话，一句一条判据：
+      // ①**只认营地那一身**：`isBase` 与上面「营地受到伤害时」用的是同一个键、同一个
+      //   写法（发信侧 `core/attackBlow.ts` 的 declare 那一拍与 `SkillTriggerBridge`
+      //   补的那一声各写一次，别无出处）。
+      // ②**攻击／技能的分界不另立一维**：读的是 `sourceKindOf` 那一份已有的一维
+      //   （v2.8.21 的「这事是谁引起的」），两格各认其中一档。
+      // ③**席位归属读「我听谁」那五档里的同一个谓词**（`playerMatchesFor`），不给
+      //   "哪家营地"再造第二套定语——这是用户 2026-10-24 那句「选B跟「我听谁」那五档
+      //   做成同一根轴」的落点。
+      // ④**将领那一层在这一身压根不参判**：营地不是任何一员将，事件里也没有将键。
+      //   所以 `self` 认将时那句"缺将键＝对不上"在这里会把自家营地也挡掉，那是错的
+      //   ⇒ 营地这一身只走玩家那一层。五档因此折成三档读（与 `generals.ts` 里
+      //   "手牌／回合挂在玩家身上，`self` 与 `allySeat` 同义"那条同一族事实）：
+      //   `self`／`allySeat`＝自家营地，`enemySeat`＝别家营地，`field`＝任意一家；
+      //   `others`＝"除自身以外"在营地这一身只能是**别家**（同席位没有第二家营地），
+      //   故折到 `enemySeat` 那一档，不新写任何判据。
+      if (data.isBase !== true) return false;
+      const wantKind = trigger === 'onBaseTargetedSkill' ? 'skill' : 'attack';
+      if (sourceKindOf(data) !== wantKind) return false;
+      return playerMatchesFor(scope === 'others' ? 'enemySeat' : scope, data.targetPlayerId);
     }
     case 'onOtherSkillActivated': {
       // v2.9.15 乙档刀（「别人使用技能时」）。三条判据，一条一句：
@@ -191,10 +215,17 @@ export function matchesSkillEvent(
       return true;
     }
     case 'onBecomingTarget': {
-      // BEFORE_DAMAGE for a base attack carries no targetPlayerId, so the
-      // owner check below legitimately never matches — being attacked as a
-      // base is not "a general becoming a target"（`field` 档同样不响：那里
-      // 缺的是"受击者"这个人，不是"受击者不是我"）。
+      // v2.9.19 营地两格刀：这一挡与上面「受到伤害后」那句是**同一族**的分工——
+      // 营地不是任何一员将⇒"哪一员将成为了目标"这一格压根没有主语可认。
+      // 扩面前这一条靠"打营地那一声不带席位键"天然不响；今天那一身**带键了**
+      // （营地自己那两格要用），所以判据换成显式挡 `isBase`：既有那条"打营地不触发
+      // 将领的成为目标技"的事实一字不动，只是从"缺键所以认不出"变成"认出是营地所以
+      // 不响"。
+      // 证人分工要说清（撤掉这一挡的实测＝**1 红 / 1 文件**）：`listenerScope.test.ts`
+      // 与 `skillPipeline.test.ts` 那两条用的是缺省档`self`，而 `self` 还要比将的键
+      // （营地那一身没有将键⇒对不上），所以它们挡这一条的**不是这句**、撤了也照样绿；
+      // 真证人＝`campTargetTrigger.test.ts` 里钉 `field`／`others` 两档的那一条。
+      if (data.isBase === true) return false;
       if (!playerMatches(data.targetPlayerId)) return false;
       if (!generalMatches(data.targetId ?? data.target, data.targetPlayerId)) return false;
       return sourceMatches(data);
