@@ -87,6 +87,17 @@ describe('createAuthoredGeneral (§H1 唯一发号口)', () => {
     expect(scholar.ok && [scholar.general.type, scholar.general.meleeAtk, scholar.general.rangedAtk]).toEqual(['文将', 1, 2]);
   });
 
+  /**
+   * 2026-10-25 导入直接新建：表里写了近战/远程就照用，没写才按体力推。
+   * 不传＝旧行为（下方那条"沿用建卡口径"就是它）；只传一边也只盖那一边。
+   */
+  it('表里带了近战/远程就照用，缺的那一边才按体力推', () => {
+    const both = createAuthoredGeneral({ ...baseInput, hp: 3, meleeAtk: 0, rangedAtk: 3 }, 'DIY', fixedId);
+    expect(both.ok && [both.general.type, both.general.meleeAtk, both.general.rangedAtk]).toEqual(['文将', 0, 3]);
+    const onlyMelee = createAuthoredGeneral({ ...baseInput, hp: 3, meleeAtk: 2 }, 'DIY', fixedId);
+    expect(onlyMelee.ok && [onlyMelee.general.meleeAtk, onlyMelee.general.rangedAtk]).toEqual([2, 2]);
+  });
+
   it('拒发号并报原因：空名 / 非法体力 / 本机没有编号源，三种都留痕', () => {
     expect(createAuthoredGeneral({ ...baseInput, name: '   ' }, 'DIY', fixedId)).toEqual({ ok: false, reason: 'NAME_REQUIRED' });
     expect(createAuthoredGeneral({ ...baseInput, hp: 0 }, 'DIY', fixedId)).toEqual({ ok: false, reason: 'HP_INVALID' });

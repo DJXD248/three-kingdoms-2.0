@@ -73,6 +73,9 @@ export type AuthoredGeneralInput = {
   name: string;
   faction: Faction;
   hp: number;
+  /** 表里写了近战/远程就照用；没写才按体力推默认（v2.9.20 导入直接新建）。 */
+  meleeAtk?: number;
+  rangedAtk?: number;
   identity?: string;
   skills?: Skill[];
 };
@@ -105,6 +108,8 @@ export function createAuthoredGeneral(
   const prefix = source === 'official' ? OFFICIAL_DRAFT_ID_PREFIX : DIY_ID_PREFIX;
   const identity = input.identity === undefined ? name : input.identity.trim();
   const type: General['type'] = hp >= 4 ? '武将' : '文将';
+  const meleeAtk = Number.isFinite(input.meleeAtk) ? Number(input.meleeAtk) : (type === '武将' ? 2 : 1);
+  const rangedAtk = Number.isFinite(input.rangedAtk) ? Number(input.rangedAtk) : (type === '武将' ? 1 : 2);
   return {
     ok: true,
     general: {
@@ -113,8 +118,8 @@ export function createAuthoredGeneral(
       faction: input.faction,
       hp,
       type,
-      meleeAtk: type === '武将' ? 2 : 1,
-      rangedAtk: type === '武将' ? 1 : 2,
+      meleeAtk,
+      rangedAtk,
       armor: 0,
       skills: input.skills ?? [],
       identity,

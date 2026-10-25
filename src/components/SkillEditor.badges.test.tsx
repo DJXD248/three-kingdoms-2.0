@@ -79,9 +79,23 @@ function openImport() {
   fireEvent.click(screen.getByText('📄 导入'));
 }
 
+const modifyFor = (name: string, faction: string) => Array.from(document.querySelectorAll('button'))
+  .find(b => b.textContent?.trim() === `修改「${name}（${faction}）」`)!;
+
+/**
+ * 2026-10-25 口径：喂文件只开「待处理」，写入发生在点「修改现有」之后。
+ * 这几个用例测的是"导入进来的徽章怎么落在存档与总结里"，所以两步一起走。
+ */
 async function importRows(rows: (string | number)[][]) {
   const input = document.querySelector('input[type=file][accept=".xlsx,.xls"]') as HTMLInputElement;
   fireEvent.change(input, { target: { files: [fileFrom(rows)] } });
+  await waitFor(() => expect(toastText()).toContain('名等你在下方决定'));
+}
+
+async function importAndApply(rows: (string | number)[][]) {
+  await importRows(rows);
+  fireEvent.click(modifyFor(zhangliao.name, zhangliao.faction));
+  await waitFor(() => expect(toastText()).toContain('已更新将领'));
   await waitFor(() => expect(panelText()).not.toBe(''));
 }
 
@@ -157,7 +171,7 @@ describe('导入路 · 徽章多枚与对账进总结面板', () => {
   it('格子里两枚⇒面板与存档都收两枚（顺序照格子）', async () => {
     openEditor();
     openImport();
-    await importRows([rowFor('遗计技、锁定技', '自身被击杀时')]);
+    await importAndApply([rowFor('遗计技、锁定技', '自身被击杀时')]);
     const saved = useGameStore.getState().skillEdits[zhangliao.id][0] as Record<string, unknown>;
     expect(saved.tags).toEqual(['遗计技', '锁定技']);
     expect(panelText()).toContain(zhangliao.name);
@@ -166,7 +180,7 @@ describe('导入路 · 徽章多枚与对账进总结面板', () => {
   it('徽章与时机对不上⇒导入总结里点名，不静悄悄收下', async () => {
     openEditor();
     openImport();
-    await importRows([rowFor('登场技', '回合结束时')]);
+    await importAndApply([rowFor('登场技', '回合结束时')]);
     expect(panelText()).toContain('登场技');
     expect(panelText()).toContain('时机里没有');
   });
@@ -174,7 +188,7 @@ describe('导入路 · 徽章多枚与对账进总结面板', () => {
   it('拼错的那枚在总结里点名；认识的那枚照收', async () => {
     openEditor();
     openImport();
-    await importRows([rowFor('锁定技、遗计济')]);
+    await importAndApply([rowFor('锁定技、遗计济')]);
     const saved = useGameStore.getState().skillEdits[zhangliao.id][0] as Record<string, unknown>;
     expect(saved.tags).toEqual(['锁定技']);
   });
@@ -182,9 +196,11 @@ describe('导入路 · 徽章多枚与对账进总结面板', () => {
   it('徽章没变、时机也没变⇒重导同一个文件不产生改动条目（对账不是每遍都报一次）', async () => {
     openEditor();
     openImport();
-    await importRows([rowFor('锁定技、遗计技', '自身被击杀时')]);
+    await importAndApply([rowFor('锁定技、遗计技', '自身被击杀时')]);
     const first = panelText();
     await importRows([rowFor('锁定技、遗计技', '自身被击杀时')]);
+    fireEvent.click(modifyFor(zhangliao.name, zhangliao.faction));
+    await waitFor(() => expect(document.body.textContent).toContain('和现有卡一致'));
     expect(panelText()).toBe(first);
   });
 });
@@ -211,8 +227,11 @@ describe('导出 Excel · 两枚徽章共用一格', () => {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       })] },
     });
-    await waitFor(() => expect(toastText()).toContain('导入 0 名将领'), { timeout: 20000 });
-    expect(toastText()).toContain('无变化');
+    await waitFor(() => expect(toastText()).toContain('新建 0 名将领'), { timeout: 20000 });
+    expect(toastText()).toContain('名等你在下方决定');
+    // 往返"读回来一模一样"的硬证：点「修改现有」时判定为无变化，一个字节都不写。
+    fireEvent.click(modifyFor(zhangliao.name, zhangliao.faction));
+    await waitFor(() => expect(document.body.textContent).toContain('和现有卡一致'));
     expect(JSON.parse(JSON.stringify(useGameStore.getState().skillEdits[zhangliao.id]))).toEqual(savedBefore);
   });
 });

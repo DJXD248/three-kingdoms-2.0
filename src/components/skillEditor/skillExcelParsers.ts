@@ -108,32 +108,25 @@ export const isRowPerSkillFormat = (header: (string|number|undefined)[]): boolea
   return String(header[8] || '').trim() === '触发时机';
 };
 
-// ── Unresolved import block (v2.8.7) ──
-// 来自 Excel 行-per-skill 格式的未解析条目，用于两阶段导入：
-//   - resolution: 'missing' (库里没有) 或 'ambiguous' (同名多张)
-//   - candidates: 仅在 ambiguous 时有值，用于点选
-//   - rowNumbers: 报行号用（1-based）
-export type UnresolvedImportBlock = {
-  name: string;
-  factionText: string;
-  hp: number | undefined;
-  meleeAtk: number | undefined;
-  rangedAtk: number | undefined;
-  skills: SkillEditEntry[];
-  resolution: 'missing' | 'ambiguous';
-  candidates: General[];
-  rowNumbers: string;
-};
+// ── 导入分流（2026-10-25 用户裁决，反转 §H8 早期口径）──
+// 三种情况：
+//   ① 同名 + 同势力   → 不写，交「待处理」让玩家选 新建 / 修改现有 / 跳过
+//   ② 同名 + 势力不同 → 直接新建，不打断
+//   ③ 名册里查无此人   → 直接新建，不打断
+// 另外：没填势力（或填了不认识的势力）＝缺少必要数据，退回同一份待处理清单。
+// 缺键时替玩家猜，猜错就是又一张被静默改写的同名卡——这一整条判断根只有这里一份。
+export const IMPORT_FACTIONS: readonly Faction[] = ['魏', '蜀', '吴', '群', '晋'];
 
-// ── Import lookup (§H8 N1 定位形态，v2.8.7) ──
-// 势力是消除歧义的键，不是「回落到同名第一个」的兜底。§H8 三态：
-//   唯一命中（名字+势力唯一）→ unique；多张 → ambiguous（弹候选）；没有 → missing（可新建）。
-// 旧实现 `resolveGeneralByNameFaction` 的「同名取第一个 + 死分支」会让导入
-// 静默改到另一势力的同名卡上（官方池 司马懿/邓艾/钟会/张春华 均跨势力），这一条已废除。
+export type ImportBlockReason =
+  | 'sameNameSameFaction'
+  | 'missingFaction'
+  | 'unknownFaction'
+  | 'missingName';
+
 export type ImportResolution =
-  | { kind: 'unique'; general: General }
-  | { kind: 'ambiguous'; candidates: General[] }
-  | { kind: 'missing' };
+  | { kind: 'needsDecision'; candidates: General[] }
+  | { kind: 'createNew'; reason: 'notInRoster' | 'sameNameOtherFaction' }
+  | { kind: 'needsData'; reason: ImportBlockReason };
 
 export function resolveGeneralForImport(
   name: string,
@@ -141,35 +134,118 @@ export function resolveGeneralForImport(
   pool: General[],
 ): ImportResolution {
   const n = name.trim();
+  if (!n) return { kind: 'needsData', reason: 'missingName' };
   const f = (factionText || '').trim();
-  if (!n) return { kind: 'missing' };
-  const sameName = pool.filter(g => g.name === n);
-  if (sameName.length === 0) return { kind: 'missing' };
-  if (f) {
-    const matched = sameName.filter(g => g.faction === f);
-    if (matched.length === 1) return { kind: 'unique', general: matched[0] };
-    if (matched.length > 1) return { kind: 'ambiguous', candidates: matched };
-    // 势力填了但没命中：不替用户猜，把全部同名列出（可能是想选另一势力、或这才是待建）。
-    return { kind: 'ambiguous', candidates: sameName };
-  }
-  if (sameName.length === 1) return { kind: 'unique', general: sameName[0] };
-  return { kind: 'ambiguous', candidates: sameName };
+  if (!f) return { kind: 'needsData', reason: 'missingFaction' };
+  if (!IMPORT_FACTIONS.includes(f as Faction)) return { kind: 'needsData', reason: 'unknownFaction' };
+  const sameNameSameFaction = pool.filter(g => g.name === n && g.faction === f);
+  if (sameNameSameFaction.length > 0) return { kind: 'needsDecision', candidates: sameNameSameFaction };
+  return pool.some(g => g.name === n)
+    ? { kind: 'createNew', reason: 'sameNameOtherFaction' }
+    : { kind: 'createNew', reason: 'notInRoster' };
 }
 
-/** @deprecated Use resolveGeneralForImport for strict three-state resolution */
-export function resolveGeneralByNameFaction(name: string, factionText?: string): General | undefined {
-  const res = resolveGeneralForImport(name, factionText, allGenerals);
-  return res.kind === 'unique' ? res.general : undefined;
+/** 直接新建的一张卡：玩家不需要做任何决定。 */
+export type NewGeneralImport = {
+  name: string;
+  faction: Faction;
+  hp?: number;
+  meleeAtk?: number;
+  rangedAtk?: number;
+  skills: SkillEditEntry[];
+  rowNumbers: string;
+  /** 名册里有同名卡、但都在别的势力（只用于报表措辞）。 */
+  sameNameOtherFaction: boolean;
+};
+
+/** 退回「待处理」的一块：等玩家在 新建 / 修改现有 / 跳过 里选，或先补必要数据。 */
+export type UnresolvedImportBlock = {
+  name: string;
+  factionText: string;
+  /** 认得出来的势力；缺数据时为空，等玩家在面板里补。 */
+  faction?: Faction;
+  hp?: number;
+  meleeAtk?: number;
+  rangedAtk?: number;
+  skills: SkillEditEntry[];
+  reason: ImportBlockReason;
+  /** sameNameSameFaction：全部同名同势力卡；缺数据：全部同名卡（供「挂到现有」）。 */
+  candidates: General[];
+  rowNumbers: string;
+};
+
+export interface ParsedImport {
+  newGenerals: NewGeneralImport[];
+  unresolved: UnresolvedImportBlock[];
+  parseWarnings: string[];
+}
+
+type ImportDraft = {
+  name: string;
+  factionText: string;
+  hp?: number;
+  meleeAtk?: number;
+  rangedAtk?: number;
+  skills: SkillEditEntry[];
+  rowStart: number;
+  rowEnd: number;
+};
+
+const draftRowNumbers = (d: ImportDraft) => {
+  if (d.rowStart <= 0) return '';
+  return d.rowStart === d.rowEnd ? `${d.rowStart}` : `${d.rowStart}-${d.rowEnd}`;
+};
+
+/** 一份草稿 → 自动新建 / 退回待处理。三条导入格式共用这唯一的出口。 */
+function classifyDraft(
+  draft: ImportDraft,
+  pool: General[],
+): { kind: 'create'; block: NewGeneralImport } | { kind: 'pending'; block: UnresolvedImportBlock } {
+  const resolution = resolveGeneralForImport(draft.name, draft.factionText, pool);
+  const base = {
+    name: draft.name,
+    factionText: draft.factionText,
+    hp: draft.hp,
+    meleeAtk: draft.meleeAtk,
+    rangedAtk: draft.rangedAtk,
+    skills: draft.skills,
+    rowNumbers: draftRowNumbers(draft),
+  };
+  if (resolution.kind === 'createNew') {
+    return {
+      kind: 'create',
+      block: {
+        ...base,
+        faction: draft.factionText.trim() as Faction,
+        sameNameOtherFaction: resolution.reason === 'sameNameOtherFaction',
+      },
+    };
+  }
+  if (resolution.kind === 'needsDecision') {
+    return {
+      kind: 'pending',
+      block: {
+        ...base,
+        faction: draft.factionText.trim() as Faction,
+        reason: 'sameNameSameFaction',
+        candidates: resolution.candidates,
+      },
+    };
+  }
+  return {
+    kind: 'pending',
+    block: {
+      ...base,
+      reason: resolution.reason,
+      candidates: pool.filter(g => g.name === draft.name),
+    },
+  };
 }
 
 // ── Parse new row-per-skill format for an entire sheet ──
 // parseWarnings: 录入面读不懂的原文（门槛栏、触发栏各自逐条列出）。
 // 导入报告必须如实显示，绝不能假装成功——"没看懂"和"没有"是两件事。
-export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool: General[] = allGenerals): {
-  entries: { general: General; gEdit: Record<string,unknown>; skills: SkillEditEntry[] }[];
-  parseWarnings: string[];
-  unresolved: UnresolvedImportBlock[];
-} => {
+export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool: General[] = allGenerals): ParsedImport => {
   const header = rows[0] || [];
   const noteColIndex = header.findIndex(h => String(h || '').trim() === '设定备注');
   const effectEndExclusive = noteColIndex === -1 ? header.length : noteColIndex; // don't parse 备注列
@@ -181,49 +257,12 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
   // v2.8.21 监听扩面刀：技能级「我听谁」同样按表头定位（旧文件没有这一列＝不填＝只听自己）。
   const skillScopeCol = header.findIndex(h => String(h || '').trim() === LISTENER_SCOPE_HEADER);
   const dataRows = rows.slice(1); // skip header
-  const entries: { general: General; gEdit: Record<string,unknown>; skills: SkillEditEntry[] }[] = [];
   const parseWarnings: string[] = [];
-  const unresolved: UnresolvedImportBlock[] = [];
-  const facList = ['魏','蜀','吴','群','晋'] as Faction[];
-
-  let currentGeneral: General | undefined;
-  let currentGEdit: Record<string,unknown> = {};
-  let currentSkills: SkillEditEntry[] = [];
-  let currentUnresolved: {
-    name: string;
-    factionText: string;
-    hp?: number;
-    meleeAtk?: number;
-    rangedAtk?: number;
-    skills: SkillEditEntry[];
-    resolution: 'missing' | 'ambiguous';
-    candidates: General[];
-    rowStart: number;
-    rowEnd: number;
-  } | null = null;
-
-  const flushCurrent = () => {
-    if (currentGeneral && currentSkills.length > 0) {
-      entries.push({ general: currentGeneral, gEdit: { ...currentGEdit }, skills: [...currentSkills] });
-    }
-    if (currentUnresolved) {
-      unresolved.push({
-        name: currentUnresolved.name,
-        factionText: currentUnresolved.factionText,
-        hp: currentUnresolved.hp,
-        meleeAtk: currentUnresolved.meleeAtk,
-        rangedAtk: currentUnresolved.rangedAtk,
-        skills: [...currentUnresolved.skills],
-        resolution: currentUnresolved.resolution,
-        candidates: [...currentUnresolved.candidates],
-        rowNumbers: `${currentUnresolved.rowStart}-${currentUnresolved.rowEnd}`,
-      });
-    }
-    currentGeneral = undefined;
-    currentGEdit = {};
-    currentSkills = [];
-    currentUnresolved = null;
-  };
+  // 同名同势力在这一份表里出现多次＝同一张卡被拆成几块，合并成一块。
+  // 不合并会直接造出两张同名卡（直接新建档），或第二次覆盖第一次。
+  const drafts = new Map<string, ImportDraft>();
+  const order: string[] = [];
+  let current: ImportDraft | null = null;
 
   for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
     const row = dataRows[rowIndex];
@@ -232,45 +271,34 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
 
     // If column A has a general name, start a new general block
     if (nameCell) {
-      flushCurrent();
       const rawFac = clean(String(row[1] || ''));
-      const resolution = resolveGeneralForImport(nameCell, rawFac, pool);
-
-      if (resolution.kind === 'unique') {
-        currentGeneral = resolution.general;
+      const key = `${nameCell}\u0000${rawFac}`;
+      const existing = drafts.get(key);
+      if (existing) {
+        current = existing;
+      } else {
         const hp = row[2] != null && String(row[2]).trim() ? Number(row[2]) : undefined;
         const mAtk = row[3] != null && String(row[3]).trim() ? Number(row[3]) : undefined;
         const rAtk = row[4] != null && String(row[4]).trim() ? Number(row[4]) : undefined;
-        currentGEdit = {
-          faction: facList.includes(rawFac as Faction) && rawFac !== currentGeneral.faction ? rawFac : undefined,
-          hp: hp && hp !== currentGeneral.hp ? hp : undefined,
-          meleeAtk: mAtk != null && mAtk !== currentGeneral.meleeAtk ? mAtk : undefined,
-          rangedAtk: rAtk != null && rAtk !== currentGeneral.rangedAtk ? rAtk : undefined,
-        };
-        currentSkills = [];
-      } else {
-        // unresolved: collect raw data for pending routing
-        const hp = row[2] != null ? Number(row[2]) : undefined;
-        const mAtk = row[3] != null ? Number(row[3]) : undefined;
-        const rAtk = row[4] != null ? Number(row[4]) : undefined;
-        currentUnresolved = {
+        current = {
           name: nameCell,
           factionText: rawFac,
           hp: Number.isFinite(hp) ? hp : undefined,
           meleeAtk: Number.isFinite(mAtk) ? mAtk : undefined,
           rangedAtk: Number.isFinite(rAtk) ? rAtk : undefined,
           skills: [],
-          resolution: resolution.kind === 'ambiguous' ? 'ambiguous' : 'missing',
-          candidates: resolution.kind === 'ambiguous' ? resolution.candidates : [],
           rowStart: rowIndex + 1, // 1-based
           rowEnd: rowIndex + 1,
         };
+        drafts.set(key, current);
+        order.push(key);
       }
+      current.rowEnd = rowIndex + 1;
       // Don't continue here — the same row may also contain the first skill (cols 5+)
     }
 
     // Parse skill from cols 5-10
-    if (!currentGeneral && !currentUnresolved) continue;
+    if (!current) continue;
 
     const sName = clean(String(row[5] || ''));
     if (!sName) continue;
@@ -279,8 +307,8 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
     const sMode = clean(String(row[9] || ''));
     const sDesc = clean(String(row[10] || ''));
 
-    // 点名要用得出名字：本行的将领（未解析出来时用「未知」）＋技能名。
-    const rowName = currentGeneral?.name || currentUnresolved?.name || '未知';
+    // 点名要用得出名字：本块的将领＋技能名。
+    const rowName = current.name;
 
     const tagRead = parseSkillTagsCell(String(row[6] || ''));
     for (const u of tagRead.unknown) {
@@ -372,76 +400,47 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
       col += groupWidth;
     }
 
-    if (currentGeneral) {
-      currentSkills.push({
-        name: sName, tags, forced, trigger: triggerWithScope,
-        effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
-        effects: effects.length > 0 ? effects : undefined,
-        description: sDesc || undefined,
-        conditions: groupGate.conditions,
-      });
-    } else if (currentUnresolved) {
-      currentUnresolved.skills.push({
-        name: sName, tags, forced, trigger: triggerWithScope,
-        effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
-        effects: effects.length > 0 ? effects : undefined,
-        description: sDesc || undefined,
-        conditions: groupGate.conditions,
-      });
-      currentUnresolved.rowEnd = rowIndex + 1; // 1-based
-    }
+    current.skills.push({
+      name: sName, tags, forced, trigger: triggerWithScope,
+      effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
+      effects: effects.length > 0 ? effects : undefined,
+      description: sDesc || undefined,
+      conditions: groupGate.conditions,
+    });
+    current.rowEnd = rowIndex + 1; // 1-based
   }
-  flushCurrent();
-  return { entries, parseWarnings, unresolved };
+
+  const newGenerals: NewGeneralImport[] = [];
+  const unresolved: UnresolvedImportBlock[] = [];
+  for (const key of order) {
+    const classified = classifyDraft(drafts.get(key)!, pool);
+    if (classified.kind === 'create') newGenerals.push(classified.block);
+    else unresolved.push(classified.block);
+  }
+  return { newGenerals, unresolved, parseWarnings };
 };
 
 // ── Legacy flat format parser (5 cols per skill) ──
-export const parseLegacyDetailedRow = (row: (string|number|undefined)[]): {
-  general: General | undefined;
-  gEdit: Record<string,unknown>;
-  skills: SkillEditEntry[];
+// 与逐技能行格式共用同一套分流：要么自动新建，要么退回待处理。
+export interface LegacyDetailedRowImport {
+  newGeneral?: NewGeneralImport;
+  pending?: UnresolvedImportBlock;
   /** 认不出的徽章名：交调用方点名，绝不静默丢（§12-76①）。 */
   tagUnknown: string[];
-  rawName?: string;
-  rawFac?: string;
-  rawHp?: number;
-  rawMAtk?: number;
-  rawRAtk?: number;
-} | null => {
+}
+
+export const parseLegacyDetailedRow = (
+  row: (string|number|undefined)[],
+  pool: General[] = allGenerals,
+  rowNumber = 0,
+): LegacyDetailedRowImport | null => {
   const name = String(row[0] || '').trim();
   if (!name) return null;
-  const facList = ['魏','蜀','吴','群','晋'] as Faction[];
   const rawFac = clean(String(row[1] || ''));
-  const resolution = resolveGeneralForImport(name, rawFac, allGenerals);
-  
-  if (resolution.kind !== 'unique') {
-    // 未解析或歧义：返回 raw 数据但不返回 general
-    const hp = row[2] != null ? Number(row[2]) : undefined;
-    const mAtk = row[3] != null ? Number(row[3]) : undefined;
-    const rAtk = row[4] != null ? Number(row[4]) : undefined;
-    return {
-      general: undefined,
-      gEdit: {},
-      skills: [],
-      tagUnknown: [],
-      rawName: name,
-      rawFac,
-      rawHp: Number.isFinite(hp) ? hp : undefined,
-      rawMAtk: Number.isFinite(mAtk) ? mAtk : undefined,
-      rawRAtk: Number.isFinite(rAtk) ? rAtk : undefined,
-    };
-  }
-  
-  const general = resolution.general;
-  const hp = row[2] != null ? Number(row[2]) : undefined;
-  const mAtk = row[3] != null ? Number(row[3]) : undefined;
-  const rAtk = row[4] != null ? Number(row[4]) : undefined;
-  const gEdit = {
-    faction: facList.includes(rawFac as Faction) && rawFac !== general.faction ? rawFac : undefined,
-    hp: hp && hp !== general.hp ? hp : undefined,
-    meleeAtk: mAtk != null && mAtk !== general.meleeAtk ? mAtk : undefined,
-    rangedAtk: rAtk != null && rAtk !== general.rangedAtk ? rAtk : undefined,
-  };
+  const hp = row[2] != null && String(row[2]).trim() ? Number(row[2]) : undefined;
+  const mAtk = row[3] != null && String(row[3]).trim() ? Number(row[3]) : undefined;
+  const rAtk = row[4] != null && String(row[4]).trim() ? Number(row[4]) : undefined;
+
   const skills: SkillEditEntry[] = [];
   const tagUnknown: string[] = [];
   let col = 5;
@@ -453,13 +452,75 @@ export const parseLegacyDetailedRow = (row: (string|number|undefined)[]): {
     const sDesc = clean(String(row[col + 4] || ''));
     const tagRead = parseSkillTagsCell(row[col + 1] == null ? '' : String(row[col + 1]));
     for (const u of tagRead.unknown) tagUnknown.push(`${sName}：${u}`);
-    const tags = tagRead.tags;
-    const forced = sForced === '是' || undefined;
-    const effectMode = readEffectModeCell(sMode);
-    skills.push({ name: sName, tags, forced, effectMode, description: sDesc || undefined });
+    skills.push({
+      name: sName,
+      tags: tagRead.tags,
+      forced: sForced === '是' || undefined,
+      effectMode: readEffectModeCell(sMode),
+      description: sDesc || undefined,
+    });
     col += 5;
   }
-  return { general, gEdit, skills, tagUnknown };
+  if (skills.length === 0) return { tagUnknown };
+
+  const classified = classifyDraft({
+    name,
+    factionText: rawFac,
+    hp: Number.isFinite(hp) ? hp : undefined,
+    meleeAtk: Number.isFinite(mAtk) ? mAtk : undefined,
+    rangedAtk: Number.isFinite(rAtk) ? rAtk : undefined,
+    skills,
+    rowStart: rowNumber,
+    rowEnd: rowNumber,
+  }, pool);
+  return classified.kind === 'create'
+    ? { newGeneral: classified.block, tagUnknown }
+    : { pending: classified.block, tagUnknown };
+};
+
+// ── Simple format: 将领名称 | 技能名：描述 | 技能名：描述 | ...
+// 这一格式没有势力列 ⇒ 每一行都缺必要数据，退回待处理（玩家补势力或挂到现有卡）。
+// 绝不按名字直接命中现有卡：同名卡可能就在别的势力，猜错＝静默改写。
+export const parseSimpleSheet = (rows: (string|number|undefined)[][], pool: General[] = allGenerals): ParsedImport => {
+  const drafts = new Map<string, ImportDraft>();
+  const order: string[] = [];
+  rows.forEach((row, rowIndex) => {
+    if (!row || row.length < 2) return;
+    const name = String(row[0] || '').trim();
+    if (!name) return;
+    const skills: SkillEditEntry[] = [];
+    for (let col = 1; col < row.length; col++) {
+      const cell = String(row[col] || '').trim();
+      if (!cell) continue;
+      const parsed = parseSkillCell(cell);
+      if (parsed) skills.push(parsed);
+    }
+    if (skills.length === 0) return;
+    const key = `${name}\u0000`;
+    const existing = drafts.get(key);
+    if (existing) {
+      existing.skills.push(...skills);
+      existing.rowEnd = rowIndex + 1;
+      return;
+    }
+    drafts.set(key, {
+      name,
+      factionText: '',
+      skills,
+      rowStart: rowIndex + 1,
+      rowEnd: rowIndex + 1,
+    });
+    order.push(key);
+  });
+
+  const newGenerals: NewGeneralImport[] = [];
+  const unresolved: UnresolvedImportBlock[] = [];
+  for (const key of order) {
+    const classified = classifyDraft(drafts.get(key)!, pool);
+    if (classified.kind === 'create') newGenerals.push(classified.block);
+    else unresolved.push(classified.block);
+  }
+  return { newGenerals, unresolved, parseWarnings: [] };
 };
 
 // ── 导入「无变化」判定（v2.8.12 真机反馈 #45）──

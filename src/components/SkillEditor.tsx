@@ -2,13 +2,13 @@ import { useState, useMemo, useCallback } from 'react';
 import { useGameStore } from '../store/gameStore';
 import {
   allGenerals, General, Faction, factionColors, SkillTag, allSkillTags, skillTagColors,
-  SkillEffect, SkillEffectMode, effectModeLabels, sourceLabels, type GeneralSource,
+  SkillEffect, SkillEffectMode, effectModeLabels, sourceLabels, type GeneralSource, type Skill,
 } from '../data/generals';
 import { isRepositoryOfficial, sourceOf } from '../domain/generalProvenance';
 import {
   FORCED_MEANING, formatTags, skillTagMeanings, tagTimingWarnings, tagsOf,
 } from '../domain/skillTags';
-import { denialMessage, mayModifyGeneral, type EditDenial } from '../domain/generalPolicy';
+import { denialMessage, mayModifyGeneral } from '../domain/generalPolicy';
 import {
   triggerToStr,
   buildTriggerOptionStrings,
@@ -36,9 +36,9 @@ import {
 } from '../skills/skillExcelFormat';
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
 import {
-  parseSkillCell, isDetailedFormat, isRowPerSkillFormat, resolveGeneralByNameFaction,
-  parseRowPerSkillSheet, parseLegacyDetailedRow, importEntryChangesNothing,
-  SkillEditEntry, UnresolvedImportBlock,
+  isDetailedFormat, isRowPerSkillFormat,
+  parseRowPerSkillSheet, parseLegacyDetailedRow, parseSimpleSheet, importEntryChangesNothing,
+  IMPORT_FACTIONS, SkillEditEntry, NewGeneralImport, UnresolvedImportBlock,
 } from './skillEditor/skillExcelParsers';
 import {
   snapshotForSummary, describeChanges, createdEntry, mergeSummaryEntry,
@@ -62,6 +62,18 @@ import { saveAs } from 'file-saver';
 
 /** All trigger dropdown options (computed once; pure, module-level). */
 const allTriggerOptionStrings = buildTriggerOptionStrings();
+
+/** 导入条目 → 卡上存的那份技能记录（新建卡与待处理「新建」共用一份映射）。 */
+const toSkillRecord = (s: SkillEditEntry): Skill => ({
+  name: s.name,
+  description: s.description || '',
+  tags: tagsOf(s),
+  trigger: s.trigger,
+  effects: s.effects,
+  effectMode: s.effectMode,
+  conditions: s.conditions,
+  forced: s.forced,
+});
 
 type SortBy = 'faction' | 'name' | 'type';
 
@@ -356,39 +368,43 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           const data = new Uint8Array(evt.target?.result as ArrayBuffer);
           const workbook = XLSX.read(data, { type: 'array' });
 
-          let count = 0;
-          let skipped = 0;
+          let createdCount = 0;
+          let pendingAdded = 0;
+          let hpDefaultedCount = 0;
+          let sameNameOtherFactionCount = 0;
           let sheetCount = 0;
+          const createFailures: string[] = [];
           const unreadableCells: string[] = [];
-          // v2.8.8: each refused row keeps its OWN denial (system vs white
-          // lock) — the report must name the two kinds apart, never merge.
-          const rejectedRows: { name: string; denial: EditDenial }[] = [];
-          // §H3 layer ①+②: a row lands through the guarded store actions — the
-          // old direct `useGameStore.setState` was a second write path that
-          // skipped the policy gate entirely.
-          type GeneralEditInput = Parameters<typeof updateGeneralEdit>[1];
-          const writeRow = (
-            general: General,
-            skills: Parameters<typeof updateSkillEdit>[1] | null,
-            gEdit: GeneralEditInput | null,
-          ): boolean => {
-            const before = editedSnapshot(general);
-            const decisions: ReturnType<typeof updateSkillEdit>[] = [];
-            if (skills && skills.length > 0) decisions.push(updateSkillEdit(general.id, skills));
-            if (gEdit) decisions.push(updateGeneralEdit(general.id, gEdit));
-            const denied = decisions.find(d => !d.allowed);
-            if (denied && !denied.allowed) {
-              rejectedRows.push({ name: general.name, denial: denied.denial });
+          // 同一份文件的后一张表要看得见前面刚建的卡，否则同名同势力会造出第二张。
+          const importPool = [...allGenerals, ...authoredGenerals];
+          // 直接新建＝玩家不用做决定的那两种（同名不同势力 / 名册里没有）。
+          const createCard = (block: NewGeneralImport): boolean => {
+            const result = addAuthoredGeneral({
+              name: block.name,
+              faction: block.faction,
+              hp: block.hp ?? 4,
+              meleeAtk: block.meleeAtk,
+              rangedAtk: block.rangedAtk,
+              skills: block.skills.map(toSkillRecord),
+            }, developerMode ? 'official' : 'DIY');
+            if (!result.ok) {
+              const why = result.reason === 'NAME_REQUIRED' ? '名称空'
+                : result.reason === 'HP_INVALID' ? '体力不是正数' : '本机暂时没有编号源';
+              createFailures.push(`${block.name}（${why}）`);
               return false;
             }
-            pushSummary(describeChanges(before, editedSnapshot(general)));
+            importPool.push(result.general);
+            createdCount++;
+            if (block.hp == null) hpDefaultedCount++;
+            if (block.sameNameOtherFaction) sameNameOtherFactionCount++;
+            pushSummary(createdEntry(block.name, block.skills.map(s => s.name)));
             return true;
           };
-          // v2.8.12 (#45): 「这一行写回去什么都不会变」——两条逐技能行格式共用。
-          // 只在**本来写得动**时才认：权限被拦的行必须照旧进"拒录"名单，
-          // 否则"无变化"会把读不了写的真话盖掉。
-          const isNoChangeRow = (general: General, ge: Record<string, unknown>, skills: SkillEditEntry[]) =>
-            mayEditGeneral(general.id) && importEntryChangesNothing(getEditedGeneral(general), ge, skills);
+          const deferBlocks = (blocks: UnresolvedImportBlock[]) => {
+            if (blocks.length === 0) return;
+            pendingAdded += blocks.length;
+            setPendingImports(prev => [...prev, ...blocks]);
+          };
 
           for (const sheetName of workbook.SheetNames) {
             const sheet = workbook.Sheets[sheetName];
@@ -399,93 +415,53 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             const detailed = isDetailedFormat(rows);
 
             if (detailed && isRowPerSkillFormat(rows[0])) {
-              // New row-per-skill format — two-phase: auto-apply unique + defer ambiguous/missing
-              const fullPool = [...allGenerals, ...authoredGenerals];
-              const { entries, parseWarnings, unresolved } = parseRowPerSkillSheet(rows, fullPool);
+              // 逐技能行格式：不再写现有卡。同名同势力退回待处理，其余直接新建。
+              const { newGenerals, parseWarnings, unresolved } = parseRowPerSkillSheet(rows, importPool);
               unreadableCells.push(...parseWarnings);
-              
-              // Auto-apply uniquely resolved rows immediately
-              for (const entry of entries) {
-                const ge = entry.gEdit;
-                if (isNoChangeRow(entry.general, ge, entry.skills)) { skipped++; continue; }
-                const wrote = writeRow(
-                  entry.general,
-                  entry.skills.length > 0 ? entry.skills : null,
-                  ge.faction || ge.hp || ge.meleeAtk != null || ge.rangedAtk != null ? ge as GeneralEditInput : null,
-                );
-                if (!wrote) continue;
-                count++;
-                sheetHasData = true;
+              for (const block of newGenerals) {
+                if (createCard(block)) sheetHasData = true;
               }
-              
-              // Defer unresolved blocks to pending list
-              if (unresolved.length > 0) {
-                setPendingImports(prev => [...prev, ...unresolved]);
-              }
+              deferBlocks(unresolved);
+              if (unresolved.length > 0) sheetHasData = true;
             } else if (detailed) {
-              // Legacy 5-col-per-skill format
-              for (const row of rows.slice(1)) {
+              // 旧详细格式（每技能 5 列）：同一套分流。
+              for (let r = 1; r < rows.length; r++) {
+                const row = rows[r];
                 if (!row || row.length < 6) continue;
-                const parsed = parseLegacyDetailedRow(row);
+                const parsed = parseLegacyDetailedRow(row, importPool, r + 1);
                 if (!parsed) continue;
                 for (const t of parsed.tagUnknown) {
-                  unreadableCells.push(`${parsed.rawName || parsed.general?.name || '未知'}·${t} — 这枚徽章我不认识，所以没记下`);
+                  unreadableCells.push(`${String(row[0] || '未知')}·${t} — 这枚徽章我不认识，所以没记下`);
                 }
-                if (!parsed.general) continue;
-                const ge = parsed.gEdit;
-                if (isNoChangeRow(parsed.general, ge, parsed.skills)) { skipped++; continue; }
-                const wrote = writeRow(
-                  parsed.general,
-                  parsed.skills.length > 0 ? parsed.skills : null,
-                  ge.faction || ge.hp || ge.meleeAtk != null || ge.rangedAtk != null ? ge as GeneralEditInput : null,
-                );
-                if (!wrote) continue;
-                count++;
-                sheetHasData = true;
+                if (parsed.newGeneral && createCard(parsed.newGeneral)) sheetHasData = true;
+                if (parsed.pending) {
+                  deferBlocks([parsed.pending]);
+                  sheetHasData = true;
+                }
               }
             } else {
-              // Simple format: name | skill1Cell | skill2Cell | ...
-              for (const row of rows) {
-                if (!row || row.length < 2) continue;
-                const generalName = String(row[0] || '').trim();
-                if (!generalName) continue;
-                const general = resolveGeneralByNameFaction(generalName);
-                if (!general) continue;
-                const skills: SkillEditEntry[] = [];
-                for (let col = 1; col < row.length; col++) {
-                  const cellValue = String(row[col] || '').trim();
-                  if (!cellValue) continue;
-                  const parsed = parseSkillCell(cellValue);
-                  if (parsed) skills.push(parsed);
-                }
-                if (skills.length > 0) {
-                  const origSkills = general.skills;
-                  const same = skills.length === origSkills.length && skills.every((s, si) => {
-                    const o = origSkills[si]; if (!o) return false;
-                    return s.name === o.name && (s.description || '') === (o.description || '')
-                      && formatTags(tagsOf(s)) === formatTags(tagsOf(o));
-                  });
-                  if (same) { skipped++; continue; }
-                  if (!writeRow(general, skills, null)) continue;
-                  count++; sheetHasData = true;
-                }
+              // 简单格式（名称 | 技能格…）：没有势力列 ⇒ 全部退回待处理补数据。
+              const { newGenerals, unresolved, parseWarnings } = parseSimpleSheet(rows, importPool);
+              unreadableCells.push(...parseWarnings);
+              for (const block of newGenerals) {
+                if (createCard(block)) sheetHasData = true;
               }
+              deferBlocks(unresolved);
+              if (unresolved.length > 0) sheetHasData = true;
             }
             if (sheetHasData) sheetCount++;
           }
 
           setParseWarnings(unreadableCells);
-          // Refused rows are named and stay on screen: a silently skipped row
-          // is the worst failure shape (§12-46①), and here it would be a
-          // permission refusal dressed up as a successful import.
-          const deniedOfficial = [...new Set(rejectedRows.filter(r => r.denial === 'OFFICIAL_READ_ONLY').map(r => r.name))];
-          const deniedLocked = [...new Set(rejectedRows.filter(r => r.denial === 'USER_LOCKED').map(r => r.name))];
-          const refusedTotal = deniedOfficial.length + deniedLocked.length;
-          setReadOnlyNotice(refusedTotal > 0
-            ? denialNotice(deniedOfficial, deniedLocked) + `｜本次未录入 ${refusedTotal} 名`
-            : '');
-          setImportResult(`✅ 从 ${sheetCount} 个工作表导入 ${count} 名将领${skipped > 0 ? `，跳过 ${skipped} 名无变化` : ''}${refusedTotal > 0 ? `，拒录 ${refusedTotal} 名` : ''}${unreadableCells.length > 0 ? `；⚠ ${unreadableCells.length} 处没看懂，见下方清单` : ''}`);
-          setTimeout(() => setImportResult(''), 5000);
+          setReadOnlyNotice('');
+          const parts: string[] = [`从 ${sheetCount} 个工作表新建 ${createdCount} 名将领`];
+          if (sameNameOtherFactionCount > 0) parts.push(`${sameNameOtherFactionCount} 名同名但势力不同，已直接新建`);
+          if (hpDefaultedCount > 0) parts.push(`${hpDefaultedCount} 名没填体力，按 4 建`);
+          if (pendingAdded > 0) parts.push(`${pendingAdded} 名等你在下方决定或补数据`);
+          if (createFailures.length > 0) parts.push(`${createFailures.length} 名建卡失败：${createFailures.join('、')}`);
+          if (unreadableCells.length > 0) parts.push(`⚠ ${unreadableCells.length} 处没看懂，见下方清单`);
+          setImportResult(`✅ ${parts.join('；')}`);
+          setTimeout(() => setImportResult(''), 6000);
         } catch {
           setImportResult('❌ Excel文件解析失败，请检查格式');
           setTimeout(() => setImportResult(''), 4000);
@@ -515,26 +491,23 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     }
 
     if (action === 'create') {
-      // Create as new authored general (DIY by default, official only in dev mode)
+      if (!block.faction) {
+        setImportResult(`❌ 缺少必要数据：请先给「${block.name}」选一个势力`);
+        setTimeout(() => setImportResult(''), 5000);
+        return;
+      }
       const result = addAuthoredGeneral({
         name: block.name,
-        faction: block.factionText as Faction || '群',
-        hp: block.hp || 4,
-        skills: block.skills.map(s => ({
-          name: s.name,
-          description: s.description || '',
-          tags: tagsOf(s),
-          trigger: s.trigger,
-          effects: s.effects,
-          effectMode: s.effectMode,
-          conditions: s.conditions,
-          forced: s.forced,
-        })),
+        faction: block.faction,
+        hp: block.hp ?? 4,
+        meleeAtk: block.meleeAtk,
+        rangedAtk: block.rangedAtk,
+        skills: block.skills.map(toSkillRecord),
       }, developerMode ? 'official' : 'DIY');
-      
+
       if (result.ok) {
         pushSummary(createdEntry(block.name, block.skills.map(s => s.name)));
-        setImportResult(`✅ 已新建${pendingCreateLayer}「${block.name}」`);
+        setImportResult(`✅ 已新建${pendingCreateLayer}「${block.name}」${block.hp == null ? '（没填体力，按 4 建）' : ''}`);
         setPendingImports(prev => prev.filter((_, i) => i !== idx));
       } else {
         setImportResult(`❌ 新建失败：${result.reason}`);
@@ -544,20 +517,27 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     }
 
     if (action === 'modify' && targetGeneralId) {
-      // Modify existing general
+      // 修改现有：只写真的变了的字段，和当前生效视图一致就一个字节都不写（#45 同口径）。
       type GeneralEditInput = Parameters<typeof updateGeneralEdit>[1];
-      const facList: Faction[] = ['魏','蜀','吴','群','晋'];
       const target = [...allGenerals, ...authoredGenerals].find(g => g.id === targetGeneralId);
-      const before = target ? editedSnapshot(target) : null;
+      if (!target) return;
+      const current = getEditedGeneral(target);
+      const before = editedSnapshot(target);
       const ge: GeneralEditInput = {
-        faction: (block.factionText && facList.includes(block.factionText as Faction)) ? block.factionText as Faction : undefined,
-        hp: block.hp,
-        meleeAtk: block.meleeAtk,
-        rangedAtk: block.rangedAtk,
+        faction: block.faction && block.faction !== current.faction ? block.faction : undefined,
+        hp: block.hp != null && block.hp !== current.hp ? block.hp : undefined,
+        meleeAtk: block.meleeAtk != null && block.meleeAtk !== current.meleeAtk ? block.meleeAtk : undefined,
+        rangedAtk: block.rangedAtk != null && block.rangedAtk !== current.rangedAtk ? block.rangedAtk : undefined,
       };
+      if (mayEditGeneral(target.id) && importEntryChangesNothing(current, ge, block.skills)) {
+        setImportResult(`「${block.name}」和现有卡一致，没有写入`);
+        setPendingImports(prev => prev.filter((_, i) => i !== idx));
+        setTimeout(() => setImportResult(''), 5000);
+        return;
+      }
       const decisions: ReturnType<typeof updateSkillEdit>[] = [];
       if (block.skills.length > 0) decisions.push(updateSkillEdit(targetGeneralId, block.skills));
-      if (ge.faction || ge.hp || ge.meleeAtk != null || ge.rangedAtk != null) {
+      if (ge.faction !== undefined || ge.hp !== undefined || ge.meleeAtk !== undefined || ge.rangedAtk !== undefined) {
         decisions.push(updateGeneralEdit(targetGeneralId, ge));
       }
       const denied = decisions.find(d => !d.allowed);
@@ -565,7 +545,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         setReadOnlyNotice(`${denialMessage(denied.denial)}｜无法修改「${block.name}」`);
         return;
       }
-      if (target && before) pushSummary(describeChanges(before, editedSnapshot(target)));
+      pushSummary(describeChanges(before, editedSnapshot(target)));
       setImportResult(`✅ 已更新将领「${block.name}」`);
       setPendingImports(prev => prev.filter((_, i) => i !== idx));
       setTimeout(() => setImportResult(''), 5000);
@@ -575,35 +555,39 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // Master button: create all pending as new
   const handleCreateAllPending = () => {
     let successCount = 0;
+    let skippedNoFaction = 0;
     let failCount = 0;
     for (const block of pendingImports) {
+      if (!block.faction) { skippedNoFaction++; continue; }
       const result = addAuthoredGeneral({
         name: block.name,
-        faction: block.factionText as Faction || '群',
-        hp: block.hp || 4,
-        skills: block.skills.map(s => ({
-          name: s.name,
-          description: s.description || '',
-          tags: tagsOf(s),
-          trigger: s.trigger,
-          effects: s.effects,
-          effectMode: s.effectMode,
-          conditions: s.conditions,
-          forced: s.forced,
-        })),
+        faction: block.faction,
+        hp: block.hp ?? 4,
+        meleeAtk: block.meleeAtk,
+        rangedAtk: block.rangedAtk,
+        skills: block.skills.map(toSkillRecord),
       }, developerMode ? 'official' : 'DIY');
       if (result.ok) {
         successCount++;
         pushSummary(createdEntry(block.name, block.skills.map(s => s.name)));
       } else failCount++;
     }
+    const note =
+      (skippedNoFaction > 0 ? `；${skippedNoFaction} 名缺少势力，还没建（先在行里选势力）` : '') +
+      (failCount > 0 ? `；${failCount} 名失败` : '');
     if (successCount > 0) {
-      setImportResult(`✅ 批量新建 ${successCount} 名${pendingCreateLayer}${failCount > 0 ? `，${failCount} 名失败` : ''}`);
-      setPendingImports([]);
+      setImportResult(`✅ 批量新建 ${successCount} 名${pendingCreateLayer}${note}`);
+      // 缺数据的那些留在清单里，等玩家补完再建。
+      setPendingImports(prev => prev.filter(b => !b.faction));
     } else {
-      setImportResult(`❌ 全部新建失败`);
+      setImportResult(`❌ 没有建出任何卡${note}`);
     }
     setTimeout(() => setImportResult(''), 5000);
+  };
+
+  /** 缺数据行在面板里补选势力（补完仍留在清单里，等玩家点新建）。 */
+  const setPendingFaction = (idx: number, faction: Faction) => {
+    setPendingImports(prev => prev.map((b, i) => i === idx ? { ...b, faction, factionText: faction } : b));
   };
 
   // ── Trigger <-> string and Excel effect-group helpers live in the pure
@@ -1106,11 +1090,11 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* §H8: Pending import blocks — unresolved generals awaiting user choice */}
+        {/* 待处理导入：同名同势力要玩家选新建/修改/跳过；缺势力的在这里补数据 */}
         {pendingImports.length > 0 && (
           <div className="px-6 py-3 border-b border-blue-700/40 bg-blue-950/25 flex-shrink-0">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs font-bold text-blue-300">📋 待处理导入（{pendingImports.length} 名将领无法自动识别）</span>
+              <span className="text-xs font-bold text-blue-300">📋 待处理导入（{pendingImports.length} 名将领等你的决定）</span>
               <div className="flex-1" />
               <button onClick={handleCreateAllPending}
                 className="px-3 py-1 rounded-lg bg-green-700/40 text-green-200 text-[10px] font-bold hover:bg-green-600/40 transition-all">
@@ -1119,23 +1103,43 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               <button onClick={() => setPendingImports([])}
                 className="text-[10px] px-1.5 py-0.5 rounded text-blue-400/70 hover:text-blue-200 hover:bg-blue-900/30">清空</button>
             </div>
-            <p className="text-[10px] text-blue-200/60 mb-2">每行可选择：① 新建为 {pendingCreateLayer} ② 挂到现有将领上修改 ③ 跳过不导入</p>
+            <p className="text-[10px] text-blue-200/60 mb-2">每行可选择：① 新建为 {pendingCreateLayer} ② 修改现有卡 ③ 跳过不导入；标了「缺少必要数据」的行要先补上势力</p>
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {pendingImports.map((block, idx) => (
                 <div key={idx} className="bg-black/30 border border-blue-700/30 rounded p-2 text-[10px]">
                   <div className="flex items-start gap-2 mb-1">
                     <div className="flex-1">
                       <span className="font-bold text-blue-100">{block.name}</span>
-                      {block.factionText && <span className="text-blue-300/70 ml-2">势力：{block.factionText}</span>}
+                      {block.faction
+                        ? <span className="text-blue-300/70 ml-2">势力：{block.faction}</span>
+                        : <span className="text-amber-300 ml-2">势力：缺</span>}
                       {block.hp && <span className="text-blue-300/70 ml-2">体力：{block.hp}</span>}
                       <span className="text-blue-400/50 ml-2">行 {block.rowNumbers}</span>
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 items-center">
+                      {!block.faction && (
+                        <select
+                          onChange={e => setPendingFaction(idx, e.target.value as Faction)}
+                          defaultValue=""
+                          className="px-1 py-0.5 rounded bg-amber-700/40 text-amber-100 text-[9px] cursor-pointer">
+                          <option value="">补选势力…</option>
+                          {IMPORT_FACTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+                        </select>
+                      )}
                       <button onClick={() => handleResolvePending(idx, 'create')}
-                        className="px-2 py-0.5 rounded bg-green-700/40 text-green-200 hover:bg-green-600/40 text-[9px]">
+                        disabled={!block.faction}
+                        className={`px-2 py-0.5 rounded text-[9px] ${block.faction
+                          ? 'bg-green-700/40 text-green-200 hover:bg-green-600/40'
+                          : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}>
                         新建
                       </button>
-                      {block.candidates.length > 0 && (
+                      {block.candidates.length === 1 && (
+                        <button onClick={() => handleResolvePending(idx, 'modify', block.candidates[0].id)}
+                          className="px-2 py-0.5 rounded bg-purple-700/40 text-purple-200 hover:bg-purple-600/40 text-[9px]">
+                          修改「{block.candidates[0].name}（{block.candidates[0].faction}）」
+                        </button>
+                      )}
+                      {block.candidates.length > 1 && (
                         <select
                           onChange={e => handleResolvePending(idx, 'modify', e.target.value)}
                           defaultValue=""
@@ -1152,11 +1156,17 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                       </button>
                     </div>
                   </div>
-                  {block.resolution === 'missing' && (
-                    <p className="text-amber-300/70">原因：找不到名为「{block.name}」的将领</p>
+                  {block.reason === 'sameNameSameFaction' && (
+                    <p className="text-amber-300/70">原因：名册里已有同名同势力的卡——请选新建一张、修改现有，或跳过</p>
                   )}
-                  {block.resolution === 'ambiguous' && block.candidates.length === 0 && (
-                    <p className="text-amber-300/70">原因：同名将领太多，无法确定是哪一个</p>
+                  {block.reason === 'missingFaction' && (
+                    <p className="text-amber-300/70">缺少必要数据：没有填势力；补选势力后才能新建，也可以改到现有同名卡上</p>
+                  )}
+                  {block.reason === 'unknownFaction' && (
+                    <p className="text-amber-300/70">缺少必要数据：势力「{block.factionText}」不是 魏/蜀/吴/群/晋 之一；补选正确势力后才能新建</p>
+                  )}
+                  {block.reason === 'missingName' && (
+                    <p className="text-amber-300/70">缺少必要数据：没有将领名称</p>
                   )}
                   {block.skills.length > 0 && (
                     <p className="text-blue-200/50 mt-1">包含 {block.skills.length} 个技能：{block.skills.map(s => s.name).join('、')}</p>

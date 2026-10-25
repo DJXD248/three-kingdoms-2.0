@@ -1,10 +1,12 @@
 /**
- * v2.8.12 真机反馈 #45：逐技能行格式（＝导出文件的格式）的导入必须有"无变化"
- * 判定。用户把自己刚导出的 Excel 原样再导一次，旧代码会报"导入 95 名将领"、
- * 并给每张官方将留下一条 ✏️ 覆盖记录（退出开发者模式后还被算进"N 处改动已停用"）。
- * 这里走真链路：造文件→喂页面上那个 <input type=file>→读回执与存档。
- * 同一个机件还用来钉 #46：待点选面板的"新建为 …"措辞必须跟着模式说真话
- * （开发者模式落的是官方本地草稿 G-*，玩家模式才是 DIY D-*）。
+ * 2026-10-25 口径反转（用户裁决）：同名同势力**不再直接覆盖**，一律退回「待处理」
+ * 让玩家选 新建 / 修改 / 跳过；同名不同势力、名册里查无此人⇒直接新建；缺势力⇒
+ * 退回「缺少必要数据」。本文件钉的是反转后仍然成立的那条硬保证：
+ * **光是喂进一个文件，存档一个字节都不会变**——写入只发生在玩家点了按钮之后。
+ *
+ * 历史由来（#45 真机反馈）：旧代码把自己刚导出的 Excel 原样重导，会报"导入 95 名"
+ * 并给每张官方将留一条 ✏️ 覆盖记录。现在改成"问"，比"跳过"更严：连判定结果都不写。
+ * #48（导出用 ExcelJS、导入用 SheetJS，数值 0 是"全部手牌"哨兵）仍靠全量往返守。
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, fireEvent, screen, cleanup, waitFor } from '@testing-library/react';
@@ -19,9 +21,7 @@ vi.mock('file-saver', () => ({ saveAs: (blob: Blob) => { savedBlobs.push(blob); 
 
 /**
  * 取张辽当"官方将"证人：他的「突袭」在卡上仍是一枚只有名字的旧形态技能，
- * 于是下面那份手造行（技能名以外全填「无」）逐字等于卡面，才配当"无变化"的证人。
- * v2.9.6 之前这里用的是蜀关羽·武圣——武圣现在带锁定技＋结构化载荷（v2.9.6），
- * "全填无"那一行不再等于卡面，用它测跳过判定只会测出一条假变化。
+ * 于是下面那份手造行（技能名以外全填「无」）逐字等于卡面，才配当"内容一致"的证人。
  */
 const probe = allGenerals.find(g => g.id === 'wei_004')!;
 
@@ -40,13 +40,22 @@ const rowFor = (hp: number) => [
 const xlsxFile = (hp: number): File => {
   const ws = XLSX.utils.aoa_to_sheet([HEADER, rowFor(hp)]);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '蜀');
+  XLSX.utils.book_append_sheet(wb, ws, '魏');
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
   return new File([buf], '将领数据.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 };
 
 const toastText = () => Array.from(document.querySelectorAll('span'))
   .find(s => s.textContent?.startsWith('✅') || s.textContent?.startsWith('❌'))?.textContent ?? '';
+
+const modifyButton = () => Array.from(document.querySelectorAll('button'))
+  .find(b => b.textContent?.trim().startsWith('修改「'));
+
+const createButton = () => Array.from(document.querySelectorAll('button'))
+  .find(b => b.textContent?.trim() === '新建');
+
+const hintText = () => Array.from(document.querySelectorAll('p'))
+  .find(p => p.textContent?.includes('每行可选择'))?.textContent ?? '';
 
 function arm(developerMode = true) {
   cleanup();
@@ -80,73 +89,88 @@ async function importFile(file: File, expectText: string) {
 const snapshot = () => ({
   skills: JSON.stringify(useGameStore.getState().skillEdits),
   head: JSON.stringify(useGameStore.getState().generalEdits),
+  authored: JSON.stringify(useGameStore.getState().authoredGenerals),
   lsSkills: localStorage.getItem('three_kingdoms_skill_edits'),
   lsHead: localStorage.getItem('three_kingdoms_general_edits'),
+  lsAuthored: localStorage.getItem('three_kingdoms_authored_generals'),
 });
 
-describe('Excel 逐技能行导入 · 无变化判定（#45）', () => {
+describe('Excel 逐技能行导入 · 光喂文件不写存档（2026-10-25 口径）', () => {
   afterEach(cleanup);
 
-  it('原样重导未改动的官方将：报"跳过…无变化"、不记"导入"、零覆盖记录', async () => {
+  it('原样重导官方将：不写任何覆盖记录，只为这张卡开一块「待处理」', async () => {
     arm();
-    const toast = await importFile(xlsxFile(probe.hp), '跳过 1 名无变化');
-    expect(toast).toContain('导入 0 名将领');
+    const before = snapshot();
+    const toast = await importFile(xlsxFile(probe.hp), '1 名等你在下方决定');
+    expect(toast).toContain('新建 0 名将领');
+    expect(snapshot()).toEqual(before);
     expect(useGameStore.getState().skillEdits[probe.id]).toBeUndefined();
     expect(useGameStore.getState().generalEdits[probe.id]).toBeUndefined();
     expect(snapshot().head).toBe('{}');
+    // 三个选项都在：新建 / 修改这张 / 跳过。
+    expect(createButton()).toBeTruthy();
+    expect(modifyButton()?.textContent).toContain(`修改「${probe.name}（${probe.faction}）」`);
+    expect(screen.getByText('跳过')).toBeTruthy();
+  });
+
+  it('待处理里点「修改现有」且内容一致 ⇒ 一个字节都不写，并如实说「和现有卡一致」', async () => {
+    arm();
+    await importFile(xlsxFile(probe.hp), '1 名等你在下方决定');
+    const before = snapshot();
+    fireEvent.click(modifyButton()!);
+    await waitFor(() => expect(document.body.textContent).toContain('和现有卡一致'));
+    expect(snapshot()).toEqual(before);
+    // 面板也不该冒出一条"修改 1 名"——没写就没有改动可报。
+    expect(document.querySelector('[data-testid="import-summary"]')).toBeNull();
   });
 
   /**
-   * 「无变化」这条判定**只在写得动的时候才许认**（复算第③闸指出这一条当时只有静态
-   * 成立、没有测试钉）。玩家模式下同一行官方将：既没变化、也写不动⇒必须报**拒录**，
-   * 绝不许报"无变化"——把"我没有权限写"说成"这行不用写"是最坏的一类假成功。
-   * 差分证人：删掉 `isNoChangeRow` 里的 `mayEditGeneral(id) &&` 前置门，本条即红。
+   * "写不了"绝不等于"不用写"：玩家模式下同一行官方将，点「修改现有」必须被拦下并
+   * 点名原因，存档一个字节不动。差分证人：把 `handleResolvePending` 里 `mayEditGeneral`
+   * 或 store 的守卫任一拿掉，本条即红。
    */
-  it('玩家模式下无变化的官方行⇒报"拒录"而不是"无变化"（权限优先于跳过）', async () => {
+  it('玩家模式下点「修改现有」⇒ 被拦下、存档不动、不进总结', async () => {
     arm(false);
+    await importFile(xlsxFile(probe.hp + 1), '1 名等你在下方决定');
     const before = snapshot();
-    const toast = await importFile(xlsxFile(probe.hp), '拒录 1 名');
-    expect(toast).toContain('拒录 1 名');
-    expect(toast).not.toContain('无变化');
-    expect(toast).toContain('导入 0 名将领');
+    fireEvent.click(modifyButton()!);
+    await waitFor(() => expect(document.body.textContent).toContain('无法修改'));
+    expect(document.body.textContent).toContain('官方将领在开发者模式外只读');
     expect(snapshot()).toEqual(before);
+    expect(document.querySelector('[data-testid="import-summary"]')).toBeNull();
   });
 
-  it('真改了数值的行照旧写入；同一份文件第二次导入则跳过、存档一条字节都不多', async () => {
+  it('真改了数值：导入本身不写，点了「修改现有」才写入', async () => {
+    arm();
+    await importFile(xlsxFile(probe.hp - 1), '1 名等你在下方决定');
+    expect(useGameStore.getState().generalEdits[probe.id]).toBeUndefined(); // 还没点
+
+    fireEvent.click(modifyButton()!);
+    await waitFor(() => expect(toastText()).toContain(`已更新将领「${probe.name}」`));
+    expect(useGameStore.getState().generalEdits[probe.id]?.hp).toBe(probe.hp - 1);
+  });
+
+  it('改完再导同一份文件：内容已一致 ⇒ 点「修改现有」仍是一笔都不写', async () => {
     arm();
     const file = xlsxFile(probe.hp - 1);
-    await importFile(file, '导入 1 名将领');
-    expect(useGameStore.getState().generalEdits[probe.id]?.hp).toBe(probe.hp - 1);
+    await importFile(file, '1 名等你在下方决定');
+    fireEvent.click(modifyButton()!);
+    await waitFor(() => expect(toastText()).toContain('已更新将领'));
 
     const before = snapshot();
-    const second = await importFile(file, '跳过 1 名无变化');
-    expect(second).toContain('导入 0 名将领');
-    expect(snapshot()).toEqual(before);
-  });
-
-  /**
-   * 已登记的局限（#47，不是本刀引入）：解析器算"要改哪些字段"是**相对仓库原始卡**，
-   * 所以写回原始值的单元格撤不掉覆盖记录。这条测试钉住"跳过"判定的真实口径＝
-   * "写回去会不会变"，而不是"文件与库里是否一致"——将来若改成相对生效视图，这条会红。
-   */
-  it('文件写回原始体力⇒撤不掉已有覆盖记录，判定为"无变化"而不是假装导入成功', async () => {
-    arm();
-    await importFile(xlsxFile(probe.hp - 1), '导入 1 名将领');
-    const before = snapshot();
-    const toast = await importFile(xlsxFile(probe.hp), '跳过 1 名无变化');
-    expect(toast).toContain('导入 0 名将领');
+    await importFile(file, '1 名等你在下方决定');
+    fireEvent.click(modifyButton()!);
+    await waitFor(() => expect(document.body.textContent).toContain('和现有卡一致'));
     expect(snapshot()).toEqual(before);
     expect(useGameStore.getState().generalEdits[probe.id]?.hp).toBe(probe.hp - 1);
   });
 
   /**
-   * #48（真机跑出来的那条，同属"重导自己的导出文件"这个抱怨）：上面几条喂的是
-   * 手造行，这条喂**应用自己导出的字节**。导出用 ExcelJS、导入用 SheetJS，
-   * 两侧不对称只有全量往返才暴露——导出把官方的「数值=0」（＝引擎的"全部手牌"
-   * 哨兵）原样写进格子，旧解析器按"最小 1"判它非法，于是导入自己的文件会把
-   * 蔡文姬·断肠从「弃置全部手牌」悄悄改成「弃置 1 张」，还留一条 ✏️。
+   * #48：导出用 ExcelJS、导入用 SheetJS，两侧不对称只有全量往返才暴露——导出把官方的
+   * 「数值=0」（＝引擎的"全部手牌"哨兵）原样写进格子，旧解析器按"最小 1"判它非法。
+   * 现在整表往返仍然必须零写入，并且每一张有技能的卡都要真的走成一块「待处理」。
    */
-  it('导出整张表再原样导回：全量零写入，回执只报跳过（#45＋#48 全量口径）', async () => {
+  it('导出整张表再原样导回：全量零写入，每张有技能的卡都退成待处理', async () => {
     arm();
     savedBlobs.length = 0;
     fireEvent.click(screen.getByText('📤 导出Excel'));
@@ -157,12 +181,12 @@ describe('Excel 逐技能行导入 · 无变化判定（#45）', () => {
     const before = snapshot();
     const toast = await importFile(
       new File([buf], '将领数据.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-      '名无变化',
+      '名等你在下方决定',
     );
-    expect(toast).toContain('导入 0 名将领');
-    // 跳过的名数＝导出的名数（有技能才成块）⇒真的走满了全表，不是空跑。
-    const skipped = Number(toast.match(/跳过 (\d+) 名无变化/)?.[1] ?? -1);
-    expect(skipped).toBe(allGenerals.filter(g => g.skills.length > 0).length);
+    expect(toast).toContain('新建 0 名将领');
+    // 待处理的名数＝导出的名数（有技能才成块）⇒真的走满了全表，不是空跑。
+    const pending = Number(toast.match(/；(\d+) 名等你在下方决定/)?.[1] ?? -1);
+    expect(pending).toBe(allGenerals.filter(g => g.skills.length > 0).length);
     expect(snapshot()).toEqual(before);
     expect(Object.keys(useGameStore.getState().skillEdits)).toHaveLength(0);
     expect(Object.keys(useGameStore.getState().generalEdits)).toHaveLength(0);
@@ -170,36 +194,20 @@ describe('Excel 逐技能行导入 · 无变化判定（#45）', () => {
 });
 
 /**
- * v2.8.12 #46（用户裁方案A＝只改措辞、不改归属）：待点选面板说"新建为 …"时
+ * v2.8.12 #46（用户裁方案A＝只改措辞、不改归属）：待处理面板说"新建为 …"时
  * 必须说出这一趟真会落在哪一层——开发者模式＝官方本地草稿（G-*），
  * 玩家模式＝DIY（D-*）。归属判定住在 generalProvenance，本刀一字未动。
+ * 2026-10-25：证人从"名册里没有的名字"换成"同名同势力"（前者现在直接新建、不弹面板）。
  */
-describe('待点选导入 · 措辞随模式说真话（#46）', () => {
+describe('待处理导入 · 措辞随模式说真话（#46）', () => {
   afterEach(cleanup);
-
-  const unknownFile = () => {
-    const row = ['张三无名', '群', 4, 2, 1, '试探', '无', '无', '无', '无', '试探一下', '无',
-      '', '', '', '', '', '', '', ''];
-    const ws = XLSX.utils.aoa_to_sheet([HEADER, row]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, '群');
-    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
-    return new File([buf], '未知将.xlsx');
-  };
-
-  const hintText = () => Array.from(document.querySelectorAll('p'))
-    .find(p => p.textContent?.includes('每行可选择'))?.textContent ?? '';
-
-  const createButton = () => Array.from(document.querySelectorAll('button'))
-    .find(b => b.textContent?.trim() === '新建');
 
   it('开发者模式：面板与回执都说"官方本地草稿"，建出来的号是 G-*', async () => {
     arm(true);
-    fireImport(unknownFile());
-    await waitFor(() => expect(hintText()).toContain('每行可选择'));
+    await importFile(xlsxFile(probe.hp), '1 名等你在下方决定');
     expect(hintText()).toContain('新建为 官方本地草稿');
     fireEvent.click(createButton()!);
-    await waitFor(() => expect(toastText()).toContain('已新建官方本地草稿「张三无名」'));
+    await waitFor(() => expect(toastText()).toContain(`已新建官方本地草稿「${probe.name}」`));
     const created = useGameStore.getState().authoredGenerals;
     expect(created).toHaveLength(1);
     expect(created[0].id.startsWith('G-')).toBe(true);
@@ -207,12 +215,11 @@ describe('待点选导入 · 措辞随模式说真话（#46）', () => {
 
   it('玩家模式：同一处面板说"DIY 将领"，建出来的号是 D-*', async () => {
     arm(false);
-    fireImport(unknownFile());
-    await waitFor(() => expect(hintText()).toContain('每行可选择'));
+    await importFile(xlsxFile(probe.hp), '1 名等你在下方决定');
     expect(hintText()).toContain('新建为 DIY 将领');
     expect(hintText()).not.toContain('官方本地草稿');
     fireEvent.click(createButton()!);
-    await waitFor(() => expect(toastText()).toContain('已新建DIY 将领「张三无名」'));
+    await waitFor(() => expect(toastText()).toContain(`已新建DIY 将领「${probe.name}」`));
     const created = useGameStore.getState().authoredGenerals;
     expect(created).toHaveLength(1);
     expect(created[0].id.startsWith('D-')).toBe(true);
