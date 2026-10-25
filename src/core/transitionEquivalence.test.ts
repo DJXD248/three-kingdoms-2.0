@@ -789,8 +789,8 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
 
     expect(fieldHp(engine.state, 2, 'g6')).toEqual({ hp: 1, armor: 0 }); // 4-2-1(奋威)
     expect(fieldHp(engine.state, 2, 'g7')).toEqual({ hp: 3, armor: 0 }); // 3-1+1(补益)
-    expect(fieldHp(engine.state, 2, 'g8')).toEqual({ hp: 3, armor: 0 });
-    expect(fieldHp(engine.state, 1, 'g3')).toEqual({ hp: 2, armor: 0 }); // 刚烈反伤
+    expect(fieldHp(engine.state, 2, 'g8')).toEqual({ hp: 2, armor: 0 }); // 4-2（司马昭 4 体力＝武将·近战 2，v2.9.20）
+    expect(fieldHp(engine.state, 1, 'g3')).toEqual({ hp: 3, armor: 0 }); // 刚烈反伤 1（司马昭 4 体力上限，v2.9.20）
     const p1 = engine.state.players.find(p => p.id === 1)!;
     const p2 = engine.state.players.find(p => p.id === 2)!;
     expect(p1.hand).toHaveLength(5); // 6-3 成本 +慧眼 +司敌
@@ -910,7 +910,7 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     const ev3 = dispatchAndAnswer(e3, attack('sym3', 'zgd', 0));
     expect(ev3.some(e => e.type === 'GAIN_ARMOR' && String((e.data as any)?.skillId ?? '').includes('并吞:e1'))).toBe(true);
     expect(ev3.some(e => e.type === 'DAMAGE' && String((e.data as any)?.skillId ?? '').includes('死节:e1'))).toBe(true);
-    expect(fieldHp(e3.state, 1, 'sym3')).toEqual({ hp: 1, armor: 2 });
+    expect(fieldHp(e3.state, 1, 'sym3')).toEqual({ hp: 2, armor: 2 }); // 司马炎 4 体力上限 − 死节 2（v2.9.20）
 
     // 戮杀：贾南风击杀 → 满血也发 HEAL 事件（封顶在结算层）
     const s4 = makeState([
@@ -1558,8 +1558,8 @@ describe('内置批量二 · 真实模板全路径对账 (v2.4.2)', () => {
     expect(selfNow.currentArmor).toBe(0);
     expect(((first.engine.state.discardPile ?? []) as Array<{ id: string }>)
       .some(c => c.id.startsWith('es_armor'))).toBe(false); // 空转不过手任何装备卡
-    // 崩坏在成为目标时落账：单点都没有 → 当次近战 2 伤照常吃满（4 血上限）
-    expect(fieldHp(first.engine.state, 2, 'es_self')).toEqual({ hp: 2, armor: 0 });
+    // 崩坏在成为目标时落账：单点都没有 → 当次近战 2 伤照常吃满（董卓 8 血上限，v2.9.20 按三国杀改）
+    expect(fieldHp(first.engine.state, 2, 'es_self')).toEqual({ hp: 6, armor: 0 });
 
     const second = runOnce();
     expect(second.raw).toEqual(first.raw);

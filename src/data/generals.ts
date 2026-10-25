@@ -973,10 +973,10 @@ const weiGenerals: General[] = [
   createGeneral('wei_013', '荀彧', '魏', 3, ['驱虎', '节命']),
   createGeneral('wei_014', '曹丕', '魏', 3, ['行殇', '放逐']),
   createGeneral('wei_015', '邓艾', '魏', 4, [SK_TUNTIAN_WEI, '凿险']),
-  createGeneral('wei_016', '钟会', '魏', 3, ['权计', '自立']),
+  createGeneral('wei_016', '钟会', '魏', 4, ['权计', '自立']),
   createGeneral('wei_017', '王异', '魏', 3, ['贞烈', '秘计']),
   createGeneral('wei_018', '荀攸', '魏', 3, ['奇策', '智愚']),
-  createGeneral('wei_019', '李典', '魏', 3, ['恂恂', '忘隙']),
+  createGeneral('wei_019', '李典', '魏', 4, ['恂恂', '忘隙']),
   createGeneral('wei_020', '满宠', '魏', 3, ['峻刑', '御策']),
   createGeneral('wei_021', '张春华', '魏', 3, ['绝情', '伤逝']),
   // v2.9.6 内容刀＝用户 2026-10-08 认定的官方将（原文「关羽 魏势力 体力4 近战2远程1
@@ -1044,9 +1044,9 @@ const wuGenerals: General[] = [
 // 群势力 - 仅保留原本势力即为"群"的将领
 const qunGenerals: General[] = [
   createGeneral('qun_001', '华佗', '群', 3, ['急救', '青囊']),
-  createGeneral('qun_002', '吕布', '群', 4, ['无双']),
+  createGeneral('qun_002', '吕布', '群', 5, ['无双']),
   createGeneral('qun_003', '貂蝉', '群', 3, ['离间', '闭月']),
-  createGeneral('qun_004', '董卓', '群', 4, ['酒池', SK_ROULIN, SK_BENGHUAI]),
+  createGeneral('qun_004', '董卓', '群', 8, ['酒池', SK_ROULIN, SK_BENGHUAI]),
   createGeneral('qun_005', '袁绍', '群', 4, ['乱击']),
   createGeneral('qun_006', '颜良文丑', '群', 4, ['双雄']),
   createGeneral('qun_007', '张角', '群', 3, ['雷公', '鬼道']),
@@ -1065,18 +1065,18 @@ const qunGenerals: General[] = [
 const jinGenerals: General[] = [
   createGeneral('jin_001', '司马懿', '晋', 3, ['巧变', '大权']),
   createGeneral('jin_002', '司马师', '晋', 3, ['鹰视', '夺嫡']),
-  createGeneral('jin_003', '司马昭', '晋', 3, ['赵染', SK_SIDI]),
+  createGeneral('jin_003', '司马昭', '晋', 4, ['赵染', SK_SIDI]),
   createGeneral('jin_004', '贾充', '晋', 3, [SK_WEIWO, '矫诏']),
   createGeneral('jin_005', '张春华', '晋', 3, [SK_HUIYAN, '秘置']),
-  createGeneral('jin_006', '钟会', '晋', 3, ['权计', '自立']),
+  createGeneral('jin_006', '钟会', '晋', 4, ['权计', '自立']),
   createGeneral('jin_007', '邓艾', '晋', 4, [SK_TUNTIAN_JIN, '凿险']),
   createGeneral('jin_008', '王元姬', '晋', 3, [SK_YINGHUI, SK_SONGWEI]),
-  createGeneral('jin_009', '杜预', '晋', 3, [SK_TUOLUE, SK_POZHU]),
+  createGeneral('jin_009', '杜预', '晋', 4, [SK_TUOLUE, SK_POZHU]),
   createGeneral('jin_010', '羊祜', '晋', 3, [SK_QINGDE, SK_KENHUANG]),
   createGeneral('jin_011', '乐綝', '晋', 4, [SK_FENWEI, SK_LINZHEN]),
   createGeneral('jin_012', '文鸯', '晋', 4, [SK_TONGMING, SK_FENGYONG]),
   createGeneral('jin_013', '贾南风', '晋', 3, ['乱政', SK_LUSHA]),
-  createGeneral('jin_014', '司马炎', '晋', 3, [SK_BINGTUN, SK_FENGSHANG]),
+  createGeneral('jin_014', '司马炎', '晋', 4, [SK_BINGTUN, SK_FENGSHANG]),
   createGeneral('jin_015', '诸葛诞', '晋', 4, ['举兵', SK_SIJIE]),
 ];
 
