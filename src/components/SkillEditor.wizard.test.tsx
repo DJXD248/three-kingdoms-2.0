@@ -1,11 +1,13 @@
 /**
  * v2.9.21 两段式流程（§12-140①「将领→确认→技能→确认完整将领」）的界面接线证人。
  *
- * 钉四件事，全在真组件上：
+ * 钉五件事，全在真组件上：
  *  ① 选中将领后落在第 1 步，那一步只谈将领本人；技能那一屏不在这一步露出来；
  *  ② 那颗「确认将领」=流程的分界，**不写库**（写库仍然只有「💾 保存修改」那一条路）；
  *  ③ 第 2 步能回到第 1 步，两边改的是同一份内存态（不是两套字段）；
- *  ④ 一句话生成将领那一格今天只是位置，**按下去不产生任何东西**（下一刀才接线）。
+ *  ④ v2.9.24 刀2 起，「🪄 一句话生成将领」是真入口：采用＝只往第①步那几格里填字，
+ *     **一样不写库**（刀1 那趟它还是灰占位，那时的证人是"点下去不产生任何东西"）；
+ *  ⑤ 一句话里读不懂的那一段当场点名，且一个字段都不落（不半采纳、不猜）。
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/react';
@@ -24,9 +26,14 @@ const identityFieldsVisible = () =>
 
 /** 「名称」那一格现在的值。 */
 function nameInputValue(): string {
+  return fieldValueByLabel('名称');
+}
+
+/** 第①步六格里某一格现在的值（按标签文字定位，不靠顺序）。 */
+function fieldValueByLabel(labelText: string): string {
   const label = Array.from(document.querySelectorAll('label'))
-    .find(l => l.textContent?.trim() === '名称');
-  if (!label) throw new Error('「名称」那格不在这一屏');
+    .find(l => l.textContent?.trim() === labelText);
+  if (!label) throw new Error(`「${labelText}」那格不在这一屏`);
   return (label.parentElement!.querySelector('input') as HTMLInputElement).value;
 }
 
@@ -89,14 +96,39 @@ describe('两段式流程：① 将领身份 → 确认 → ② 技能编辑', (
     expect(screen.getByText('✅ 已保存')).toBeTruthy();
   });
 
-  it('「🪄 一句话生成」这一格今天按下去不产生任何东西（位置先亮出来）', () => {
+  it('「🪄 一句话生成将领」采用＝只往那六格里填字，一个字都不落档', () => {
     openZhangliao();
-    const magic = btnByText('🪄 一句话生成');
-    expect(magic).toBeTruthy();
-    expect(magic!.disabled).toBe(true);
-    fireEvent.click(magic!);
-    expect(useGameStore.getState().authoredGenerals).toHaveLength(0);
+    fireEvent.click(btnByText('🪄 一句话生成将领')!);
+    const box = screen.getByLabelText('一句话生成将领') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '名：张辽文远，势力：魏，体力5，近战3' } });
+    fireEvent.click(btnByText('按这句生成')!);
+    fireEvent.click(btnByText('✔ 采用，把读到的填进上面那几格')!);
+
+    expect(nameInputValue()).toBe('张辽文远');
+    expect(fieldValueByLabel('体力 ❤️')).toBe('5');
+    expect(fieldValueByLabel('近战 ⚔️')).toBe('3');
+    // 这句没点远程⇒那一格一字不动（绝不因为玩家没提就抹成缺省）
+    expect(fieldValueByLabel('远程 🏹')).toBe(String(zhangliao.rangedAtk));
+    // 采用不等于保存：写库那条路仍然只有第②步那颗「💾 保存修改」
     expect(useGameStore.getState().generalEdits[zhangliao.id]).toBeUndefined();
+    expect(useGameStore.getState().authoredGenerals).toHaveLength(0);
+    const note = screen.getByText(/已填进：/);
+    expect(note.textContent).toContain('已填进：名称／势力／体力／近战');
+    expect(note.textContent).toContain('还没保存');
+  });
+
+  it('一句话里那句读不懂的照样点名，且不落进任何一格', () => {
+    openZhangliao();
+    fireEvent.click(btnByText('🪄 一句话生成将领')!);
+    const box = screen.getByLabelText('一句话生成将领') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '张辽，势力魏，攻击力3' } });
+    fireEvent.click(btnByText('按这句生成')!);
+    expect(screen.getByText(/没落进去的那一段：「攻击力3」/).textContent)
+      .toContain('攻击力有近战与远程两个数');
+    fireEvent.click(btnByText('✔ 采用，把读到的填进上面那几格')!);
+    expect(nameInputValue()).toBe('张辽');
+    expect(fieldValueByLabel('近战 ⚔️')).toBe(String(zhangliao.meleeAtk));
+    expect(fieldValueByLabel('远程 🏹')).toBe(String(zhangliao.rangedAtk));
   });
 
   it('再选一张卡会回到第 1 步（不会带着上一次的屏往下走）', () => {

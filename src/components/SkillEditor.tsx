@@ -4,7 +4,7 @@ import {
   allGenerals, General, Faction, factionColors, SkillTag, allSkillTags, skillTagColors,
   SkillEffect, SkillEffectMode, effectModeLabels, sourceLabels, type GeneralSource, type Skill,
 } from '../data/generals';
-import { isRepositoryOfficial, sourceOf } from '../domain/generalProvenance';
+import { isRepositoryOfficial, sourceOf, hpOrDefault, DEFAULT_HP_WHEN_MISSING, type AuthoredGeneralInput } from '../domain/generalProvenance';
 import {
   FORCED_MEANING, formatTags, skillTagMeanings, tagTimingWarnings, tagsOf,
 } from '../domain/skillTags';
@@ -59,6 +59,9 @@ import {
   isHandWritten, isSkillHandWritten,
 } from '../skills/skillSentence';
 import { SkillTextPanel } from './skillEditor/SkillTextPanel';
+import { GeneralTextPanel } from './skillEditor/GeneralTextPanel';
+import type { GeneralTextDraft } from './skillEditor/generalTextParse';
+import { canAdoptGeneral, hpWasDefaulted } from './skillEditor/generalTextParse';
 import type { SkillTextDraft } from '../skills/skillTextParse';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -137,7 +140,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState('');
   const [createFaction, setCreateFaction] = useState<Faction>('蜀');
-  const [createHp, setCreateHp] = useState(4);
+  const [createHp, setCreateHp] = useState(hpOrDefault(undefined));
   const [createIdentity, setCreateIdentity] = useState('__default__');
   const [createSource, setCreateSource] = useState<GeneralSource>('DIY');
   const [createResult, setCreateResult] = useState('');
@@ -157,6 +160,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const [saved, setSaved] = useState(false);
   /** v2.9.21 两段式流程（§12-140①）：第 1 步定将领身份 →「确认」→ 第 2 步弄技能。 */
   const [editStep, setEditStep] = useState<'identity' | 'skills'>('identity');
+  /** v2.9.24 刀2：第①步「一句话生成将领」采用后那句回显（写了哪几格、什么还没落档）。 */
+  const [identityGenNote, setIdentityGenNote] = useState('');
   /** §H3: why a save/import/delete was refused. Persistent until the next try. */
   const [readOnlyNotice, setReadOnlyNotice] = useState('');
 
@@ -250,6 +255,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     const idEdit = generalEdits[g.id]?.identity;
     setEditIdentity(idEdit === undefined ? '__default__' : idEdit === '' ? '__none__' : idEdit);
     setEditStep('identity');
+    setIdentityGenNote('');
     setSaved(false);
   };
 
@@ -390,7 +396,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             const result = addAuthoredGeneral({
               name: block.name,
               faction: block.faction,
-              hp: block.hp ?? 4,
+              hp: hpOrDefault(block.hp),
               meleeAtk: block.meleeAtk,
               rangedAtk: block.rangedAtk,
               skills: block.skills.map(toSkillRecord),
@@ -464,7 +470,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           setReadOnlyNotice('');
           const parts: string[] = [`从 ${sheetCount} 个工作表新建 ${createdCount} 名将领`];
           if (sameNameOtherFactionCount > 0) parts.push(`${sameNameOtherFactionCount} 名同名但势力不同，已直接新建`);
-          if (hpDefaultedCount > 0) parts.push(`${hpDefaultedCount} 名没填体力，按 4 建`);
+          if (hpDefaultedCount > 0) parts.push(`${hpDefaultedCount} 名没填体力，按 ${DEFAULT_HP_WHEN_MISSING} 建`);
           if (pendingAdded > 0) parts.push(`${pendingAdded} 名等你在下方决定或补数据`);
           if (createFailures.length > 0) parts.push(`${createFailures.length} 名建卡失败：${createFailures.join('、')}`);
           if (unreadableCells.length > 0) parts.push(`⚠ ${unreadableCells.length} 处没看懂，见下方清单`);
@@ -507,7 +513,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       const result = addAuthoredGeneral({
         name: block.name,
         faction: block.faction,
-        hp: block.hp ?? 4,
+        hp: hpOrDefault(block.hp),
         meleeAtk: block.meleeAtk,
         rangedAtk: block.rangedAtk,
         skills: block.skills.map(toSkillRecord),
@@ -515,7 +521,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
 
       if (result.ok) {
         pushSummary(createdEntry(block.name, block.skills.map(s => s.name)));
-        setImportResult(`✅ 已新建${pendingCreateLayer}「${block.name}」${block.hp == null ? '（没填体力，按 4 建）' : ''}`);
+        setImportResult(`✅ 已新建${pendingCreateLayer}「${block.name}」${block.hp == null ? `（没填体力，按 ${DEFAULT_HP_WHEN_MISSING} 建）` : ''}`);
         setPendingImports(prev => prev.filter((_, i) => i !== idx));
       } else {
         setImportResult(`❌ 新建失败：${result.reason}`);
@@ -570,7 +576,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       const result = addAuthoredGeneral({
         name: block.name,
         faction: block.faction,
-        hp: block.hp ?? 4,
+        hp: hpOrDefault(block.hp),
         meleeAtk: block.meleeAtk,
         rangedAtk: block.rangedAtk,
         skills: block.skills.map(toSkillRecord),
@@ -877,22 +883,80 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     ID_SOURCE_UNAVAILABLE: '本机无法生成编号（浏览器未提供随机编号源）',
   };
 
-  const handleCreateGeneral = () => {
-    const identity = createIdentity === '__default__'
-      ? undefined
-      : createIdentity === '__none__' ? '' : createIdentity;
-    const result = addAuthoredGeneral(
-      { name: createName, faction: createFaction, hp: createHp, identity },
-      createSource,
-    );
+  /**
+   * 建卡那唯一一条路（§H1：`createAuthoredGeneral` 钉死 `id` 与 `source`）的共用回显。
+   * 手填那一排与「一句话生成将领」采用那一腿**说同一句话**，措辞不许有两份。
+   */
+  const createAndReport = (input: AuthoredGeneralInput, source: GeneralSource, extraNote = '') => {
+    const result = addAuthoredGeneral(input, source);
     if (!result.ok) {
       setCreateResult(`❌ 未创建：${AUTHORING_REFUSAL_TEXT[result.reason] ?? result.reason}`);
       return;
     }
     const g = result.general;
     const layer = isRepositoryOfficial(g) ? '仓库官方' : sourceOf(g) === 'official' ? '官方本地草稿' : '玩家自制';
-    setCreateResult(`✅ 已新建「${g.name}·${g.faction}」（${layer}，编号 ${g.id}，身份 ${g.identity ?? '未填'}）`);
+    setCreateResult(`✅ 已新建「${g.name}·${g.faction}」（${layer}，编号 ${g.id}，身份 ${g.identity ?? '未填'}${extraNote ? `｜${extraNote}` : ''}）`);
     setCreateName('');
+  };
+
+  const handleCreateGeneral = () => {
+    const identity = createIdentity === '__default__'
+      ? undefined
+      : createIdentity === '__none__' ? '' : createIdentity;
+    createAndReport({ name: createName, faction: createFaction, hp: createHp, identity }, createSource);
+  };
+
+  /**
+   * v2.9.24 刀2㈡：一句话 → 名册字段 → 仍然只走上面那一条建卡路。
+   * 身份与归属这一腿**不接受那句话**（§12-140④：那两格是人为决定），沿用上面那一排的现选项；
+   * 体力这句话没点才兜底，且兜底住在 `hpOrDefault`（与 Excel 导入同一格判据）；
+   * 近战／远程没点＝交回 `createAuthoredGeneral` 按体力推，这里不重推一遍。
+   */
+  const handleAdoptCreateDraft = (draft: GeneralTextDraft) => {
+    if (!canAdoptGeneral(draft)) return;
+    const identity = createIdentity === '__default__'
+      ? undefined
+      : createIdentity === '__none__' ? '' : createIdentity;
+    const notes: string[] = [];
+    if (hpWasDefaulted(draft)) notes.push(`体力这句没点、按 ${DEFAULT_HP_WHEN_MISSING} 建`);
+    if (draft.meleeAtk === undefined && draft.rangedAtk === undefined) notes.push('近战／远程按体力推');
+    if (draft.skillNames.length > 0) notes.push(`技能只记名（${draft.skillNames.join('、')}），效果请去第②步拼`);
+    createAndReport({
+      name: draft.name,
+      faction: draft.faction,
+      hp: hpOrDefault(draft.hp),
+      meleeAtk: draft.meleeAtk,
+      rangedAtk: draft.rangedAtk,
+      identity,
+      skills: draft.skillNames.map(name => ({ name })),
+    }, createSource, notes.join('／'));
+  };
+
+  /**
+   * v2.9.24 刀2㈠：第①步那一腿——采用＝**只把这句话点到的那几格**填进上面的输入框，
+   * 没点到的格子一律不动（绝不因为玩家没提就把他手填过的数抹成缺省）。
+   * 这里一个字都不落档：写库仍然只有第②步那颗「💾 保存修改」。
+   */
+  const handleAdoptIdentityDraft = (draft: GeneralTextDraft) => {
+    if (!canAdoptGeneral(draft)) return;
+    const landed: string[] = [];
+    if (draft.name) { setEditName(draft.name); landed.push('名称'); }
+    if (draft.faction) { setEditFaction(draft.faction); landed.push('势力'); }
+    if (draft.hp !== undefined) { setEditHp(draft.hp); landed.push('体力'); }
+    if (draft.meleeAtk !== undefined) { setEditMeleeAtk(draft.meleeAtk); landed.push('近战'); }
+    if (draft.rangedAtk !== undefined) { setEditRangedAtk(draft.rangedAtk); landed.push('远程'); }
+    const already = new Set(editingSkills.map(s => s.name.trim()).filter(Boolean));
+    const toAdd = draft.skillNames.filter(n => !already.has(n));
+    const dup = draft.skillNames.filter(n => already.has(n));
+    if (toAdd.length > 0) setEditingSkills(prev => [...prev, ...toAdd.map(name => ({ name, description: '' }))]);
+    const skipped = draft.issues.map(i => `「${i.raw}」`);
+    setIdentityGenNote(
+      `✏️ 已填进：${landed.length > 0 ? landed.join('／') : '这一句没点到那几格'}；`
+      + `技能加名 ${toAdd.length > 0 ? toAdd.join('、') : '无'}`
+      + `${dup.length > 0 ? `（${dup.join('、')} 卡上已有同名技能，没加第二遍）` : ''}`
+      + `${skipped.length > 0 ? `；没落进去的：${skipped.join(' ')}` : ''}`
+      + '。还没保存——第②步点「💾 保存修改」才落档。',
+    );
   };
 
   // v2.8.8: removeAuthoredGeneral no longer returns a boolean — branch on
@@ -991,6 +1055,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 创建
               </button>
             </div>
+            {/* v2.9.24 刀2：同一排的另一条入口——说一句话，读到的字段照样只走上面那颗「创建」
+                所走的那一条建卡路；身份与归属仍由上面那两个下拉定（一句话不替玩家定这两格）。 */}
+            <GeneralTextPanel mode="create" onAdopt={handleAdoptCreateDraft} />
             <p className="text-[11px] text-emerald-200/70">
               创建即定死：编号与归属之后不可改（改名/改血量/导出再导入都不重新发号）。身份可以之后在编辑面板里改。
               新建的将进入本地征召池；AI 标准自动对局仍只用仓库官方池，要成为仓库官方须人工合进 generals.ts。
@@ -1442,13 +1509,17 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                   </div>
                   {/* 第 1 步的"确认"节点在底栏那颗（流程的分界，不是又一次保存：这里不写库，
                       只把人放进第 2 步）；真正落档仍然只有第 2 步的「💾 保存修改」。 */}
+                  {/* v2.9.24 刀2㈡：这一腿采用＝只往上面那六格里填字（见 `handleAdoptIdentityDraft`），
+                      不新建第二条写库路——落档仍然只有第②步那颗「💾 保存修改」。 */}
+                  <div className="mt-3">
+                    <GeneralTextPanel mode="edit" onAdopt={handleAdoptIdentityDraft} />
+                  </div>
+                  {identityGenNote && (
+                    <p className="mt-2 text-[11px] leading-tight text-violet-200">{identityGenNote}</p>
+                  )}
                   <p className="mt-3 text-[11px] text-purple-300/50">
-                    <button disabled
-                      title="这一格是下一刀（一句话生成将领）要接的入口，今天还没有功能，先把位置亮出来"
-                      className="px-3 py-1.5 mr-2 rounded-lg bg-gray-800/60 border border-gray-700/40 text-gray-500 text-xs font-bold cursor-not-allowed">
-                      🪄 一句话生成（下一刀）
-                    </button>
-                    这一格是下一刀要接的「一句话生成将领」入口；本刀先把两段流程立起来。
+                    这一句只替您读上面那六格（名称／势力／体力／近战／远程／技能名）；
+                    <span className="text-purple-300/70">身份那一格要您自己选</span>——它决定这张卡归谁、锁不锁，不由一句话代定。
                   </p>
                 </div>
                 )}

@@ -80,6 +80,18 @@ export type AuthoredGeneralInput = {
   skills?: Skill[];
 };
 
+/**
+ * 「没填体力」那唯一的一个兜底数字。v2.9.24 刀2 纯提取：此前它抄在三处内联
+ * `block.hp ?? 4`（Excel 导入的三条新建路）与「新建将领」那一排的初值上，
+ * 现在四处读同一枚——**行为逐字不变**，`??` 的语义也原样保留
+ * （写 0／写坏了的数照旧交回 `createAuthoredGeneral` 判 `HP_INVALID`，不在这里被吞掉）。
+ */
+export const DEFAULT_HP_WHEN_MISSING = 4;
+
+export function hpOrDefault(raw: number | undefined | null): number {
+  return raw ?? DEFAULT_HP_WHEN_MISSING;
+}
+
 export type AuthoringFailure = { ok: false; reason: 'NAME_REQUIRED' | 'HP_INVALID' | 'ID_SOURCE_UNAVAILABLE' };
 export type AuthoringSuccess = { ok: true; general: General };
 
