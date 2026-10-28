@@ -7,8 +7,9 @@
 // It does NOT resist someone who edits the local build: an offline single-file
 // app cannot be protected against its own user, and pretending otherwise would
 // add a second, unverifiable security claim.
+// Rotated 2026-10-28 by the owner's word; the digest set at v2.8.1 is retired for good.
 export const DEV_MODE_DIGEST =
-  'fc30e52acdd8042eaf7a8f101fbf99b5ef9352a07b3ba60915fc6df47744c386';
+  '4024a6389e20ff8b2968183d07fa5a45b5408a71b0c64dcbc5155fd817c2bdda';
 
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 

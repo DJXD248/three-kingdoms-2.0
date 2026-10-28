@@ -147,6 +147,10 @@ export interface SkillActivationEventData {
   /** v2.8.32：带「一局一次」额度的定义才落这一键＝这枚技能的额度身份。见
    *  `EngineState.consumedSkills` 上的同名键。 */
   limitKey?: string;
+  /** 限次刀：带「每回合限 N 次」的定义才落这一键＝这一笔发动进的是**哪一格窗**的账
+   *  （`<窗口戳>:<将领实例>:<技能名>`）。串的唯一生产点＝`skills/skillQuota.ts`，
+   *  判定与记账读的都是同一句，见 `EngineState.turnWindow`。 */
+  turnQuotaKey?: string;
   /** v2.9.15：只在为真时出现＝"这一次发动是由「其他将领技能发动时」那一声引起的"。
    *  那一格读到它就不响（防套娃）；除此之外没有任何消费者。 */
   viaActivation?: true;

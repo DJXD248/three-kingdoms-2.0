@@ -19,6 +19,7 @@ import { hasSettleableContent } from '../data/skillTable';
 import { setSkillBookAutoRecompute, __resetSkillNameIndexForTests } from '../skills/skillNameIndex';
 import { useGameStore } from '../store/gameStore';
 import { AUTHORED_GENERALS_KEY } from '../store/editorPersistence';
+import { clickIntoSkillsStep } from '../test/wizardStep';
 
 /** 效果卡里那个「获得技能名」输入框所在的整块（编辑器头部没有这个格子）。 */
 function gainNameInput(): HTMLInputElement {
@@ -56,6 +57,7 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
     const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0
       && g.skills.every(s => !hasSettleableContent(s)))!;
     fireEvent.click(Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes(target.name))!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
     fireEvent.change(findRuntimeSelect(), { target: { value: 'GAIN_SKILL' } });
   });

@@ -219,7 +219,9 @@ describe('skillQuota · 判据单点与发动账形状', () => {
 
   it('链内已用集合：账本还没落、但这条链里已经响过⇒不再第二次放行', () => {
     const state = createInitialEngineState();
-    const spent = new Set(['g:x']);
+    // 限次刀起这份容器从 `Set` 换成按次数计的 `Map`（每回合 N 次要数数）；一局一次
+    // 这一侧读的仍是"有没有"，所以 `> 0` 那一支的行为逐字不变。
+    const spent = new Map([['g:x', 1]]);
     expect(limitedQuotaAvailable(state, { id: 'a', limitKey: 'g:x' } as never, spent)).toBe(false);
     expect(limitedQuotaAvailable(state, { id: 'b', limitKey: 'g:y' } as never, spent)).toBe(true);
     // 不带额度的定义连这一层都不看

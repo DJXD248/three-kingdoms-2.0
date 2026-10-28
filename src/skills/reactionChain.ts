@@ -43,7 +43,7 @@ import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { compileGeneralSkills } from './skillCompiler';
 import { evaluateSkillConditions } from './skillConditions';
 import { matchesSkillEvent } from './skillEventMatch';
-import { limitedQuotaAvailable } from './skillQuota';
+import { limitedQuotaAvailable, perTurnQuotaAvailable } from './skillQuota';
 import { PRIORITY, SkillTriggerBridge, defersToReactionQueue } from './SkillTriggerBridge';
 import type { DataSkillDefinition, DataSkillTrigger } from './dataTypes';
 import { ANY_TRIGGER_EVENT_TYPES, eventsHeardBy } from './reactionTriggers';
@@ -165,6 +165,10 @@ function collectListeners(
       // 问答路没有"置灰列出"的形状，能列的就是能答的）。这一路不需要触发链那份
       // 链内集合——每一次表态都是一次独立 dispatch，两次之间账已经落了。
       if (!limitedQuotaAvailable(state, definition)) continue;
+      // 限次刀·第二本账（每回合 N 次）同一条判据、同一处补齐：问答路的候选与解析器
+      // 复核（`TurnEndSkillResolver`）必须逐字同意"这一格窗还能不能用"，否则界面列出
+      // 一朵点下去被拒的按钮（§12-112 那一族）。
+      if (!perTurnQuotaAvailable(state, definition)) continue;
       candidates.push({
         ownerId: playerId,
         generalId: definition.sourceGeneralId === undefined ? '' : String(definition.sourceGeneralId),

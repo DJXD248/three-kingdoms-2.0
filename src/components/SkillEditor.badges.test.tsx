@@ -9,7 +9,7 @@ import * as XLSX from 'xlsx';
 import SkillEditor from './SkillEditor';
 import { allGenerals } from '../data/generals';
 import { useGameStore } from '../store/gameStore';
-
+import { clickIntoSkillsStep } from '../test/wizardStep';
 // 导出走 file-saver：这里只拦计数，绝不让真实下载落到你的浏览器上。
 const { savedBlobs } = vi.hoisted(() => ({ savedBlobs: [] as Blob[] }));
 vi.mock('file-saver', () => ({ saveAs: (blob: Blob) => { savedBlobs.push(blob); } }));
@@ -73,6 +73,7 @@ function openEditor(seed?: Record<string, unknown>) {
   const listBtn = Array.from(document.querySelectorAll('button'))
     .find(b => b.textContent?.includes(zhangliao.name));
   fireEvent.click(listBtn!);
+  clickIntoSkillsStep();
 }
 
 function openImport() {

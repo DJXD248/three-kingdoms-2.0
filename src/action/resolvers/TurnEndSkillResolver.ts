@@ -7,7 +7,10 @@ import { evaluateSkillConditions } from '../../skills/skillConditions';
 import {
   activationRecordEvent,
   limitedQuotaAvailable,
+  perTurnQuotaAvailable,
+  perTurnQuotaUsed,
   skillActivatedEvent,
+  turnWindowOf,
 } from '../../skills/skillQuota';
 import { listAllTurnEndDefinitions } from '../../skills/turnEndSkills';
 import {
@@ -84,13 +87,23 @@ export class TurnEndSkillResolver implements ActionResolver {
     if (definition.sourceGeneralId !== generalId || definition.turnSubType === 'otherTurn') {
       return [rejected(action, 'GENERAL_NOT_CONTROLLED')];
     }
-    if ((state.consumedSkills ?? []).some(c => c.stableId === `${turn}:${skillId}`)) {
+    // 限次刀前的"同一枚定义一格窗只落一笔"（2.3.1 起的回合结束门）。挂了「每回合限
+    // N 次」的定义不走这一句：它的 `stableId` 带窗内序号（见 `skillQuota.mintStableId`），
+    // 本来就不是这个串，而且它要的正是"这一格窗能落 N 笔"——由下面那句按 N 数。
+    if (!definition.turnQuota
+      && (state.consumedSkills ?? []).some(c => c.stableId === `${turn}:${skillId}`)) {
       return [rejected(action, 'SKILL_ALREADY_ACTIVATED')];
     }
     // v2.8.32 限定技额度：同一句判据，第四条消费路（解析器复核）。放在"本回合已经
     // 用过"之后＝既有拒绝理由逐字不变，只有跨回合再用同一枚限定技才新报这一条。
     if (!limitedQuotaAvailable(state, definition)) {
       return [rejected(action, 'SKILL_LIMIT_EXHAUSTED')];
+    }
+    // 限次刀·第二本账（每回合 N 次）：同一句判据（`skillQuota.perTurnQuotaAvailable`），
+    // 与界面置灰／响应问答／自动触发读的是同一个函数、同一个窗键。理由另起一条＝
+    // 「本回合已用尽」与「本局已用尽」是两句不同的话，不许混用（裁决⑤）。
+    if (!perTurnQuotaAvailable(state, definition)) {
+      return [rejected(action, 'SKILL_TURN_LIMIT_EXHAUSTED')];
     }
     // v2.7.3 threshold gate: re-derived here independently of the candidate
     // filter, so an activation that raced a state change is honestly refused
@@ -104,8 +117,15 @@ export class TurnEndSkillResolver implements ActionResolver {
     }
 
     // 载荷形状的唯一生产点（v2.8.32）：键序与 v2.8.31 逐字一致，不带额度的定义
-    // 连键都不多——三条路因此记的是同一份账。
-    const activationEvent = skillActivatedEvent(definition, { playerId: action.playerId, generalId, turn });
+    // 连键都不多——三条路因此记的是同一份账。限次刀起窗戳与窗内序号也从同一个
+    // state、经同两句判据取（与自动触发路一字不差），所以"数几笔"和"落哪一笔"不分叉。
+    const activationEvent = skillActivatedEvent(definition, {
+      playerId: action.playerId,
+      generalId,
+      turn,
+      turnWindow: turnWindowOf(state),
+      turnQuotaUsed: perTurnQuotaUsed(state, definition),
+    });
     const effectEvents = SkillTriggerBridge.createSkillEvents(
       { ownerId: action.playerId, skill: definition },
       state,
@@ -153,6 +173,11 @@ function resolveReactionActivation(
   if (!option.definitions.every(definition => limitedQuotaAvailable(state, definition))) {
     return [rejected(action, 'SKILL_LIMIT_EXHAUSTED')];
   }
+  // 限次刀：第二本账同一路复核，理由与回合结束那条同一个串（两句用完的话只有一份写法，
+  // 见 `skillQuota.TURN_LIMIT_EXHAUSTED_TEXT` 那条纪律——这里给的是机读的 reason）。
+  if (!option.definitions.every(definition => perTurnQuotaAvailable(state, definition))) {
+    return [rejected(action, 'SKILL_TURN_LIMIT_EXHAUSTED')];
+  }
 
   const answeredData: ReactionAnsweredData = reactionAnsweredOf(ask, option);
   const answeredEvent: GameEvent = { type: 'REACTION_ANSWERED', data: answeredData };
@@ -171,6 +196,8 @@ function resolveReactionActivation(
     playerId: action.playerId,
     generalId: ask.generalId,
     turn: state.turn ?? 0,
+    turnWindow: turnWindowOf(state),
+    turnQuotaUsed: perTurnQuotaUsed(state, option.definitions[0]),
   }, effectEvents.length);
   return [...(activation ? [activation] : []), answeredEvent, ...effectEvents];
 }

@@ -73,6 +73,22 @@ export interface EngineState {
    */
   consumedSkills?: ConsumedSkill[];
   /**
+   * 「每回合限 N 次」的**窗口戳**（限次刀）。用户 2026-10-28 裁决②逐字＝
+   * 「回合完全结束时自动归零，也就是 A 回合结束时并且处理完所有可处理事项，即将进入
+   * B 回合开始的这个节点归零」⇒归零那一声不是有人去清账，而是**盖一个新戳**：账本照旧
+   * 只增不删（与上面 consumedSkills 同一条结构纪律），"还回次数"由键的换窗表达。
+   *
+   * 为什么不直接用 `turn`：`applyTurnEndEvent` 在 `TURN_END` 那一刻就把 `turn + 1` 写了
+   * （`turnEvents.ts`），而 A 的收尾链里还有可处理事项（例：到期收账派生出的那一声死、
+   * 随之开格的响应问答）要在那之后由玩家表态⇒拿裸 `turn` 当窗，A 收尾时的那一次发动会
+   * 落进 B 的格子。唯一写手＝`applyTurnStartEvent`：戳在**即将进入 B 回合开始**这一拍盖下，
+   * 于是裁决②说的"处理完所有可处理事项"之前，窗还是 A 的那一格。
+   *
+   * 缺省（旧存档／旧录像／开局第一拍还没有 TURN_START）＝没有戳，读侧回落到裸 `turn`
+   * （回落点唯一＝`skills/skillQuota.ts::turnWindowOf`，不在这里再抄一份）。
+   */
+  turnWindow?: number;
+  /**
    * Pending player decision (2.6.3, choice channel — a capability-layer
    * non-content cut): an A-class replayable fact, same idea as consumedSkills
    * — it lives in the state so 常驻/重建/回放 all see the SAME debt, and the
@@ -173,6 +189,13 @@ export interface ConsumedSkill {
    * 的定义落账时才写这一键；既有条目一律没有＝旧局没有额度可消耗，如实成立。
    */
   limitKey?: string;
+  /**
+   * 限次刀·「每回合限 N 次」这一笔落在**哪一格窗**的账键（`<窗口戳>:<将领实例>:<技能名>`）。
+   * 窗口戳见上面 `EngineState.turnWindow`：键里带窗＝换窗即换键，所以归零不需要任何删账动作，
+   * 数某一窗用了几次＝数这一串键在台账里出现了几笔。与 `limitKey` 同一条纪律：只有真挂着
+   * 每回合额度的定义才落这一键，其余条目一个字都不多＝既有台账逐字不变。
+   */
+  turnQuotaKey?: string;
 }
 
 export function createInitialEngineState(): EngineState {

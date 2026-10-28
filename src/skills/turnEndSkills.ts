@@ -17,7 +17,7 @@ import { getRuntimeCardId } from '../utils/runtimeIdentity';
 import { compileGeneralSkills } from './skillCompiler';
 import { evaluateSkillConditions } from './skillConditions';
 import { gateConditionsToText } from './skillGateText';
-import { LIMIT_EXHAUSTED_TEXT, limitedQuotaAvailable } from './skillQuota';
+import { LIMIT_EXHAUSTED_TEXT, TURN_LIMIT_EXHAUSTED_TEXT, limitedQuotaAvailable, perTurnQuotaAvailable } from './skillQuota';
 import type { DataSkillDefinition } from './dataTypes';
 
 export interface TurnEndSkillCandidate {
@@ -106,24 +106,30 @@ export function listTurnEndAskItems(
     // honestly); selfTurn-or-unspecified is the askable shape.
     if (definition.turnSubType === 'otherTurn') continue;
     const generalId = String(definition.sourceGeneralId ?? '');
-    const alreadyUsed = consumed.has(`${turn}:${definition.id}`);
+    // 限次刀前那一格的"本回合用过"（2.3.1 起，按裸 `<回合>:<定义 id>` 认）。挂了「每
+    // 回合限 N 次」的定义走下面那本新账，不走这一句：它的 `stableId` 带窗内序号，串形
+    // 状本就不同（结构上撞不到），写明这层意思是给读代码的人，不是给运行时兜底。
+    const alreadyUsed = !definition.turnQuota && consumed.has(`${turn}:${definition.id}`);
     // v2.8.32 限定技额度：同一句判据（`skillQuota.limitedQuotaAvailable`），界面
     // 与合法集合读的是同一份事实——置灰项永远不等于可发动项。
     const exhausted = !limitedQuotaAvailable(state, definition);
+    // 限次刀·第二本账：同一个函数（`perTurnQuotaAvailable`），与三条发动路一字不差
+    // ⇒界面说"本回合已用尽"的那一枚，点下去必然被同一条判据拒掉。
+    const turnExhausted = !perTurnQuotaAvailable(state, definition);
     // v2.7.3 threshold gate — the SAME pure predicate the trigger path calls.
     const conditionsMet = evaluateSkillConditions(definition.conditions, {
       state,
       ownerId: playerId,
       sourceGeneralId: definition.sourceGeneralId,
     });
-    const activatable = !alreadyUsed && !exhausted && conditionsMet;
+    const activatable = !alreadyUsed && !exhausted && !turnExhausted && conditionsMet;
     items.push({
       playerId,
       generalId,
       generalName: nameByRuntimeId.get(generalId) ?? generalId,
       definition,
       activatable,
-      disabledReason: disabledReasonOf(alreadyUsed, exhausted, conditionsMet, definition.conditions),
+      disabledReason: disabledReasonOf(alreadyUsed, exhausted, turnExhausted, conditionsMet, definition.conditions),
     });
   }
   return items;
@@ -132,14 +138,18 @@ export function listTurnEndAskItems(
 function disabledReasonOf(
   alreadyUsed: boolean,
   exhausted: boolean,
+  turnExhausted: boolean,
   conditionsMet: boolean,
   conditions: DataSkillDefinition['conditions'],
 ): string | null {
-  if (!alreadyUsed && !exhausted && conditionsMet) return null;
+  if (!alreadyUsed && !exhausted && !turnExhausted && conditionsMet) return null;
   // 账本优先：门槛文本描述的是"此刻战场"，而"本回合已经用过""本局已用尽"是不可逆
   // 的事实。两句按不可逆程度排：**额度先于回合**——一枚限定技刚用掉时两句话都真，
   // 说轻的那一句会把"到终局都没有"讲成"下一回合还有"（闸③复算抓到、2026-10-04 更正）。
+  // 每回合那一本夹在中间＝比"本局"轻（下一格窗就还）、比"本回合已发动过"重
+  // （这一格窗里彻底没有了），裁决⑤给的原文是「本回合已用尽」。
   if (exhausted) return LIMIT_EXHAUSTED_TEXT;
+  if (turnExhausted) return TURN_LIMIT_EXHAUSTED_TEXT;
   if (alreadyUsed) return '本回合已发动过';
   return `不满足发动门槛：${gateConditionsToText(conditions)}`;
 }

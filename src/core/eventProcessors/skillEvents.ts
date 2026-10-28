@@ -26,6 +26,10 @@ export function applySkillActivatedEvent(state: EngineState, event: GameEvent): 
     turn: Number.isFinite(turn) ? turn : state.turn,
     playerId: Number(data.playerId),
     ...(data.limitKey ? { limitKey: data.limitKey } : {}),
+    // 限次刀：每回合额度的那一笔同样只增不删——键里带窗口戳，所以"下一回合还回次数"
+    // 是新键生效、旧键自然不再被数到（全库没有任何回退入口＝裁决③"被无效不退"
+    // 与裁决④"没发动成功不消耗"在这一版结构上同时成立）。不带这一键的既有每一笔逐字不变。
+    ...(data.turnQuotaKey ? { turnQuotaKey: data.turnQuotaKey } : {}),
   };
   return { ...state, consumedSkills: [...existing, entry] };
 }

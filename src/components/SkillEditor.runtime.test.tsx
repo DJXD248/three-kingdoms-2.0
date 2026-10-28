@@ -12,6 +12,7 @@ import { hasSettleableContent } from '../data/skillTable';
 import { useGameStore } from '../store/gameStore';
 import { compileGeneralSkills } from '../skills/skillCompiler';
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
+import { clickIntoSkillsStep } from '../test/wizardStep';
 
 function findRuntimeSelect(): HTMLSelectElement {
   const selects = Array.from(document.querySelectorAll('select'));
@@ -47,6 +48,7 @@ describe('SkillEditor: structured runtime entry', () => {
       .find(b => b.textContent?.includes(target.name));
     expect(listBtn).toBeTruthy();
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
 
     // Switch the first skill from single-effect to multi-effect mode
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
@@ -82,6 +84,7 @@ describe('SkillEditor: structured runtime entry', () => {
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
 
     const sel = findRuntimeSelect();
@@ -100,6 +103,7 @@ describe('SkillEditor: structured runtime entry', () => {
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
 
     const findDestSelect = () => Array.from(document.querySelectorAll('select'))
@@ -129,6 +133,7 @@ describe('SkillEditor: structured runtime entry', () => {
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
 
     const findStatSelect = (labelText: string) =>
@@ -186,6 +191,7 @@ describe('SkillEditor: structured runtime entry', () => {
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
 
     const findStatSelect = (labelText: string) =>
@@ -242,6 +248,7 @@ describe('SkillEditor: structured runtime entry', () => {
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
 
     const findStatSelect = (labelText: string) =>
@@ -279,6 +286,7 @@ describe('SkillEditor: structured runtime entry', () => {
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
 
     const findStatSelect = (labelText: string) =>
@@ -326,6 +334,7 @@ describe('SkillEditor: structured runtime entry', () => {
     render(<SkillEditor onClose={() => {}} />);
     fireEvent.click(Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name))!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
     fireEvent.change(findRuntimeSelect(), { target: { value: 'GAIN_SKILL' } });
 
@@ -399,6 +408,7 @@ describe('SkillEditor: 发动门槛录入（🚪 门槛框）', () => {
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
     // v2.8.11 刀2：门槛框有两个了——第 1 个是「整组门槛」（技能级），最后一个
     // 是这条效果的「逐项门槛」。既有断言说的都是逐项那一栏，取末位保持原意。

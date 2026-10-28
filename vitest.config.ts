@@ -30,6 +30,9 @@ export default defineConfig({
       include: ['src/**/*.{ts,tsx}'],
       exclude: [
         'src/**/*.test.{ts,tsx}',
+        // 只被测试 import 的界面点法助手（v2.9.21 两段式）：不进生产路径，
+        // 算进分母＝用测试自己的行数去稀释覆盖率读数。
+        'src/test/**',
         'src/**/*.d.ts',
         'src/main.tsx',
         'src/vite-env.d.ts',

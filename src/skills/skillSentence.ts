@@ -14,7 +14,7 @@ import {
   SkillCondition, SkillEffect, SkillRuntimeEffect, SkillTriggerConfig,
   triggerTypeLabels, listenerScopeLabels, supportsListenerScope, getTriggerSubOptions,
   statModifierKeyLabels, deploySubLabels, turnSubLabels, damageSubLabels, targetSubLabels,
-  killSubLabels, cardSubLabels, expireLabels,
+  killSubLabels, cardSubLabels, expireLabels, isValidTurnLimit,
 } from '../data/generals';
 import type { DamageDealtOccasionType, StatModifierDurationType } from '../data/generals';
 import { runtimeTargetLabels } from './skillExcelFormat';
@@ -161,6 +161,8 @@ export interface SkillBlocks {
   effects?: SkillEffect[];
   conditions?: SkillCondition[];
   effectMode?: string;
+  /** 限次刀：技能级那一格「每回合限 N 次」。只在拼得出合法 N 时才念出来。 */
+  turnLimit?: number;
 }
 
 /** 一整条技能（多效果模式）拼出来的总述；没有一块能说话的积木＝空串。 */
@@ -168,9 +170,19 @@ export function skillSentence(skill: SkillBlocks): string {
   const rows = (skill.effects ?? []).map(effectSentence).filter(Boolean);
   if (rows.length === 0) return '';
   const groupGate = gatePhrase(skill.conditions);
-  const head = modeHead(skill.effectMode, rows.length);
+  const head = [modeHead(skill.effectMode, rows.length), turnLimitHead(skill.turnLimit)]
+    .filter(Boolean).join('，');
   const body = rows.map(r => r.replace(/。$/, '')).join('；');
   return [head, groupGate, body].filter(Boolean).join('，') + '。';
+}
+
+/**
+ * 「每回合限 N 次」那一句的**唯一拼法**（生成侧与读入侧共用，见 `skillTextParse` 的
+ * `matchTurnLimit`）。N 不合法（不是 1 以上的整数）＝空串＝宁可不念，绝不生成半句、
+ * 更绝不替玩家兜底成 1（用户 2026-10-28 裁决③「读不出数字就逐段退回问玩家」）。
+ */
+export function turnLimitHead(turnLimit?: number): string {
+  return isValidTurnLimit(turnLimit) ? `每回合限${turnLimit}次` : '';
 }
 
 /**

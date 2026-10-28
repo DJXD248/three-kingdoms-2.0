@@ -437,6 +437,27 @@ export interface Skill {
    */
   conditions?: SkillCondition[];
   forced?: boolean;                   // 强制发动：满足触发条件后自动发动，需满足代价才发动，否则不发动
+  /**
+   * 限次刀·「每回合限 N 次」（用户 2026-10-28 五条裁决）。正整数；**没有这一格＝不写＝不限制**
+   * （今天名册里一条都没有⇒既有内容逐字不变）。三句话：
+   *  · 一格窗＝一名玩家的回合（裁决①），能不能在别人的回合发动仍由触发时机与「我听谁」说了算；
+   *  · 归零＝换窗，不删账（裁决②），落地形状见 `core/GameState.ts::turnWindow`；
+   *  · 按**技能**计不按编译定义计，与「一局一次」那本账同一把键（`<将领实例>:<技能名>`）。
+   * 读法：汉字与阿拉伯数字都认（`parseCountNumber` 那一份），读不出就逐段退回、绝不兜底成 1。
+   * 唯一消费点＝`skills/skillQuota.ts`（判定＋记账），编译器只做透传与形状闸。
+   */
+  turnLimit?: number;
+}
+
+/**
+ * 限次刀·「这一格填的到底是不是一个每回合限几次的数」——**全库唯一判据**（就放在
+ * `Skill.turnLimit` 这格旁边，四个问它的人共用一支）：编译器（形状闸，非法⇒整条技能
+ * 点名跳过）、卡面念话侧（不合法就一个字也不念）、反解侧（读出的数先过这道闸才敢挂进
+ * 积木）、Excel 录入侧。写两份迟早分叉＝"卡上印着限次、结算没人管"那一族事故的源头。
+ * 用户 2026-10-28 裁决③「读不出数字就逐段退回问玩家」的"读不出"就是这一句说不成立。
+ */
+export function isValidTurnLimit(turnLimit: unknown): turnLimit is number {
+  return typeof turnLimit === 'number' && Number.isInteger(turnLimit) && turnLimit > 0;
 }
 
 export interface General {

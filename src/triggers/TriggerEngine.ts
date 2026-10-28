@@ -49,8 +49,8 @@ export class TriggerEngine {
     event: GameEvent,
     depth = 0,
     rootEventId = event.id ?? `${event.type}:${event.timestamp ?? Date.now()}`,
-    /** v2.8.32：同一条展开链里已落账的「一局一次」额度键（见 `TriggerContext.quotaSpent`）。 */
-    quotaSpent?: Set<string>,
+    /** v2.8.32／限次刀：同一条展开链里各额度键**已用掉几次**（见 `TriggerContext.quotaSpent`）。 */
+    quotaSpent?: Map<string, number>,
     /** v2.9.13（按需池第一刀）：只让这一批 id 的监听听这一声。用途＝部署步的
      *  补注册重放（v2.5.1，§12-26）：那一步的事件**已经喂给派发前的链一次**了，
      *  重放只为"这一步刚上册的那几位"而存在。缺省＝不限（其余调用点逐字不变）。

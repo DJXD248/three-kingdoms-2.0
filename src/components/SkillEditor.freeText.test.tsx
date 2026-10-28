@@ -12,6 +12,7 @@ import { render, fireEvent, screen, cleanup } from '@testing-library/react';
 import SkillEditor from './SkillEditor';
 import { allGenerals } from '../data/generals';
 import { useGameStore } from '../store/gameStore';
+import { clickIntoSkillsStep } from '../test/wizardStep';
 
 function openFirstPlainSkill() {
   const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
@@ -19,6 +20,8 @@ function openFirstPlainSkill() {
   const listBtn = Array.from(document.querySelectorAll('button'))
     .find(b => b.textContent?.includes(target.name));
   fireEvent.click(listBtn!);
+  // v2.9.21 两段式：选中后落在第 1 步，技能那一屏要点「② 技能编辑」才露出来。
+  clickIntoSkillsStep();
   return target;
 }
 

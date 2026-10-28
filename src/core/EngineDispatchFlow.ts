@@ -21,10 +21,12 @@ export function resolveTriggerChain(
   const queue = [...initialEvents];
   let depth = 0;
   let generatedCount = 0;
-  // v2.8.32 限定技额度：整条展开读的是同一个（落账前的）state，所以"这条链里已经
-  // 响过的那一枚一局一次"必须在这里记一笔，否则一条链上两声命中＝技能结两遍、台账
+  // v2.8.32 限定技额度／限次刀：整条展开读的是同一个（落账前的）state，所以"这条链里
+  // 那一枚额度已经用掉几次"必须在这里记着，否则一条链上两声命中＝技能结两遍、台账
   // 只扣一次。跨调用不共享——每次调用之间已经落过账，账本才是真相。
-  const quotaSpent = new Set<string>();
+  // 限次刀起容器从 `Set`（只答"响过没"）换成按次数计的 `Map`：一局一次那条判据读的
+  // 仍是"有没有"（`> 0`），每回合 N 次那条读的才是"几次"，两本账共用这一份。
+  const quotaSpent = new Map<string, number>();
 
   while (queue.length > 0 && depth < MAX_TRIGGER_DEPTH && generatedCount < MAX_EVENTS_PER_CHAIN) {
     const next = queue.shift();

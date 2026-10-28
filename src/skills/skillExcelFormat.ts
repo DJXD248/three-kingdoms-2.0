@@ -55,8 +55,9 @@ import {
   statModifierKeyLabels,
   statModifyModeLabels,
   statModifierDurationLabels,
+  isValidTurnLimit,
 } from '../data/generals';
-import { parseGateText, gateConditionsToText } from './skillGateText';
+import { parseGateText, gateConditionsToText, parseCountNumber } from './skillGateText';
 import { lookupSkillByName } from './skillNameIndex';
 import { ownerDescriptions } from '../data/skillTable';
 
@@ -576,6 +577,40 @@ export function readGainSkillNameCell(raw: unknown): string {
 
 export function gainSkillNameToStr(name?: string): string {
   return String(name ?? '').trim() || EMPTY;
+}
+
+// ── 「每回合限几次」（限次刀：技能级固定列，与「技能门槛」「我听谁」同一族做法）──
+
+/** 列名。这一格与「强制发动」并列，都是**技能级**的（一条技能只有一格限次）。 */
+export const TURN_LIMIT_HEADER = '每回合限几次';
+
+/** 贴在表头批注上的一句话——"留空＝不限制"必须写出来，否则空着那一格会被读成"不许发动"。 */
+export const TURN_LIMIT_HINT =
+  '「每回合限几次」＝这条技能在**一名玩家的一个回合**里最多能发动几次（正整数，例：1、2、3）。'
+  + '留空（或写「无」）＝不限制，和今天一样。次数在**下一格回合开始时自动归零**（不是到终局都没），'
+  + '用完以后候选里照常列出、写明「本回合已用尽」。'
+  + '汉字也认（「一」「两」「三」…），但写成一个读不出的串会被导入报告逐条点名——系统不猜数、也不兜底成 1。'
+  + '注：能不能在**别人的**回合发动，由「触发时机」与「我听谁」那两格说了算，这一格不管这件事。';
+
+/** 写出侧：合法 N 写阿拉伯数字，没填＝「无」。 */
+export function turnLimitToStr(limit?: number): string {
+  return isValidTurnLimit(limit) ? String(limit) : EMPTY;
+}
+
+/**
+ * 读入侧：空格／「无」＝不限制；数词（阿拉伯与汉字）走 `parseCountNumber` 那**唯一一份**
+ * 读法；剩下的原文一律交回 `unknown` 由导入面逐条点名。
+ * 这一支**绝不返回 1 兜底**——写着限额却按没有限额算，与写着「三」却按一次算，是同一种谎。
+ *
+ * 列名本身就是「每回合限几**次**」，所以玩家手填十有八九带一个尾字「次」（「一次」「2 次」）：
+ * 先削掉这一层再交给唯一的那份数词读法。削尾字只发生在**读入**侧，写出侧永远是裸数字＝只进不出。
+ */
+export function readTurnLimitCell(raw: unknown): { limit?: number; unknown?: string } {
+  const text = cleanCell(raw);
+  if (!text) return {};
+  const n = parseCountNumber(text.replace(/[次回]$/, '').trim());
+  if (!isValidTurnLimit(n)) return { unknown: text };
+  return { limit: n };
 }
 
 // ── Effect column groups (Excel) ────────────────────────────────────

@@ -56,7 +56,7 @@
  */
 
 import type { General, Skill, SkillCondition, SkillEffect, SkillTriggerConfig, SkillTriggerType } from '../data/generals';
-import { supportsListenerScope } from '../data/generals';
+import { supportsListenerScope, isValidTurnLimit } from '../data/generals';
 import { tagsOf } from '../domain/skillTags';
 import type {
   DataSkillDefinition,
@@ -183,7 +183,11 @@ export interface SkillSkip {
     | 'GAIN_SKILL_UNKNOWN_NAME'
     /** 技能表里同名却有**两份不同内容**：谁也不知道要哪一枚。用户 2026-10-08 裁过
      *  「官方目前不存在不同效果但重名的技能」，所以真撞上就是一条要人裁决的数据缺陷。 */
-    | 'GAIN_SKILL_AMBIGUOUS_NAME';
+    | 'GAIN_SKILL_AMBIGUOUS_NAME'
+    /** 限次刀：「每回合限 N 次」里的 N 不是一个 1 以上的整数（手改存档／内容包直塞那条路
+     *  没有类型保护）。悄悄当成"没写"＝写着限额却没人管，兜底成 1＝把玩家没写的规则替他
+     *  编了一条——两头都是谎，所以整条技能点名跳过。 */
+    | 'TURN_LIMIT_INVALID';
 }
 
 export interface CompileResult {
@@ -289,8 +293,13 @@ function toEffectData(effect: SkillEffect): SkillEffectData | SkillSkip | null {
 export function judgeSkillEffect(
   effect: SkillEffect,
   triggerConfig: SkillTriggerConfig | undefined,
-  usage: { skillConditions?: SkillCondition[]; awakeningTag?: boolean } = {},
+  usage: { skillConditions?: SkillCondition[]; awakeningTag?: boolean; turnLimit?: number } = {},
 ): SkillSkip['reason'] | undefined {
+  // 限次刀：技能级那一格「每回合限 N 次」排最前面验——它错了，这条技能里每一块积木都不该
+  // 编出来（"写着三却按一算"与"写了却没人数"是同一种谎）。
+  if (usage.turnLimit !== undefined && !isValidTurnLimit(usage.turnLimit)) {
+    return 'TURN_LIMIT_INVALID';
+  }
   // 先验载荷、后验时机：一条既没写时机、载荷又拼错了的积木，玩家要改的是那句写错的话，
   // 而不是"还没选时机"（选时机在界面上就是一格下拉，随手就有；载荷错了必须改字）。
   const converted = toEffectData(effect);
@@ -393,6 +402,12 @@ export function compileSkill(
   const awakeningTag = tagsOf(skill).includes('觉醒技');
   const quotaTag = limitedTag || awakeningTag;
   const limitKey = `${ownerKey}:${skill.name}`;
+  // 限次刀：「每回合限 N 次」的键与上面那本账同一把（都按**技能**不按定义），所以直接复用
+  // 同一个串、不拼第二份。写了非法的 N 不在这里悄悄丢掉——`judgeSkillEffect` 会把它点名为
+  // `TURN_LIMIT_INVALID` 并跳过整条技能（"记录而未消费"与"写着三却按一算"都不许发生）。
+  const turnQuota = isValidTurnLimit(skill.turnLimit)
+    ? { limit: skill.turnLimit, key: limitKey }
+    : undefined;
 
   const consider = (effect: SkillEffect | undefined, fallbackTrigger: Skill['trigger']): CompiledEffect | null => {
     // A skill without effect entries can never carry structured payloads.
@@ -409,6 +424,7 @@ export function compileSkill(
     const verdict = judgeSkillEffect(effect, triggerConfig, {
       skillConditions: skill.conditions,
       awakeningTag,
+      turnLimit: skill.turnLimit,
     });
     if (verdict) {
       skipped.push({ skillName: skill.name, effectId: effect?.id, reason: verdict });
@@ -504,6 +520,8 @@ export function compileSkill(
     // 2.9.3 刀B：限定技与觉醒技共用同一本账（quotaTag）；觉醒位只在编出定义时落，
     // passive 那一支在上面已经点名跳过，所以这一句永远走不到"落键却不问"的死角。
     ...(quotaTag && c.mapped !== 'passive' ? { limitKey } : {}),
+    // 限次刀：同一支纪律——passive 那一型没有"发动一次"的时刻，额度无处可消，不落键。
+    ...(turnQuota && c.mapped !== 'passive' ? { turnQuota } : {}),
     ...(awakeningTag && c.mapped !== 'passive' ? { awakening: true } : {}),
   });
 
@@ -583,6 +601,8 @@ export function compileSkill(
         // 限定技同理继承：整组择一＝一次发动＝一次额度（键与单效果定义同形）。
         // （觉醒技＋择一那一组在上面已点名跳过，所以这一支只可能是限定技在落键。）
         ...(quotaTag ? { limitKey } : {}),
+        // 每回合额度同理继承：择一组一次表态＝一次发动＝扣一格 N 分之一。
+        ...(turnQuota ? { turnQuota } : {}),
       });
     }
     // v2.8.x 链式若-则刀：effectMode==='chain' 时，同一触发签名的多个效果编入一条
@@ -638,6 +658,8 @@ export function compileSkill(
         // **并**获得技能「怒斩」"就是这一支——一次觉醒、一笔账、两下连着落）。
         ...(quotaTag ? { limitKey } : {}),
         ...(awakeningTag ? { awakening: true } : {}),
+        // 链式一组＝一次发动，每回合额度照常继承（与上面 choice 那一支同一位）。
+        ...(turnQuota ? { turnQuota } : {}),
       });
     }
   } else {

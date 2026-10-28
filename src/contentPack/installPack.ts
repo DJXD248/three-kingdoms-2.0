@@ -12,7 +12,7 @@
  *  ③ 落库前先按已知字段名筛一遍（`sanitizeRecord`），野字段不进本机存档。
  */
 import type { General, Skill } from '../data/generals';
-import { allSkillTags } from '../data/generals';
+import { allSkillTags, isValidTurnLimit } from '../data/generals';
 import { isRepositoryOfficial, idNamespace, isAcceptableAuthoredRecord } from '../domain/generalProvenance';
 import { PACK_FACTIONS, type PackRead, stableText } from './contentPack';
 
@@ -38,7 +38,7 @@ export type InstallPlan = {
 export type InstallContext = { existingAuthored: General[] };
 
 const GENERAL_KEYS = ['id', 'name', 'faction', 'hp', 'type', 'meleeAtk', 'rangedAtk', 'armor', 'skills', 'identity', 'source'] as const;
-const SKILL_KEYS = ['name', 'description', 'tags', 'tag', 'trigger', 'effects', 'effectMode', 'conditions', 'forced'] as const;
+const SKILL_KEYS = ['name', 'description', 'tags', 'tag', 'trigger', 'effects', 'effectMode', 'conditions', 'forced', 'turnLimit'] as const;
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -83,6 +83,7 @@ export function findRecordProblem(raw: unknown): string | null {
     if (s.effects !== undefined && !Array.isArray(s.effects)) return `「${s.name}」的效果那一段不是一个清单`;
     if (s.conditions !== undefined && !Array.isArray(s.conditions)) return `「${s.name}」的门槛那一段不是一个清单`;
     if (s.trigger !== undefined && asRecord(s.trigger) === null) return `「${s.name}」的触发时机不是一个记录`;
+    if (s.turnLimit !== undefined && !isValidTurnLimit(s.turnLimit)) return `「${s.name}」的每回合限次数「${String(s.turnLimit)}」不是 1 以上的整数（留空这一格＝不限制；这一格不猜数、也不兜底成 1）`;
   }
   if (g.identity !== undefined && typeof g.identity !== 'string') return `「${g.name}」的身份那一格不是文字`;
   return null;

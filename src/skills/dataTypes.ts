@@ -218,6 +218,18 @@ export interface DataSkillDefinition {
    */
   limitKey?: string;
   /**
+   * 限次刀·「每回合限 N 次」这一格额度（录入面 `Skill.turnLimit` 编过来的）。存在＝这枚
+   * 技能挂着每回合额度，`limit`＝N，`key`＝`<将领实例>:<技能名>`（**按技能不按定义**，与
+   * `limitKey` 同一条纪律：一枚技能编出多个定义共用同一格额度）。三条要点与 `limitKey` 同族：
+   *  - 只在录入真的写了 N 时落这一键，其余定义一个键都不多＝既有编译产物逐字不变；
+   *  - 窗口戳不在这里存（它是**局**里的事实，不是内容里的事实）⇒用键的时候现拼，
+   *    唯一拼法＝`skills/skillQuota.ts::turnQuotaKeyOf`；
+   *  - `passive`（在场即生效）那一型照旧不落：持续生效没有"发动一次"的时刻。
+   * 唯一消费点＝`skills/skillQuota.ts`（判定 `perTurnQuotaAvailable`＋记账 `mintActivation`），
+   * 四条执法路（回合结束解析／响应问答候选／自动触发条件／界面置灰）读的都是这同一句。
+   */
+  turnQuota?: { limit: number; key: string };
+  /**
    * 2.9.3 刀B·「觉醒技」徽章编进定义后的那一枚记录位。编译器从 `tagsOf(skill)` 里认
    * 「觉醒技」，只在这一枚真的编出了定义时落键（其余定义的键集合逐字不变＝两个锚池不动）。
    *  ① 额度：与限定技共用 `limitKey` 那同一本账（用户 2026-10-08 裁「觉醒技和限定技同理，

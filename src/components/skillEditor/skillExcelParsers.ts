@@ -8,7 +8,7 @@ import {
   readTriggerCell, triggerToStr, detectEffectGroupWidth, parseEffectGroup,
   SKILL_GATE_HEADER, detectEffectGroupStart, parseSkillGate,
   LISTENER_SCOPE_HEADER, readListenerScopeCell,
-  readEffectModeCell,
+  readEffectModeCell, TURN_LIMIT_HEADER, readTurnLimitCell,
 } from '../../skills/skillExcelFormat';
 import { parseSkillTagsCell, tagsOf, formatTags } from '../../domain/skillTags';
 
@@ -26,6 +26,9 @@ export interface SkillEditEntry {
   /** v2.8.11 刀2：整组门槛（Excel 固定列「技能门槛」）。逐项门槛挂在各效果上。 */
   conditions?: SkillCondition[];
   forced?: boolean;
+  /** 限次刀：「每回合限 N 次」（技能级固定列「每回合限几次」，1 以上的整数）。
+   *  没有这一列／格内空白＝不限制。读不出的那一串点名退回，绝不兜底成 1。 */
+  turnLimit?: number;
 }
 
 // ── Parse a single skill cell like "武圣：远程伤害+1" or "反馈<锁定技>：描述"
@@ -256,6 +259,8 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
   const skillGateCol = header.findIndex(h => String(h || '').trim() === SKILL_GATE_HEADER);
   // v2.8.21 监听扩面刀：技能级「我听谁」同样按表头定位（旧文件没有这一列＝不填＝只听自己）。
   const skillScopeCol = header.findIndex(h => String(h || '').trim() === LISTENER_SCOPE_HEADER);
+  // 限次刀：技能级「每回合限几次」同样按表头定位（旧文件没有这一列＝不填＝不限制，逐字旧行为）。
+  const turnLimitCol = header.findIndex(h => String(h || '').trim() === TURN_LIMIT_HEADER);
   const dataRows = rows.slice(1); // skip header
   const parseWarnings: string[] = [];
   // 同名同势力在这一份表里出现多次＝同一张卡被拆成几块，合并成一块。
@@ -343,6 +348,19 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
     }
     const effectMode = readEffectModeCell(sMode);
 
+    // 限次刀：「每回合限几次」＝技能级那一格，与「我听谁」同一族分工（各占一列，不挤进
+    // 触发那句话）。写了一个读不出的串（「若干」「零」「abc」）⇒ 点名退回、按没填读，
+    // **绝不兜底成 1**：替玩家编一条他没写的限额与"写着三却按一算"是同一种谎（裁决③）。
+    let turnLimit: number | undefined;
+    if (turnLimitCol >= 0) {
+      const quotaRead = readTurnLimitCell(row[turnLimitCol]);
+      if (quotaRead.unknown) {
+        parseWarnings.push(`${rowName}·${sName} 每回合限几次：这一串不是 1 以上的整数，所以没记下（留空＝不限制）→ ${quotaRead.unknown}`);
+      } else {
+        turnLimit = quotaRead.limit;
+      }
+    }
+
     // v2.8.11 刀2：整组门槛（「技能门槛」列）。这一列不存在=旧文件=没有整组门槛。
     const groupGate = skillGateCol >= 0
       ? parseSkillGate(clean(String(row[skillGateCol] || '')))
@@ -401,7 +419,7 @@ export const parseRowPerSkillSheet = (rows: (string|number|undefined)[][], pool:
     }
 
     current.skills.push({
-      name: sName, tags, forced, trigger: triggerWithScope,
+      name: sName, tags, forced, trigger: triggerWithScope, turnLimit,
       effectMode: effects.length > 0 ? (effectMode || 'all') : effectMode,
       effects: effects.length > 0 ? effects : undefined,
       description: sDesc || undefined,
@@ -562,7 +580,7 @@ const canonSkill = (s: SkillEditEntry | General['skills'][number]) => {
     s.name, s.description || null, formatTags(tagsOf(s)) || null, s.forced ? true : null,
     canonTrigger(s.trigger),
     effects.length > 0 ? (s.effectMode ?? 'all') : (s.effectMode ?? null),
-    effects.map(canonEffect), canonGate(s.conditions),
+    effects.map(canonEffect), canonGate(s.conditions), s.turnLimit ?? null,
   ];
 };
 

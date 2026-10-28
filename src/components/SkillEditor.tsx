@@ -33,6 +33,9 @@ import {
   GAIN_SKILL_NAME_HINT,
   effectModeToStr,
   EFFECT_MODE_LIST,
+  TURN_LIMIT_HEADER,
+  TURN_LIMIT_HINT,
+  turnLimitToStr,
 } from '../skills/skillExcelFormat';
 import { GATE_SYNTAX_HINT } from '../skills/skillGateText';
 import {
@@ -50,8 +53,9 @@ import { describeLockKey, findIdentityConflicts } from '../domain/identity';
 import { TriggerEditor } from './skillEditor/TriggerEditor';
 import { RuntimeEditor } from './skillEditor/RuntimeEditor';
 import { GateEditor } from './skillEditor/GateEditor';
+import { TurnLimitEditor } from './skillEditor/TurnLimitEditor';
 import {
-  patchEffect, patchSkill, effectSentence, skillSentence,
+  patchEffect, patchSkill, effectSentence, skillSentence, turnLimitHead,
   isHandWritten, isSkillHandWritten,
 } from '../skills/skillSentence';
 import { SkillTextPanel } from './skillEditor/SkillTextPanel';
@@ -73,6 +77,7 @@ const toSkillRecord = (s: SkillEditEntry): Skill => ({
   effectMode: s.effectMode,
   conditions: s.conditions,
   forced: s.forced,
+  turnLimit: s.turnLimit,
 });
 
 type SortBy = 'faction' | 'name' | 'type';
@@ -150,6 +155,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // v2.8.13：一次导入（含文本路、含待点选的新建）累积的"新增/修改了什么"，常驻到点「知道了」。
   const [importSummary, setImportSummary] = useState<ImportSummaryEntry[]>([]);
   const [saved, setSaved] = useState(false);
+  /** v2.9.21 两段式流程（§12-140①）：第 1 步定将领身份 →「确认」→ 第 2 步弄技能。 */
+  const [editStep, setEditStep] = useState<'identity' | 'skills'>('identity');
   /** §H3: why a save/import/delete was refused. Persistent until the next try. */
   const [readOnlyNotice, setReadOnlyNotice] = useState('');
 
@@ -173,7 +180,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       if (gEdit.meleeAtk != null) result.meleeAtk = gEdit.meleeAtk;
       if (gEdit.rangedAtk != null) result.rangedAtk = gEdit.rangedAtk;
     }
-    if (sEdit) result.skills = sEdit.map(s => ({ name: s.name, description: s.description, tags: tagsOf(s), trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced }));
+    if (sEdit) result.skills = sEdit.map(s => ({ name: s.name, description: s.description, tags: tagsOf(s), trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced, turnLimit: s.turnLimit }));
     return result;
   }, [generalEdits, skillEdits]);
 
@@ -234,7 +241,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     }
     setSelectedGeneral(g);
     const edited = getEditedGeneral(g);
-    setEditingSkills(edited.skills.map(s => ({ name: s.name, description: s.description, tags: tagsOf(s), trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced })));
+    setEditingSkills(edited.skills.map(s => ({ name: s.name, description: s.description, tags: tagsOf(s), trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced, turnLimit: s.turnLimit })));
     setEditName(edited.name);
     setEditFaction(edited.faction);
     setEditHp(edited.hp);
@@ -242,6 +249,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     setEditRangedAtk(edited.rangedAtk);
     const idEdit = generalEdits[g.id]?.identity;
     setEditIdentity(idEdit === undefined ? '__default__' : idEdit === '' ? '__none__' : idEdit);
+    setEditStep('identity');
     setSaved(false);
   };
 
@@ -636,7 +644,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   // Effect group (12 cols): 标注 | 触发 | 效果类型 | 数值 | 目标 | 描述 | 门槛 | 我听谁 | 改哪个数 | 怎么改 | 有效周期 | 获得哪个技能
   // — 只有填了效果类型(+数值)的效果
   // 才会被技能编译器接入对局结算（见 skills/skillCompiler.ts）；门槛=该效果的发动条件（可空）。
-  // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 技能门槛 | 我听谁 | 效果1标注 | 效果1触发 | ... | 设定备注
+  // Columns: 将领 | 势力 | 体力 | 近战 | 远程 | 技能名 | 标签 | 强制发动 | 触发时机 | 效果模式 | 技能描述 | 技能门槛 | 我听谁 | 每回合限几次 | 效果1标注 | 效果1触发 | ... | 设定备注
   // v2.8.11 刀2：新增固定列「技能门槛」＝整组门槛（技能级）；效果组第 7 列
   // 「效果N门槛」＝逐项门槛，两者是两级（先整组、再逐项）。
   // v2.8.21 监听扩面刀：再加一轴（技能级固定列「我听谁」＋效果组第 8 列「效果N我听谁」），
@@ -669,8 +677,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
 
         const ws = wb.addWorksheet(faction);
 
-        // Build header（13 个固定列＋每组 12 列＋设定备注；解析侧按表头认列，不按位置写死）
-        const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述', '技能门槛', LISTENER_SCOPE_HEADER];
+        // Build header（14 个固定列＋每组 12 列＋设定备注；解析侧按表头认列，不按位置写死）
+        const header: string[] = ['将领名称', '势力', '体力', '近战', '远程', '技能名称', '技能标签', '强制发动', '触发时机', '效果模式', '技能描述', '技能门槛', LISTENER_SCOPE_HEADER, TURN_LIMIT_HEADER];
         for (let e = 0; e < maxEffects; e++) header.push(...effectGroupHeaders(e + 1));
         header.push('设定备注');
 
@@ -693,6 +701,10 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           }
           if (new RegExp(`^效果\\d+${GAIN_SKILL_NAME_HEADER}$`).test(h)) {
             hdr.getCell(i + 1).note = { texts: [{ text: GAIN_SKILL_NAME_HINT }] };
+          }
+          // 限次那一格必须把"留空＝不限制"写进批注：空着被读成"一次都不许"就是界面替引擎撒谎。
+          if (h === TURN_LIMIT_HEADER) {
+            hdr.getCell(i + 1).note = { texts: [{ text: TURN_LIMIT_HINT }] };
           }
         });
 
@@ -728,6 +740,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               serializeSkillGate(sk.conditions),
               // 「我听谁」住在触发配置里，导出时拆成自己的一列（与「技能门槛」同理）。
               listenerScopeToStr(sk.trigger?.listenerScope),
+              // 限次刀：技能级那一格「每回合限 N 次」自己一列；没填＝「无」＝不限制。
+              turnLimitToStr(sk.turnLimit),
             );
 
             // Sub-effects (12-col groups: runtime fields + 发动门槛 + 我听谁 + 改数三格 + 获得哪个技能)
@@ -779,7 +793,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         }
 
         // Column widths
-        const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40, 26, 18];
+        const widths = [14, 6, 5, 5, 5, 14, 10, 8, 20, 10, 40, 26, 18, 14];
         for (let e = 0; e < maxEffects; e++) widths.push(10, 20, 12, 8, 12, 40, 26, 18, 14, 18, 24, 20);
         widths.push(30);
         widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
@@ -1362,6 +1376,25 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
           <div className="flex-1 flex flex-col overflow-hidden">
             {selectedGeneral && !multiSelectMode ? (
               <>
+                {/* v2.9.21 两段式流程的顶栏（§12-140①）：底下仍是同一套存储与编译路，
+                    这里只加"确认"这个节点，不新开第二条录入路，也不新开第二条结算路。 */}
+                <div className="px-4 py-2 border-b border-purple-800/20 bg-purple-900/20 flex items-center gap-2 flex-shrink-0">
+                  <button onClick={() => setEditStep('identity')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${editStep === 'identity' ? 'bg-purple-700 text-white' : 'bg-black/30 text-gray-500 hover:text-white'}`}>
+                    ① 将领身份
+                  </button>
+                  <button onClick={() => setEditStep('skills')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${editStep === 'skills' ? 'bg-purple-700 text-white' : 'bg-black/30 text-gray-500 hover:text-white'}`}>
+                    ② 技能编辑
+                  </button>
+                  <span className="flex-1 text-[10px] text-purple-300/50">
+                    {editStep === 'identity'
+                      ? '先把将领本人定下来（名称／势力／体力／近战／远程／身份），点下面「确认将领，进入技能编辑」再去弄技能。'
+                      : '这一步改的是技能。要回头改本人，点上面「① 将领身份」。'}
+                  </span>
+                </div>
+
+                {editStep === 'identity' && (
                 <div className="p-4 border-b border-purple-800/20 flex-shrink-0">
                   <div className="flex items-center gap-3 mb-3">
                     <div className="w-4 h-4 rounded-full" style={{ backgroundColor: factionColors[editFaction] }} />
@@ -1407,8 +1440,20 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                         className="w-full px-2 py-1.5 rounded-lg bg-black/50 border border-purple-700/30 text-purple-100 text-sm focus:outline-none focus:border-purple-500" />
                     </div>
                   </div>
+                  {/* 第 1 步的"确认"节点在底栏那颗（流程的分界，不是又一次保存：这里不写库，
+                      只把人放进第 2 步）；真正落档仍然只有第 2 步的「💾 保存修改」。 */}
+                  <p className="mt-3 text-[11px] text-purple-300/50">
+                    <button disabled
+                      title="这一格是下一刀（一句话生成将领）要接的入口，今天还没有功能，先把位置亮出来"
+                      className="px-3 py-1.5 mr-2 rounded-lg bg-gray-800/60 border border-gray-700/40 text-gray-500 text-xs font-bold cursor-not-allowed">
+                      🪄 一句话生成（下一刀）
+                    </button>
+                    这一格是下一刀要接的「一句话生成将领」入口；本刀先把两段流程立起来。
+                  </p>
                 </div>
+                )}
 
+                {editStep === 'skills' && (
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                   <h4 className="text-xs font-bold text-purple-400/80 uppercase tracking-wider">技能列表</h4>
                   {editingSkills.map((skill, i) => {
@@ -1441,6 +1486,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                         effects: efs,
                         effectMode: d.effectMode ?? skill.effectMode ?? 'all',
                         conditions: d.conditions?.length ? [...(skill.conditions ?? []), ...d.conditions] : skill.conditions,
+                        // 限次刀：那一格也是整条技能的（与模式头同族）；那句话里没写＝
+                        // 不动原有的那一格，绝不清空（写了话却把已经填好的次数抹掉＝静默丢）。
+                        ...(d.turnLimit !== undefined ? { turnLimit: d.turnLimit } : {}),
                       });
                     };
 
@@ -1457,6 +1505,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                             </span>
                           ))}
                           {skill.forced && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-900/30 text-red-300 border border-red-800/30" title={FORCED_MEANING}>强制发动</span>}
+                          {turnLimitHead(skill.turnLimit) && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-900/30 text-orange-300 border border-orange-800/30" title={TURN_LIMIT_HINT}>{turnLimitHead(skill.turnLimit)}</span>}
                           {hasEffects && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-900/30 text-cyan-300 border border-cyan-800/30">{skill.effects!.length}个效果</span>}
                         </div>
                         <button onClick={() => handleRemoveSkill(i)}
@@ -1479,6 +1528,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                               <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${skill.forced ? 'left-5' : 'left-0.5'}`} />
                             </button>
                           </div>
+                          <TurnLimitEditor turnLimit={skill.turnLimit}
+                            onChange={n => updateSkill({ turnLimit: n })} />
                         </div>
 
                         <div>
@@ -1653,6 +1704,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                     + 添加技能
                   </button>
                 </div>
+                )}
 
                 {/* §H3 layer ①: a general this session may not touch offers no
                     write path at all, and says which of the two locks says no
@@ -1676,11 +1728,25 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                   </div>
                 )}
                 <div className="p-4 border-t border-purple-800/20 flex items-center gap-3 flex-shrink-0">
-                  <button onClick={handleSave}
-                    disabled={!mayEditGeneral(selectedGeneral.id)}
-                    className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all ${!mayEditGeneral(selectedGeneral.id) ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : saved ? 'bg-green-600 text-white' : 'bg-purple-700 text-white hover:bg-purple-600'}`}>
-                    {saved ? '✅ 已保存' : '💾 保存修改'}
-                  </button>
+                  {editStep === 'identity' && (
+                    <button onClick={() => setEditStep('skills')}
+                      className="flex-1 py-2.5 rounded-xl bg-purple-700 text-white font-bold text-sm hover:bg-purple-600 transition-all active:scale-95">
+                      ✔ 确认将领，进入技能编辑
+                    </button>
+                  )}
+                  {editStep === 'skills' && (
+                    <>
+                      <button onClick={() => setEditStep('identity')}
+                        className="px-4 py-2.5 rounded-xl bg-gray-800 text-purple-200 font-bold text-sm hover:bg-gray-700 transition-all">
+                        ← 回到将领身份
+                      </button>
+                      <button onClick={handleSave}
+                        disabled={!mayEditGeneral(selectedGeneral.id)}
+                        className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all ${!mayEditGeneral(selectedGeneral.id) ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : saved ? 'bg-green-600 text-white' : 'bg-purple-700 text-white hover:bg-purple-600'}`}>
+                        {saved ? '✅ 已保存' : '💾 保存修改'}
+                      </button>
+                    </>
+                  )}
                   <button onClick={() => setSelectedGeneral(null)}
                     className="px-4 py-2.5 rounded-xl bg-gray-700 text-white font-bold text-sm hover:bg-gray-600">
                     关闭

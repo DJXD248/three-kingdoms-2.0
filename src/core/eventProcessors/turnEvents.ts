@@ -47,6 +47,10 @@ export function applyTurnStartEvent(state: EngineState, event: GameEvent): Engin
     phase: nextPlayerId === null || nextPlayerId === undefined ? state.phase : 'drawing',
     timelinePhase: nextPlayerId === null || nextPlayerId === undefined ? 'TURN_START' : 'DRAW',
     currentPlayerId: nextPlayerId,
+    // 限次刀·窗口戳的**唯一写手**（裁决②逐字：归零点＝"A 回合结束、处理完所有可处理事项、
+    // 即将进入 B 回合开始的这个节点"）。`TURN_END` 已把 `turn` 加过一，所以这里的值就是
+    // 新的一格那一号；没有下一拍 TURN_START（终局／整场打完）＝戳停在最后一格，账照旧读得到。
+    turnWindow: state.turn,
     drawState: nextPlayerId === null || nextPlayerId === undefined || !nextPlayer
       ? null
       : {

@@ -10,6 +10,7 @@ import { allGenerals } from '../data/generals';
 import { useGameStore } from '../store/gameStore';
 import { createAuthoredGeneral } from '../domain/generalProvenance';
 import { loadLockedGenerals } from '../store/editorPersistence';
+import { clickIntoSkillsStep } from '../test/wizardStep';
 
 const ledger = allGenerals.find(g => g.name === '关羽' && g.faction === '蜀')!;
 const fixture = createAuthoredGeneral({ name: 'UI锁试将', faction: '蜀', hp: 3 }, 'DIY');
@@ -37,6 +38,7 @@ function openGeneral(name: string) {
     .find(b => b.textContent?.includes(name));
   expect(listBtn).toBeTruthy();
   fireEvent.click(listBtn!);
+  clickIntoSkillsStep();
 }
 
 function saveButton(): HTMLButtonElement | undefined {

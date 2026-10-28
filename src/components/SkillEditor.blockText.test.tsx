@@ -8,6 +8,7 @@ import { render, fireEvent, screen, cleanup } from '@testing-library/react';
 import SkillEditor from './SkillEditor';
 import { allGenerals } from '../data/generals';
 import { useGameStore } from '../store/gameStore';
+import { clickIntoSkillsStep } from '../test/wizardStep';
 
 function findRuntimeSelect(): HTMLSelectElement {
   const el = Array.from(document.querySelectorAll('select'))
@@ -34,6 +35,7 @@ describe('拼积木→生成文字→文字还能改', () => {
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));
     fireEvent.click(listBtn!);
+    clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
     return target;
   };

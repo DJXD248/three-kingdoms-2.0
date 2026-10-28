@@ -9,7 +9,7 @@ import { capDamageToBase } from '../core/baseDamage';
 import { evaluateSkillConditions } from './skillConditions';
 import { gateConditionsToText } from './skillGateText';
 import { matchesSkillEvent } from './skillEventMatch';
-import { activationRecordEvent, limitedQuotaAvailable } from './skillQuota';
+import { activationRecordEvent, limitedQuotaAvailable, perTurnQuotaAvailable, perTurnQuotaUsed, spendChainQuota, turnWindowOf } from './skillQuota';
 import { eventsHeardBy } from './reactionTriggers';
 import {
   enumerateHandCardCandidates,
@@ -136,7 +136,10 @@ function buildCondition(
     && matchesSkillEvent(trigger, binding, context.event)
     // v2.8.32 限定技额度：额度是**账本事实**，与门槛（战场事实）分列两处判，读同一
     // 个判定函数＝三条路加界面四处同判据。fail-closed、自身不发事件。
-    && limitedQuotaAvailable(context.state, skill, context.quotaSpent) && evaluateSkillConditions(skill.conditions, {
+    // 限次刀起额度是**两本**账，两处各判各的（一局一次问"用过没"，每回合 N 次数
+    // "这一格窗用了几次"）；两本都不带额度的定义恒为真⇒既有内容一律照旧放行。
+    && limitedQuotaAvailable(context.state, skill, context.quotaSpent)
+    && perTurnQuotaAvailable(context.state, skill, context.quotaSpent) && evaluateSkillConditions(skill.conditions, {
     state: context.state,
     ownerId,
     sourceGeneralId: skill.sourceGeneralId,
@@ -221,12 +224,18 @@ export class SkillTriggerBridge {
             playerId: binding.ownerId,
             generalId: binding.skill.sourceGeneralId ?? '',
             turn: context.state.turn ?? 0,
+            // 限次刀：窗口戳与"这一格窗落账前已用几次"都从**同一个 state**、经**同一句
+            // 判据**取（`turnWindowOf`／`perTurnQuotaUsed`）⇒记账的键和判定的键不可能分叉，
+            // 而窗内序号（`mintStableId` 的 `#n`）拿的正是这个数：第一笔 `#0`、第二笔 `#1`。
+            turnWindow: turnWindowOf(context.state),
+            turnQuotaUsed: perTurnQuotaUsed(context.state, binding.skill, context.quotaSpent),
             viaActivation: context.event.type === 'SKILL_ACTIVATED',
           }, effectEvents.length);
           if (!activation) return effectEvents;
           // 当场把额度键记进**这条链**的已用集合：整条展开读的是落账前的同一个 state，
           // 不记这一笔就有"一条链上两声命中、技能结两遍而台账只扣一次"的洞（v2.8.32）。
-          if (binding.skill.limitKey) context.quotaSpent?.add(binding.skill.limitKey);
+          // 哪几格键该涨由 `skillQuota.spendChainQuota` 说了算（一局一次＋每回合窗键两本账）。
+          spendChainQuota(context.quotaSpent, context.state, binding.skill);
           return [activation, ...effectEvents];
         },
       });

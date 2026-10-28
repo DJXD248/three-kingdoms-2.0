@@ -85,6 +85,11 @@ export function SkillTextPanel({ onAdopt }: {
               模式按您写的头一句记下了：{draft.effectMode === 'choice' ? '以下择一' : '以下依次生效'}
             </p>
           )}
+          {draft.turnLimit !== undefined && (
+            <p className={`${hintCls} text-sky-300/70`}>
+              限次也一并记下：每回合限 {draft.turnLimit} 次（下一格回合开始自动归零；用完候选里照常列出、写明「本回合已用尽」）
+            </p>
+          )}
           {draft.effects.length === 0 ? (
             <p className={`${hintCls} text-rose-300/80`}>一句也没生成。上面逐条说了哪一段读不懂、照着改哪一格。</p>
           ) : (

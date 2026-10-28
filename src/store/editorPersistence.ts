@@ -14,6 +14,10 @@ export type SkillEdit = {
   /** v2.8.11 刀2：整组门槛（技能级）。可选字段——旧存档没有它，读出来即"没门槛"。 */
   conditions?: SkillCondition[];
   forced?: boolean;
+  /** 限次刀：「每回合限 N 次」（技能级，1 以上的整数；没有这一格＝不限制）。
+   *  与 `conditions` 同一条可选字段规矩：旧存档没有它，读出来即"没写＝不限制"，
+   *  合法性由 `data/generals.ts::isValidTurnLimit` 单点判，编译器与界面都问它。 */
+  turnLimit?: number;
 };
 
 export type SkillEdits = Record<string, SkillEdit[]>;

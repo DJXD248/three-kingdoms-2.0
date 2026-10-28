@@ -21,6 +21,7 @@ import {
   listenerScopeLabels, deployTimingWithIntent,
   deploySubLabels, turnSubLabels, damageSubLabels, targetSubLabels,
   killSubLabels, cardSubLabels, expireLabels, statModifierKeyLabels, allSkillTags,
+  isValidTurnLimit,
 } from '../data/generals';
 import { runtimeTargetLabels } from './skillExcelFormat';
 import { parseGateText, parseCountNumber } from './skillGateText';
@@ -45,6 +46,9 @@ export interface SkillTextDraft {
   /** 整组门槛。 */
   conditions?: SkillCondition[];
   effectMode?: SkillEffectMode;
+  /** 限次刀：技能级那一格「每回合限 N 次」（整条技能公用，不是某一块的）。
+   *  只在读出一个 1 以上的整数时才挂这里；读不出的那一串进 `issues` 点名，绝不兜底成 1。 */
+  turnLimit?: number;
   effects: SkillEffect[];
   /** 读不懂／形状不合法 ⇒ **这一块没有生成**，逐段点名。 */
   issues: SkillTextIssue[];
@@ -138,6 +142,74 @@ const TRIGGER_INDEX: Map<string, SkillTriggerConfig> = (() => {
 
 function matchTrigger(fragment: string): SkillTriggerConfig | undefined {
   return TRIGGER_INDEX.get(fragment);
+}
+
+// ── 读入侧写法别名（v2.9.22 刀5＝用户 2026-10-27 拍板的「633 条描述走出口①＝补词表/别名」）──
+// **只进不出**：这批说法只喂 `parseSkillText` 的读入侧。生成侧那一份词源（`triggerPhrase`／
+// `skillSentence`）与导出串一字不改⇒卡面话永远还是系统那一套，玩家的写法不会长进产物里
+// （与 `LEGACY_TYPE_LABELS`／`LEGACY_TRIGGER_CELL_ALIASES` 同族规矩，§12-110）。
+// 别名右边一律给**结构化档位**、串由 `triggerPhrase` 现场生成；钥匙名一律现场取
+// `statModifierKeyLabels`——上面第 ② 条"词表只有一个出处"不因这批别名而破例。
+// 命中判据＝**整片段相等**（`$` 收尾）。绝不做子串替换：切在括号外的分隔符上、整片才换，
+// 这是"吃掉分隔符"与"把一句话改成另一句话"那两类事故的正面判据。
+const ALIAS_HEAD = '(?:当|每当|每)?(?:你|自身|自己)?的?';
+const ALIAS_TAIL = '(?:时候|候|时)?';
+
+/** 玩家常见的时机说法 → 引擎里那一档（档位变了⇒串跟着变，不手抄 223 条里的任何一条）。 */
+const TRIGGER_ALIASES: { re: RegExp; trigger: SkillTriggerConfig }[] = [
+  { re: new RegExp(`^${ALIAS_HEAD}(?:死亡|阵亡|战死|被击杀|被杀|殉职)${ALIAS_TAIL}$`), trigger: { type: 'onDeath' } },
+  // 「出场」两读（登场／上场进池），故意不收：替玩家决定是哪个＝猜。
+  { re: new RegExp(`^${ALIAS_HEAD}(?:放置|登场|上场)${ALIAS_TAIL}$`), trigger: { type: 'onDeploy' } },
+  { re: new RegExp(`^${ALIAS_HEAD}回合结束${ALIAS_TAIL}$`), trigger: { type: 'onTurnEnd' } },
+  { re: new RegExp(`^${ALIAS_HEAD}(?:受到|遭受)伤害(?:时候|候|时|后)?$`), trigger: { type: 'onDamageTaken' } },
+  { re: new RegExp(`^${ALIAS_HEAD}(?:被攻击|遭到攻击|受到攻击|成为攻击目标|被指定为攻击目标)${ALIAS_TAIL}$`), trigger: { type: 'onBecomingTarget' } },
+  { re: new RegExp(`^${ALIAS_HEAD}(?:击杀|打死|杀死)(?:其他|敌方|一名|1名)*(?:角色|武将|将领|敌人)(?:时候|候|时|后)?$`), trigger: { type: 'onKill' } },
+  // 施工图的 7~10 在这批表里零命中＝替玩家猜的写法，用户把留不留交给我判。留：这一批别名的价值
+  // 本来就在玩家手写（存量表只救回 1 行）。真正的判据是「只进不出」不能只做半套——收下
+  // `每回合结束时` 却拒绝 `每回合开始时`，是明知故犯地留一条自相矛盾的词表。
+  { re: new RegExp(`^${ALIAS_HEAD}回合开始${ALIAS_TAIL}$`), trigger: { type: 'onTurnStart' } },
+  { re: new RegExp(`^${ALIAS_HEAD}(?:造成|打出)伤害(?:时候|候|时|后)?$`), trigger: { type: 'onDamageDealt' } },
+  { re: new RegExp(`^${ALIAS_HEAD}失去(?:全部|所有)(?:手牌|牌)${ALIAS_TAIL}$`), trigger: { type: 'onCardLost' } },
+  { re: new RegExp(`^${ALIAS_HEAD}(?:获得|摸到)(?:全部|所有)?手牌${ALIAS_TAIL}$`), trigger: { type: 'onCardGained' } },
+];
+
+/** 动词写法：弃置／弃去／弃掉／丢弃 → 生成侧那一个「弃」。数量尾巴原样带过去（两支都要能吃）。 */
+const VERB_ALIASES: { re: RegExp; to: (m: RegExpMatchArray) => string }[] = [
+  // 「丢弃」首字是「丢」不是「弃」，所以四条写法得整词列，不能写成 `弃(?:置|去|掉|丢)` 那种前缀共享。
+  { re: /^(?:弃置|弃去|弃掉|丢弃)\s*(.+)$/, to: m => `弃${m[1].trim()}` },
+];
+
+const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** 紧凑改数式 `近战攻击力+1`／`你的远程攻击力-2` → `让…增加/减少 N`。钥匙名只取那六把。 */
+const STAT_ALIASES: { re: RegExp; to: (m: RegExpMatchArray) => string }[] = Object.entries(statModifierKeyLabels).map(
+  ([, label]) => ({
+    re: new RegExp(`^${ALIAS_HEAD}${reEscape(label)}([+-])\\s*(\\d+|[零一二两三四五六七八九十]+)$`),
+    to: m => `让${label}${m[1] === '+' ? '增加' : '减少'}${m[2]}`,
+  }),
+);
+
+/** 读入侧的一个片段的写法归一。读不懂的串原样返回⇒仍由原来的逐段点名说出来，不新增第二条路。 */
+export function readingAlias(fragment: string): string {
+  // 已经是词表认得的时机串⇒一字不动。别名的活是"把没登记的写法挪到登记那一串"，不是"把登记
+  // 那一串换成缺省那一串"——「登场」那一档带定语的串（`自身`／`其他角色`… 打头）要是被归一成
+  // 缺省那一档，v2.9.13 那五档的"听谁"就被读没了（证人：listenerScopeSingleSource 与 aliases 那两条）。
+  if (matchTrigger(fragment)) return fragment;
+  for (const a of TRIGGER_ALIASES) {
+    if (!a.re.test(fragment)) continue;
+    const phrase = triggerPhrase(a.trigger);
+    // 词表漂移（那一档改名或删了）⇒ 不改写，让它照旧点名退回，绝不悄悄换成别的档。
+    if (TRIGGER_INDEX.has(phrase)) return phrase;
+    return fragment;
+  }
+  for (const v of VERB_ALIASES) {
+    const m = v.re.exec(fragment);
+    if (m) return v.to(m);
+  }
+  for (const s of STAT_ALIASES) {
+    const m = s.re.exec(fragment);
+    if (m) return s.to(m);
+  }
+  return fragment;
 }
 
 // ── 数量词 ────────────────────────────────────────────────────────
@@ -375,6 +447,29 @@ function matchAction(fragment: string): { runtime?: SkillRuntimeEffect; issue?: 
   return null;
 }
 
+// ── 每回合限 N 次（限次刀·技能级那一格，与生成侧 `turnLimitHead` 同一句拼法）──────
+//
+// 实测来的写法（`.ai-battle/probe-limit-styles.txt`，转换表 180 段／35 种写法）：
+//   回合限1次(77)／回合限一次(58)／回合限2次(2)／每回合限一次(2)／每回合限1次(1)／
+//   回合各限1次(1)／你的回合限1次(1)／回合限三次(1)
+// 所以前缀「每／你的／自身／自己」与那一格「各」都可有可无，N 汉字与阿拉伯数字都认
+// （用户 2026-10-28 裁决③逐字＝「汉字与阿拉伯数字都认；读不出数字就逐段退回问玩家」）。
+// **不**收的那一支：「其他玩家回合限1次」——它混进了"谁的回合"这一根轴，而这一刀只裁了
+// "自己这一格窗"，把别人的回合也算进来＝替用户编一条他没写的规则，所以整段退回问人。
+const TURN_LIMIT_RE = /^(?:每|你的|自身|自己的?|自己)?回合(?:各)?限(.+?)次$/;
+
+/** 读这一格：`null`＝这一段压根不是限次（交给别的字段）；`issue`＝形状像但数读不出，
+ *  **必须点名**，绝不兜底成 1（悄悄当成"没写"＝写着限额却没人管，兜成 1＝替玩家编规则）。 */
+function matchTurnLimit(fragment: string): { limit?: number; issue?: string } | null {
+  const m = TURN_LIMIT_RE.exec(fragment);
+  if (!m) return null;
+  const n = parseCountNumber(m[1].trim());
+  if (!isValidTurnLimit(n)) {
+    return { issue: `限次那一句里的次数「${m[1].trim()}」不是一个 1 以上的整数：只认「一／二／三…」这类中文写法和阿拉伯数字。系统不会替您猜一个数，也不会当成"没有限次"——这一整条技能因此没有生成。` };
+  }
+  return { limit: n };
+}
+
 // ── 模式头（三种模式只有两句要说得出的话，与生成侧同一份）──────────────
 
 const MODE_HEADS: [string, SkillEffectMode][] = [['以下择一', 'choice'], ['以下依次生效', 'chain']];
@@ -477,6 +572,10 @@ export function parseSkillText(text: unknown): SkillTextDraft {
   const groupGateRaw: string[] = [];
   const groupConditions: SkillCondition[] = [];
 
+  /** 「每回合限 N 次」这一格读不成（数读不出／两个数对不上）。这一格是**整条技能**的，
+   *  没读懂就一条效果也不生成＝不半采纳（采纳了就是"写着限额却没人管"）；点名已在原处给出。 */
+  let quotaUnsettled = false;
+
   /** 整组门槛与单块门槛共用同一次解析；读不懂的那几串各自点名，绝不静默吞。 */
   const parseGate = (strings: string[]): SkillCondition[] => {
     if (strings.length === 0) return [];
@@ -513,8 +612,14 @@ export function parseSkillText(text: unknown): SkillTextDraft {
     for (let i = 0; i < fragments.length; i++) {
       const { text: cleaned, dropped } = stripConnectives(fragments[i]);
       if (dropped.length) for (const d of dropped) if (!draft.ignored.includes(d)) draft.ignored.push(d);
-      const fragment = cleaned;
+      const fragment = readingAlias(cleaned);
       if (!fragment) continue;
+      // 列表编号（`1、2、`这样切出来的裸数字）＝脏片段，不是玩家想说的第二件事。
+      // 走 `ignored` 那条回显路（连接词被忽略也要回显），不静默吞成"读过了"。
+      if (/^\d+$/.test(fragment)) {
+        if (!draft.ignored.includes(fragment)) draft.ignored.push(fragment);
+        continue;
+      }
 
       const trigger = matchTrigger(fragment);
       if (trigger) { row.trigger = trigger; sawField = true; continue; }
@@ -525,13 +630,28 @@ export function parseSkillText(text: unknown): SkillTextDraft {
         draft.issues.push({ raw: fragment, reason: whyBadge(tag) });
         continue;
       }
+      // 限次那一格是**整条技能**的（与模式头同族），不是这一块积木的字段⇒不碰
+      // `sawField`：生成侧把它排在整组门槛**之前**，吃了这一格就会把后面那句门槛错认成
+      // 这一块积木自己的门槛（v2.9.9 那条"字段次序定死"的判据因此照样成立）。
+      const quota = matchTurnLimit(fragment);
+      if (quota) {
+        if (quota.issue) { draft.issues.push({ raw: fragment, reason: quota.issue }); quotaUnsettled = true; }
+        else if (draft.turnLimit === undefined) draft.turnLimit = quota.limit;
+        else if (draft.turnLimit !== quota.limit) {
+          // 同一句话里两个不同的数＝不猜哪个作数（静默顶掉＝最坏的一种丢），整条退回。
+          draft.issues.push({ raw: fragment, reason: `这一句又写了一个限次（限 ${quota.limit} 次），和前面那句（限 ${draft.turnLimit} 次）对不上：一条技能只有一格「每回合限 N 次」，请去掉一句。整条技能因此没有生成——这一格是**整条技能**的，猜哪个数都是替您编规则。` });
+          quotaUnsettled = true;
+        }
+        continue;
+      }
       if (fragment.startsWith('要满足')) {
         // 门槛文本自己含顿号逗号（`gateConditionsToText` 就是这么串的），把后面到下一个字段之前的都收进来。
         const bucket: string[] = sawField ? row.gate : groupGateRaw;
         sawField = true;
         bucket.push(fragment.slice('要满足'.length));
-        while (i + 1 < fragments.length
-          && !matchTrigger(fragments[i + 1]) && !matchWho(fragments[i + 1]) && !matchAction(fragments[i + 1])) {
+        // 下一片是不是字段＝按**归一后的写法**问，否则「死亡时／近战攻击力+1」这类会被当门槛文字收进桶里。
+        const nextField = (f: string) => matchTrigger(readingAlias(f)) || matchWho(f) || matchAction(readingAlias(f)) || matchTurnLimit(readingAlias(f)) !== null;
+        while (i + 1 < fragments.length && !nextField(fragments[i + 1])) {
           bucket.push(fragments[++i]);
         }
         continue;
@@ -587,6 +707,10 @@ export function parseSkillText(text: unknown): SkillTextDraft {
   if (carryTrigger) draft.trigger = carryTrigger;
   groupConditions.push(...parseGate(groupGateRaw));
   if (groupConditions.length) draft.conditions = groupConditions;
+
+  // 限次那一格没读成的那一趟：**一条效果也不生成**。这一格管的是整条技能，收下积木就等于
+  // 替玩家把"每回合限几次"当成没写（裁决③"读不出数字就逐段退回问玩家"在技能级那一格的落点）。
+  if (quotaUnsettled) draft.effects = [];
 
   // 最后一遍：**问编译器**这几块积木今天编不编得出。写错形状的一块不生成；
   // 只是还没接线的照样给，但要说一句"今天还不响"。判据不抄第二份，见 `judgeSkillEffect`。

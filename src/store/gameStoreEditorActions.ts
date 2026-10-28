@@ -337,6 +337,7 @@ export function buildEditorActions(
           effectMode: skill.effectMode,
           conditions: skill.conditions,
           forced: skill.forced,
+          turnLimit: skill.turnLimit,
         }));
       }
       return result;
