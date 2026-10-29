@@ -24,6 +24,7 @@ import {
   type HeartbeatModel,
 } from './netHeartbeat';
 import { openNetLink, type NetLink, type SocketFactory } from './wsTransport';
+import { randomPeerId } from './netRandom';
 
 export type NetRole = 'host' | 'guest';
 /** 界面措辞与这几个状态一一对应，别多写一层含义。 */
@@ -72,7 +73,7 @@ export type StepResult = {
 };
 
 export function newPeerId(): string {
-  return crypto.randomUUID();
+  return randomPeerId();
 }
 
 export function initialSessionState(role: NetRole, selfId: string, name: string, roomCode: string | null): SessionState {
@@ -162,6 +163,10 @@ export function stepSession(
     if (!fromHost) {
       return { state: { ...state, note: '收到不是房主发来的局面，已忽略' }, sends: [], saw };
     }
+    // 切片③（v2.9.25）：按席位各出的那一份是指名发给某一席的（传话线也会把它递给屋里
+    // 其他人）⇒ 不是指名给我的那份就丢掉，绝不拿别人的私有视图画自己这一席。
+    // 没带 `to` 的是全桌通用的观战那份 ⇒ 照旧采纳。
+    if (envelope.to !== undefined && envelope.to !== state.selfId) return { state, sends: [], saw };
     return { state, sends: [], snapshot: envelope.state, saw };
   }
   // ── J4：客人这边收到三样，全部只认房主那一份 ──

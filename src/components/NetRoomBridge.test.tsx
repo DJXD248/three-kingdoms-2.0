@@ -27,6 +27,12 @@ function engineState(marker: string): EngineState {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** 按信封类型挑出线上的那几条。J2 那四条证人原本直接数 `sent` 的总条数，
+ *  v2.9.25 起房主接上那一刻**除了快照还会发一份席位表**（客人重进房时看不到
+ *  "还没收到席位表"就是靠它），所以这里按类型数——快照那条断言的强度一字不降。 */
+const wire = (sent: Record<string, unknown>[], type: string) => sent.filter((e) => e.t === type);
+const snapshots = (sent: Record<string, unknown>[]) => wire(sent, 'snapshot');
+
 function fakeRoom(withGuest: boolean): { room: ActiveRoom; sent: Record<string, unknown>[] } {
   const sent: Record<string, unknown>[] = [];
   const connection = {
@@ -69,30 +75,32 @@ describe('NetRoomBridge：房主每次局面变化发一份', () => {
     render(<NetRoomBridge />);
     await wait(30);
 
-    expect(sent).toHaveLength(1); // 刚接上就补发一份当下的，不让客人干等
-    expect(sent[0].t).toBe('snapshot');
-    expect(JSON.stringify(sent[0])).not.toContain('暗牌一号');
-    expect((sent[0].state as EngineState).players[0].hand).toHaveLength(1);
+    expect(snapshots(sent)).toHaveLength(1); // 刚接上就补发一份当下的，不让客人干等
+    // 切片③之后线上第一条是**席位表**（快照要按席位各出一份，得先有那张表），
+    // 所以这里读的是第一条快照，不再读第一条消息——遮蔽那条断言的强度一字不降。
+    const first = snapshots(sent)[0];
+    expect(JSON.stringify(first)).not.toContain('暗牌一号');
+    expect((first.state as EngineState).players[0].hand).toHaveLength(1);
 
     setEngine(engineState('b'));
     await wait(300); // 没满间隔的那一笔 ⇒ 到点补发当下这份
-    expect(sent).toHaveLength(2);
-    expect((sent[1].state as EngineState).round).toBe(3);
+    expect(snapshots(sent)).toHaveLength(2);
+    expect((snapshots(sent)[1].state as EngineState).round).toBe(3);
 
     setEngine(engineState('c'));
     await wait(300);
-    expect(sent).toHaveLength(3);
-    expect((sent[2].state as EngineState).round).toBe(2);
+    expect(snapshots(sent)).toHaveLength(3);
+    expect((snapshots(sent)[2].state as EngineState).round).toBe(2);
   });
 
-  it('只是界面在动（engineState 引用没换）⇒ 一条都不发', async () => {
+  it('只是界面在动（engineState 引用没换）⇒ 一条快照都不发', async () => {
     const { room, sent } = fakeRoom(true);
     const fixed = engineState('a');
     setEngine(fixed);
     attachRoom(room);
     render(<NetRoomBridge />);
     await wait(30);
-    expect(sent).toHaveLength(1);
+    expect(snapshots(sent)).toHaveLength(1);
 
     act(() => {
       useGameStore.setState({ currentRound: 9 });
@@ -101,7 +109,7 @@ describe('NetRoomBridge：房主每次局面变化发一份', () => {
       useGameStore.setState({ engineState: fixed });
     });
     await wait(300);
-    expect(sent).toHaveLength(1);
+    expect(snapshots(sent)).toHaveLength(1);
   });
 
   it('房间里没有客人 ⇒ 什么都不发；客人进来那一刻补发当下这一份', async () => {
@@ -117,7 +125,7 @@ describe('NetRoomBridge：房主每次局面变化发一份', () => {
       .push({ id: 'g-2', name: '客人乙', role: 'guest' });
     bumpNetRoom();
     await wait(30);
-    expect(sent).toHaveLength(1);
+    expect(snapshots(sent)).toHaveLength(1);
   });
 
   it('退房之后不再发（离开房间不留后台发件人）', async () => {
@@ -131,7 +139,7 @@ describe('NetRoomBridge：房主每次局面变化发一份', () => {
     await wait(300);
     setEngine(engineState('c'));
     await wait(30);
-    expect(sent).toHaveLength(1);
+    expect(snapshots(sent)).toHaveLength(1);
   });
 });
 
@@ -188,8 +196,6 @@ function installTwoSeatTable() {
 }
 
 describe('NetRoomBridge：J4 席位表、清单与客人交回来的一步', () => {
-  const wire = (sent: Record<string, unknown>[], type: string) => sent.filter((e) => e.t === type);
-
   it('两把椅子 ⇒ 接上那一刻除了快照，还发出席位表与指名给客人的清单', async () => {
     const { room, sent } = fakeRoom(true);
     installTwoSeatTable();
@@ -206,6 +212,25 @@ describe('NetRoomBridge：J4 席位表、清单与客人交回来的一步', () 
     expect(lists[0].to).toBe('g-1');
     expect(lists[0].seat).toBe(2);
     expect(JSON.stringify(lists[0].items)).toContain('结束回合');
+  });
+
+  it('第二席还没排到人 ⇒ 席位表照样发出去，而且只发一次（2026-10-28 两台机器实测：重进房的客人看到"还没收到席位表"）', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a')); // 桌上只有一把能坐人的椅子，且绑的是房主自己
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+
+    // 老代码把补发挡在"这一席有没有绑到客人"后面：客人一席都没绑 ⇒ 一条都不发，
+    // 那一屏就同时写着"还没收到席位表"和"椅子还没排到你"。表本身是真的，必须照发。
+    expect(wire(sent, 'seatmap')).toEqual([
+      { t: 'seatmap', from: 'host-1', seats: [{ peer: 'host-1', seat: 1, name: '房主甲' }] },
+    ]);
+
+    // 发过一次就按人头记账：牌动一下（表还是那张表）不该再追着人补发。
+    setEngine(engineState('b'));
+    await wait(300);
+    expect(wire(sent, 'seatmap')).toHaveLength(1);
   });
 
   it('客人点房主发出去的那个编号 ⇒ 走房主自己那份动作，牌桌真的动了', async () => {
@@ -283,6 +308,37 @@ describe('NetRoomBridge：J4 席位表、清单与客人交回来的一步', () 
     });
     await wait(30);
     expect(getSeatMap()).toBe(before);
+  });
+
+  it('切片③：发给客人那一条是指名的，而且放开的正是他那一席的牌', async () => {
+    const { room, sent } = fakeRoom(true);
+    installTwoSeatTable();
+    // 两席各装一张手牌与一员征召候选：放开谁、遮谁，一眼分得开。
+    act(() => {
+      const engine = useGameStore.getState().engineState;
+      useGameStore.setState({
+        engineState: {
+          ...engine,
+          players: engine.players.map((p) => ({
+            ...p,
+            hand: [{ id: `c-${p.id}`, name: `手牌-${p.id}` }],
+            generalPool: [{ id: `g-${p.id}`, name: `候选-${p.id}` }],
+          })),
+        } as EngineState,
+      });
+    });
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+
+    const shot = wire(sent, 'snapshot');
+    expect(shot).toHaveLength(1);
+    expect(shot[0].to).toBe('g-1'); // 指名给屋里那位客人（他坐第 2 席）
+    const payload = JSON.stringify(shot[0].state);
+    expect(payload).toContain('手牌-2');
+    expect(payload).toContain('候选-2');
+    expect(payload).not.toContain('手牌-1'); // 房主那一席对他而言也是"别人"
+    expect(payload).not.toContain('候选-1');
   });
 
   it('退房时把接走的活也放下（不再有人递请求过来）', async () => {

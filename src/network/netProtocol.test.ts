@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NETWORK_SNAPSHOT_VERSION } from './StateSerializer';
 import {
   MAX_NAME_LENGTH,
@@ -42,6 +42,14 @@ describe('房间码：界面随机绝不借引擎那颗对局种子', () => {
   it('生成出来的码自己就能通过归一化（两边说法一致）', () => {
     const code = createRoomCode();
     expect(normalizeRoomCode(code.toLowerCase())).toBe(code);
+  });
+
+  it('非安全上下文（`http://<一串 IP>`，没有 getRandomValues）⇒ 房主照样开得出房', () => {
+    vi.stubGlobal('crypto', null);
+    const code = createRoomCode();
+    expect(code).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/);
+    expect(normalizeRoomCode(code)).toBe(code);
+    vi.unstubAllGlobals();
   });
 });
 
@@ -154,6 +162,25 @@ describe('J2 快照信封：协议层只认形状，看不懂的内容不在这�
     const huge = JSON.stringify({ t: 'snapshot', from: 'a', state: { pad: 'x'.repeat(MAX_WIRE_BYTES) } });
     expect(huge.length).toBeGreaterThan(MAX_WIRE_BYTES);
     expect(parseEnvelope(huge)).toBeNull();
+  });
+
+  // 切片③（v2.9.25）：快照多了一个"这一份是算给谁的"。协议层只认形状，
+  // 采纳与否仍是客人端那一步判（netSession）。
+  it('带 `to` 的快照原样带上那个收件人', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'snapshot', from: 'a', to: 'g-1', state: VIEW })))
+      .toEqual({ t: 'snapshot', from: 'a', to: 'g-1', state: VIEW });
+  });
+
+  it('没带 `to` 的照旧收，而且线上不多一个字（那是全桌通用那份观战视图）', () => {
+    const text = '{"t":"snapshot","from":"a","state":{"version":1}}';
+    expect(parseEnvelope(text)).toEqual({ t: 'snapshot', from: 'a', state: { version: 1 } });
+    expect(parseEnvelope(text)).not.toHaveProperty('to');
+  });
+
+  it('`to` 是个空串／非字符串／超长 ⇒ 整条拒掉，不留半截的收件人', () => {
+    expect(parseEnvelope('{"t":"snapshot","from":"a","to":"","state":{"a":1}}')).toBeNull();
+    expect(parseEnvelope('{"t":"snapshot","from":"a","to":7,"state":{"a":1}}')).toBeNull();
+    expect(parseEnvelope(`{"t":"snapshot","from":"a","to":"${'x'.repeat(65)}","state":{"a":1}}`)).toBeNull();
   });
 });
 

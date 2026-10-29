@@ -7,16 +7,22 @@
  *
  *  - 公开的事实照发：谁在场上、剩多少体力、轮到谁、第几回合、弃牌堆、墓地、
  *    状态、数值修正器账本（不发它客人的体力上限读数会和房主算出两个数）。
- *  - 私有的内容只发**数量**：手牌／将领池／牌堆顺序／护甲牌实例 ⇒ 长度保留、
+ *  - **别人**的私有内容只发**数量**：手牌／将领池／牌堆顺序／护甲牌实例 ⇒ 长度保留、
  *    内容一律换成 {@link HIDDEN_MARKER}。
+ *  - **自己**的那一份（v2.9.25 联机切片③）：第二格参数 `viewSeat` 说清"这一份是发给
+ *    哪一席的"，那一席自己的手牌与征召池就照发内容——牌本来就是他的，他在本地玩时
+ *    也一直看得见。席位号就是引擎的 playerId（与 `netSeat.buildSeatMap` 同一口径）。
+ *    对不上任何一席（含不传）⇒ 退回全遮，那正是观战者该看到的那一份。
+ *    **护甲牌实例不在放开之列**：需求原文点的是"自己的手牌、自己的征召候选池"，
+ *    场上将领身上那几张是另一格东西，没到说放开的时候（见文件末 {@link PRIVATE_REVEALED_KEYS}）。
  *  - 引擎自己的随机游标（rngState）绝不发：收到快照的一方若能推进它，就等于
  *    预先知道后面抽到什么。
  *  - 待答的选择／响应问答（pendingChoice／pendingReaction）绝不发：那两格里
  *    存的是开窗那一刻**已翻译好的效果**，其中可能点名牌堆顶的牌（2.6.3／
- *    v2.8.22 的延后结算契约）。客人动手本来就是 J4，这一刀不需要它们。
+ *    v2.8.22 的延后结算契约）。问答窗里牌面引用的抹除＝切片④的活，这一刀不提前做。
  *
  * 输出仍是一个**形状合法的 EngineState**（{@link isRestorableEngineState} 读得通），
- * 这样 J4 接座位时不用换协议，只把"该遮的"改成"属于我的那一格"。
+ * 所以按席位各出一份不用换协议：信封多一个"发给谁"，客人只认指名给自己那一份。
  */
 import type { EnginePlayer, EngineState, EngineStatusState } from '../core/GameState';
 import type { StatModifier } from '../core/statModifiers';
@@ -26,6 +32,12 @@ export const HIDDEN_MARKER = Object.freeze({ hidden: true });
 
 /** 只有房主那台机器能算出下一张是什么 ⇒ 随机游标永不上线。 */
 export const NEVER_SENT_TOP_LEVEL = ['rngState', 'pendingChoice', 'pendingReaction'] as const;
+
+/**
+ * 发给某一席的那一份里，**那一席自己**被放开的两格。
+ * 名单就是需求原文点到的那两样：手牌、征召候选池。场上的护甲牌实例不在这里。
+ */
+export const PRIVATE_REVEALED_KEYS = ['hand', 'generalPool'] as const;
 
 /** 席位是不是 AI 对客人是公开的（牌桌显示 🤖），但"哪一档 AI"属于房主自己的配置 ⇒ 不发。 */
 const PUBLIC_PLAYER_KEYS = [
@@ -75,13 +87,15 @@ function maskFieldGeneral(value: unknown): unknown {
   };
 }
 
-function maskPlayer(player: EnginePlayer): EnginePlayer {
+function maskPlayer(player: EnginePlayer, revealed: boolean): EnginePlayer {
   const masked: Record<string, unknown> = {};
   for (const key of PUBLIC_PLAYER_KEYS) {
     if (player[key] !== undefined) masked[key] = player[key];
   }
-  masked.hand = maskCount(player.hand);
-  masked.generalPool = maskCount(player.generalPool);
+  // 放开的那两格照发内容，其余一切（含场上将领身上的护甲牌实例）照旧只发数量。
+  masked.hand = revealed && Array.isArray(player.hand) ? player.hand : maskCount(player.hand);
+  masked.generalPool =
+    revealed && Array.isArray(player.generalPool) ? player.generalPool : maskCount(player.generalPool);
   masked.fieldGenerals = (Array.isArray(player.fieldGenerals) ? player.fieldGenerals : [])
     .map(maskFieldGeneral);
   masked.graveyard = Array.isArray(player.graveyard) ? player.graveyard : [];
@@ -89,7 +103,14 @@ function maskPlayer(player: EnginePlayer): EnginePlayer {
   return masked as unknown as EnginePlayer;
 }
 
-export function buildBroadcastView(state: EngineState): EngineState {
+/**
+ * 算一份**发给某一席**的局面。
+ *
+ * `viewSeat` ＝ 引擎的 playerId（席位号就是它，与 `netSeat.buildSeatMap` 同一口径）。
+ * 给号 ⇒ 那一席的手牌与征召池照发内容；给 null、给一个对不上任何玩家的号 ⇒ 全桌都只发数量
+ * （＝观战者看到的那一份，也是切片③之前所有人看到的那一份）。
+ */
+export function buildBroadcastView(state: EngineState, viewSeat: number | null = null): EngineState {
   const metadata: Record<string, unknown> = {};
   for (const key of PUBLIC_METADATA_KEYS) {
     if (state.metadata?.[key] !== undefined) metadata[key] = state.metadata[key];
@@ -99,7 +120,7 @@ export function buildBroadcastView(state: EngineState): EngineState {
     version: state.version,
     phase: state.phase,
     timelinePhase: state.timelinePhase,
-    players: state.players.map(maskPlayer),
+    players: state.players.map((p) => maskPlayer(p, viewSeat !== null && p.id === viewSeat)),
     currentPlayerId: state.currentPlayerId,
     turn: state.turn,
     round: state.round,
@@ -117,4 +138,15 @@ export function buildBroadcastView(state: EngineState): EngineState {
 /** 遮蔽后仍有"这一格有多少张"⇒ 客人的读数靠它，而内容永不上线。 */
 export function hiddenCount(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
+}
+
+/**
+ * 这一格是**遮过的**（只剩数量）还是**真内容**。
+ * 客人那一格要用它决定画牌面还是画张数：按席位放开的只有收件人自己那一席，
+ * 而"我是哪一席"这件事是从房主发来的席位表读的——两张表在线上是各自的消息，
+ * 谁先到没有保证。照这个判据读，快照先到、席位表后到时界面仍旧只画张数，
+ * 不会把别人的牌面当成我的画出来。
+ */
+export function isHiddenEntry(value: unknown): boolean {
+  return !!value && typeof value === 'object' && (value as { hidden?: unknown }).hidden === true;
 }

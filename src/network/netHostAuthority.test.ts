@@ -192,6 +192,35 @@ describe('发席位表与清单', () => {
     expect(maps[0].seats as unknown[]).toHaveLength(2);
     expect(s.frames('moves').map((m) => m.to)).toEqual([GUEST.id]);
   });
+
+  it('新的那位进来、表的内容一个字没变 ⇒ 这张表照样补发到他手上（2026-10-28 两台机器实测）', () => {
+    // 现场形状：上一位客人硬断线没发 `bye` ⇒ 第 2 席仍绑着一个已经不存在的身份号，
+    // 新的这位排不到椅子 ⇒ 席位表逐字没变。按"内容变没变"去重就永远不再发，
+    // 他界面停在「还没收到席位表」，而同局牌桌正在第 2 轮。
+    const peers = [HOST, GUEST];
+    const s = setup({ peers });
+    s.auth.syncNow();
+    expect(s.frames('seatmap')).toHaveLength(1);
+
+    peers.push(OTHER);
+    s.auth.syncNow();
+    const maps = s.frames('seatmap');
+    expect(maps).toHaveLength(2);
+    // 补发的正是同一张表（不是新算一份别的），且仍只给绑到椅子的那一席算清单。
+    expect(maps[1].seats).toEqual(maps[0].seats);
+    expect(s.frames('moves').map((m) => m.to)).toEqual([GUEST.id]);
+  });
+
+  it('补发过一次就不追着人发（去重换了口径，不是取消去重）', () => {
+    const peers = [HOST, GUEST];
+    const s = setup({ peers });
+    s.auth.syncNow();
+    peers.push(OTHER);
+    s.auth.syncNow();
+    s.auth.syncNow();
+    s.changeState();
+    expect(s.frames('seatmap')).toHaveLength(2);
+  });
 });
 
 describe('收请求：拿房主当下重算的编号比，其余一律退回并说明', () => {

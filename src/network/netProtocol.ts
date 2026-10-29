@@ -1,5 +1,6 @@
 import pkg from '../../package.json';
 import { NETWORK_SNAPSHOT_VERSION } from './StateSerializer';
+import { randomBytes } from './netRandom';
 
 /** 换协议格式就抬这个数：两端不一致 ⇒ 明确拒接，绝不静默半连。 */
 export const NET_PROTOCOL_VERSION = 1;
@@ -44,8 +45,11 @@ export type NetEnvelope =
   | { t: 'refuse'; from: string; to: string; reason: string }
   | { t: 'roster'; from: string; peers: NetPeer[] }
   /** J2：房主每次局面变化后发的一份**已遮蔽**快照。协议层只当它是未知对象——
-   *  看懂它是快照层的事（`isRestorableEngineState` 在客人端把关）。 */
-  | { t: 'snapshot'; from: string; state: Record<string, unknown> }
+   *  看懂它是快照层的事（`isRestorableEngineState` 在客人端把关）。
+   *  切片③（v2.9.25）多了一个可选的 `to`＝"这一份是算给哪一位的"：按席位各出私有视图后，
+   *  指名发给别人的那一份，收信人不采纳（心跳记账照旧刷新）。不带 `to`＝全桌通用那份
+   *  （观战面），也是切片③之前唯一存在的那一份 ⇒ 老形状照样能用。 */
+  | { t: 'snapshot'; from: string; to?: string; state: Record<string, unknown> }
   /** J3：房主探测某个连接。`at`＝房主自己那台机器的发出时刻，客人**原样抄回来**，
    *  往返耗时由房主算——全程只用房主一个时钟，绝不去比两边的表。 */
   | { t: 'ping'; from: string; to: string; at: number }
@@ -73,10 +77,12 @@ export function ourVersionStamp(): VersionStamp {
 /**
  * 房间码走浏览器自己的随机源，绝不碰引擎那颗对局种子——
  * 掺进对局随机流会打乱"同一局能重演"的基准读数（契约 §G 方法结论 2）。
+ * 随机数取不到就退到 `Math.random`（判据与那条兜底都住 `netRandom.ts`，与身份号共用）：
+ * 房主那页若开在 `http://<一串 IP>` 上，`getRandomValues` 也不在，
+ * 少了这条兜底房主连一间房都开不出来，客人更没有码可填。
  */
 export function createRoomCode(): string {
-  const bytes = new Uint8Array(ROOM_CODE_LENGTH);
-  crypto.getRandomValues(bytes);
+  const bytes = randomBytes(ROOM_CODE_LENGTH);
   return Array.from(bytes, (b) => ROOM_CODE_ALPHABET[b % ROOM_CODE_ALPHABET.length]).join('');
 }
 
@@ -157,9 +163,15 @@ export function parseEnvelope(text: string): NetEnvelope | null {
       return isId(raw.from) ? { t: 'bye', from: raw.from } : null;
     case 'snapshot': {
       if (!isId(raw.from)) return null;
+      // `to` 可以缺席（＝全桌通用那份观战视图）；给了就必须是个身份号，
+      // 半截的"发给谁"比没有更危险：客人那边会把别人的私有视图当成自己的收下。
+      // 缺席时**不补一个 undefined 键**：那样线上与内存里的形状会不一致。
+      if (raw.to !== undefined && !isId(raw.to)) return null;
       const state = raw.state;
       if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
-      return { t: 'snapshot', from: raw.from, state: state as Record<string, unknown> };
+      return raw.to === undefined
+        ? { t: 'snapshot', from: raw.from, state: state as Record<string, unknown> }
+        : { t: 'snapshot', from: raw.from, to: raw.to, state: state as Record<string, unknown> };
     }
     case 'ping':
       return isId(raw.from) && isId(raw.to) && isClock(raw.at)

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DISCONNECT_SILENCE_MS,
   HEARTBEAT_PROBE_INTERVAL_MS,
@@ -13,7 +13,7 @@ import {
   type NetSeatRow,
   type VersionStamp,
 } from './netProtocol';
-import { initialSessionState, joinRoom, stepSession, type SessionState } from './netSession';
+import { initialSessionState, joinRoom, newPeerId, stepSession, type SessionState } from './netSession';
 
 /** 本机戳＝握手比对的那一份；写死版本号会让这组测试在每次抬版本时假红。 */
 const STAMP: VersionStamp = ourVersionStamp();
@@ -289,6 +289,71 @@ describe('J2 客人只认房主发来的局面', () => {
     expect(step.state).toBe(withGuest);
     expect(step.sends).toEqual([]);
     expect(step.snapshot).toBeUndefined();
+  });
+
+  // ── 切片③（v2.9.25）：快照按席位各出一份 ⇒ 信封上多了一个"这一份是算给谁的" ──
+  it('指名发给我的那一份 ⇒ 收下', () => {
+    const inRoom = guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: OTHER, name: '客人乙', role: 'guest' }] });
+    const step = stepSession(inRoom, text({ t: 'snapshot', from: HOST.id, to: GUEST.id, state: VIEW as never }));
+    expect(step.snapshot).toEqual(VIEW);
+    expect(step.state).toBe(inRoom);
+  });
+
+  it('指名发给别人的那一份 ⇒ 不采纳（别人的私有视图绝不画在自己这一席上），但仍算"收到过房主的消息"', () => {
+    const inRoom = guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: OTHER, name: '客人乙', role: 'guest' }] });
+    const step = stepSession(inRoom, text({ t: 'snapshot', from: HOST.id, to: OTHER, state: VIEW as never }));
+    expect(step.snapshot).toBeUndefined();
+    expect(step.state).toBe(inRoom);
+    // 掉线判定的口径是"15 秒未收到该人任何消息"，所以丢掉别人的那份不等于没看见过房主。
+    expect(step.saw).toEqual({ from: HOST.id, kind: 'snapshot' });
+  });
+
+  it('房主手滑把收件人写成了空串 ⇒ 协议层整条拒掉，客人这边退回"看不懂"而不是半收', () => {
+    const inRoom = guestState({ phase: 'in-room', peers: [HOST, GUEST] });
+    const step = stepSession(inRoom, text({ t: 'snapshot', from: HOST.id, to: '', state: VIEW as never }));
+    expect(step.snapshot).toBeUndefined();
+    expect(step.state.note).toContain('看不懂');
+  });
+
+  it('接上假传话线：一份局面里三个人，只有被点名的那位采纳', async () => {
+    const relay = new FakeRelay();
+    const mine: Record<string, unknown>[] = [];
+    const theirs: Record<string, unknown>[] = [];
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    const guest = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA',
+        selfId: GUEST.id, socketFactory: relay.factory, onSnapshot: (s) => mine.push(s),
+      },
+      () => {},
+    );
+    const other = joinRoom(
+      {
+        role: 'guest', name: '客人乙', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA',
+        selfId: OTHER, socketFactory: relay.factory, onSnapshot: (s) => theirs.push(s),
+      },
+      () => {},
+    );
+    await nextTick();
+    expect(host.state.peers).toHaveLength(3);
+
+    // 传话程序只认房间不认人：发给别人的那一条照样会递到我这里，采纳与否是我这边判的。
+    expect(host.send({ t: 'snapshot', from: HOST.id, to: OTHER, state: { who: '别人的那一份' } })).toBe(true);
+    await nextTick();
+    expect(mine).toEqual([]);
+    expect(theirs).toEqual([{ who: '别人的那一份' }]);
+
+    expect(host.send({ t: 'snapshot', from: HOST.id, to: GUEST.id, state: { who: '我的那一份' } as never })).toBe(true);
+    await nextTick();
+    expect(mine).toEqual([{ who: '我的那一份' }]);
+    expect(theirs).toHaveLength(1);
+
+    host.leave();
+    guest.leave();
+    other.leave();
   });
 
   it('接上假传话线：房主 send 一份快照 ⇒ 客人那边的 onSnapshot 收到同一份', async () => {
@@ -712,5 +777,55 @@ describe('J4 座位与请求：各人的份各人收', () => {
 
     guest.leave();
     host.leave();
+  });
+});
+
+/**
+ * 非安全上下文那一档（v2.9.25）。2026-10-28 两台机器实测：客人对着 `http://<一串 IP>`
+ * 点「进房间」一声不响——那个上下文里没有 `crypto.randomUUID`，取号当场抛异常，
+ * **一根线都没拨出去**。J1–J4 的实测全是"同机＋localhost"，而 `localhost` 算安全上下文，
+ * 所以这条线从没被盖到过。
+ *
+ * 这里的正面断言不是"没抛异常"，是那两步真事实：号码领到了（`length>0` 且在协议的 64 字符硬界内）
+ * ＋握手真走完（房主名册收下这个人、客人那侧 `phase` 到 `in-room`）。
+ */
+describe('没有 crypto.randomUUID 的机器：拨号照样发得出去', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('演成"连 crypto 都没有"⇒ newPeerId 仍给得出一个能上线的号（非空、不超 64 字符）', () => {
+    vi.stubGlobal('crypto', null);
+    const id = newPeerId();
+    expect(id.length).toBeGreaterThan(0);
+    expect(id.length).toBeLessThanOrEqual(64);
+  });
+
+  it('房主与客人都不自带号 ⇒ 两边各领一个兜底号，握手走完、名册对上（不是"没报错"，是真进房）', async () => {
+    vi.stubGlobal('crypto', null);
+    const relay = new FakeRelay();
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', socketFactory: relay.factory },
+      () => {},
+    );
+    await nextTick();
+
+    const guest = joinRoom(
+      { role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', socketFactory: relay.factory },
+      () => {},
+    );
+    await nextTick();
+
+    expect(host.state.selfId).not.toBe(guest.state.selfId);
+    expect(host.state.peers.map((p) => p.id)).toEqual([host.state.selfId, guest.state.selfId]);
+    expect(guest.state.phase).toBe('in-room');
+    expect(guest.state.peers.map((p) => p.id)).toEqual([host.state.selfId, guest.state.selfId]);
+
+    guest.leave();
+    host.leave();
+  });
+
+  it('同一页连领两次不重号（名册按 id 认人，重号＝第二个人被当成第一个）', () => {
+    vi.stubGlobal('crypto', null);
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    expect(newPeerId()).not.toBe(newPeerId());
   });
 });

@@ -109,6 +109,17 @@ describe('客人那一份：只有房主指名给我这一席的清单才变成�
     expect(text()).toContain('一步也走不了');
   });
 
+  it('空清单时那句抬头话不许自相矛盾（2026-10-28 远程实测读到的就是两行挨着打脸）', () => {
+    guestView({ moves: { seat: 2, items: [], omitted: 0 } });
+    expect(text()).toContain('你坐第 2 席');
+    expect(text()).not.toContain('现在能走');
+  });
+
+  it('清单真有步子时才说"现在能走"（这句话是那句真话的另一半）', () => {
+    guestView();
+    expect(text()).toContain('现在能走');
+  });
+
   it('被封顶挤掉的那几条要按数字说出来：看到的不是全部', () => {
     guestView({ moves: { seat: 2, items: [{ key: '0-END_TURN:aaa', label: '⏭️结束回合' }], omitted: 5 } });
     expect(text()).toContain('只列出前 1 步');

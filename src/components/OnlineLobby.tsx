@@ -37,8 +37,11 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
  * J1 做到"连得上、版本对得上、看得见谁在场"；J2（v2.9.2）再加上"客人看得见
  * 房主那一局的牌桌"——发出去的是遮蔽过的局面；J3（v2.9.10）再加上
  * "左上角公开连线表＋15 秒掉线判定"（判定只有房主做，客人只照抄那张表）；
- * J4（本刀）再加上"客人能动自己那一席"：椅子由房主绑，按钮由房主算，
+ * J4（v2.9.11）再加上"客人能动自己那一席"：椅子由房主绑，按钮由房主算，
  * 客人交回来的只是席位号与编号，合法性与执行全在房主那台机器。
+ * 联机切片③（v2.9.25）把 J2 那"一份全桌通用的遮蔽局面"改成**按席位各出一份**：
+ * 收件人自己那一席的手牌与征召池照发牌面，别人的仍只发数量；信封上多一个收件人，
+ * 不是指名给自己的那一条客人不采纳。
  * 剩下：掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
@@ -134,7 +137,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
             <h2 className="text-xl font-bold text-amber-300">🌐 联网对战</h2>
             <p className="text-xs text-amber-200/50 mt-1">
               牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌、
-              还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表"。
+              还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表，牌桌那一份按席位各发一条——各自看得见自己手里的牌"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -202,8 +205,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
                 <p className="text-amber-200/40 mt-1">同一屋里填上面这行；异地经虚拟网或服务器时，把地址换成那台机器的地址。</p>
                 {guestCount > 0 && (
                   <p className="text-emerald-300/80 mt-1">
-                    现在有 {guestCount} 位客人正在看这一局。每次局面变化都会发一份遮蔽过的局面过去：
-                    手牌、将领池、牌堆顺序只发数量，不发内容。
+                    现在有 {guestCount} 位客人正在看这一局。每次局面变化都按席位**各发一份**指名的局面：
+                    那位客人自己那一席的手牌与征召池发的是牌面，别人的、以及牌堆顺序仍只发数量。
                   </p>
                 )}
               </div>
@@ -240,7 +243,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
-            {session.role === 'guest' && <NetSpectator snapshot={guestSnapshot} />}
+            {session.role === 'guest' && (
+              <NetSpectator snapshot={guestSnapshot} mySeat={seatMap?.find((r) => r.peer === session.selfId)?.seat ?? null} />
+            )}
 
             <NetSeatPanel
               seatMap={seatMap}
@@ -273,7 +278,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           客人动手（J4）现在做到：椅子由房主按进房顺序排（房主占第一把，全是电脑在打就没有能坐的椅子），
           按钮上那几句是房主按当下的局面算给那一席的清单，客人点出去只交回「第几席＋编号」，
           房主重算对得上才走、对不上退回并说明；清单一次最多列 32 步，没列出的条数会写在下面。
-          这一版不防作弊：清单虽然只指名发给那一席，传话程序只认房间不认人，同桌理论上看得见别人那几行的文字。
+          牌桌那一份现在按席位各发一条（联机切片③）：指名给谁，谁才采纳那一条，而且只有他自己那一席的手牌与征召池发的是牌面，
+          别人的、以及牌堆顺序仍只发数量。
+          这一版不防作弊：清单与局面都只指名发给那一席，但传话程序只认房间不认人，同桌理论上看得见发给别人的那几行文字与牌面。
           还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
         </p>
       </div>

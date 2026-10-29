@@ -64,7 +64,14 @@ export type HostAuthority = {
 
 export function startHostAuthority(deps: HostAuthorityDeps): HostAuthority {
   let lastStateRef: EngineState | null = null;
-  let lastSeatMap: NetSeatRow[] | null = null;
+  /**
+   * 每一位客人**最后一次真正收到**的那张席位表。去重的口径是"这个人收过这一份没有"，
+   * 不是"这张表内容变没变"（2026-10-28 两台机器实测撞出来的形状漏洞）：上一位客人硬断线
+   * 没发 `bye` ⇒ 名册里那一格还绑着一个已经不存在的身份号，新的那位进来后排完座
+   * 表的内容一个字没变 ⇒ 按内容去重就永远不再发，他界面停在"还没收到席位表"，
+   * 而同一局牌桌正在第 2 轮。新 peer 进房（与每次重排）都必须把当下这份表补到他手上。
+   */
+  const tableSentTo = new Map<string, NetSeatRow[]>();
   /** 每一位客人最后一次真正发出去的清单（内容没动就别再发一遍，也别让界面重画）。 */
   const sentTo = new Map<string, SeatMoveList>();
 
@@ -89,14 +96,21 @@ export function startHostAuthority(deps: HostAuthorityDeps): HostAuthority {
     // 房主自己那屏也要看得见这张表（开局前桌上还没有席位，那就一张也不抄）。
     if (rows.length > 0) deps.seatMapSink?.(rows);
     const selfId = deps.selfId();
+    const guests = deps.peers().filter((p) => p.role === 'guest').map((p) => p.id);
+    for (const id of [...tableSentTo.keys()]) if (!guests.includes(id)) tableSentTo.delete(id);
+    // 这张表是全桌广播的（信封里没有 `to`）⇒ 一次发出去屋里每位客人都收到同一份，
+    // 所以判据是"有没有哪位还没收到这一份"，发成功才把屋里这些人一并记上。
+    // 空表不发＝开局前桌上压根没有席位，那时发一张空表只会让人以为椅子没了而不是还没生成。
+    if (rows.length > 0 && guests.some((g) => !sameSeatRows(tableSentTo.get(g) ?? null, rows))) {
+      if (deps.send({ t: 'seatmap', from: selfId, seats: rows })) {
+        for (const g of guests) tableSentTo.set(g, rows);
+      }
+    }
+
     const bound = rows.filter((r) => r.peer !== null && r.peer !== selfId);
     if (bound.length === 0) {
       sentTo.clear();
       return;
-    }
-
-    if (!sameSeatRows(lastSeatMap, rows)) {
-      if (deps.send({ t: 'seatmap', from: selfId, seats: rows })) lastSeatMap = rows;
     }
     const stillHere = new Set(bound.map((r) => r.peer as string));
     for (const peer of [...sentTo.keys()]) if (!stillHere.has(peer)) sentTo.delete(peer);

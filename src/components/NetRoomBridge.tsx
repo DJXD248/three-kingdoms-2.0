@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { probeSeatActions } from '../store/engineExecutionBridge';
 import { applyCanonicalAction } from '../store/applyCanonicalAction';
-import { getActiveRoom, receiveSeatMap, setHostActionSink, subscribeNetRoom, type ActiveRoom } from '../network/netRoom';
+import { getActiveRoom, getSeatMap, receiveSeatMap, setHostActionSink, subscribeNetRoom, type ActiveRoom } from '../network/netRoom';
 import { startSnapshotBroadcaster, type SnapshotBroadcaster } from '../network/snapshotBroadcaster';
 import { startHostAuthority, type HostAuthority } from '../network/netHostAuthority';
 
@@ -35,10 +35,19 @@ export default function NetRoomBridge() {
       rosterKey = room.connection.state.peers.map((p) => p.id).join('|');
       bc = startSnapshotBroadcaster({
         readState: () => useGameStore.getState().engineState,
-        hasGuests: () => (bound?.connection.state.peers ?? []).some((p) => p.role === 'guest'),
-        send: (view) => room.connection.send({
+        // 切片③（v2.9.25）：屋里每位客人各拿一份**指名给他**的局面。他坐哪一席从席位表读
+        // （那张表由 auth 算好、同时抄进 netRoom），还没绑上的（开局前、纯来看牌的）拿
+        // 全遮那份＝观战面。席位号就是引擎的 playerId，与 buildSeatMap 同一口径。
+        recipients: () => {
+          const rows = getSeatMap();
+          return (bound?.connection.state.peers ?? [])
+            .filter((p) => p.role === 'guest')
+            .map((p) => ({ peer: p.id, seat: rows?.find((r) => r.peer === p.id)?.seat ?? null }));
+        },
+        send: (view, to) => room.connection.send({
           t: 'snapshot',
           from: room.connection.state.selfId,
+          to,
           state: view as unknown as Record<string, unknown>,
         }),
       });
@@ -54,8 +63,10 @@ export default function NetRoomBridge() {
       });
       setHostActionSink((msg) => auth?.handleAction(msg));
       // 房主连着大厅没动牌、客人却已经进来了 ⇒ 先各给一份当下的，别让人家等下一次变化。
-      bc.flush();
+      // 顺序是 auth 先、bc 后：bc 要按席位各出一份，而席位表正是 auth 算出来抄进 netRoom 的
+      // ——反过来的话，新进来那位第一次拿到的是"还没绑上"的全遮那份。
       auth.syncNow();
+      bc.flush();
     };
 
     const syncRoom = (room: ActiveRoom | null) => {
@@ -74,14 +85,17 @@ export default function NetRoomBridge() {
       const key = room.connection.state.peers.map((p) => p.id).join('|');
       if (key !== rosterKey) {
         rosterKey = key;
-        bc?.flush();
+        // 同 start：先把席位表算出来，再按新座次逐人发私有视图。
         auth?.syncNow();
+        bc?.flush();
       }
     };
 
+    // 局面每变一次：先让 auth 重算席位表与清单（并抄进 netRoom），bc 才读得到当下这份座次
+    // 去按席位各出一私有视图。反了一序，视图会慢一整拍地跟着旧座次走。
     const unsubscribeStore = useGameStore.subscribe(() => {
-      bc?.notifyChange();
       auth?.notifyChange();
+      bc?.notifyChange();
     });
     const unsubscribeRoom = subscribeNetRoom(() => syncRoom(getActiveRoom()));
     syncRoom(getActiveRoom());

@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EngineState } from '../core/GameState';
 import { MAX_WIRE_BYTES } from './netProtocol';
-import { HIDDEN_MARKER, NEVER_SENT_TOP_LEVEL, buildBroadcastView, hiddenCount } from './snapshotView';
+import { HIDDEN_MARKER, NEVER_SENT_TOP_LEVEL, PRIVATE_REVEALED_KEYS, buildBroadcastView, hiddenCount, isHiddenEntry } from './snapshotView';
 import { isRestorableEngineState } from '../store/gameStateAdapter';
 import { createCardDeck } from '../data/cards';
 import { allGenerals } from '../data/generals';
@@ -194,6 +194,90 @@ describe('J2 遮蔽视图：只发公开的事实', () => {
     }));
     const bytes = new TextEncoder().encode(JSON.stringify(buildBroadcastView(full))).length;
     expect(full.deck.length).toBeGreaterThanOrEqual(50);
+    expect(bytes).toBeLessThan(MAX_WIRE_BYTES);
+    expect(bytes).toBeLessThan(64 * 1024);
+  });
+});
+
+/**
+ * 切片③（v2.9.25）：同一张桌按席位各出一份。
+ * 正向＝那一席自己的手牌与征召池照发内容（牌本来就是他的，他在本地也一直看得见）；
+ * 反向＝**别人的**那两格、场上的护甲牌实例、牌堆顺序仍旧只有数量。
+ * 反向那几条是这一刀的全部风险：参数传错一位，泄的就是坐对面那个人的牌。
+ */
+describe('切片③：按席位各出一份私有视图', () => {
+  const full = matchState();
+
+  it('放开的就是需求点到的那两格，名单不多不少', () => {
+    expect(PRIVATE_REVEALED_KEYS).toEqual(['hand', 'generalPool']);
+  });
+
+  it('发给第 1 席的那一份：他自己的手牌与征召池是牌面，不是遮罩', () => {
+    const view = buildBroadcastView(full, 1);
+    const wire = JSON.stringify(view);
+    for (const id of ['p1-h1', 'p1-h2', 'p1-h3', 'p1-pool-1', 'p1-pool-2']) expect(wire).toContain(id);
+    for (const card of view.players[0].hand!) expect(isHiddenEntry(card)).toBe(false);
+    expect(view.players[0].generalPool).toHaveLength(2);
+  });
+
+  it('同一份里别人仍只有数量：第 2 席的手牌、以及两边的护甲牌实例', () => {
+    const view = buildBroadcastView(full, 1);
+    const wire = JSON.stringify(view);
+    expect(wire).not.toContain('p2-h1');
+    expect(wire).not.toContain('arm-1');
+    expect(wire).not.toContain('arm-2');
+    expect(hiddenCount(view.players[1].hand)).toBe(1);
+    for (const card of view.players[1].hand!) expect(card).toEqual(HIDDEN_MARKER);
+    const fg = view.players[0].fieldGenerals![0] as Record<string, unknown>;
+    for (const card of fg.armorCards as unknown[]) expect(card).toEqual(HIDDEN_MARKER);
+  });
+
+  it('两份之间只差那一席的两格：发给第 2 席的那份看不见第 1 席的牌', () => {
+    for (const seat of [1, 2] as const) {
+      const wire = JSON.stringify(buildBroadcastView(full, seat));
+      const own = seat === 1 ? ['p1-h1', 'p1-pool-1'] : ['p2-h1'];
+      const other = seat === 1 ? ['p2-h1'] : ['p1-h1', 'p1-pool-1', 'p1-pool-2'];
+      for (const id of own) expect(wire).toContain(id);
+      for (const id of other) expect(wire).not.toContain(id);
+    }
+  });
+
+  it('不传席位／传一个桌上没有的号 ⇒ 与切片③之前那份逐字节相同（观战面不受这一刀影响）', () => {
+    const legacy = JSON.stringify(buildBroadcastView(full));
+    expect(JSON.stringify(buildBroadcastView(full, null))).toBe(legacy);
+    expect(JSON.stringify(buildBroadcastView(full, 99))).toBe(legacy);
+  });
+
+  it('牌堆顺序与三样绝不上线的东西，放开某一席之后照样上不了线', () => {
+    const view = buildBroadcastView(full, 1);
+    const wire = JSON.stringify(view);
+    for (const id of ['deck-1', 'deck-2', 'SECRET_STATUS', 'SECRET_PLAYER_FIELD', '拿牌堆顶第一张']) {
+      expect(wire).not.toContain(id);
+    }
+    for (const key of NEVER_SENT_TOP_LEVEL) expect(view).not.toHaveProperty(key);
+    expect(JSON.stringify(view.deck)).toBe(JSON.stringify([HIDDEN_MARKER, HIDDEN_MARKER, HIDDEN_MARKER]));
+  });
+
+  it('放开一份之后仍是合法 EngineState ⇒ 客人端那道闸照样放得过去', () => {
+    expect(isRestorableEngineState(buildBroadcastView(full, 1))).toBe(true);
+    expect(isRestorableEngineState(buildBroadcastView(full, 2))).toBe(true);
+  });
+
+  it('最坏的一份（放开满手牌＋满征召池）仍在单帧上限内', () => {
+    const shuffle = () => 0.5;
+    const deck = createCardDeck(shuffle);
+    const roster = allGenerals.slice(0, 12);
+    const hot = matchState();
+    hot.deck = deck;
+    hot.players = hot.players.map((p, i) => ({
+      ...p,
+      hand: deck.slice(0, 10),
+      generalPool: roster.slice(i * 4, i * 4 + 4),
+      graveyard: roster.slice(i * 6, i * 6 + 6),
+      fieldGenerals: roster.slice(i * 2, i * 2 + 4).map((g) => ({ ...fieldGeneral(p.id), general: g })),
+    }));
+    const bytes = new TextEncoder().encode(JSON.stringify(buildBroadcastView(hot, 1))).length;
+    expect(hiddenCount(hot.players[0].generalPool)).toBe(4);
     expect(bytes).toBeLessThan(MAX_WIRE_BYTES);
     expect(bytes).toBeLessThan(64 * 1024);
   });

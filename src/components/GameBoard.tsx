@@ -17,12 +17,20 @@ import { clearLocalGameSnapshot, saveLocalGameSnapshot } from '../store/localGam
 import Rules from './Rules';
 import Settings from './Settings';
 import { SC, StatPill, Bar, Btn, Modal } from './gameBoard/uiPrimitives';
+import { placeSeats, resolveViewIndex } from './gameBoard/seatLayout';
 
 type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'selectMoveCard'|'selectSupplyCards'|'selectArmorCards';
+
+/**
+ * 联机切片②：棋盘**朝向哪一席**可以从外面指。不传＝跟着"现在轮到谁"转＝本地热座与
+ * 房主本机今天的画面，一字不差；客人那一屏由联机接线把自己那一席递进来（切片③才有人传）。
+ * 动手的那一格（`cp`）不看这个，仍然只看 store 的 `currentPlayerIndex`。
+ */
+export type GameBoardProps = { viewSeat?: number | null };
 interface InspectTarget { type:'general'|'card'|'fieldGeneral'; general?:General; card?:GameCard; fieldGeneral?:FieldGeneral; playerId?:number; }
 function isGen(c:General|GameCard):c is General{return 'skills' in c;}
 
-export default function GameBoard(){
+export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
   const players=useGameStore(s=>s.players);
   const cpi=useGameStore(s=>s.currentPlayerIndex);
   const round=useGameStore(s=>s.currentRound);
@@ -130,6 +138,9 @@ export default function GameBoard(){
 
   const cp=players[cpi] ?? players.find(p => p.isAlive !== false) ?? players[0]; if(!cp) return null;
   const activeIndex=Math.max(0,players.findIndex(p=>p.id===cp.id));
+  // 视角轴与动手轴分家：`activeIndex` 管"谁在动手"（手牌、征召名单、登场合法性、高亮），
+  // `viewIndex` 只管"哪一席画在下面"。本地没人传 viewSeat ⇒ 两者恒等 ⇒ 画面一字不差。
+  const viewIndex=resolveViewIndex(players, activeIndex, viewSeat);
   const cpColor=factionColors[cp.faction!]||'#eab308';
 
   useEffect(() => {
@@ -362,16 +373,9 @@ export default function GameBoard(){
   };
 
   // ── layout ──
-  const arrange=()=>{
-    const n=players.length;
-    type Pos='bottom'|'top'|'left'|'right';
-    const o:{player:Player;pos:Pos}[]=[];
-    if(n===2){o.push({player:players[activeIndex] ?? players.find(p=>p.isAlive!==false)!,pos:'bottom'},{player:players[(activeIndex+1)%n] ?? players.find(p=>p.isAlive!==false)!,pos:'top'});}
-    else if(n===3){o.push({player:players[activeIndex] ?? players.find(p=>p.isAlive!==false)!,pos:'bottom'},{player:players[(activeIndex+1)%n] ?? players.find(p=>p.isAlive!==false)!,pos:'left'},{player:players[(activeIndex+2)%n] ?? players.find(p=>p.isAlive!==false)!,pos:'right'});}
-    else if(n===4){o.push({player:players[activeIndex] ?? players.find(p=>p.isAlive!==false)!,pos:'bottom'},{player:players[(activeIndex+1)%n] ?? players.find(p=>p.isAlive!==false)!,pos:'left'},{player:players[(activeIndex+2)%n] ?? players.find(p=>p.isAlive!==false)!,pos:'top'},{player:players[(activeIndex+3)%n] ?? players.find(p=>p.isAlive!==false)!,pos:'right'});}
-    return o;
-  };
-  const arr=arrange();
+  // 摆放的规则在 `gameBoard/seatLayout.ts`（逐格对照拆轴前那段 `arrange()` 的证人在那里）。
+  // 下面那一席跟着**视角**走，其余一切都还跟着**动手的那一席**走。
+  const arr=placeSeats(players, viewIndex);
   const bot=arr.find(x=>x.pos==='bottom')!.player;
   const top=arr.find(x=>x.pos==='top')?.player;
   const lft=arr.find(x=>x.pos==='left')?.player;
@@ -533,7 +537,11 @@ export default function GameBoard(){
             </div>
             {rgt&&<div className="flex flex-col items-center"><span className="mb-1 text-[10px] font-bold" style={{color:factionColors[rgt.faction!]}}>{rgt.name}</span><TerritorySide p={rgt} side="right"/></div>}
           </div>
-          <div className="flex flex-col items-center"><TerritoryBottom p={bot}/><span className="mt-1 text-[10px] font-bold" style={{color:factionColors[bot.faction!]}}>{bot.name}({bot.faction}) — {bot.isAi?'AI 出手中…':'你的回合'}</span></div>
+          {/* 这一句原来是混的：前半跟着**视角**（`bot`），后半「你的回合／AI 出手中」说的却是
+              **动手轴**。拆轴前两者恒等所以听不出来；现在后半跟着 `cp` 取，并且只在"下面这一格
+              正是动手那一席"时才说出口——客人盯着自己的营地时，绝不会被一句「你的回合」骗。
+              本地热座（`bot`＝`cp`）渲染出的字符与拆轴前逐字相同，没新增任何一句玩家看得见的词。 */}
+          <div className="flex flex-col items-center"><TerritoryBottom p={bot}/><span className="mt-1 text-[10px] font-bold" style={{color:factionColors[bot.faction!]}}>{bot.name}({bot.faction}){bot.id===cp.id&&<>{' — '}{cp.isAi?'AI 出手中…':'你的回合'}</>}</span></div>
         </div>
         {/* Skill activation notifications */}
         {skillActivations.length>0&&<div className="pointer-events-none absolute left-3 top-12 z-40 flex flex-col gap-2 max-w-xs">{skillActivations.map(a=>(

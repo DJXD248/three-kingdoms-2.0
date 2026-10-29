@@ -72,7 +72,14 @@ export function NetSeatPanel({ seatMap, moves, refusal, selfId, isHost, onPick }
             {mySeat === null
               ? '椅子还没排到你（房主重排后会发新的一份过来）——你这边先只看。'
               : `你坐第 ${mySeat} 席。`
-                + (mine !== null && onPick !== undefined ? ' 现在能走：' : ' 还没收到这一席的清单，房主那边牌一动就会发。')}
+                + (mine === null || onPick === undefined
+                  ? ' 还没收到这一席的清单，房主那边牌一动就会发。'
+                  // 清单是空的这一种**不许**说"现在能走"：那句与下面那一行自相矛盾
+                  // （2026-10-28 两台机器实测读到的原文就是两行挨着打脸）。这里闭嘴，
+                  // 让下面那句真话说，同一件事不派两句话。
+                  : mine.items.length === 0
+                    ? ''
+                    : ' 现在能走：')}
           </p>
 
           {!isHost && mine !== null && onPick !== undefined && (

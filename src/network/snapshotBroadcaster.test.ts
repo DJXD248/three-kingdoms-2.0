@@ -1,11 +1,13 @@
 /**
  * 房主发快照的节流证人：一次出手会连着落好几笔事实，客人只需要最后那个样子。
- * 钉的是四件事——满间隔立刻发、没满攒成一笔到点发最新的、只是界面在动不发、
- * 房间里没客人不白费力气，以及发出去的那一份是遮蔽过的。
+ * 钉的是几件事——满间隔立刻发、没满攒成一笔到点发最新的、只是界面在动不发、
+ * 没有收件人不白费力气，以及发出去的那一份是遮蔽过的。
+ * 切片③（v2.9.25）把"一份给全桌"改成"每人一份"，所以这里还钉：
+ * 一位收件人一条、指名给谁、同一席位只算一份、没排上席位的拿全遮那份。
  */
 import { describe, expect, it } from 'vitest';
 import type { EngineState } from '../core/GameState';
-import { MIN_BROADCAST_INTERVAL_MS, startSnapshotBroadcaster } from './snapshotBroadcaster';
+import { MIN_BROADCAST_INTERVAL_MS, startSnapshotBroadcaster, type SnapshotRecipient } from './snapshotBroadcaster';
 
 function state(marker: string, extra: Partial<EngineState> = {}): EngineState {
   return {
@@ -21,20 +23,23 @@ function state(marker: string, extra: Partial<EngineState> = {}): EngineState {
   } as EngineState;
 }
 
-function harness(initial: EngineState = state('a')) {
+/** 一条线上消息：算给哪一席的那一份，指名发给了谁。 */
+type Wire = { view: EngineState; to: string };
+
+function harness(initial: EngineState = state('a'), recipients: SnapshotRecipient[] = [{ peer: 'g-1', seat: null }]) {
   let clock = 1_000;
   let current = initial;
-  let guests = true;
-  const sent: EngineState[] = [];
+  let targets = recipients;
+  const sent: Wire[] = [];
   const queue: Array<{ at: number; fn: () => void } | null> = [];
 
   const bc = startSnapshotBroadcaster({
     readState: () => current,
-    send: (view) => {
-      sent.push(view);
+    send: (view, to) => {
+      sent.push({ view, to });
       return true;
     },
-    hasGuests: () => guests,
+    recipients: () => targets,
     now: () => clock,
     schedule: (fn, ms) => {
       queue.push({ at: clock + ms, fn });
@@ -48,7 +53,8 @@ function harness(initial: EngineState = state('a')) {
   return {
     bc,
     sent,
-    phases: () => sent.map((s) => s.phase),
+    peers: () => sent.map((s) => s.to),
+    phases: () => sent.map((s) => s.view.phase),
     advance(ms: number) {
       clock += ms;
       for (let i = 0; i < queue.length; i += 1) {
@@ -59,7 +65,7 @@ function harness(initial: EngineState = state('a')) {
         }
       }
     },
-    setGuests(value: boolean) { guests = value; },
+    setRecipients(value: SnapshotRecipient[]) { targets = value; },
     setState(value: EngineState) { current = value; },
   };
 }
@@ -77,10 +83,10 @@ describe('J2 房主发快照的节流', () => {
       currentPlayerId: 1,
     }));
     h.bc.notifyChange();
-    const wire = JSON.stringify(h.sent[0]);
+    const wire = JSON.stringify(h.sent[0].view);
     expect(wire).not.toContain('暗牌一号');
     expect(wire).toContain('"hidden":true');
-    expect(h.sent[0].players[0].hand).toHaveLength(1);
+    expect(h.sent[0].view.players[0].hand).toHaveLength(1);
   });
 
   it('没满间隔的连续变化并成一笔，到点发的是最新那一份', () => {
@@ -117,13 +123,13 @@ describe('J2 房主发快照的节流', () => {
     expect(h.phases()).toEqual(['a']);
   });
 
-  it('房间里没有客人 ⇒ 不发；客人进来后 flush 补一份当下的，不用等下一次变化', () => {
+  it('没有收件人 ⇒ 不发；有人进来后 flush 补一份当下的，不用等下一次变化', () => {
     const h = harness();
-    h.setGuests(false);
+    h.setRecipients([]);
     h.bc.notifyChange();
     expect(h.sent).toHaveLength(0);
 
-    h.setGuests(true);
+    h.setRecipients([{ peer: 'g-1', seat: 1 }]);
     h.bc.flush();
     expect(h.phases()).toEqual(['a']);
   });
@@ -136,5 +142,60 @@ describe('J2 房主发快照的节流', () => {
     h.bc.stop();
     h.advance(MIN_BROADCAST_INTERVAL_MS * 3);
     expect(h.phases()).toEqual(['a']);
+  });
+});
+
+/**
+ * 切片③（v2.9.25）：一次变化＝屋里每人一条，每条指名给一个收件人，
+ * 而每条里的私有内容只放开**他那一席**。这里摆一张两席桌（1 号甲、2 号乙，各有暗牌），
+ * 断言的是"互相看不见"——这才是这一刀真正买到的东西。
+ */
+describe('切片③：按席位各出一份，一人一条', () => {
+  const twoSeats = state('turn', {
+    players: [
+      { id: 1, name: '甲', hand: [{ name: '甲的暗牌' }], generalPool: [{ name: '甲的将' }] },
+      { id: 2, name: '乙', hand: [{ name: '乙的暗牌' }], generalPool: [{ name: '乙的将' }] },
+    ],
+    currentPlayerId: 1,
+  });
+
+  it('两位客人各坐一席 ⇒ 一条局面发两条，各自指名、各自只看见自己的手牌', () => {
+    const h = harness(twoSeats, [{ peer: 'g-1', seat: 1 }, { peer: 'g-2', seat: 2 }]);
+    h.bc.notifyChange();
+
+    expect(h.peers()).toEqual(['g-1', 'g-2']);
+    const forG1 = JSON.stringify(h.sent[0].view);
+    const forG2 = JSON.stringify(h.sent[1].view);
+    expect(forG1).toContain('甲的暗牌');
+    expect(forG1).not.toContain('乙的暗牌');
+    expect(forG2).toContain('乙的暗牌');
+    expect(forG2).not.toContain('甲的暗牌');
+    // 放开的只有"收件人自己那一席"那两格：别人的手牌／池子与牌堆顺序谁都不发。
+    expect(forG1).not.toContain('乙的将');
+    expect(forG2).not.toContain('甲的将');
+    expect(h.bc.stats().sent).toBe(2);
+  });
+
+  it('一条都没排上席位的 ⇒ 拿全遮那一份（＝切片③之前大家看到的同一份）', () => {
+    const h = harness(twoSeats, [{ peer: 'g-9', seat: null }]);
+    h.bc.notifyChange();
+    const wire = JSON.stringify(h.sent[0].view);
+    expect(wire).not.toContain('甲的暗牌');
+    expect(wire).not.toContain('乙的暗牌');
+    expect(h.sent[0].view.players[0].hand).toHaveLength(1);
+    expect(h.peers()).toEqual(['g-9']);
+  });
+
+  it('两位收件人对上同一席位 ⇒ 视图只算一份（同一个引用），但仍一人一条', () => {
+    const h = harness(twoSeats, [{ peer: 'g-1', seat: 2 }, { peer: 'g-2', seat: 2 }]);
+    h.bc.notifyChange();
+    expect(h.peers()).toEqual(['g-1', 'g-2']);
+    expect(h.sent[1].view).toBe(h.sent[0].view);
+  });
+
+  it('发出去的两份各是指名给谁的：`to` 就是那条的收件人', () => {
+    const h = harness(twoSeats, [{ peer: 'g-1', seat: 1 }, { peer: 'g-2', seat: 2 }]);
+    h.bc.flush();
+    expect(h.sent.map((s) => s.to)).toEqual(['g-1', 'g-2']);
   });
 });
