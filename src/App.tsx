@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { useGameStore } from './store/gameStore';
 import MainMenu from './components/MainMenu';
 import Codex from './components/Codex';
@@ -16,6 +17,7 @@ import AiBattleWindow from './components/AiBattleWindow';
 import AiBattleDock from './components/AiBattleDock';
 import AiDirector from './components/AiDirector';
 import NetRoomBridge from './components/NetRoomBridge';
+import { getMyNetSeat, subscribeNetRoom } from './network/netRoom';
 import NetPingOverlay from './components/NetPingPanel';
 import NetSeatOverlay from './components/NetSeatPanel';
 import { factionColors } from './data/generals';
@@ -28,6 +30,10 @@ const IS_AI_BATTLE_WINDOW =
 
 export default function App() {
   const phase = useGameStore(s => s.phase);
+  // 视角轴（哪一营画在正下方）唯一的取数点：联机＝我这台机器绑到的那一席，本地＝null。
+  // 动手那一格不看它，仍只看 `store.currentPlayerIndex`（用户 2026-10-30 裁第 3 条：
+  // 能不能动手只由 `ActionValidator` 那一处说了算＝轮到谁 ＋ 有没有技能正等着响应）。
+  const viewSeat = useSyncExternalStore(subscribeNetRoom, getMyNetSeat, getMyNetSeat);
   if (IS_AI_BATTLE_WINDOW) return <AiBattleWindow />;
 
   let content: React.ReactNode;
@@ -63,7 +69,7 @@ export default function App() {
       content = <UnifiedDraw />;
       break;
     case 'playing':
-      content = <GameBoard />;
+      content = <GameBoard viewSeat={viewSeat} />;
       break;
     case 'gameOver':
       content = <GameOverScreen />;

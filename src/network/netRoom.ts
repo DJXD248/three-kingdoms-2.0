@@ -12,7 +12,7 @@ import type { NetRole, RoomConnection } from './netSession';
 import type { IncomingAction } from './netHostAuthority';
 import { isRestorableEngineState } from '../store/gameStateAdapter';
 import { sameRows } from './netHeartbeat';
-import { sameMoveLists, sameSeatRows, type SeatMoveList } from './netSeat';
+import { seatOfPeer, sameMoveLists, sameSeatRows, type SeatMoveList } from './netSeat';
 
 export type ActiveRoom = {
   role: NetRole;
@@ -80,6 +80,21 @@ export function getNetStatus(): NetLinkRow[] | null {
 
 export function getSeatMap(): NetSeatRow[] | null {
   return seatMap;
+}
+
+/**
+ * 我这台机器坐第几席＝**视角轴**的唯一来源（联机切片⑤，v2.9.25）。
+ *
+ * 房主与客人问的是同一句话：那张表里绑到我这个号的那一行。不自算第二遍座次——
+ * 客人自己排一遍，两边就会读着不同的席位看牌（与 J4 那三格同一个纪律）。
+ *
+ * 四种"没有"都返回 `null`：没开联机房（本地游戏）、房主还没发表、表里没绑到我
+ * （椅子没排到／全桌都是电脑在打）、刚退房。`null` 传进牌桌＝退回"哪一营画在下面
+ * 跟着轮到谁走"，也就是本地热座今天那帧画面，一字不差（用户 2026-10-30 裁：本地形状不许变）。
+ */
+export function getMyNetSeat(): number | null {
+  if (!active || seatMap === null) return null;
+  return seatOfPeer(seatMap, active.connection.state.selfId);
 }
 
 export function getSeatMoves(): SeatMoveList | null {

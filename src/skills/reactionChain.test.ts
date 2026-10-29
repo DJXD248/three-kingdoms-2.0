@@ -35,6 +35,7 @@ import {
 import { ANY_TRIGGER_EVENT_TYPES, TRIGGER_EVENTS, eventsHeardBy } from './reactionTriggers';
 import type { DataSkillTrigger } from './dataTypes';
 import { defersToReactionQueue } from './SkillTriggerBridge';
+import { probeSeatActions } from '../store/engineExecutionBridge';
 
 function makeGeneral(id: string, skills: Skill[]): General {
   return {
@@ -514,6 +515,27 @@ describe('响应链 · 冻结世界四方一致（校验器／合法动作／解
     // 枚举与执法读同一条规则：列出来的动作逐一 dispatch 都不被拒。
     const events = engine.dispatch(debtor[0]);
     expect(events.some(e => e.type === 'ACTION_REJECTED')).toBe(false);
+  });
+
+  /**
+   * 用户 2026-10-30 裁第 3 条的证人（联机切片⑤，v2.9.25）：「能不能动手要按轮到谁走
+   * **和是否有技能可以触发响应**」——两样都算，不是一句"轮到谁"说了算。
+   *
+   * 这里走的是**线上那条取数路**（`probeSeatActions`：房主算给某一席的按钮清单就是它给的），
+   * 不是引擎的 `legalActions` 本身：客人能不能点那一步，判据落在这条路上。
+   * 这一格的当前行动席仍是第 1 席（上面一行断言钉住），欠答的是第 2 席 ⇒
+   * 第 2 席照样拿到两个出口，而**轮到动手的第 1 席一步也没有**。
+   * 同一处判据（`ActionValidator` 那一格） ⇒ 不许另起一根"只看轮到谁"的轴来放开按钮。
+   */
+  it('动手轴不只跟着轮到谁：轮不到第 2 席、但那席正等着响应 ⇒ 清单从探针这条路照样发得出', () => {
+    const engine = askedEngine();
+    expect(engine.state.currentPlayerId).toBe(1);
+    const storeState = { engineState: engine.state };
+
+    expect(probeSeatActions(storeState, 2).map(a => a.type).sort()).toEqual(['ACTIVATE_SKILL', 'SKIP_REACTION']);
+    expect(probeSeatActions(storeState, 1)).toEqual([]);
+    // 探针不改对局：算完清单，那格问句还原样挂着（客人多点一次按钮不该把债点没了）。
+    expect(getReactionAsk(engine.state)).not.toBeNull();
   });
 
   it('问句活着时，别人的常规动作与欠答席自己的其余动作一律 REACTION_PENDING', () => {

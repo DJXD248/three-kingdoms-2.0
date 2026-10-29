@@ -11,6 +11,7 @@ import {
   getActiveRoom,
   getGuestSnapshot,
   getNetStatus,
+  getMyNetSeat,
   getRefusal,
   getSeatMap,
   getSeatMoves,
@@ -244,5 +245,71 @@ describe('J4 席位表、清单与退回说明也住这一格', () => {
     receiveSeatMap(SEATS);
     detachRoom();
     expect(getSeatMap()).toBeNull();
+  });
+});
+
+/**
+ * 视角轴取数（联机切片⑤，v2.9.25）：牌桌「哪一营画在正下方」问的就是这一格。
+ *
+ * 用户 2026-10-30 裁的第 1 条在这里钉死：**本地热座那帧画面逐字不许变**——本地没有房间，
+ * 所以取数必须是 `null`，牌桌才退回"跟着轮到谁转"。第 2 条（联机＝看的人自己那一席
+ * 一直在下面）由房主与客人问同一句话保证：两边都只照抄那张表里绑到自己号的那一行，
+ * 谁都不自己排第二遍座次。
+ */
+describe('getMyNetSeat：我这台机器坐第几席（视角轴唯一取数点）', () => {
+  const SEATS = [
+    { peer: 'h', seat: 1, name: '房主' },
+    { peer: 'g', seat: 2, name: '客人甲' },
+  ];
+
+  it('本地游戏（没进房）＝null ⇒ 牌桌沿用本地形状，一位不动', () => {
+    detachRoom();
+    receiveSeatMap(SEATS);
+    // 表都在了但没有房间这根线 ⇒ 仍然 null：视角不跟着一张无主的座位表转。
+    expect(getMyNetSeat()).toBeNull();
+  });
+
+  it('房主那台机器问出自己那一席；客人那台机器问出自己那一席（同一张表、同一句话）', () => {
+    attachRoom({ role: 'host', name: '房主', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    expect(getMyNetSeat()).toBeNull();
+    receiveSeatMap(SEATS);
+    // fakeConnection 的 selfId 是 'h'：房主读出第 1 席。
+    expect(getMyNetSeat()).toBe(1);
+
+    const guestConn = { ...fakeConnection(), state: { ...fakeConnection().state, role: 'guest', selfId: 'g' } };
+    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: guestConn as never });
+    receiveSeatMap(SEATS);
+    expect(getMyNetSeat()).toBe(2);
+  });
+
+  it('椅子被收回（那一行改成空位）⇒ 立刻回 null，不抱着旧席位看', () => {
+    attachRoom({ role: 'host', name: '房主', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    receiveSeatMap(SEATS);
+    expect(getMyNetSeat()).toBe(1);
+    receiveSeatMap([{ peer: null, seat: 1, name: '空位' }, { peer: 'g', seat: 2, name: '客人甲' }]);
+    expect(getMyNetSeat()).toBeNull();
+  });
+
+  it('退房把视角一起收干净：下一屋没绑到我之前，画面退回本地形状', () => {
+    attachRoom({ role: 'host', name: '房主', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    receiveSeatMap(SEATS);
+    expect(getMyNetSeat()).toBe(1);
+    detachRoom();
+    expect(getMyNetSeat()).toBeNull();
+  });
+
+  it('订阅者看得见它跟着席位表变（界面靠同一个通知重取，不自算）', () => {
+    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: { ...fakeConnection(), state: { ...fakeConnection().state, role: 'guest', selfId: 'g' } } as never });
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+    expect(getMyNetSeat()).toBeNull();
+    receiveSeatMap(SEATS);
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(getMyNetSeat()).toBe(2);
+    // 原样重发＝没变：不惊动界面，视角读数也还是同一个数。
+    receiveSeatMap(SEATS.map((r) => ({ ...r })));
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(getMyNetSeat()).toBe(2);
+    unsubscribe();
   });
 });
