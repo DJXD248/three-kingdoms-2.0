@@ -87,7 +87,8 @@ export function NetSetupPanel({ snapshot }: { snapshot: EngineState | null }) {
       {step === 'draft' && (
         <p className="text-xs text-amber-200/60">
           房主那边已进入征召：各家挑到哪儿了看下面那张征召进度表（那张表里只有数量，一张牌也没有）。
-          你自己那一席的候选名单与点将那一步还没做（⑤c／⑤d）⇒ 这一段现在只有进度可看。
+          你自己那一席的候选名单在再下面那一格（联机切片⑤c：房主指名发给你的那一份，别人那一格不在里面）；
+          点将与确认那颗钮还没做＝⑤d。
         </p>
       )}
 

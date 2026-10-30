@@ -7,16 +7,19 @@ import { startSnapshotBroadcaster, type SnapshotBroadcaster } from '../network/s
 import { startHostAuthority, type HostAuthority } from '../network/netHostAuthority';
 import { startHostReady, type HostReady } from '../network/netHostReady';
 import { startHostDraftProgress, type HostDraftProgress } from '../network/netHostDraftProgress';
+import { startHostDraftList, type HostDraftList } from '../network/netHostDraftList';
 import { draftFactsOf } from '../network/netDraftProgress';
+import { draftListFactsOf } from '../network/netDraftList';
 
 /**
- * 房主侧的接线（J2 发快照 ＋ J4 席位表／清单／把关 ＋ ⑤a 准备表 ＋ ⑤b 征召进度表）。住在 App 上而不是大厅弹窗里——
+ * 房主侧的接线（J2 发快照 ＋ J4 席位表／清单／把关 ＋ ⑤a 准备表 ＋ ⑤b 征召进度表 ＋ ⑤c 逐席候选名单）。住在 App 上而不是大厅弹窗里——
  * 房主要关掉大厅去开局，连线不能跟着弹窗一起没。它不含任何规则：读房主当下的局面，
  * 一份交给遮蔽层发快照，一份交给房主权威算席位与清单、并把客人交回来的编号验一遍，
  * 还有一份交给准备发布者算"谁还算数、还等谁"（那一条读的是名册与连线表，不读局面），
- * 最后一份交给进度发布者把征召走到哪儿抄成一张只报数量的表（那一条读的是 store 里的征召格，不读引擎）。
+ * 一份交给进度发布者把征召走到哪儿抄成一张只报数量的表（那一条读的是 store 里的征召格，不读引擎），
+ * 最后一份交给名单发布者按人各算一帧、**指名**发给那一席本人（别席的那一格在这里没有出口）。
  *
- * 每根线一套接线：`bc`、`auth`、`ready` 与 `progress` 都闭包着建它们时那一间的 `room.connection`，
+ * 每根线一套接线：`bc`、`auth`、`ready`、`progress` 与 `draftList` 都闭包着建它们时那一间的 `room.connection`，
  * 换了房间必须整套重建，否则下一间房的快照会发进上一间的线里。
  */
 export default function NetRoomBridge() {
@@ -25,6 +28,7 @@ export default function NetRoomBridge() {
     let auth: HostAuthority | null = null;
     let ready: HostReady | null = null;
     let progress: HostDraftProgress | null = null;
+    let draftList: HostDraftList | null = null;
     let bound: ActiveRoom | null = null;
     let rosterKey = '';
 
@@ -34,6 +38,7 @@ export default function NetRoomBridge() {
       auth = null;
       ready = null;
       progress = null;
+      draftList = null;
       bound = null;
       rosterKey = '';
       setHostActionSink(null);
@@ -57,6 +62,18 @@ export default function NetRoomBridge() {
         facts: () => draftFactsOf(useGameStore.getState()),
         send: (rows) => room.connection.send({ t: 'draftprogress', from: room.connection.state.selfId, rows }),
         tableSink: receiveDraftProgress,
+      });
+      // 切片⑤c：逐席候选名单。屋里每位客人各算一帧、**指名**发给他，别席那一格一个字节也不进。
+      // 席位从 auth 算好抄进 netRoom 的那张表读（与 bc 按席位各出私有视图同一个来源，不自算第二遍）。
+      draftList = startHostDraftList({
+        facts: () => draftListFactsOf(useGameStore.getState()),
+        guests: () => {
+          const rows = getSeatMap();
+          return (bound?.connection.state.peers ?? [])
+            .filter((p) => p.role === 'guest')
+            .map((p) => ({ peer: p.id, seat: rows?.find((r) => r.peer === p.id)?.seat ?? null }));
+        },
+        send: (peer, frame) => room.connection.send({ t: 'draftlist', from: room.connection.state.selfId, to: peer, ...frame }),
       });
       bc = startSnapshotBroadcaster({
         readState: () => useGameStore.getState().engineState,
@@ -96,6 +113,8 @@ export default function NetRoomBridge() {
       // 进度表也排在 auth 前：刚连上线那一刻若真在征召，别人才不用等下一次点将才看见进度。
       progress.syncNow();
       auth.syncNow();
+      // 候选名单排在 auth 之后：它要按"这个人坐第几席"算那一帧，而那张表正是 auth 刚算出来抄进 netRoom 的。
+      draftList.syncNow();
       bc.flush();
     };
 
@@ -120,6 +139,10 @@ export default function NetRoomBridge() {
         progress?.syncNow();
         // 同 start：先把席位表算出来，再按新座次逐人发私有视图。
         auth?.syncNow();
+        // 名册换了人⇒把每一帧重新发一遍（与上面那张进度表、bc 的 flush 同一做法）：
+        // 迟来的那位原来没有账，必然发得出；已经在座的那位就算内容一字没动，也只是多收一帧重复的
+        // ——客人那边那一格按内容去重，界面不会为它重画。
+        draftList?.syncNow();
         bc?.flush();
       }
       // 准备表在这条路上问两遍（名册变了要重算，连线表上有人被判掉线也要重算——那张表换了
@@ -134,6 +157,8 @@ export default function NetRoomBridge() {
       bc?.notifyChange();
       // 征召那一段每勾一名都会 set 一次 store；进度表就是靠这一趟跟上（那张表没动时一条不发）。
       progress?.notifyChange();
+      // 同一趟也让候选名单跟上：我这一格勾了几颗、该做什么那句话，都跟着房主这次的动。
+      draftList?.notifyChange();
     });
     const unsubscribeRoom = subscribeNetRoom(() => syncRoom(getActiveRoom()));
     syncRoom(getActiveRoom());

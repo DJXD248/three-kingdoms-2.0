@@ -39,6 +39,35 @@ export type NetReadyRow = { peer: string; name: string; on: boolean; counted: bo
  */
 export type NetDraftState = 'waiting' | 'picking' | 'done';
 export type NetDraftProgressRow = { seat: number; name: string; state: NetDraftState; picked: number; total: number };
+/**
+ * 联机切片⑤c（v2.9.25）候选名单里的一张牌——**指名发给那一席本人的那一份**。
+ * 用户 2026-10-30 的口径逐字是：「每个玩家只能看到自己的候选将领和已选将领，而不是能看到全部」
+ * ⇒ 牌面可以上线，但一帧只装一个席位的那一格（别席一个字节都不进，判据见 `netDraftListPrivacy.test.ts`）。
+ *
+ * 这里**没有 `id`**（档案号）：客人往后交回"我要勾哪一颗"用的是这张名单上的位置编号 `key`，
+ * 房主拿同一个规则把自己发过的那格查回来——绝不采信客人发来的将名（ARCH_MAP 第 7 条㈢）。
+ * 装的就是那张卡画得出来的几样（对照 `components/GeneralDraft.tsx`：类型图标＋将名＋三行点数＋技能名一排）；
+ * 护甲、身份、来源那些格界面上不画，也就一个都不上线。
+ */
+export type NetDraftItem = {
+  key: string;
+  name: string;
+  faction: string;
+  type: string;
+  hp: number;
+  meleeAtk: number;
+  rangedAtk: number;
+  skills: string[];
+};
+/** 指名发给某一席的那一整帧：他自己那一格的两份名单、他勾了哪几颗、以及这一席该做什么的那句人话。 */
+export type NetDraftListFrame = {
+  seat: number;
+  total: number;
+  instruction: string;
+  main: NetDraftItem[];
+  qun: NetDraftItem[];
+  picked: string[];
+};
 
 /** 往返耗时的可信上限：超过就当没量到（对面时钟被改、或攒了很久的一条回话）。 */
 export const MAX_TRUSTED_PING_MS = 600_000;
@@ -58,6 +87,22 @@ export const MAX_DRAFT_PROGRESS_ROWS = 8;
  *  这里**不**要求 `picked <= total`——已完成那一行的 `picked` 直接取自那一席的征召池长度，
  *  沙盒与测试工具能把它填成任何数；宁可多显示一个真实的怪数，不可把一帧真话判成假消息。 */
 export const MAX_DRAFT_PICK_COUNT = 1000;
+/**
+ * 切片⑤c 那一格的两个上界。`MAX_DRAFT_ITEMS` 比生产者实际给得出的最大数还宽：
+ * 房主那台机器上一席的候选是 10 张本势力＋5 张群（`setup/runtimeSetup.ts:166,179`）＝15 张，
+ * 这里放到 32 是留给"以后候选面变宽"，而**超过就整帧拒**、不截断——
+ * 截断会让客人以为自己看到的就是全部（与 `moves` 那条用 `omitted` 说清"还有几条没列出来"是两种做法：
+ * 征召名单是这一席动手的唯一依据，少一张牌就选不成那一套 10 名，所以宁可拒）。
+ * 将名与技能名跟着「人读句子」那个上界（`MAX_MOVE_LABEL_LENGTH`）而不是席位名的 12 个字：
+ * DIY 将名那一格没有 12 个字的闸，拿席位名的尺去量牌名会把一帧真话判成坏消息。
+ */
+export const MAX_DRAFT_ITEMS = 32;
+/** 一张卡下面那一排技能名的小格数上界（同一判据：超了就是坏消息，不是"少画两个"）。 */
+export const MAX_DRAFT_SKILLS = 12;
+/** 卡面三行数各自的线上上界：与 `MAX_DRAFT_PICK_COUNT` 同一口径（宁可多画一个真实的怪数，不把一帧真话判成假消息）。 */
+export const MAX_DRAFT_STAT_VALUE = 1000;
+/** 「这一席该做什么」那句话的线上上界：它是一句人话，长度与退回说明同一档（界面上是一行，不是一段）。 */
+export const MAX_DRAFT_INSTRUCTION_LENGTH = 120;
 /**
  * 联机切片⑥（v2.9.25）：身份号进握手网址第二段时允许的字符。
  * 它比解析器里那条 `isId`（非空、≤64 个字符）**严**，严出来的不是协议、是路：
@@ -118,6 +163,18 @@ export type NetEnvelope =
    * 与 netstatus／seatmap 一样把空表当坏消息拒掉。
    */
   | { t: 'draftprogress'; from: string; rows: NetDraftProgressRow[] }
+  /**
+   * 切片⑤c：房主算给**正在征召那一席本人**的那一格候选名单（＋他勾了哪几颗＋这一席该做什么的那句人话）。
+   *
+   * `to` 在类型里**必填**，不是可选：这一帧装的是私有信息，而传话程序那一侧（切片⑥）的形状是
+   * 「写了收件人的只投那一条、查不到收件人就丢」⇒ 一个可省的 `to` 等于要么静默丢掉别人的名单、
+   * 要么落成全房群发。必填＝编译器替人盯这一格。
+   *
+   * 别席那一格永远不上线：同一时刻只有一个席位在征召，其余席位收到的是**空名单＋一句"没轮到你"**
+   * （空名单在这里是一句真话，与 `moves` 那条同一个判据，与 `draftprogress` 的空表＝坏消息相反）。
+   * 这一帧不进私有视图（`snapshotView.ts:40` 那份放开名单仍是 `hand`／`generalPool`，一格没加）、不进引擎、不进录像。
+   */
+  | ({ t: 'draftlist'; from: string; to: string } & NetDraftListFrame)
   | { t: 'bye'; from: string };
 
 export function ourVersionStamp(): VersionStamp {
@@ -166,7 +223,7 @@ export function encodeEnvelope(envelope: NetEnvelope): string {
   return JSON.stringify(envelope);
 }
 
-/** 线上证人：解析器只认这十六种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
+/** 线上证人：解析器只认这十七种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
 export function parseEnvelope(text: string): NetEnvelope | null {
   if (typeof text !== 'string' || text.length === 0 || text.length > MAX_WIRE_BYTES) return null;
   let parsed: unknown;
@@ -191,6 +248,27 @@ export function parseEnvelope(text: string): NetEnvelope | null {
     if (!v || typeof v !== 'object') return false;
     const s = v as Record<string, unknown>;
     return typeof s.app === 'string' && typeof s.proto === 'number' && typeof s.snapshot === 'number';
+  };
+  /**
+   * 一张候选卡（切片⑤c）。`type` 只按"一小串非空字符"收而不钉死那两种写法：
+   * 卡片上那个图标是 `type === '武将' ? ⚔️ : 📜`（`GeneralDraft.tsx` 同一句），
+   * 将来真加第三种画法是那一格的事——在这里钉死两种只会让一帧未来的真话被当成坏消息丢掉。
+   */
+  const draftItemOf = (v: unknown): NetDraftItem | null => {
+    if (!v || typeof v !== 'object') return null;
+    const o = v as Record<string, unknown>;
+    if (!isBounded(o.key, MAX_MOVE_KEY_LENGTH) || !isBounded(o.name, MAX_MOVE_LABEL_LENGTH)) return null;
+    if (!isBounded(o.faction, MAX_NAME_LENGTH) || !isBounded(o.type, MAX_NAME_LENGTH)) return null;
+    if (!isPing(o.hp) || o.hp > MAX_DRAFT_STAT_VALUE) return null;
+    if (!isPing(o.meleeAtk) || o.meleeAtk > MAX_DRAFT_STAT_VALUE) return null;
+    if (!isPing(o.rangedAtk) || o.rangedAtk > MAX_DRAFT_STAT_VALUE) return null;
+    if (!Array.isArray(o.skills) || o.skills.length > MAX_DRAFT_SKILLS) return null;
+    const skills = (o.skills as unknown[]).map((s) => (isBounded(s, MAX_MOVE_LABEL_LENGTH) ? s : null));
+    if (skills.some((s) => s === null)) return null;
+    return {
+      key: o.key, name: o.name, faction: o.faction, type: o.type,
+      hp: o.hp, meleeAtk: o.meleeAtk, rangedAtk: o.rangedAtk, skills: skills as string[],
+    };
   };
 
   switch (raw.t) {
@@ -320,6 +398,33 @@ export function parseEnvelope(text: string): NetEnvelope | null {
         return { seat: o.seat, name: o.name, state: o.state, picked: o.picked, total: o.total };
       });
       return rows.every(Boolean) ? { t: 'draftprogress', from: raw.from, rows: rows as NetDraftProgressRow[] } : null;
+    }
+    case 'draftlist': {
+      // `to` 必填（信封上那段理由）：半截的"发给谁"比没有更危险——别人的候选名单会画到自己屏上。
+      if (!isId(raw.from) || !isId(raw.to) || !isSeatNumber(raw.seat)) return null;
+      if (!isPing(raw.total) || raw.total > MAX_DRAFT_PICK_COUNT) return null;
+      if (!isBounded(raw.instruction, MAX_DRAFT_INSTRUCTION_LENGTH)) return null;
+      // 两份名单可以都是空的（"现在没有你的候选"是一句真话），但必须是数组、且不超上界。
+      if (!Array.isArray(raw.main) || raw.main.length > MAX_DRAFT_ITEMS) return null;
+      if (!Array.isArray(raw.qun) || raw.qun.length > MAX_DRAFT_ITEMS) return null;
+      if (!Array.isArray(raw.picked) || raw.picked.length > MAX_DRAFT_ITEMS) return null;
+      const main = (raw.main as unknown[]).map(draftItemOf);
+      const qun = (raw.qun as unknown[]).map(draftItemOf);
+      if (main.some((i) => i === null) || qun.some((i) => i === null)) return null;
+      const items = [...main, ...qun] as NetDraftItem[];
+      // 位置编号在整帧里必须唯一：两张卡共用一个号，客人交回来的那一颗就说不清是哪一张。
+      const keys = new Set(items.map((i) => i.key));
+      if (keys.size !== items.length) return null;
+      // `picked` 只许指这张名单上的号：房主按同一个规则生成，永远给得出可用的号；
+      // 指到没有的号或重复 ⇒ 整帧拒（客人那边保留上一帧，不画一个猜出来的"已选"）。
+      const picked = (raw.picked as unknown[]).map((k) => (isBounded(k, MAX_MOVE_KEY_LENGTH) && keys.has(k) ? k : null));
+      if (picked.some((k) => k === null)) return null;
+      if (new Set(picked).size !== picked.length) return null;
+      return {
+        t: 'draftlist', from: raw.from, to: raw.to, seat: raw.seat, total: raw.total,
+        instruction: raw.instruction, main: main as NetDraftItem[], qun: qun as NetDraftItem[],
+        picked: picked as string[],
+      };
     }
     default:
       return null;

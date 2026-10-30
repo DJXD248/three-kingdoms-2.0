@@ -11,6 +11,7 @@ import {
   deliverHostReady,
   detachRoom,
   getActiveRoom,
+  getDraftList,
   getDraftProgress,
   getGuestSnapshot,
   getNetStatus,
@@ -19,6 +20,7 @@ import {
   getSeatMap,
   getSeatMoves,
   getStartGate,
+  receiveDraftList,
   receiveDraftProgress,
   receiveGuestSnapshot,
   receiveNetStatus,
@@ -31,6 +33,7 @@ import {
 import NetSpectator from './NetSpectator';
 import { NetSeatPanel } from './NetSeatPanel';
 import { NetPingPanel } from './NetPingPanel';
+import { NetDraftListPanel } from './NetDraftListPanel';
 import { NetDraftProgressPanel } from './NetDraftProgressPanel';
 import { NetSetupPanel } from './NetSetupPanel';
 
@@ -61,7 +64,12 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
  * 这一格**没有新增信封**：房主 store 的那段相位名本来就随每一条指名快照一起上线
  * （`store/engineAwareSetter.ts:20-27`＋`store/gameStateAdapter.ts:80`），点数／势力／座次又都是公开字段，
  * 所以"走到第几步"与"那一步定下的数"在同一份快照里一次到位，跨消息接头的空档不存在。
- * 剩下：客人自己那一席的候选名单与点将＝⑤c／⑤d、掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
+ * 联机切片⑤c（v2.9.25）再加上"每个人看得见自己那一席的候选名单"：房主按席位各算一帧、**指名**发给
+ * 那一席本人（`to` 在信封类型里必填），一帧里只有他那一格的两份名单、他当下勾了哪几颗、以及这一席
+ * 该做什么的那句人话；别席的那一格在任何一帧里都不存在（隐私证人 `network/netDraftListPrivacy.test.ts`
+ * 拿真 store 走一遍扫线上）。这一枚是新形状、不是新协议：`NET_PROTOCOL_VERSION` 仍为 1，
+ * 私有视图那份放开名单（`snapshotView.ts:40`＝`hand`／`generalPool`）一个字没扩，候选名单也不进引擎、不进录像。
+ * 剩下：客人点将与确认那颗钮＝⑤d、掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。
@@ -82,6 +90,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const readyTable = useSyncExternalStore(subscribeNetRoom, getReadyTable, getReadyTable);
   // 切片⑤b：那张征召进度表——同样只照抄房主算好的那一份（里面只有座次与两个数，没有牌）。
   const draftProgress = useSyncExternalStore(subscribeNetRoom, getDraftProgress, getDraftProgress);
+  // 切片⑤c：我自己那一席的候选名单——房主按席位各算一帧、指名发来，别人那一格到不了这一格。
+  const draftList = useSyncExternalStore(subscribeNetRoom, getDraftList, getDraftList);
   /** 闸门那句人话的唯一出处（房主那屏那颗「开始游戏」读的是同一格，两边不会说两套）。 */
   const gate = useSyncExternalStore(subscribeNetRoom, getStartGate, getStartGate);
 
@@ -160,6 +170,11 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         onDraftProgress: (rows) => {
           if (receiveDraftProgress(rows)) bumpNetRoom();
         },
+        // 切片⑤c：能走到这一行的已经只有"房主发的、收件人是我"那一份（把关在 `stepSession`），
+        // 所以这一格存的必然是我自己那一席的名单；房主自己那台机器不经过这里（他看的是真征召面板）。
+        onDraftList: (frame) => {
+          if (receiveDraftList(frame)) bumpNetRoom();
+        },
       },
       (next) => {
         setSession(next);
@@ -191,7 +206,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
             <p className="text-xs text-amber-200/50 mt-1">
               牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌、
               还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表，牌桌那一份按席位各发一条——各自看得见自己手里的牌，
-              进房的人各点一颗准备钮、全员准备之前房主那颗「开始游戏」按不下去，开局那一段客人只画房主定下来发过来的数"。
+              进房的人各点一颗准备钮、全员准备之前房主那颗「开始游戏」按不下去，开局那一段客人只画房主定下来发过来的数，
+              征召那一段每个人看得见房主指名发给自己的那一格候选名单（只能看，点将还没做）"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -337,6 +353,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
             {/* 切片⑤b：房主开始征召之后，这一格才有线上读数；之前一直是"还没开始征召"。 */}
             <NetDraftProgressPanel rows={draftProgress} />
 
+            {/* 切片⑤c：只有客人挂这一格——它是指名发给某一席本人的私有信息，房主那屏看的是真的征召面板。 */}
+            {session.role === 'guest' && <NetDraftListPanel frame={draftList} />}
+
             {netRows !== null && netRows.length > 0 && (
               <NetPingPanel
                 rows={netRows}
@@ -399,9 +418,13 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           所以客人那边是一步一停地跟着变的。
           客人这边只画收到的点数、势力与座次，还没收到的那一格写着「还没定」——本机不摇骰子，也不画一个没收到的数。
           迟到或中途重连的人一进来拿到的就是已经定下来的那一份，所以他那一屏直接落定，不会补看一遍滚动。
+          候选名单那一段（联机切片⑤·腿2）现在做到：房主按席位各算一帧、指名发给那一席本人（信封上那个收件人是必填的），
+          每一帧里只有他自己那一格的两份候选、房主当下勾着的那几颗、以及这一席该做什么的那句人话——别席那一格在任何一帧里都没有；
+          这一枚是新增的信封形状，不是新协议（协议版本仍为 1），它不走私有快照那条路（快照里该遮的照旧遮），也不进引擎、不进录像。
+          名单现在只能看、点不动：勾哪一颗与确认那颗钮是腿3（⑤d），还没接到客人这边。
           这一版不防作弊：它仍然只是传话，线上是明文，而它信的是连接自己带来的那串身份号，没有钥匙也没有验证；
           所以跑传话程序的那台机器、以及在网络上偷听这条线的人，照样看得见别人那一席的那些字与牌面。
-          还没做的：客人自己那一席的候选名单与点将＝⑤c／⑤d、掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
+          还没做的：客人点将与确认那颗钮＝⑤d、掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
         </p>
       </div>
     </div>

@@ -8,6 +8,7 @@ import {
   ourVersionStamp,
   parseEnvelope,
   type NetEnvelope,
+  type NetDraftListFrame,
   type NetDraftProgressRow,
   type NetLinkRow,
   type NetMoveItem,
@@ -1011,6 +1012,115 @@ describe('⑤b 征召进度表：只有房主那台机器说得准走到第几�
     await nextTick();
     expect(tablesA).toEqual([ROWS, ROWS]);
     expect(tablesB).toEqual([ROWS, ROWS]);
+
+    guestA.leave();
+    guestB.leave();
+    host.leave();
+  });
+});
+
+/**
+ * 切片⑤c（v2.9.25）：那一格候选名单是**指名**的。
+ * 用户 2026-10-30 那句「每个玩家只能看到自己的候选将领和已选将领，而不是能看到全部」
+ * 在客人端就落成一句话：不是我的那一格，一个字也不采纳。
+ * 这里量的是客户端自己那道闸；传话程序按 `to` 投递那一道住在 `scripts/net-relay.test.mjs`——
+ * 两道闸各管各的，任何一道失守都不该漏（所以下面那两场假线故意让消息照旧抄给全屋）。
+ */
+describe('⑤c 逐席候选名单：只采纳房主指名发给我的那一帧', () => {
+  const OTHER = 'guest-2';
+  const FRAME: NetDraftListFrame = {
+    seat: 2,
+    total: 10,
+    instruction: '选择10名将领（群势力1-3名，当前1名）',
+    main: [{ key: 'm0', name: '夏侯惇', faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: ['刚勇'] }],
+    qun: [{ key: 'q0', name: '华雄', faction: '群', type: '武将', hp: 4, meleeAtk: 3, rangedAtk: 1, skills: [] }],
+    picked: ['q0'],
+  };
+  const inRoom = () => guestState({ phase: 'in-room', peers: [HOST, GUEST] });
+  const toMe = (over: Partial<NetDraftListFrame> = {}) =>
+    text({ t: 'draftlist', from: HOST.id, to: GUEST.id, ...FRAME, ...over });
+
+  it('房主指名发给我的那一帧 ⇒ 七个字段原样交出去，名册与回程各一个字节也不动（客人不自算名单）', () => {
+    const before = inRoom();
+    const step = stepSession(before, toMe());
+    expect(step.draftList).toEqual(FRAME);
+    expect(step.state).toBe(before);
+    expect(step.sends).toEqual([]);
+  });
+
+  it('指名给别人的那一帧 ⇒ 一个字也不采纳，名册也不动（别人的候选与已选不上我这一屏）', () => {
+    const before = inRoom();
+    const step = stepSession(before, text({ t: 'draftlist', from: HOST.id, to: OTHER, ...FRAME }));
+    expect(step.draftList).toBeUndefined();
+    expect(step.state).toBe(before);
+  });
+
+  it('收件人写歪（空串以外的怪形状由协议层先拒）⇒ 这里只认逐字等于我自己那串号', () => {
+    const step = stepSession(inRoom(), toMe({ seat: 3 }));
+    expect(step.draftList!.seat).toBe(3); // 采纳的是那一格的内容，不是"谁坐这一席"由客人自己改
+    const notMe = stepSession(inRoom(), text({ t: 'draftlist', from: HOST.id, to: `${GUEST.id} `, ...FRAME }));
+    expect(notMe.draftList).toBeUndefined();
+  });
+
+  it('客人冒充房主发这一帧 ⇒ 不收（征召这本账只有房主那台机器说得准）', () => {
+    const before = guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: OTHER, name: '客人乙', role: 'guest' }] });
+    const step = stepSession(before, text({ t: 'draftlist', from: OTHER, to: GUEST.id, ...FRAME }));
+    expect(step.draftList).toBeUndefined();
+    expect(step.state.note).toContain('不是房主发来');
+  });
+
+  it('还没进房（名册里根本没有房主）时收到的那一帧也不收——没有"谁说的算"就没有可抄的', () => {
+    const step = stepSession(guestState(), toMe());
+    expect(step.draftList).toBeUndefined();
+  });
+
+  it('房主一侧不采纳（他自己就是出处），客人发来的也不当名单用', () => {
+    const before = hostState({ phase: 'in-room', peers: [HOST, GUEST] });
+    const step = stepSession(before, text({ t: 'draftlist', from: GUEST.id, to: HOST.id, ...FRAME }));
+    expect(step.draftList).toBeUndefined();
+    expect(step.state).toBe(before);
+  });
+
+  it('假传话线：指名给甲的那一帧只有甲采纳——乙那侧的线也听见了，但他不采纳', async () => {
+    const relay = new FakeRelay();
+    const mineA: NetDraftListFrame[] = [];
+    const mineB: NetDraftListFrame[] = [];
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    await nextTick();
+    const guestA = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id,
+        socketFactory: relay.factory, onDraftList: (f) => mineA.push(f),
+      },
+      () => {},
+    );
+    const guestB = joinRoom(
+      {
+        role: 'guest', name: '客人乙', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: OTHER,
+        socketFactory: relay.factory, onDraftList: (f) => mineB.push(f),
+      },
+      () => {},
+    );
+    await nextTick();
+
+    expect(host.send({ t: 'draftlist', from: HOST.id, to: GUEST.id, ...FRAME })).toBe(true);
+    await nextTick();
+    expect(mineA).toEqual([FRAME]);
+    expect(mineB).toEqual([]);
+
+    // 客人自己往房间里发一帧指名给我的 ⇒ 谁都不采纳（能发不等于会被认）。
+    expect(guestB.send({ t: 'draftlist', from: OTHER, to: GUEST.id, ...FRAME })).toBe(true);
+    await nextTick();
+    expect(mineA).toHaveLength(1);
+
+    // 指名给乙的那一帧走乙的路：甲不再跟着变。
+    expect(host.send({ t: 'draftlist', from: HOST.id, to: OTHER, ...FRAME, seat: 3 })).toBe(true);
+    await nextTick();
+    expect(mineA).toHaveLength(1);
+    expect(mineB).toEqual([{ ...FRAME, seat: 3 }]);
 
     guestA.leave();
     guestB.leave();

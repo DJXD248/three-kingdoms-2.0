@@ -8,14 +8,17 @@
  * （切片⑤a 起这里还多收着房主算好的那张准备表，以及从它派生出来的那句"还等谁"——
  *  派生物单独占一格的存在理由只有一个：界面要一个稳定的引用，每次现算就会每次都说"变了"。）
  * （切片⑤b 起再多收一张征召进度表：还是那句"房主算、客人抄"，表里只有数量，没有牌。）
+ * （切片⑤c 起再多收**我自己那一席的候选名单**：这一格是私有的——一台机器只有一个身份号，
+ *  所以这里存的必然是"发给我的那一份"，别人那一格从来没有到过这一格。）
  */
 import type { EngineState } from '../core/GameState';
-import type { NetDraftProgressRow, NetLinkRow, NetReadyRow, NetSeatRow } from './netProtocol';
+import type { NetDraftListFrame, NetDraftProgressRow, NetLinkRow, NetReadyRow, NetSeatRow } from './netProtocol';
 import type { NetRole, RoomConnection } from './netSession';
 import type { IncomingAction } from './netHostAuthority';
 import type { IncomingReady, ReadyGate } from './netReady';
 import { gateOfReadyRows, sameReadyRows } from './netReady';
 import { sameDraftProgressRows } from './netDraftProgress';
+import { sameDraftListFrames } from './netDraftList';
 import { isRestorableEngineState } from '../store/gameStateAdapter';
 import { sameRows } from './netHeartbeat';
 import { seatOfPeer, sameMoveLists, sameSeatRows, type SeatMoveList } from './netSeat';
@@ -70,6 +73,13 @@ let gateGuests = -1;
  * 掷骰、分势力那几段还没有进度可报，不是"报了一张空表"。
  */
 let draftProgress: NetDraftProgressRow[] | null = null;
+/**
+ * 切片⑤c（v2.9.25）：**我自己这一席**的候选名单那一格（房主指名发给我的那一份）。
+ * 与上面那张进度表分开放的理由就是"私有／全桌"这一刀：进度表换了，我这一格可以一个字没动，
+ * 反之也是——房主每勾一名都会重发我这一格，而那张全桌表只是那个数字在动。
+ * `null`＝还没收到属于我这一格的那一帧（没开联机房、这台机器是房主、刚连线、或刚退房）。
+ */
+let draftList: NetDraftListFrame | null = null;
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -115,6 +125,7 @@ export function attachRoom(room: ActiveRoom): void {
   refusal = null;
   readyTable = null;
   draftProgress = null;
+  draftList = null;
   syncStartGate();
   notify();
 }
@@ -129,6 +140,7 @@ export function detachRoom(): void {
   refusal = null;
   readyTable = null;
   draftProgress = null;
+  draftList = null;
   syncStartGate();
   notify();
 }
@@ -247,6 +259,23 @@ export function receiveDraftProgress(rows: NetDraftProgressRow[] | null): boolea
 
 export function getDraftProgress(): NetDraftProgressRow[] | null {
   return draftProgress;
+}
+
+/**
+ * 切片⑤c：我自己那一席的候选名单。与进度表同一格纪律——内容没变就保留同一个引用并返回 false
+ * （房主每次点将、每次界面重绘都会问一遍，而多数时候我这一格根本没动）。
+ * 这里**不收 null**：线上传的那一帧永远是个对象（"没轮到你"也是带着空名单的一帧，见 `netDraftList`），
+ * 清空只由换房／退房那一两条路做。
+ */
+export function receiveDraftList(frame: NetDraftListFrame): boolean {
+  if (sameDraftListFrames(draftList, frame)) return false;
+  draftList = frame;
+  notify();
+  return true;
+}
+
+export function getDraftList(): NetDraftListFrame | null {
+  return draftList;
 }
 
 /**

@@ -3,9 +3,9 @@
  * 被拒时把原因原文显示，并且界面上写明"还没做到哪一步"——不让人误以为已经能开一局联机。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import OnlineLobby from './OnlineLobby';
-import { NET_PROTOCOL_VERSION, encodeEnvelope, ourVersionStamp, type NetEnvelope } from '../network/netProtocol';
+import { NET_PROTOCOL_VERSION, encodeEnvelope, ourVersionStamp, type NetDraftItem, type NetDraftListFrame, type NetEnvelope } from '../network/netProtocol';
 import { buildBroadcastView } from '../network/snapshotView';
 import { MIN_BROADCAST_INTERVAL_MS } from '../network/snapshotBroadcaster';
 import { detachRoom, getActiveRoom } from '../network/netRoom';
@@ -595,6 +595,122 @@ describe('⑤b 大厅里的征召进度：客人看见"走到第几席"，看不
   });
 });
 
+/**
+ * 联机切片⑤·腿2（⑤c）：客人屏幕上**自己那一席**的候选名单。
+ *
+ * 用户 2026-10-30 逐字裁过「每个玩家只能看到自己的候选将领和已选将领，而不是能看到全部」，
+ * 而这一版的投递口径是"房主按席位各算一帧、指名发给对应的那个人"。所以这一组量的不是判据
+ * （判据住 `network/netDraftList`，隐私那条住 `netDraftListPrivacy.test.ts`），量的是接线：
+ * ㈠线上那一份到得了屏幕、上墙的字就是收到的字；
+ * ㈡指名给别人／不是房主的那两份一律不上墙；
+ * ㈢这一格只挂客人那屏（房主看的是真的征召面板，不需要一份抄来的名单）；
+ * ㈣ `NetSetupPanel` 那句「再下面那一格」必须真的对得上位置。
+ */
+describe('⑤c 大厅里的候选名单：只画指名发给我的那一份，点不动', () => {
+  async function inRoomAsGuest() {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('DDDDDD');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    const me = myId(socket);
+    await receive(socket, {
+      t: 'roster', from: 'host-9',
+      peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }],
+    });
+    socket.sent.length = 0;
+    return { socket, me };
+  }
+
+  const card = (key: string, name: string): NetDraftItem => ({
+    key, name, faction: '群', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: ['突袭'],
+  });
+
+  const frame = (patch: Partial<NetDraftListFrame> = {}): NetDraftListFrame => ({
+    seat: 2,
+    total: 10,
+    instruction: '选择10名将领（群势力1-3名，当前0名）',
+    main: [card('m0', '华雄'), card('m1', '吕布')],
+    qun: [card('q0', '张角')],
+    picked: ['m0'],
+    ...patch,
+  });
+
+  it('还没收到属于我这一席的那一格＝一句实话，不是一块让人以为卡住的空白', async () => {
+    await inRoomAsGuest();
+    expect(text()).toContain('你这一席的候选名单');
+    expect(text()).toContain('还没收到属于你这一席的那一格');
+  });
+
+  it('房主指名发给我的那一份逐字上墙：两张名单、那个分母与"这一席该做什么"全是收到的', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
+    expect(text()).toContain('第 2 席：选择10名将领（群势力1-3名，当前0名）');
+    expect(text()).toContain('⚔️ 华雄｜群｜❤4 ⚔2 🏹1');
+    expect(text()).toContain('突袭');
+    expect(text()).toContain('本势力候选（2 张）');
+    expect(text()).toContain('群候选（1 张）');
+    expect(text()).toContain('已选 1/10');
+    expect(text()).not.toContain('还没收到属于你这一席的那一格');
+  });
+
+  it('位置编号不上屏：名单靠"第几张"认，档案号压根没发到线上', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
+    expect(text()).not.toMatch(/m0|m1|q0/);
+  });
+
+  it('指名给别人的那一份不上我的屏：这一格只认收件人是自己的那一帧', async () => {
+    const { socket } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: 'someone-else', ...frame({ seat: 3 }) });
+    expect(text()).toContain('还没收到属于你这一席的那一格');
+    expect(text()).not.toContain('华雄');
+  });
+
+  it('不是房主发来的那一份不上我的屏（客人也能往房间里发这一条，那就成了假的候选名单）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'guest-x', to: me, ...frame() });
+    expect(text()).toContain('还没收到属于你这一席的那一格');
+    expect(text()).not.toContain('华雄');
+    expect(text()).toContain('收到不是房主发来的候选名单，已忽略');
+  });
+
+  it('这一格点不动：牌面不是钮，界面上明写勾与确认是腿3（⑤d）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
+    const cell = screen.getByText(/你这一席的候选名单/).closest('div');
+    expect(cell).not.toBeNull();
+    // 三张牌全是不能点的 `li`；这一格里一张钮也没有（大厅别处有钮，所以判据按这一格取）。
+    expect(within(cell as HTMLElement).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(cell as HTMLElement).queryAllByRole('button')).toHaveLength(0);
+    expect(text()).toContain('只能看、点不动');
+    expect(text()).toContain('⑤d');
+  });
+
+  it('这一格只挂客人那屏：房主那桌看的是真的征召面板，不挂一份抄来的名单', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    await clickButton(/^🏠 开房间/);
+    await settle();
+    expect(text()).not.toContain('你这一席的候选名单');
+  });
+
+  it('那句「再下面那一格」得对得上位置：进度表真的排在候选名单上面', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'draftprogress', from: 'host-9',
+      rows: [{ seat: 1, name: '房主乙', state: 'picking', picked: 3, total: 10 }],
+    });
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
+    const progressRow = screen.getByText(/征召进度（这张表由房主算/);
+    const listRow = screen.getByText(/你这一席的候选名单/);
+    expect(progressRow.compareDocumentPosition(listRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('收到候选名单不往外回话：这一格是给人看的，不是一条请求（更不替我勾一颗）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
+    expect(socket.sent).toEqual([]);
+  });
+});
+
 describe('⑤·腿1（㈢ 演出刀）客人屏上的开局那一段：只画房主定下来发过来的数', () => {
   /** 走到"已连上、名册上有房主也有我"那一步（入口与 ⑤a／⑤b 那两组各抄一份，互不牵动）。 */
   async function inRoomAsGuest() {
@@ -700,9 +816,11 @@ describe('⑤·腿1（㈢ 演出刀）客人屏上的开局那一段：只画房
     await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('generalDraft', twoSeats) });
     expect(text()).toContain('各家挑到哪儿了看下面那张征召进度表');
     expect(text()).not.toMatch(/SECRET/);
-    // ⑤c／⑤d 还没做 ⇒ 这一格必须自己说破，不能让人以为"看不见是我这边的问题"。
-    // （页脚那段散文里也提到 ⑤c／⑤d，所以判据取这一格的专属那句，不取编号。）
-    expect(text()).toContain('这一段现在只有进度可看');
+    // ⑤c 做完了、⑤d 还没做 ⇒ 这一格说破的是"点将那颗钮还没接到你这边"，
+    // 而那句"这一段现在只有进度可看"必须已经不在（留着它＝把人往错误的地方引）。
+    // （页脚那段散文里也提到 ⑤d，所以判据取这一格的专属那句，不取编号。）
+    expect(text()).toContain('你自己那一席的候选名单在再下面那一格');
+    expect(text()).not.toContain('这一段现在只有进度可看');
   });
 
   it('那句「下面那张征召进度表」得对得上位置：开局那一格真的排在进度表上面', async () => {

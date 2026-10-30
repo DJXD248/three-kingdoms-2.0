@@ -5,6 +5,7 @@ import {
   parseEnvelope,
   versionMismatch,
   type NetEnvelope,
+  type NetDraftListFrame,
   type NetDraftProgressRow,
   type NetLinkRow,
   type NetMoveItem,
@@ -85,6 +86,12 @@ export type StepResult = {
    * **一张牌也不在这张表里**（用户 2026-10-30 裁：「和热座一样」不延伸到别人那几格的私有信息）。
    */
   draftProgress?: NetDraftProgressRow[];
+  /**
+   * 切片⑤c（客人侧）：房主算给**我这一席**的那一格候选名单（＋我勾了哪几颗＋这一席该做什么的那句人话）。
+   * 指名发给别人的那一帧在这里丢掉——用户 2026-10-30 那句「每个玩家只能看到自己的候选将领和已选将领，
+   * 而不是能看到全部」在客人端就落成这一句：不是我的那一格，一个字也不采纳。
+   */
+  draftList?: NetDraftListFrame;
 };
 
 export function newPeerId(): string {
@@ -220,6 +227,26 @@ export function stepSession(
     }
     return { state, sends: [], draftProgress: envelope.rows, saw };
   }
+  // ── 切片⑤c：那一格候选名单是指名发的（传话线按 `to` 只投那一条，但客人这边照样自己把关一遍）──
+  if (envelope.t === 'draftlist') {
+    const fromHost = state.peers.some((p) => p.id === envelope.from && p.role === 'host');
+    if (!fromHost) {
+      // 有人冒充房主往房间里发候选名单 ⇒ 说一句（与 seatmap／readytable／draftprogress 同一判据：
+      // 让人对着不动的界面猜"是不是我这侧出了问题"是最坏的一种安静）。
+      return { state: { ...state, note: '收到不是房主发来的候选名单，已忽略' }, sends: [], saw };
+    }
+    // 指名给别人的那一格：安静丢掉（`moves`／`actno` 同一条判据——不是我的那一份，一个字也不采纳）。
+    if (envelope.to !== state.selfId) return { state, sends: [], saw };
+    return {
+      state,
+      sends: [],
+      draftList: {
+        seat: envelope.seat, total: envelope.total, instruction: envelope.instruction,
+        main: envelope.main, qun: envelope.qun, picked: envelope.picked,
+      },
+      saw,
+    };
+  }
   return { state, sends: [], saw };
 }
 
@@ -340,6 +367,11 @@ export function joinRoom(
      * 与准备表同一格纪律：客人只照抄进 `netRoom`，自己不在这里算进度。
      */
     onDraftProgress?: (rows: NetDraftProgressRow[]) => void;
+    /**
+     * 切片⑤c（客人侧）：房主算给**我这一席**的那一格候选名单。与 ⑤b 那张进度表各存一格：
+     * 这一格是发给一个人的私有信息，那张表是全桌的进度，界面读的那一格换了内容不代表另一格也该重画。
+     */
+    onDraftList?: (frame: NetDraftListFrame) => void;
   },
   onChange: (state: SessionState) => void,
 ): RoomConnection {
@@ -427,6 +459,8 @@ export function joinRoom(
     if (next.readyTable) args.onReadyTable?.(next.readyTable);
     // 切片⑤b：那张进度表只有客人会收到（发的人正是房主自己）。
     if (next.draftProgress) args.onDraftProgress?.(next.draftProgress);
+    // 切片⑤c：那一格候选名单同理——而且能走到这一行的，已经是"房主发的、收件人是我"的那一份。
+    if (next.draftList) args.onDraftList?.(next.draftList);
   };
 
   link = openNetLink(args.url, {

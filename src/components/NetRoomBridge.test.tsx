@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render } from '@testing-library/react';
 import NetRoomBridge from './NetRoomBridge';
-import { attachRoom, bumpNetRoom, deliverHostAction, deliverHostReady, detachRoom, getDraftProgress, getReadyTable, getSeatMap, getStartGate, type ActiveRoom } from '../network/netRoom';
+import { attachRoom, bumpNetRoom, deliverHostAction, deliverHostReady, detachRoom, getDraftList, getDraftProgress, getReadyTable, getSeatMap, getStartGate, type ActiveRoom } from '../network/netRoom';
 import type { RoomConnection } from '../network/netSession';
 import type { EngineState } from '../core/GameState';
 import { useGameStore, type Player } from '../store/gameStore';
@@ -598,5 +598,163 @@ describe('NetRoomBridge：房主那张征召进度表从这里出', () => {
     await wait(10);
     expect(progressFrames(sent)).toHaveLength(1);
     expect(getDraftProgress()).toBeNull();
+  });
+});
+
+const draftLists = (sent: Record<string, unknown>[]) => wire(sent, 'draftlist');
+
+/**
+ * 切片⑤c 的接线证人：逐席候选名单**按人各算一帧、指名发**。
+ * 这里量的是接线那三件事——席位从哪张表读、`to` 填的是谁、房主自己那屏为什么不抄这一格；
+ * 帧里该装什么住 `netDraftList`，"别席漏没漏"住 `netDraftListPrivacy.test.ts`。
+ */
+describe('NetRoomBridge：逐席候选名单按人指名发从这里出', () => {
+  /** 三席的牌桌：第 1 席房主（绑 host-1）、第 2 席那位客人（绑 g-1）；第 3 席先空着，
+   *  等名册上真来了第二个人，房主这边按 join 顺序把他绑上去。 */
+  function engineTwo(): EngineState {
+    const base = engineState('a');
+    return {
+      ...base,
+      players: [
+        { ...base.players[0] },
+        { id: 2, name: '客人甲', faction: '蜀', hand: [{ id: 'p2-h1', name: '暗牌二号' }], baseHp: 6, isAlive: true },
+        { id: 3, name: '客人乙', faction: '吴', hand: [{ id: 'p3-h1', name: '暗牌三号' }], baseHp: 6, isAlive: true },
+      ],
+    } as EngineState;
+  }
+
+  /** 房主那台机器摆成"正在征召第 `draftPlayerIndex` 席、勾了 `picked` 名"（名单里全是本会话编的假将，真名由隐私证人管）。 */
+  function setDraftLists(picked: number, draftPlayerIndex = 0, phase: 'generalDraft' | 'diceRoll' = 'generalDraft') {
+    const main = Array.from({ length: 2 }, (_, i) => ({ id: `wei_00${i}`, name: `假将${i}`, faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: [{ name: '假技能' }] }));
+    const qun = [{ id: 'qun_000', name: '假群将', faction: '群', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: [] }];
+    const patch = {
+      phase,
+      draftPlayerIndex,
+      draftGenerals: main,
+      draftQunGenerals: qun,
+      selectedDraftGenerals: [...main.slice(0, Math.min(picked, 2)), ...(picked > 2 ? qun : [])],
+      players: [
+        { id: 1, name: '房主甲', faction: '魏', generalPool: [] },
+        { id: 2, name: '客人甲', faction: '蜀', generalPool: [] },
+        { id: 3, name: '客人乙', faction: '吴', generalPool: [] },
+      ],
+    } as unknown as Partial<ReturnType<typeof useGameStore.getState>>;
+    act(() => {
+      useGameStore.setState(patch);
+    });
+    return { main, qun };
+  }
+
+  it('接上那一刻正在征召第 1 席 ⇒ 屋里每位客人各收**指名给他**的一帧；第 2 席那一帧是"还没轮到你"、一张牌也没有', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    setDraftLists(1);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+
+    const frames = draftLists(sent);
+    expect(frames).toHaveLength(1); // 屋里只有 g-1 这一位客人（房主那一格不经过这条线）
+    expect(frames[0].to).toBe('g-1');
+    expect(frames[0].from).toBe('host-1');
+    expect(frames[0].seat).toBe(2);
+    expect(frames[0].main).toEqual([]);
+    expect(frames[0].instruction).toContain('还没轮到你这一席');
+  });
+
+  it('房主确认到第 2 席 ⇒ 他那一帧真的带上他自己的名单（"名单送到位"就是这一条）', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    const { main } = setDraftLists(1);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(draftLists(sent)[0].main).toEqual([]);
+
+    setDraftLists(0, 1);
+    await wait(10);
+    const last = draftLists(sent).at(-1)!;
+    expect(last.to).toBe('g-1');
+    expect(last.seat).toBe(2);
+    expect((last.main as Array<{ name: string }>).map((i) => i.name)).toEqual([main[0].name, main[1].name]);
+  });
+
+  it('房主自己那屏不抄这一格：他是出处，看的是真的征召面板（同一张桌上不许出现两份读数）', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    setDraftLists(2);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(draftLists(sent)).toHaveLength(1);
+    expect(getDraftList()).toBeNull();
+  });
+
+  it('只是界面重绘（store 换了引用、每一格都没换）⇒ 一条也不多发', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    setDraftLists(1);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(draftLists(sent)).toHaveLength(1);
+
+    const same = useGameStore.getState().draftGenerals.slice();
+    act(() => {
+      useGameStore.setState({ draftGenerals: same });
+    });
+    await wait(10);
+    expect(draftLists(sent)).toHaveLength(1);
+  });
+
+  it('掷骰那一段：每位客人各收一句"现在不在征召那一段"，之后一直不发（不是发一张编出来的名单）', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    setDraftLists(0, 0, 'diceRoll');
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(draftLists(sent)).toHaveLength(1);
+    expect(draftLists(sent)[0].instruction).toContain('现在不在征召那一段');
+    expect(draftLists(sent)[0].main).toEqual([]);
+
+    setDraftLists(0, 0, 'diceRoll');
+    await wait(10);
+    expect(draftLists(sent)).toHaveLength(1);
+  });
+
+  it('名册变了而每一帧一字未动 ⇒ 逐人重发一遍：迟来的那位一进来就得看得见自己那一格', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    setDraftLists(1);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(draftLists(sent)).toHaveLength(1);
+
+    (room.connection.state.peers as Array<{ id: string; name: string; role: 'host' | 'guest' }>)
+      .push({ id: 'g-2', name: '客人乙', role: 'guest' });
+    bumpNetRoom();
+    await wait(30);
+
+    const frames = draftLists(sent);
+    expect(frames).toHaveLength(3); // g-1 那帧重发一遍 + 新来的那位一帧
+    expect(frames[1].to).toBe('g-1');
+    expect(frames[2].to).toBe('g-2');
+    expect(frames[2].seat).toBe(3);
+  });
+
+  it('退房后这一格不再往外发（接线整套拆掉，不往上一间房里递别人的名单）', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    setDraftLists(1);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    detachRoom();
+
+    setDraftLists(0, 1);
+    await wait(10);
+    expect(draftLists(sent)).toHaveLength(1);
   });
 });

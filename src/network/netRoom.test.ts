@@ -10,6 +10,7 @@ import {
   deliverHostReady,
   detachRoom,
   getActiveRoom,
+  getDraftList,
   getDraftProgress,
   getGuestSnapshot,
   getMyNetSeat,
@@ -19,6 +20,7 @@ import {
   getSeatMap,
   getSeatMoves,
   getStartGate,
+  receiveDraftList,
   receiveDraftProgress,
   receiveGuestSnapshot,
   receiveNetStatus,
@@ -29,6 +31,7 @@ import {
   setHostReadySink,
   subscribeNetRoom,
 } from './netRoom';
+import type { NetDraftListFrame } from './netProtocol';
 import { joinRoom } from './netSession';
 
 const VALID = {
@@ -552,5 +555,73 @@ describe('⑤b 征召进度表也住这一格（房主算、客人照抄，两�
     receiveDraftProgress(TWO_ROWS);
     detachRoom();
     expect(getDraftProgress()).toBeNull();
+  });
+});
+
+/**
+ * 切片⑤c（v2.9.25）：我自己那一席的候选名单也住这一格，但与上面那张全桌表**分开一格**。
+ * 分开放的理由就一条：那张表换了，我这一格可以一个字没动（反之也是）——
+ * 界面读的那一格换了内容不代表另一格也该重画。
+ */
+describe('⑤c 我自己那一席的候选名单也住这一格（与那张全桌表各走各的）', () => {
+  const ITEM = { key: 'm0', name: '夏侯惇', faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: ['刚勇'] };
+  const FRAME: NetDraftListFrame = {
+    seat: 2, total: 10, instruction: '选择10名将领（群势力1-3名，当前0名）', main: [ITEM], qun: [], picked: [],
+  };
+  const TWO_ROWS = [{ seat: 1, name: '玩家1', state: 'picking' as const, picked: 3, total: 10 }];
+
+  function side(role: 'host' | 'guest') {
+    const connection = {
+      ...fakeConnection(),
+      state: { ...fakeConnection().state, role, selfId: role === 'host' ? 'h' : 'a', name: role === 'host' ? '房主' : '客人甲' },
+    };
+    attachRoom({ role, name: connection.state.name, roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+  }
+
+  it('没进房＝这一格是空的（本地桌、纯 AI 桌从来不有一张指名发给我的名单）', () => {
+    expect(getDraftList()).toBeNull();
+  });
+
+  it('同一帧原样重发＝没变：不换引用、不通知界面（房主每勾一名都会重发我这一格，多数时候内容没动）', () => {
+    side('guest');
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+    expect(receiveDraftList(FRAME)).toBe(true);
+    expect(getDraftList()).toBe(FRAME);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    expect(receiveDraftList({ ...FRAME, main: [{ ...ITEM }] })).toBe(false);
+    expect(getDraftList()).toBe(FRAME);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    // 房主那边勾了一颗 ⇒ 内容真变了：换引用 + 通知一次
+    expect(receiveDraftList({ ...FRAME, picked: ['m0'] })).toBe(true);
+    expect(getDraftList()).not.toBe(FRAME);
+    expect(seen).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it('与那张全桌进度表互不牵扯：表换了不许动我这格的引用，我这格换了也不许动表', () => {
+    side('guest');
+    receiveDraftProgress(TWO_ROWS);
+    receiveDraftList(FRAME);
+    const listBefore = getDraftList();
+
+    expect(receiveDraftProgress([{ ...TWO_ROWS[0], picked: 7 }])).toBe(true);
+    expect(getDraftList()).toBe(listBefore);
+
+    const rowsBefore = getDraftProgress();
+    expect(receiveDraftList({ ...FRAME, instruction: '你这一席的征召已经完成了（你那份池子已经定下来）' })).toBe(true);
+    expect(getDraftProgress()).toBe(rowsBefore);
+  });
+
+  it('attach／detach 把这一格一起清掉：换房不能抱着上一屋里别人发给我的名单', () => {
+    side('guest');
+    receiveDraftList(FRAME);
+    side('host');
+    expect(getDraftList()).toBeNull();
+    receiveDraftList(FRAME);
+    detachRoom();
+    expect(getDraftList()).toBeNull();
   });
 });

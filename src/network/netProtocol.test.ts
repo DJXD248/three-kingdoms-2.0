@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NETWORK_SNAPSHOT_VERSION } from './StateSerializer';
 import {
+  MAX_DRAFT_INSTRUCTION_LENGTH,
+  MAX_DRAFT_ITEMS,
   MAX_DRAFT_PICK_COUNT,
   MAX_DRAFT_PROGRESS_ROWS,
+  MAX_DRAFT_SKILLS,
+  MAX_DRAFT_STAT_VALUE,
   MAX_NAME_LENGTH,
   MAX_MOVE_ITEMS,
+  MAX_MOVE_LABEL_LENGTH,
   MAX_OMITTED_MOVES,
   MAX_READY_ROWS,
   MAX_SEAT_ROWS,
@@ -19,10 +24,12 @@ import {
   ourVersionStamp,
   parseEnvelope,
   versionMismatch,
+  type NetDraftItem,
   type NetDraftProgressRow,
   type NetReadyRow,
   type VersionStamp,
 } from './netProtocol';
+import { PRIVATE_REVEALED_KEYS } from './snapshotView';
 
 const STAMP: VersionStamp = ourVersionStamp();
 
@@ -122,7 +129,7 @@ describe('版本握手：不一致就明确拒，绝不静默半连', () => {
   });
 });
 
-describe('线上证人：信封只认这十六种形状', () => {
+describe('线上证人：信封只认这十七种形状', () => {
   it('往返一致', () => {
     const envelope = { t: 'hello', from: 'a', name: '张三', v: STAMP } as const;
     expect(parseEnvelope(encodeEnvelope(envelope))).toEqual(envelope);
@@ -573,6 +580,126 @@ describe('⑤b 征召进度表信封：一席一行，只有座次与两个数',
 });
 
 /**
+ * 切片⑤c（v2.9.25）：房主算给**某一席本人**的那一格候选名单。
+ * 用户 2026-10-30 裁：「每个玩家只能看到自己的候选将领和已选将领，而不是能看到全部」
+ * ⇒ 这一枚与 ⑤b 那张表相反：牌面**是**它的内容，而它的边界全在"指名"那一格上——
+ * `to` 在类型里必填，解析器也必填（少一个收件人＝整条拒，绝不退回全房广播）。
+ * 这里量的是线上证人（形状与上界），"别席那一格漏没漏"住 `netDraftListPrivacy.test.ts`。
+ */
+describe('⑤c 逐席候选名单信封：牌面上线，但只许上一个收件人的那一格', () => {
+  const ITEM: NetDraftItem = {
+    key: 'm0', name: '夏侯惇', faction: '魏', type: '武将',
+    hp: 4, meleeAtk: 2, rangedAtk: 1, skills: ['刚勇', '疾走'],
+  };
+  const QUN: NetDraftItem = { ...ITEM, key: 'q0', name: '华雄', faction: '群' };
+  const FRAME = {
+    seat: 2, total: 10, instruction: '选择10名将领（群势力1-3名，当前1名）',
+    main: [ITEM], qun: [QUN], picked: ['q0'],
+  };
+  const text = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({ t: 'draftlist', from: 'HOST-1', to: 'GUEST-B', ...FRAME, ...over });
+
+  it('往返一致：房主发的那一帧原样收回来，一个字段不多、一个不少', () => {
+    const round = parseEnvelope(encodeEnvelope({ t: 'draftlist', from: 'a', to: 'b', ...FRAME }));
+    expect(round).toEqual({ t: 'draftlist', from: 'a', to: 'b', ...FRAME });
+  });
+
+  it('`to` 必填：少一个收件人＝整条拒（半截的"发给谁"比没有更危险——别人的名单会画到自己屏上）', () => {
+    expect(parseEnvelope(text({ to: undefined }))).toBeNull();
+    expect(parseEnvelope('{"t":"draftlist","from":"HOST-1","seat":2,"total":10,"instruction":"x","main":[],"qun":[],"picked":[]}')).toBeNull();
+    expect(parseEnvelope(text({ to: '' }))).toBeNull();
+    expect(parseEnvelope(text({ to: 123 }))).toBeNull();
+    // 与 ⑤b 那张全桌表的对照：同一枚 `to`，那张表是"不是它的字段、丢掉"，这一枚是"整条拒"。
+    expect(parseEnvelope('{"t":"draftprogress","from":"a","to":"b","rows":[{"seat":1,"name":"甲","state":"done","picked":10,"total":10}]}'))
+      .not.toHaveProperty('to');
+  });
+
+  it('空名单收得下（"没轮到你"是一句真话），但不是数组、或压根没带 ⇒ 整条拒', () => {
+    const empty = { ...FRAME, main: [], qun: [], picked: [], instruction: '还没轮到你这一席（现在轮到第 1 席挑将）' };
+    expect(parseEnvelope(encodeEnvelope({ t: 'draftlist', from: 'a', to: 'b', ...empty }))).toEqual({ t: 'draftlist', from: 'a', to: 'b', ...empty });
+    for (const bad of ['"x"', 'null', '{}', '0', '[null]']) {
+      for (const field of ['main', 'qun', 'picked']) {
+        expect(parseEnvelope(text({ [field]: JSON.parse(bad) }))).toBeNull();
+      }
+    }
+    expect(parseEnvelope(text({ main: undefined }))).toBeNull();
+  });
+
+  it('位置编号在整帧里必须唯一：两张卡共用一个号 ⇒ 客人交回来的那一颗说不清是哪一张 ⇒ 整帧拒', () => {
+    expect(parseEnvelope(text({ main: [ITEM, { ...ITEM, name: '另一张' }] }))).toBeNull();
+    expect(parseEnvelope(text({ qun: [ITEM] }))).toBeNull(); // m0 同时在两份名单上
+    expect(parseEnvelope(text({ main: [ITEM, { ...ITEM, key: 'm1' }] }))).not.toBeNull();
+  });
+
+  it('`picked` 只许指这张名单上的号：指到没有的号、重复、空串、不是字符串 ⇒ 整帧拒（客人屏上不出现一条猜出来的"已选"）', () => {
+    expect(parseEnvelope(text({ picked: ['m7'] }))).toBeNull();
+    expect(parseEnvelope(text({ picked: ['q0', 'q0'] }))).toBeNull();
+    expect(parseEnvelope(text({ picked: [''] }))).toBeNull();
+    expect(parseEnvelope(text({ picked: [0] }))).toBeNull();
+    expect(parseEnvelope(text({ picked: [] }))).not.toBeNull();
+  });
+
+  it('档案号（`id`）不认也不回显：塞进牌面里，解析回来的那一颗没有这一格', () => {
+    const parsed = parseEnvelope(text({ main: [{ ...ITEM, id: 'general-0007', description: '一整段牌面文字' }], qun: [QUN] }));
+    const main = (parsed as { main: NetDraftItem[] }).main;
+    expect(Object.keys(main[0]).sort()).toEqual(['faction', 'hp', 'key', 'meleeAtk', 'name', 'rangedAtk', 'skills', 'type']);
+    expect(JSON.stringify(parsed)).not.toContain('general-0007');
+    expect(JSON.stringify(parsed)).not.toContain('一整段牌面文字');
+  });
+
+  it('一张卡少一样、点数不是非负整数、技能名超长 ⇒ 整帧拒（半张卡画到客人屏上就是一条猜出来的将）', () => {
+    const cases: [string, Record<string, unknown>][] = [
+      ['缺 key', { key: undefined }],
+      ['key 是空串', { ...ITEM, key: '' }],
+      ['name 是空串', { ...ITEM, name: '' }],
+      [`name 超过 ${MAX_MOVE_LABEL_LENGTH} 个字`, { ...ITEM, name: '一'.repeat(MAX_MOVE_LABEL_LENGTH + 1) }],
+      ['name 带控制字符', { ...ITEM, name: '夏侯\u0001惇' }],
+      ['hp 是字符串', { ...ITEM, hp: '4' }],
+      ['hp 是负数', { ...ITEM, hp: -1 }],
+      ['hp 不是整数', { ...ITEM, hp: 4.5 }],
+      [`hp 超过 ${MAX_DRAFT_STAT_VALUE}`, { ...ITEM, hp: MAX_DRAFT_STAT_VALUE + 1 }],
+      ['meleeAtk 是 null', { ...ITEM, meleeAtk: null }],
+      ['skills 不是数组', { ...ITEM, skills: '刚勇' }],
+      [`skills 超过 ${MAX_DRAFT_SKILLS} 条`, { ...ITEM, skills: Array.from({ length: MAX_DRAFT_SKILLS + 1 }, (_, i) => `技${i}`) }],
+      ['skills 里有一条是空串', { ...ITEM, skills: ['刚勇', ''] }],
+      ['type 干脆没带', { key: 'm0', name: '夏侯惇', faction: '魏', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: [] }],
+    ];
+    for (const [, mutated] of cases) {
+      expect(parseEnvelope(text({ main: [mutated as NetDraftItem], qun: [QUN] }))).toBeNull();
+    }
+  });
+
+  it('上界：两份名单各到 32 张收得下，多一张整帧拒（截断会让客人以为自己看到的就是全部）', () => {
+    const many = (prefix: string, n: number): NetDraftItem[] =>
+      Array.from({ length: n }, (_, i) => ({ ...ITEM, key: `${prefix}${i}` }));
+    expect(parseEnvelope(text({ main: many('m', MAX_DRAFT_ITEMS), qun: many('q', MAX_DRAFT_ITEMS), picked: [] }))).not.toBeNull();
+    expect(parseEnvelope(text({ main: many('m', MAX_DRAFT_ITEMS + 1), picked: [] }))).toBeNull();
+    expect(parseEnvelope(text({ qun: many('q', MAX_DRAFT_ITEMS + 1), picked: [] }))).toBeNull();
+    expect(parseEnvelope(text({ picked: many('m', MAX_DRAFT_ITEMS).map((i) => i.key), main: many('m', MAX_DRAFT_ITEMS) }))).not.toBeNull();
+    expect(parseEnvelope(text({ picked: many('m', MAX_DRAFT_ITEMS + 1).map((i) => i.key), main: many('m', MAX_DRAFT_ITEMS + 1) }))).toBeNull();
+  });
+
+  it('那几个数与那句话各自有封顶：合法到不了的数就是坏消息', () => {
+    // 席位号用的是 `moves`／`act`／`seatmap` 那同一把尺（整数、≤64），这一枚不自己造第二把。
+    expect(parseEnvelope(text({ seat: 65 }))).toBeNull();
+    expect(parseEnvelope(text({ seat: '2' }))).toBeNull();
+    expect(parseEnvelope(text({ total: MAX_DRAFT_PICK_COUNT }))).not.toBeNull();
+    expect(parseEnvelope(text({ total: MAX_DRAFT_PICK_COUNT + 1 }))).toBeNull();
+    expect(parseEnvelope(text({ instruction: '一'.repeat(MAX_DRAFT_INSTRUCTION_LENGTH) }))).not.toBeNull();
+    expect(parseEnvelope(text({ instruction: '一'.repeat(MAX_DRAFT_INSTRUCTION_LENGTH + 1) }))).toBeNull();
+    expect(parseEnvelope(text({ instruction: '' }))).toBeNull();
+    expect(parseEnvelope(text({ instruction: undefined }))).toBeNull();
+  });
+
+  it('这一枚协议版本仍为 1：新增的是同版本内的一种信封形状，私有视图那份放开名单一格没加', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(1);
+    expect(ourVersionStamp().proto).toBe(1);
+    // 名单一格没加＝这一枚新信封没有顺手把别人的牌面放进私有视图（派单硬要求 4）。
+    expect(PRIVATE_REVEALED_KEYS).toEqual(['hand', 'generalPool']);
+  });
+});
+
+/**
  * 切片⑥（v2.9.25）：传话程序按 `to` 投递，客户端按 `to` 决定采不采纳这一份。
  * 两边必须是**同一个收件人**，否则墙会被绕过：`{"to":"甲","to":"乙"}` 这种重复键，
  * 如果 `JSON.parse` 认后者而传话程序自己写的扫描认前者，那么本该只给乙的那份交给了甲，
@@ -590,14 +717,17 @@ describe('⑥ 重复 to 键：客户端与传话程序认同一个收件人', ()
     expect(recipientOf('{"t":"snapshot","from":"HOST-1","to":"GUEST-C","state":{"players":[]}}')).toBe('GUEST-C');
   });
 
-  it('清单与准备钮同样取后者（这三枚是装着某个席位私有内容的全部三种形状）', () => {
+  it('清单、准备钮、动手那一条同样取后者（这四枚是装着某个席位私有内容的全部四种形状）', () => {
     expect(recipientOf('{"t":"moves","from":"H","to":"B","to":"C","seat":2,"items":[],"omitted":0}')).toBe('C');
     expect(recipientOf('{"t":"ready","from":"H","to":"B","to":"C","on":true}')).toBe('C');
     expect(recipientOf('{"t":"act","from":"B","to":"H","to":"C","seat":2,"key":"0-END_TURN:abcd1234"}')).toBe('C');
+    // 切片⑤c 新增的那一枚：候选名单是指名发的，重复键的赢家必须与传话程序认的同一个。
+    expect(recipientOf('{"t":"draftlist","from":"H","to":"B","to":"C","seat":2,"total":10,"instruction":"x","main":[],"qun":[],"picked":[]}')).toBe('C');
   });
 
   it('后者那个号不合法 ⇒ 整条拒（不是"退回去用前者"）：投出去就是一次按坏消息投递', () => {
     expect(parseEnvelope('{"t":"snapshot","from":"HOST-1","to":"GUEST-B","to":"","state":{"players":[]}}')).toBeNull();
     expect(parseEnvelope('{"t":"snapshot","from":"HOST-1","to":"GUEST-B","to":123,"state":{"players":[]}}')).toBeNull();
+    expect(parseEnvelope('{"t":"draftlist","from":"H","to":"B","to":"","seat":2,"total":10,"instruction":"x","main":[],"qun":[],"picked":[]}')).toBeNull();
   });
 });
