@@ -217,10 +217,13 @@ describe('⑤c 逐席候选名单的隐私证人：真 store 走一遍，别席�
     }
   });
 
-  it('帧里只有那六个字段：座次／总数／一句话／两份名单／勾了哪几颗，别的键一律不存在', () => {
+  it('帧里只有那七个字段：座次／总数／一句话／两份名单／勾了哪几颗／够不够交卷，别的键一律不存在', () => {
     useGameStore.getState().distributeDraftGenerals();
     for (const w of wireFrames()) {
-      expect(Object.keys(w.frame).sort()).toEqual(['instruction', 'main', 'picked', 'qun', 'seat', 'total']);
+      // ⑤d 多出来的那一个 `canConfirm` 是一个布尔，不是一张牌、不是一个档案号——它把"够不够"这一句话
+      // 说清就完了，客人那边拿它决定那颗钮灰不灰，自己不再算第二遍（隐私口径没有因为它宽一寸）。
+      expect(Object.keys(w.frame).sort()).toEqual(['canConfirm', 'instruction', 'main', 'picked', 'qun', 'seat', 'total']);
+      expect(typeof w.frame.canConfirm).toBe('boolean');
       for (const item of [...w.frame.main, ...w.frame.qun]) {
         expect(Object.keys(item).sort()).toEqual(['faction', 'hp', 'key', 'meleeAtk', 'name', 'rangedAtk', 'skills', 'type']);
       }

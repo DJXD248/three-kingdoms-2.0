@@ -606,7 +606,7 @@ describe('⑤b 大厅里的征召进度：客人看见"走到第几席"，看不
  * ㈢这一格只挂客人那屏（房主看的是真的征召面板，不需要一份抄来的名单）；
  * ㈣ `NetSetupPanel` 那句「再下面那一格」必须真的对得上位置。
  */
-describe('⑤c 大厅里的候选名单：只画指名发给我的那一份，点不动', () => {
+describe('⑤c/⑤d 大厅里的候选名单：只画指名发给我的那一份，而这一格现在点得动', () => {
   async function inRoomAsGuest() {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('DDDDDD');
@@ -631,6 +631,7 @@ describe('⑤c 大厅里的候选名单：只画指名发给我的那一份，�
     main: [card('m0', '华雄'), card('m1', '吕布')],
     qun: [card('q0', '张角')],
     picked: ['m0'],
+    canConfirm: false,
     ...patch,
   });
 
@@ -673,16 +674,71 @@ describe('⑤c 大厅里的候选名单：只画指名发给我的那一份，�
     expect(text()).toContain('收到不是房主发来的候选名单，已忽略');
   });
 
-  it('这一格点不动：牌面不是钮，界面上明写勾与确认是腿3（⑤d）', async () => {
+  it('腿3 之前那两句"只能看、点不动"一个字都不许留（界面上现在说的是交回去的是什么）', async () => {
     const { socket, me } = await inRoomAsGuest();
     await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
-    const cell = screen.getByText(/你这一席的候选名单/).closest('div');
-    expect(cell).not.toBeNull();
-    // 三张牌全是不能点的 `li`；这一格里一张钮也没有（大厅别处有钮，所以判据按这一格取）。
-    expect(within(cell as HTMLElement).getAllByRole('listitem')).toHaveLength(3);
-    expect(within(cell as HTMLElement).queryAllByRole('button')).toHaveLength(0);
-    expect(text()).toContain('只能看、点不动');
-    expect(text()).toContain('⑤d');
+    expect(text()).not.toContain('只能看、点不动');
+    expect(text()).not.toContain('还没接到客人这边');
+    expect(text()).toContain('点一颗＝把房主这一帧上的那个位置编号交回给他');
+  });
+
+  it('点一张牌 ⇒ 线上只多出那一条：来路、收件人、席位与那个位置编号，将名与档案号一个也不在', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
+    socket.sent.length = 0;
+    const cell = screen.getByText(/你这一席的候选名单/).closest('div') as HTMLElement;
+    // 两份名单上三张牌＝三颗钮（+下面那颗「确认征召」）；点第二颗（吕布＝那一帧上的 m1）。
+    await within(cell).getAllByRole('button')[1].click();
+    await settle();
+    expect(socket.sent).toEqual([encodeEnvelope({ t: 'draftpick', from: me, to: 'host-9', seat: 2, key: 'm1' })]);
+    const onTheWire = socket.sent.join('');
+    expect(onTheWire).not.toContain('吕布');
+    expect(onTheWire).not.toContain('华雄');
+  });
+
+  it('点下去这一屏不许自己先变：那颗「已选」只能等房主重新发来的那一帧（本机不猜他认不认）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
+    const cell = screen.getByText(/你这一席的候选名单/).closest('div') as HTMLElement;
+    await within(cell).getAllByRole('button')[1].click(); // 吕布（m1）——线上发出去了
+    await settle();
+    expect(text()).toContain('已选 1/10'); // 界面上仍只有房主原来标着的那一颗
+    expect(text()).not.toContain('⚔️ 吕布｜群｜❤4 ⚔2 🏹1已选');
+    // 房主那边真勾上了再发一帧 ⇒ 这屏才跟着动。
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame({ picked: ['m0', 'm1'] }) });
+    expect(text()).toContain('已选 2/10');
+  });
+
+  it('那颗「确认征召」：房主说没凑够时按不动，说凑够了才交那一条', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
+    const cell = screen.getByText(/你这一席的候选名单/).closest('div') as HTMLElement;
+    const confirmBtn = within(cell).getByText(/还没凑够/).closest('button') as HTMLButtonElement;
+    expect(confirmBtn.disabled).toBe(true);
+    socket.sent.length = 0;
+    await act(async () => { confirmBtn.click(); });
+    expect(socket.sent).toEqual([]); // 灰着的那颗一条也不发（不是"发了但房主会拒"）
+
+    await receive(socket, {
+      t: 'draftlist', from: 'host-9', to: me,
+      ...frame({ canConfirm: true, instruction: '名单凑够了 10 名（群势力 1 名）·按下「确认征召」就交这一席的卷' }),
+    });
+    const go = within(cell).getByText('✓ 确认征召').closest('button') as HTMLButtonElement;
+    expect(go.disabled).toBe(false);
+    await act(async () => { go.click(); });
+    // 那一条只有席位，连位置编号也不带（派单第 2 条那一档）。
+    expect(socket.sent).toEqual([encodeEnvelope({ t: 'draftconfirm', from: me, to: 'host-9', seat: 2 })]);
+  });
+
+  it('没轮到你的那一席（房主发来的是空名单）⇒ 这一格里一颗钮也不长', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'draftlist', from: 'host-9', to: me,
+      ...frame({ main: [], qun: [], picked: [], instruction: '还没轮到你这一席（现在轮到第 1 席挑将）' }),
+    });
+    const cell = screen.getByText(/你这一席的候选名单/).closest('div') as HTMLElement;
+    expect(within(cell).queryAllByRole('button')).toHaveLength(0);
+    expect(text()).toContain('这一格现在是空的');
   });
 
   it('这一格只挂客人那屏：房主那桌看的是真的征召面板，不挂一份抄来的名单', async () => {
@@ -816,9 +872,8 @@ describe('⑤·腿1（㈢ 演出刀）客人屏上的开局那一段：只画房
     await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('generalDraft', twoSeats) });
     expect(text()).toContain('各家挑到哪儿了看下面那张征召进度表');
     expect(text()).not.toMatch(/SECRET/);
-    // ⑤c 做完了、⑤d 还没做 ⇒ 这一格说破的是"点将那颗钮还没接到你这边"，
+    // ⑤c／⑤d 都做完了 ⇒ 这一格说的是"名单在再下面那一格、那一格点得动"，
     // 而那句"这一段现在只有进度可看"必须已经不在（留着它＝把人往错误的地方引）。
-    // （页脚那段散文里也提到 ⑤d，所以判据取这一格的专属那句，不取编号。）
     expect(text()).toContain('你自己那一席的候选名单在再下面那一格');
     expect(text()).not.toContain('这一段现在只有进度可看');
   });

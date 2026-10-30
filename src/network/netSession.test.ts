@@ -17,6 +17,7 @@ import {
   type VersionStamp,
 } from './netProtocol';
 import { initialSessionState, joinRoom, newPeerId, stepSession, type SessionState } from './netSession';
+import type { IncomingDraft } from './netDraftList';
 
 /** 本机戳＝握手比对的那一份；写死版本号会让这组测试在每次抬版本时假红。 */
 const STAMP: VersionStamp = ourVersionStamp();
@@ -1035,6 +1036,7 @@ describe('⑤c 逐席候选名单：只采纳房主指名发给我的那一帧',
     main: [{ key: 'm0', name: '夏侯惇', faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: ['刚勇'] }],
     qun: [{ key: 'q0', name: '华雄', faction: '群', type: '武将', hp: 4, meleeAtk: 3, rangedAtk: 1, skills: [] }],
     picked: ['q0'],
+    canConfirm: false,
   };
   const inRoom = () => guestState({ phase: 'in-room', peers: [HOST, GUEST] });
   const toMe = (over: Partial<NetDraftListFrame> = {}) =>
@@ -1121,6 +1123,96 @@ describe('⑤c 逐席候选名单：只采纳房主指名发给我的那一帧',
     await nextTick();
     expect(mineA).toHaveLength(1);
     expect(mineB).toEqual([{ ...FRAME, seat: 3 }]);
+
+    guestA.leave();
+    guestB.leave();
+    host.leave();
+  });
+});
+
+/**
+ * 切片⑤d（v2.9.25）：客人交回来的那两下在线上怎么走。
+ * 与 J4 那枚 `act`、⑤a 那枚 `ready` 一个纪律——reducer 只认来路、只搬运，
+ * 「这一颗合不合法」是接线那头拿房主自己发过的那一帧当场重算的事（`netHostDraftList.handleIncoming`）。
+ *
+ * ⚠️ 与 `act` 唯一的不同：**信封里那个自报席位不往上传**。客人写第几席都没用，
+ * 房主往后读的是自己那张席位表（派单 2026-10-30 ㈢ 那句"冒充别席直接拒"就断在这一步）。
+ */
+describe('⑤d 客人交回来的点将／确认：只认来路，连他自报的席位也不带走', () => {
+  const TWO = 'guest-2';
+  const hostWithGuest = () => hostState({ phase: 'in-room', peers: [HOST, GUEST] });
+  const hostWithTwo = () => hostState({ phase: 'in-room', peers: [HOST, GUEST, { id: TWO, name: '客人乙', role: 'guest' }] });
+
+  it('来路对得上的那一颗点将钮 ⇒ 交出去的是"这个人＋这个号"，名册与状态一个字节也不改', () => {
+    const before = hostWithGuest();
+    const step = stepSession(before, text({ t: 'draftpick', from: GUEST.id, to: HOST.id, seat: 1, key: 'm0' }));
+    expect(step.draft).toEqual({ kind: 'pick', peer: GUEST.id, key: 'm0' });
+    // 逐字钉那句"自报的席位就地丢掉"：交出去的那一种形状里连 `seat` 这一格都没有，
+    // 于是接线那头根本拿不到"客人说自己坐第几席"这句话，也就无从误用（不是"用了但忽略"，是压根没送到）。
+    expect(step.draft).not.toHaveProperty('seat');
+    expect(step.state).toBe(before);
+    expect(step.sends).toEqual([]);
+  });
+
+  it('确认那一条连号也不带：交回来的就只有"这一席说他要交卷"', () => {
+    const step = stepSession(hostWithGuest(), text({ t: 'draftconfirm', from: GUEST.id, to: HOST.id, seat: 1 }));
+    expect(step.draft).toEqual({ kind: 'confirm', peer: GUEST.id });
+    expect(step.draft).not.toHaveProperty('key');
+  });
+
+  it('发给别人的、发信人不在名册上的、房主自己的 ⇒ 一概不理（他替不了别人点将）', () => {
+    const before = hostWithTwo();
+    expect(stepSession(before, text({ t: 'draftpick', from: GUEST.id, to: TWO, seat: 1, key: 'm0' })).draft).toBeUndefined();
+    expect(stepSession(before, text({ t: 'draftpick', from: 'ghost', to: HOST.id, seat: 1, key: 'm0' })).draft).toBeUndefined();
+    expect(stepSession(before, text({ t: 'draftpick', from: HOST.id, to: HOST.id, seat: 1, key: 'm0' })).draft).toBeUndefined();
+    expect(stepSession(before, text({ t: 'draftconfirm', from: 'ghost', to: HOST.id, seat: 2 })).draft).toBeUndefined();
+    expect(stepSession(before, text({ t: 'draftpick', from: GUEST.id, to: HOST.id, seat: 1, key: 'm0' })).state).toBe(before);
+  });
+
+  it('客人那侧根本不采纳这一枚：他收的只有名单，交回的那条线不是给他听的', () => {
+    const before = guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: TWO, name: '客人乙', role: 'guest' }] });
+    const step = stepSession(before, text({ t: 'draftpick', from: TWO, to: HOST.id, seat: 1, key: 'm0' }));
+    expect(step.draft).toBeUndefined();
+    expect(step.state).toBe(before);
+  });
+
+  it('接上假传话线：甲交回点将、乙交回确认 ⇒ 都只到房主的接线，且各自带着自己的号（不是他自称的席位）', async () => {
+    const relay = new FakeRelay();
+    const moves: IncomingDraft[] = [];
+    const host = joinRoom(
+      {
+        role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id,
+        socketFactory: relay.factory, onDraftMove: (m) => moves.push(m),
+      },
+      () => {},
+    );
+    await nextTick();
+    const guestA = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id,
+        socketFactory: relay.factory,
+      },
+      () => {},
+    );
+    const guestB = joinRoom(
+      {
+        role: 'guest', name: '客人乙', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: TWO,
+        // 乙那一侧也挂了监听：假传话线把他发的那一条同样抄给甲，但客人那台机器上根本不该有这一格动。
+        socketFactory: relay.factory, onDraftMove: () => { throw new Error('客人那侧不该收到交回来的那一条'); },
+      },
+      () => {},
+    );
+    await nextTick();
+
+    expect(guestA.send({ t: 'draftpick', from: GUEST.id, to: HOST.id, seat: 1, key: 'm0' })).toBe(true);
+    await nextTick();
+    // 信封里那个 `seat: 1` 不见了：房主接下来只能按"这个人"去自己的席位表里查他是第几席。
+    expect(moves).toEqual([{ kind: 'pick', peer: GUEST.id, key: 'm0' }]);
+
+    // 乙自称第 1 席（其实那是甲那一席）⇒ 交出来的仍然只有"乙要交卷"，冒充在形状这一层就没有落脚点。
+    expect(guestB.send({ t: 'draftconfirm', from: TWO, to: HOST.id, seat: 1 })).toBe(true);
+    await nextTick();
+    expect(moves[1]).toEqual({ kind: 'confirm', peer: TWO });
 
     guestA.leave();
     guestB.leave();

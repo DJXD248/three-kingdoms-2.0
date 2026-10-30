@@ -7,6 +7,7 @@ import {
   attachRoom,
   bumpNetRoom,
   clearRefusal,
+  deliverHostDraft,
   deliverHostReady,
   detachRoom,
   getActiveRoom,
@@ -28,9 +29,11 @@ import {
   receiveRefusal,
   receiveSeatMap,
   receiveSeatMoves,
+  setHostDraftSink,
   setHostReadySink,
   subscribeNetRoom,
 } from './netRoom';
+import type { IncomingDraft } from './netDraftList';
 import type { NetDraftListFrame } from './netProtocol';
 import { joinRoom } from './netSession';
 
@@ -566,7 +569,7 @@ describe('⑤b 征召进度表也住这一格（房主算、客人照抄，两�
 describe('⑤c 我自己那一席的候选名单也住这一格（与那张全桌表各走各的）', () => {
   const ITEM = { key: 'm0', name: '夏侯惇', faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: ['刚勇'] };
   const FRAME: NetDraftListFrame = {
-    seat: 2, total: 10, instruction: '选择10名将领（群势力1-3名，当前0名）', main: [ITEM], qun: [], picked: [],
+    seat: 2, total: 10, instruction: '选择10名将领（群势力1-3名，当前0名）', main: [ITEM], qun: [], picked: [], canConfirm: false,
   };
   const TWO_ROWS = [{ seat: 1, name: '玩家1', state: 'picking' as const, picked: 3, total: 10 }];
 
@@ -623,5 +626,64 @@ describe('⑤c 我自己那一席的候选名单也住这一格（与那张全�
     receiveDraftList(FRAME);
     detachRoom();
     expect(getDraftList()).toBeNull();
+  });
+});
+
+/**
+ * 切片⑤d（v2.9.25）：客人交回来的那两下走的是同一格，而他屏上那句"为什么不让你走"
+ * 也挤在同一格里——所以这一格的去重判据必须认得出"只有那一行字换了"。
+ * 认不出的话，界面就会照旧画着上一秒那句该做什么，人点了没反应还一句也不给他。
+ */
+describe('⑤d 拒话与交回来的那两下也住这一格', () => {
+  const ITEM = { key: 'm0', name: '夏侯惇', faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: ['刚勇'] };
+  const FRAME: NetDraftListFrame = {
+    seat: 1, total: 10, instruction: '选择10名将领（群势力1-3名，当前0名）',
+    main: [ITEM], qun: [], picked: [], canConfirm: false,
+  };
+
+  function guestSide() {
+    const connection = {
+      ...fakeConnection(),
+      state: { ...fakeConnection().state, role: 'guest' as const, selfId: 'a', name: '客人甲' },
+    };
+    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+  }
+
+  it('只有那一行字换了（名单与"已选"一字未动）⇒ 算一次变化：换引用、通知界面（拒话不是"没动"）', () => {
+    guestSide();
+    receiveDraftList(FRAME);
+    const before = getDraftList();
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+
+    const refused = { ...FRAME, instruction: '这一颗不在我发给你的那份名单上，这一条不认。' };
+    expect(receiveDraftList(refused)).toBe(true);
+    expect(getDraftList()).not.toBe(before);
+    expect(getDraftList()!.main).toEqual([ITEM]); // 那句拒话不许把他的名单一起改掉
+    expect(getDraftList()!.picked).toEqual([]);
+    expect(seen).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it('只有那个「凑够了没有」的布尔换了 ⇒ 也算一次变化（判据不靠"这两个字段一定一起动"的推导）', () => {
+    guestSide();
+    receiveDraftList(FRAME);
+    expect(receiveDraftList({ ...FRAME, canConfirm: true })).toBe(true);
+    expect(getDraftList()!.canConfirm).toBe(true);
+  });
+
+  it('客人交回来的那一颗点将钮要递给房主那台机器上的发布者：没挂上＝原样丢掉，挂上＝只递一次', () => {
+    const got: IncomingDraft[] = [];
+    expect(deliverHostDraft({ kind: 'pick', peer: 'a', key: 'm0' })).toBe(false);
+    expect(got).toEqual([]);
+
+    setHostDraftSink((msg) => got.push(msg));
+    expect(deliverHostDraft({ kind: 'pick', peer: 'a', key: 'm0' })).toBe(true);
+    expect(deliverHostDraft({ kind: 'confirm', peer: 'a' })).toBe(true);
+    expect(got).toEqual([{ kind: 'pick', peer: 'a', key: 'm0' }, { kind: 'confirm', peer: 'a' }]);
+
+    setHostDraftSink(null);
+    expect(deliverHostDraft({ kind: 'pick', peer: 'a', key: 'm1' })).toBe(false);
+    expect(got).toHaveLength(2);
   });
 });

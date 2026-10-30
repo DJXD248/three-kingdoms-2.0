@@ -67,6 +67,13 @@ export type NetDraftListFrame = {
   main: NetDraftItem[];
   qun: NetDraftItem[];
   picked: string[];
+  /**
+   * 切片⑤d 多出来的那一个布尔：**房主算出来的**「这一席现在凑够了没有」。
+   * 客人屏上那颗「✓ 确认征召」能不能按，读的就是这一格——他不在自己这边重算那条上下限
+   * （那条真闸今天长在热座界面 `GeneralDraft.tsx:21`，store 里那份 `confirmDraft()` 自己不查人数）。
+   * 线上送的是一个由同一笔账派生的布尔，不是一句要客人自己读的话。
+   */
+  canConfirm: boolean;
 };
 
 /** 往返耗时的可信上限：超过就当没量到（对面时钟被改、或攒了很久的一条回话）。 */
@@ -175,6 +182,24 @@ export type NetEnvelope =
    * 这一帧不进私有视图（`snapshotView.ts:40` 那份放开名单仍是 `hand`／`generalPool`，一格没加）、不进引擎、不进录像。
    */
   | ({ t: 'draftlist'; from: string; to: string } & NetDraftListFrame)
+  /**
+   * 切片⑤d（v2.9.25）：客人交回的那一颗点将钮——**只有第几席与第几张**。
+   *
+   * 这里没有将名、没有档案号、也没有"我为什么觉得这合法"那句说明：解析器对陌生字段的做法是
+   * **收下这一条、但那几格不进对象**（与 `ready`／`act`／`draftprogress` 同一判据），
+   * 所以房主手上那个对象里根本没有可误读的第二份说法，想采信也无机可采（用户 2026-10-30 裁，ARCH_MAP 第 7 条㈢）。
+   * 房主拿**他自己发给这一席的那一帧**把编号查回那张牌，
+   * 再调 store 自己那颗 `selectDraftGeneral(那张牌)`——与热座点同一颗钮。
+   * `key` 用的是 ⑤c 那一格上的位置编号（`m0…`／`q0…`），与 `moves`／`act` 那套对局内编号互不相干：
+   * 这一枚**不扩 `moves` 的语义**，也不走 `actno` 那条退回（那条的原意是"对局里那一步没让走"）。
+   */
+  | { t: 'draftpick'; from: string; to: string; seat: number; key: string }
+  /**
+   * 切片⑤d：客人那一席的"确认"。只带席位、一个编号都不带（他不能替别人确认，也不能顺手把
+   * "开始游戏"塞进同一条里）。人数与群牌上下限由房主自己再算一遍——`confirmDraft()` 今天**不查**这些
+   * （它直接写池子并推进座次），所以这一档绝不许"收到就走"。
+   */
+  | { t: 'draftconfirm'; from: string; to: string; seat: number }
   | { t: 'bye'; from: string };
 
 export function ourVersionStamp(): VersionStamp {
@@ -223,7 +248,10 @@ export function encodeEnvelope(envelope: NetEnvelope): string {
   return JSON.stringify(envelope);
 }
 
-/** 线上证人：解析器只认这十七种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
+/** 线上证人：解析器只认这十九种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。
+ *  数的是类型定义那一坨 `| { t: ... }`（现场读到 19 枚：……⑤c 的 `draftlist` ＋ ⑤d 新加的
+ *  `draftpick`／`draftconfirm` 两枚）。加信封就要数一遍这一行，别让它悄悄过期——
+ *  过期不等于错，但它正是"客人以为协议里还有一枚、房主那侧整帧判成坏消息"的那种坑。 */
 export function parseEnvelope(text: string): NetEnvelope | null {
   if (typeof text !== 'string' || text.length === 0 || text.length > MAX_WIRE_BYTES) return null;
   let parsed: unknown;
@@ -404,6 +432,9 @@ export function parseEnvelope(text: string): NetEnvelope | null {
       if (!isId(raw.from) || !isId(raw.to) || !isSeatNumber(raw.seat)) return null;
       if (!isPing(raw.total) || raw.total > MAX_DRAFT_PICK_COUNT) return null;
       if (!isBounded(raw.instruction, MAX_DRAFT_INSTRUCTION_LENGTH)) return null;
+      // 那一个布尔必须是布尔：客人屏上那颗「确认征召」按不按得下去读的就是它，
+      // 缺了或写成字符串就等于让界面猜（猜出来的闸与房主算的那道闸会各说一套）。
+      if (typeof raw.canConfirm !== 'boolean') return null;
       // 两份名单可以都是空的（"现在没有你的候选"是一句真话），但必须是数组、且不超上界。
       if (!Array.isArray(raw.main) || raw.main.length > MAX_DRAFT_ITEMS) return null;
       if (!Array.isArray(raw.qun) || raw.qun.length > MAX_DRAFT_ITEMS) return null;
@@ -424,8 +455,19 @@ export function parseEnvelope(text: string): NetEnvelope | null {
         t: 'draftlist', from: raw.from, to: raw.to, seat: raw.seat, total: raw.total,
         instruction: raw.instruction, main: main as NetDraftItem[], qun: qun as NetDraftItem[],
         picked: picked as string[],
+        canConfirm: raw.canConfirm,
       };
     }
+    case 'draftpick': {
+      // 与 `act` 同一道闸的形状，但它是另一枚信封：这一条说的是"勾哪一颗候选"，不是"走哪一步"。
+      // 只有席位与位置编号——线上传不出将名、档案号与任何解释（就算有，房主那侧也不读，见 `netDraftList.judgeDraftPick`）。
+      if (!isId(raw.from) || !isId(raw.to) || !isSeatNumber(raw.seat) || !isBounded(raw.key, MAX_MOVE_KEY_LENGTH)) return null;
+      return { t: 'draftpick', from: raw.from, to: raw.to, seat: raw.seat, key: raw.key };
+    }
+    case 'draftconfirm':
+      // 比 `draftpick` 还少一个字段：确认这一档只说"这一席交卷了"，一个编号都不带。
+      if (!isId(raw.from) || !isId(raw.to) || !isSeatNumber(raw.seat)) return null;
+      return { t: 'draftconfirm', from: raw.from, to: raw.to, seat: raw.seat };
     default:
       return null;
   }

@@ -14,6 +14,7 @@ import {
   type NetSeatRow,
 } from './netProtocol';
 import type { IncomingReady } from './netReady';
+import type { IncomingDraft } from './netDraftList';
 import {
   DISCONNECT_SILENCE_MS,
   HEARTBEAT_PROBE_INTERVAL_MS,
@@ -92,6 +93,12 @@ export type StepResult = {
    * 而不是能看到全部」在客人端就落成这一句：不是我的那一格，一个字也不采纳。
    */
   draftList?: NetDraftListFrame;
+  /**
+   * 切片⑤d（房主侧）：某一位客人交回来的那一颗点将钮／那一次确认。与 `action`／`ready` 同一手法——
+   * 这里只搬运，"这一颗合不合法、要不要退一句"由接线那头拿**房主自己发过的那一帧**当场重判
+   * （`netHostDraftList.handleIncoming`）。信封里那个他自报的席位号在这一格就已经不进来了。
+   */
+  draft?: IncomingDraft;
 };
 
 export function newPeerId(): string {
@@ -242,7 +249,7 @@ export function stepSession(
       sends: [],
       draftList: {
         seat: envelope.seat, total: envelope.total, instruction: envelope.instruction,
-        main: envelope.main, qun: envelope.qun, picked: envelope.picked,
+        main: envelope.main, qun: envelope.qun, picked: envelope.picked, canConfirm: envelope.canConfirm,
       },
       saw,
     };
@@ -296,6 +303,20 @@ function hostStep(state: SessionState, envelope: NetEnvelope): StepResult {
     if (envelope.to !== state.selfId) return { state, sends: [] };
     if (!state.peers.some((p) => p.id === envelope.from && p.role === 'guest')) return { state, sends: [] };
     return { state, sends: [], ready: { peer: envelope.from, on: envelope.on } };
+  }
+
+  // 切片⑤d：客人那一颗点将钮／那一次确认。把关的两句还是那两句（发给我的、发信人是名册上的客人），
+  // 交回来的也只有"第几张"这一个编号——**他自己报的第几席在这里就地丢掉**，
+  // 房主往后用的是自己那张席位表里的绑定席位（判据见 `netDraftList.judgeDraftPick`，用法见 `netHostDraftList.handleIncoming`）。
+  if (envelope.t === 'draftpick') {
+    if (envelope.to !== state.selfId) return { state, sends: [] };
+    if (!state.peers.some((p) => p.id === envelope.from && p.role === 'guest')) return { state, sends: [] };
+    return { state, sends: [], draft: { kind: 'pick', peer: envelope.from, key: envelope.key } };
+  }
+  if (envelope.t === 'draftconfirm') {
+    if (envelope.to !== state.selfId) return { state, sends: [] };
+    if (!state.peers.some((p) => p.id === envelope.from && p.role === 'guest')) return { state, sends: [] };
+    return { state, sends: [], draft: { kind: 'confirm', peer: envelope.from } };
   }
 
   // 客人之间互发的消息、以及发给别人的 welcome/refuse/roster，房主一概不当名册用。
@@ -357,6 +378,12 @@ export function joinRoom(
      * 与 `onAction` 同一手法：这里只搬运，闸门那笔账由接线那头的 `startHostReady` 当场重算。
      */
     onReadyMark?: (msg: IncomingReady) => void;
+    /**
+     * 切片⑤d（房主侧）：某位客人交回来的那一颗点将钮／那一次确认。
+     * 与 `onAction`／`onReadyMark` 同一手法：这里只搬运，判据与执行都在接线那头
+     * （`netHostDraftList.handleIncoming`——它拿的是房主自己发过的那一帧，不是这位客人说的话）。
+     */
+    onDraftMove?: (msg: IncomingDraft) => void;
     /**
      * 切片⑤a：那张准备表。房主那边是自己算出来的（抄一格给自己那屏），客人那边是房主发来的那一份
      * ——两边都只住 `netRoom` 那一格，界面照抄，与席位表一个纪律。
@@ -457,6 +484,8 @@ export function joinRoom(
     // 准备表两边都递进同一格——房主那份是自己算的，客人那份是房主发来的。
     if (next.ready) args.onReadyMark?.(next.ready);
     if (next.readyTable) args.onReadyTable?.(next.readyTable);
+    // 切片⑤d：客人那颗点将钮／那一次确认递给房主那台机器上的名单发布者（与 `action`／`ready` 同一根线）。
+    if (next.draft) args.onDraftMove?.(next.draft);
     // 切片⑤b：那张进度表只有客人会收到（发的人正是房主自己）。
     if (next.draftProgress) args.onDraftProgress?.(next.draftProgress);
     // 切片⑤c：那一格候选名单同理——而且能走到这一行的，已经是"房主发的、收件人是我"的那一份。

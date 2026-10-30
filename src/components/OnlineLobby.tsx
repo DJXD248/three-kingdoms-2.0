@@ -8,6 +8,7 @@ import {
   bumpNetRoom,
   clearRefusal,
   deliverHostAction,
+  deliverHostDraft,
   deliverHostReady,
   detachRoom,
   getActiveRoom,
@@ -69,7 +70,13 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
  * 该做什么的那句人话；别席的那一格在任何一帧里都不存在（隐私证人 `network/netDraftListPrivacy.test.ts`
  * 拿真 store 走一遍扫线上）。这一枚是新形状、不是新协议：`NET_PROTOCOL_VERSION` 仍为 1，
  * 私有视图那份放开名单（`snapshotView.ts:40`＝`hand`／`generalPool`）一个字没扩，候选名单也不进引擎、不进录像。
- * 剩下：客人点将与确认那颗钮＝⑤d、掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
+ * 剩下：掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
+ * 联机切片⑤·腿3（v2.9.25）把客人那一格的两颗钮接上了：点一张牌＝把**房主这一帧上的那个位置编号**交回去，
+ * 按「确认征召」＝只交回席位、一个编号都不带；这一台机器上没有任何一条路径能改那本征召账。
+ * 收的那一侧也不采信他说的话——房主拿**自己发给这一席的那一帧**重判（`network/netDraftList.judgeDraftPick`），
+ * 判得过才去 store 里查出那张牌、调与热座同一颗 `selectDraftGeneral`／`confirmDraft`；判不过就当面回他一句为什么不走。
+ * 「凑够 10 名、群势力 1-3 名」那条上下限只有一份抄本（`draftTally`）：那句人话、帧上那个 `canConfirm`、
+ * 房主重判那一步读的都是它，界面上不另算一遍（那条真闸今天仍长在热座面板 `GeneralDraft.tsx:21`，本轮那一格一字未改）。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。
@@ -117,6 +124,28 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   };
   /** 我这一行的读数来自房主那张表（还没回来＝按"没点"算，再点一次还是同一句话，不会多点出一步）。 */
   const myReadyRow = session ? readyTable?.find((row) => row.peer === session.selfId) : undefined;
+
+  /**
+   * 切片⑤d（v2.9.25）：客人那两下的交回。与上面那颗准备钮同一个形状——**只交回、不执行**，
+   * 这一台机器上没有任何一条路径能改房主那本征召账。
+   *
+   * 那一个 `seat` 取的是**我收到的那一帧**上的席位（房主按哪一席发给我，我就以哪一席交回），
+   * 不是本机排的座次；而房主那侧压根不读它——他用自己那张席位表里绑到这个号的那一席
+   * （`netHostDraftList` 里那句"他报的第几席就地丢掉"）。
+   * ⚠️ 这里发的只有席位与位置编号：将名、档案号、"我为什么觉得这合法"一句都不上线，
+   * 就算上线房主也不采信（用户 2026-10-30 裁，ARCH_MAP 第 7 条㈢）。
+   */
+  const sendDraftPick = (key: string) => {
+    const room = getActiveRoom();
+    if (!room || !session || !draftList || !hostPeerId) return;
+    room.connection.send({ t: 'draftpick', from: session.selfId, to: hostPeerId, seat: draftList.seat, key });
+  };
+  /** 交这一席的卷：一个编号都不带（他不能替别人确认，也不能顺手把"开始游戏"塞进同一条里）。 */
+  const sendDraftConfirm = () => {
+    const room = getActiveRoom();
+    if (!room || !session || !draftList || !hostPeerId) return;
+    room.connection.send({ t: 'draftconfirm', from: session.selfId, to: hostPeerId, seat: draftList.seat });
+  };
 
   const start = () => {
     setFormError(null);
@@ -166,6 +195,10 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         onReadyTable: (rows) => {
           if (receiveReadyTable(rows)) bumpNetRoom();
         },
+        // 切片⑤d：客人那颗点将钮／那一次确认递给房主那台机器上的名单发布者（它拿自己发过的那一帧重判）。
+        onDraftMove: (msg) => {
+          deliverHostDraft(msg);
+        },
         // 切片⑤b：房主算好的那张征召进度表进同一格（房主自己那屏读的也是这一格，两边同一份）。
         onDraftProgress: (rows) => {
           if (receiveDraftProgress(rows)) bumpNetRoom();
@@ -207,7 +240,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌、
               还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表，牌桌那一份按席位各发一条——各自看得见自己手里的牌，
               进房的人各点一颗准备钮、全员准备之前房主那颗「开始游戏」按不下去，开局那一段客人只画房主定下来发过来的数，
-              征召那一段每个人看得见房主指名发给自己的那一格候选名单（只能看，点将还没做）"。
+              征召那一段每个人看得见房主指名发给自己的那一格候选名单，还能点自己那一格的牌与那颗「确认征召」（交回的都是房主那一帧上的位置编号，办事的仍是房主那台机器）"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -354,7 +387,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
             <NetDraftProgressPanel rows={draftProgress} />
 
             {/* 切片⑤c：只有客人挂这一格——它是指名发给某一席本人的私有信息，房主那屏看的是真的征召面板。 */}
-            {session.role === 'guest' && <NetDraftListPanel frame={draftList} />}
+            {session.role === 'guest' && <NetDraftListPanel frame={draftList} onPick={sendDraftPick} onConfirm={sendDraftConfirm} />}
 
             {netRows !== null && netRows.length > 0 && (
               <NetPingPanel
@@ -421,10 +454,13 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           候选名单那一段（联机切片⑤·腿2）现在做到：房主按席位各算一帧、指名发给那一席本人（信封上那个收件人是必填的），
           每一帧里只有他自己那一格的两份候选、房主当下勾着的那几颗、以及这一席该做什么的那句人话——别席那一格在任何一帧里都没有；
           这一枚是新增的信封形状，不是新协议（协议版本仍为 1），它不走私有快照那条路（快照里该遮的照旧遮），也不进引擎、不进录像。
-          名单现在只能看、点不动：勾哪一颗与确认那颗钮是腿3（⑤d），还没接到客人这边。
+          名单现在点得动了（联机切片⑤·腿3）：点一张牌＝把房主这一帧上的那个位置编号交回去，按「确认征召」＝只交回席位、一个编号都不带；
+          将名与档案号压根不上线，上线了房主也不读。他那一台机器拿**自己发给这一席的那一帧**重判：判得过才去自己的名单里查出那张牌、
+          调与热座同一颗钮，判不过就把"第几席该做什么"那一行换成回他的那句人话——没有"点了没反应"这一种安静。
+          那颗「确认征召」按不按得下去读的是房主送上来的那一个布尔（凑够 10 名、群势力 1-3 名那条上下限只有一份抄本，界面上不另算一遍）。
           这一版不防作弊：它仍然只是传话，线上是明文，而它信的是连接自己带来的那串身份号，没有钥匙也没有验证；
           所以跑传话程序的那台机器、以及在网络上偷听这条线的人，照样看得见别人那一席的那些字与牌面。
-          还没做的：客人点将与确认那颗钮＝⑤d、掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
+          还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
         </p>
       </div>
     </div>

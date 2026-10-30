@@ -1,9 +1,14 @@
 /**
- * 联机切片⑤c（v2.9.25）房主侧那份候选名单发布者的证人。
+ * 联机切片⑤c（v2.9.25）房主侧那份候选名单发布者的证人——⑤d 起还带上"客人交回来的那两下"怎么办。
  *
  * 与 ⑤b 那张进度发布者差一个字：**按人各算一帧**。所以这里量的不是"发没发表"，
  * 而是"每一位各自的那一帧有没有各走各的"——一位客人那一格没动，不该按住另一位的那一帧；
  * 反之一个人身上重复的内容也不该反复上线。判据本身住 `netDraftList`，这里一条也不重演。
+ *
+ * ⑤d 那一段量的三样，正是派单 2026-10-30 逐字要的那三条：
+ * ㈠重判只看**自己发出去的那一帧**（没发过、发的是别席、号不在那格上，都拒）；
+ * ㈡办事时交给 store 的是**店里那个对象**（`toBe` 级别的同一份），不是线上来客凑出来的名字；
+ * ㈢拒不得静默——那一句挂在同一枚指名名单信封的 `instruction` 上，说完就消费掉，别的一格不动。
  *
  * ⑤b 那位有 `tableSink`（把表抄给房主自己那屏），这一位**没有**：
  * 房主自己看的是真的征召面板 `components/GeneralDraft.tsx`，不该在同一张桌上出现两份读数。
@@ -26,20 +31,53 @@ const VIEW = {
   selectedDraftGenerals: [] as ReturnType<typeof card>[],
   players: [{ id: 1 }, { id: 2 }],
 };
+type StoreView = typeof VIEW;
+type Card = ReturnType<typeof card>;
 
-function harness(facts0: DraftListFacts, guests0: { peer: string; seat: number | null }[]) {
+/**
+ * `harness` 从⑤c 那一版多带了 ⑤d 的四格（牌本身、勾一颗、交一次卷、这位绑第几席）。
+ * `toggle`／`confirm` 不是记账而已：它们照 store 那两颗的做法把 `view` 改了并同步 `facts`，
+ * 于是"客人点完之后的那一帧该长什么样"在这份证人是真的跟着走的。
+ */
+function harness(facts0: DraftListFacts, guests0: { peer: string; seat: number | null }[], view0: StoreView = VIEW) {
   const sent: { peer: string; frame: NetDraftListFrame }[] = [];
+  const toggled: Card[] = [];
+  let view: StoreView = { ...view0, draftGenerals: [...view0.draftGenerals], draftQunGenerals: [...view0.draftQunGenerals], selectedDraftGenerals: [...view0.selectedDraftGenerals] };
   let facts = facts0;
   let guests = guests0;
-  const host = startHostDraftList({
+  let confirmCalls = 0;
+  const host = startHostDraftList<Card>({
     facts: () => facts,
     guests: () => guests,
     send: (peer, frame) => { sent.push({ peer, frame }); },
+    cards: () => ({ main: view.draftGenerals, qun: view.draftQunGenerals }),
+    toggle: (c) => {
+      toggled.push(c);
+      view = {
+        ...view,
+        selectedDraftGenerals: view.selectedDraftGenerals.includes(c)
+          ? view.selectedDraftGenerals.filter((x) => x !== c)
+          : [...view.selectedDraftGenerals, c],
+      };
+      facts = draftListFactsOf(view);
+    },
+    confirm: () => {
+      confirmCalls += 1;
+      // 真 store 那颗交卷后把光标挪到下一席（并清掉这一席的勾选）；这里跟着挪，重复交卷才判得出来。
+      view = { ...view, draftPlayerIndex: view.draftPlayerIndex + 1, selectedDraftGenerals: [] };
+      facts = draftListFactsOf(view);
+    },
+    // 席位读的是权威那张表（`guests` 里的那一格），不是客人信封里自报的那一个数。
+    boundSeat: (peer) => guests.find((g) => g.peer === peer)?.seat ?? null,
   });
   return {
     sent,
+    toggled,
+    confirmCalls: () => confirmCalls,
     setFacts: (next: DraftListFacts) => { facts = next; },
     setGuests: (next: { peer: string; seat: number | null }[]) => { guests = next; },
+    /** 房主那边换了牌面（沙盒换了候选、重开一桌）：`facts` 跟着换，但那一帧的旧读数仍留在账上。 */
+    patchView: (patch: Partial<StoreView>) => { view = { ...view, ...patch }; facts = draftListFactsOf(view); },
     host,
   };
 }
@@ -137,5 +175,149 @@ describe('⑤c 房主侧名单发布者：按人各算一帧、变了才发', ()
     h.host.notifyChange();
     h.host.syncNow();
     expect(h.sent).toHaveLength(0);
+  });
+});
+
+/** 凑够 10 名（群 1 名）的那一份材料，交给"确认"那一档用。 */
+const readyView = (): StoreView => {
+  const main = Array.from({ length: 9 }, (_, i) => card(`r-m${i}`, `将${i}`));
+  const qun = [card('r-q0', '群将', '群')];
+  return { ...VIEW, draftGenerals: main, draftQunGenerals: qun, selectedDraftGenerals: [...main, ...qun] };
+};
+
+describe('⑤d 客人交回来的那两下：房主按自己发过的那一帧重判，办事只走 store 那颗', () => {
+  it('合法的那一颗 ⇒ 交出去的是店里那个对象，紧接着的那一帧把「已选」带上线', () => {
+    const h = harness(MID, TWO_GUESTS);
+    h.host.syncNow(); // g-1（第 1 席）拿到整格名单
+    const before = h.sent.length;
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm0' })).toBe(true);
+    // ⚠️ 派单第 5 条逐字：「绝不把线上来的任何东西当牌用」。来的那一条只有 `key`，
+    // 而 `toggle` 收到的是 `VIEW.draftGenerals[0]` 这**一个**对象——同一个引用，不是按名字凑出来的 replica。
+    expect(h.toggled).toEqual([VIEW.draftGenerals[0]]);
+    expect(h.sent.length).toBe(before + 1);
+    expect(h.sent[before].peer).toBe('g-1');
+    expect(h.sent[before].frame.picked).toEqual(['m0']);
+  });
+
+  it('退一颗也走同一颗：再点一次那个号 ⇒ 店里那份被撤掉，线下的那一格跟着空', () => {
+    const h = harness(MID, TWO_GUESTS);
+    h.host.syncNow();
+    h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm0' });
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm0' })).toBe(true);
+    expect(h.toggled).toHaveLength(2);
+    expect(h.host.frameSentTo('g-1')!.picked).toEqual([]);
+  });
+
+  it('信封里那个自报的席位号进不了门：他绑的是第 2 席，就按第 2 席判（一颗也不勾）', () => {
+    // 第 1 席正在挑；`g-1` 在权威席位表上绑的是第 2 席 ⇒ "没轮到你"。
+    // 他在线上怎么写那个 `seat` 都改不动这一条：`IncomingDraft` 那一种形状里压根没有席位这一格
+    // （`netSession` 进门时把它丢了），这里能读的只有 `boundSeat`。
+    const h = harness(MID, [{ peer: 'g-1', seat: 2 }, { peer: 'g-2', seat: 1 }]);
+    h.host.syncNow();
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm0' })).toBe(false);
+    expect(h.toggled).toEqual([]);
+  });
+
+  it('房主还没给他发过任何一帧 ⇒ 不认：判据不能凭空给他补一份名单', () => {
+    const h = harness(MID, TWO_GUESTS);
+    // 一次 syncNow 也没跑 ⇒ 那本"我发过什么"的账是空的。
+    expect(h.sent).toHaveLength(0);
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm0' })).toBe(false);
+    expect(h.toggled).toEqual([]);
+    // 而这一趟也不许让他干等：拒话顺带把当下那一帧发了出去，他屏上从此有得看。
+    expect(h.sent.map((s) => s.peer)).toEqual(['g-1', 'g-2']);
+    expect(h.sent[0].frame.instruction).toContain('还没给你这一席算出候选名单');
+  });
+
+  it('那个号不在我发过的那一帧上 ⇒ 认不得，也绝不按客人带来的名字自己凑一张', () => {
+    const h = harness(MID, TWO_GUESTS);
+    h.host.syncNow();
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm9' })).toBe(false);
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'q1' })).toBe(false);
+    expect(h.toggled).toEqual([]);
+  });
+
+  it('那一帧上的号还在、店里的名单却换了 ⇒ 回一句"查不到那张牌"，不拿旧帧去勾一张此刻不存在的牌', () => {
+    const h = harness(MID, TWO_GUESTS);
+    h.host.syncNow();
+    // 沙盒换了候选／重开一桌：房主这边两格短了一位，而 `last` 里那一帧还带着 m1 这个号。
+    // 今天真走到这一步需要"两个读数之间换了牌面"，实际给不出；钉的是给得出时不办事、也不静默。
+    h.patchView({ draftGenerals: [card('g-1', '夏侯惇')] });
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm1' })).toBe(false);
+    expect(h.toggled).toEqual([]);
+    expect(h.sent[h.sent.length - 1].frame.instruction).toContain('查不到那张牌');
+  });
+
+  it('确认那一档：凑够了才转交 store 那颗，没凑够就一句拒话、一次也不转交', () => {
+    const r = readyView();
+    const ok = harness(draftListFactsOf(r), [{ peer: 'g-1', seat: 1 }], r);
+    ok.host.syncNow();
+    expect(ok.host.frameSentTo('g-1')!.canConfirm).toBe(true);
+    expect(ok.host.handleIncoming({ kind: 'confirm', peer: 'g-1' })).toBe(true);
+    expect(ok.confirmCalls()).toBe(1);
+    // 交完卷，那一席的那一格立刻换成"已经完成"——这是房主自己算出来的下一步，不是客人屏上的读数。
+    expect(ok.sent[ok.sent.length - 1].frame.instruction).toContain('你这一席的征召已经完成了');
+
+    const bad = harness(MID, [{ peer: 'g-1', seat: 1 }]);
+    bad.host.syncNow();
+    expect(bad.host.handleIncoming({ kind: 'confirm', peer: 'g-1' })).toBe(false);
+    expect(bad.confirmCalls()).toBe(0);
+    expect(bad.toggled).toEqual([]);
+    // 那句里给的是房主当下的数（客人屏上那颗钮本来就是灰的，这里再说一遍为什么）。
+    expect(bad.sent[bad.sent.length - 1].frame.instruction).toContain('还交不了卷：现在 0/10 名');
+  });
+
+  it('交过卷之后同一位再交一次 ⇒ 不认：那一格的光标已经不在这一席', () => {
+    const r = readyView();
+    const h = harness(draftListFactsOf(r), [{ peer: 'g-1', seat: 1 }], r);
+    h.host.syncNow();
+    expect(h.host.handleIncoming({ kind: 'confirm', peer: 'g-1' })).toBe(true);
+    expect(h.host.handleIncoming({ kind: 'confirm', peer: 'g-1' })).toBe(false);
+    expect(h.confirmCalls()).toBe(1);
+  });
+
+  it('拒不得静默：那句拒话走的就是已有的那一枚指名名单信封，只发给他、别的一格不动', () => {
+    const h = harness(MID, TWO_GUESTS);
+    h.host.syncNow();
+    const hisBefore = h.host.frameSentTo('g-1')!;
+    const countBefore = h.sent.length;
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm7' })).toBe(false);
+    expect(h.sent.length).toBe(countBefore + 1);
+    const refusalFrame = h.sent[countBefore];
+    expect(refusalFrame.peer).toBe('g-1'); // 别席没有多收一条（g-2 那一格一个字节也没动）
+    expect(refusalFrame.frame.instruction).toContain('不在我发给你的那份名单上');
+    // ⚠️ 只换那一句话：他屏上的名单与"已选"不能因为一句拒话被改写或清空。
+    expect(refusalFrame.frame.main).toEqual(hisBefore.main);
+    expect(refusalFrame.frame.qun).toEqual(hisBefore.qun);
+    expect(refusalFrame.frame.picked).toEqual(hisBefore.picked);
+  });
+
+  it('那句拒话是一次性的：房主那边真有了变化，正常那句自己拼回来', () => {
+    const h = harness(MID, TWO_GUESTS);
+    h.host.syncNow();
+    h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm7' });
+    const refused = h.host.frameSentTo('g-1')!;
+    expect(refused.instruction).toContain('不在我发给你的那份名单上');
+    h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm0' }); // 这一次合法，勾上了
+    const after = h.host.frameSentTo('g-1')!;
+    expect(after.instruction).toContain('选择10名将领（群势力1-3名，当前0名）');
+    expect(after.picked).toEqual(['m0']);
+  });
+
+  it('重连（syncNow）之后第一帧说的是当下该做什么，不是上一场挂着的那句拒话', () => {
+    const h = harness(MID, TWO_GUESTS);
+    h.host.syncNow();
+    h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm7' });
+    expect(h.host.frameSentTo('g-1')!.instruction).toContain('不在我发给你的那份名单上');
+    h.host.syncNow();
+    expect(h.host.frameSentTo('g-1')!.instruction).toContain('选择10名将领');
+  });
+
+  it('那一格换了才多发，没换的那一位不跟着收重复的（⑤d 没有新开一条通路）', () => {
+    const h = harness(MID, TWO_GUESTS);
+    h.host.syncNow();
+    const before = h.sent.length;
+    h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm0' });
+    expect(h.sent.slice(before).map((s) => s.peer)).toEqual(['g-1']);
   });
 });

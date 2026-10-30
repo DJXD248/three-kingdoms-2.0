@@ -10,6 +10,8 @@
  * （切片⑤b 起再多收一张征召进度表：还是那句"房主算、客人抄"，表里只有数量，没有牌。）
  * （切片⑤c 起再多收**我自己那一席的候选名单**：这一格是私有的——一台机器只有一个身份号，
  *  所以这里存的必然是"发给我的那一份"，别人那一格从来没有到过这一格。）
+ * （切片⑤d 起这里还多挂**房主侧的第三个挂钩**（客人点的那一颗递回房主那台机器）；存的那一格形状没变，
+ *  只是帧里多了房主算好的那个「凑够了没有」——客人屏上那颗确认钮读的就是它，本机不重算那条上下限。）
  */
 import type { EngineState } from '../core/GameState';
 import type { NetDraftListFrame, NetDraftProgressRow, NetLinkRow, NetReadyRow, NetSeatRow } from './netProtocol';
@@ -18,7 +20,7 @@ import type { IncomingAction } from './netHostAuthority';
 import type { IncomingReady, ReadyGate } from './netReady';
 import { gateOfReadyRows, sameReadyRows } from './netReady';
 import { sameDraftProgressRows } from './netDraftProgress';
-import { sameDraftListFrames } from './netDraftList';
+import { sameDraftListFrames, type IncomingDraft } from './netDraftList';
 import { isRestorableEngineState } from '../store/gameStateAdapter';
 import { sameRows } from './netHeartbeat';
 import { seatOfPeer, sameMoveLists, sameSeatRows, type SeatMoveList } from './netSeat';
@@ -343,6 +345,26 @@ export function setHostReadySink(sink: ((msg: IncomingReady) => void) | null): v
 export function deliverHostReady(msg: IncomingReady): boolean {
   if (!hostReadySink) return false;
   hostReadySink(msg);
+  return true;
+}
+
+/**
+ * 切片⑤d（v2.9.25）：客人交回来的那一颗点将钮／那一次确认要递给房主那台机器上的名单发布者，
+ * 而连线是在大厅里建的、发布者住在 App 上（`NetRoomBridge`）——两边碰不到对方，所以又是这里挂一句话。
+ * 没有挂上＝这条原样丢掉（那位客人表现为"点了这一颗没反应"——房主那侧根本没接到过这一条，
+ * 连那句"为什么不让你走"都没处说）。判合法性与执行一律在 `netHostDraftList.handleIncoming`，这一格只搬运。
+ * ⚠️ 这一格与上面两格不同，没有"下一次变化会顺带补算"这条路（点将是即时动作）：客人那侧每一次动手都等两样回音之一——
+ * 名单里那颗「已选」动了，或者"这一席该做什么"那一行换成房主回他的那句拒话。
+ */
+let hostDraftSink: ((msg: IncomingDraft) => void) | null = null;
+
+export function setHostDraftSink(sink: ((msg: IncomingDraft) => void) | null): void {
+  hostDraftSink = sink;
+}
+
+export function deliverHostDraft(msg: IncomingDraft): boolean {
+  if (!hostDraftSink) return false;
+  hostDraftSink(msg);
   return true;
 }
 

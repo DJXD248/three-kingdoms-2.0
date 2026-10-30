@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render } from '@testing-library/react';
 import NetRoomBridge from './NetRoomBridge';
-import { attachRoom, bumpNetRoom, deliverHostAction, deliverHostReady, detachRoom, getDraftList, getDraftProgress, getReadyTable, getSeatMap, getStartGate, type ActiveRoom } from '../network/netRoom';
+import { attachRoom, bumpNetRoom, deliverHostAction, deliverHostDraft, deliverHostReady, detachRoom, getDraftList, getDraftProgress, getReadyTable, getSeatMap, getStartGate, type ActiveRoom } from '../network/netRoom';
 import type { RoomConnection } from '../network/netSession';
 import type { EngineState } from '../core/GameState';
 import { useGameStore, type Player } from '../store/gameStore';
@@ -603,26 +603,27 @@ describe('NetRoomBridge：房主那张征召进度表从这里出', () => {
 
 const draftLists = (sent: Record<string, unknown>[]) => wire(sent, 'draftlist');
 
+/** 三席的牌桌：第 1 席房主（绑 host-1）、第 2 席那位客人（绑 g-1）；第 3 席先空着，
+ *  等名册上真来了第二个人，房主这边按 join 顺序把他绑上去。
+ *  ⑤c 那张名单表与 ⑤d 那条进来的路都要它，所以住在模块级（一处摆桌，两处共读）。 */
+function engineTwo(): EngineState {
+  const base = engineState('a');
+  return {
+    ...base,
+    players: [
+      { ...base.players[0] },
+      { id: 2, name: '客人甲', faction: '蜀', hand: [{ id: 'p2-h1', name: '暗牌二号' }], baseHp: 6, isAlive: true },
+      { id: 3, name: '客人乙', faction: '吴', hand: [{ id: 'p3-h1', name: '暗牌三号' }], baseHp: 6, isAlive: true },
+    ],
+  } as EngineState;
+}
+
 /**
  * 切片⑤c 的接线证人：逐席候选名单**按人各算一帧、指名发**。
  * 这里量的是接线那三件事——席位从哪张表读、`to` 填的是谁、房主自己那屏为什么不抄这一格；
  * 帧里该装什么住 `netDraftList`，"别席漏没漏"住 `netDraftListPrivacy.test.ts`。
  */
 describe('NetRoomBridge：逐席候选名单按人指名发从这里出', () => {
-  /** 三席的牌桌：第 1 席房主（绑 host-1）、第 2 席那位客人（绑 g-1）；第 3 席先空着，
-   *  等名册上真来了第二个人，房主这边按 join 顺序把他绑上去。 */
-  function engineTwo(): EngineState {
-    const base = engineState('a');
-    return {
-      ...base,
-      players: [
-        { ...base.players[0] },
-        { id: 2, name: '客人甲', faction: '蜀', hand: [{ id: 'p2-h1', name: '暗牌二号' }], baseHp: 6, isAlive: true },
-        { id: 3, name: '客人乙', faction: '吴', hand: [{ id: 'p3-h1', name: '暗牌三号' }], baseHp: 6, isAlive: true },
-      ],
-    } as EngineState;
-  }
-
   /** 房主那台机器摆成"正在征召第 `draftPlayerIndex` 席、勾了 `picked` 名"（名单里全是本会话编的假将，真名由隐私证人管）。 */
   function setDraftLists(picked: number, draftPlayerIndex = 0, phase: 'generalDraft' | 'diceRoll' = 'generalDraft') {
     const main = Array.from({ length: 2 }, (_, i) => ({ id: `wei_00${i}`, name: `假将${i}`, faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: [{ name: '假技能' }] }));
@@ -755,6 +756,135 @@ describe('NetRoomBridge：逐席候选名单按人指名发从这里出', () => 
 
     setDraftLists(0, 1);
     await wait(10);
+    expect(draftLists(sent)).toHaveLength(1);
+  });
+});
+
+/** 腿3（⑤d）那一趟要的接线证人：客人交回来的那一条，最后动的是**房主这台机器上的 store**。
+ *  判据住 `netDraftList`、发布者住 `netHostDraftList`，这两处都已经在自己的证人对里量过；
+ *  这里只量接线那三件只有拼起来才看得到的事——
+ *  ㈠`deliverHostDraft` 真被挂到那位发布者身上（没挂上＝客人点了没反应，连句拒话都没处说）；
+ *  ㈡办事用的是 store 自己那颗 `selectDraftGeneral`／`confirmDraft`，落进池子的是**店里那几张对象**；
+ *  ㈢没办成的那一条，店里的账一个字节也不动，而回给他的那一帧里带着为什么。 */
+describe('NetRoomBridge：客人交回来的点将／确认走的是房主自己那颗', () => {
+  /** 摆一份"第 2 席（那位客人绑的席位）正在挑、名单有 `mainN`＋`qunN` 张、勾了 `pickMain`＋`pickQun` 颗"的房主店。 */
+  function draftStore(o: { mainN: number; qunN: number; pickMain: number; pickQun: number; draftPlayerIndex?: number }) {
+    const main = Array.from({ length: o.mainN }, (_, i) => ({
+      id: `wei_${String(i).padStart(3, '0')}`, name: `假将${i}`, faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: [{ name: '假技能' }],
+    }));
+    const qun = Array.from({ length: o.qunN }, (_, i) => ({
+      id: `qun_${String(i).padStart(3, '0')}`, name: `假群${i}`, faction: '群', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: [],
+    }));
+    act(() => {
+      useGameStore.setState({
+        phase: 'generalDraft',
+        draftPlayerIndex: o.draftPlayerIndex ?? 1, // 默认轮到第 2 席＝那位客人绑的那一席
+        draftGenerals: main,
+        draftQunGenerals: qun,
+        selectedDraftGenerals: [...main.slice(0, o.pickMain), ...qun.slice(0, o.pickQun)],
+        players: [
+          { id: 1, name: '房主甲', faction: '魏', generalPool: [] },
+          { id: 2, name: '客人甲', faction: '蜀', generalPool: [] },
+          { id: 3, name: '客人乙', faction: '吴', generalPool: [] },
+        ],
+      } as unknown as Partial<ReturnType<typeof useGameStore.getState>>);
+    });
+    return { main, qun };
+  }
+
+  /** 接上房主那套接线（屋里只有 g-1 一位客人，他绑第 2 席）。 */
+  async function wired() {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    return { sent };
+  }
+
+  it('客人点中自己那一帧上的号 ⇒ 店里真多了那一张（同一个对象），线上多出的那一帧把它标成「已选」', async () => {
+    const cards = draftStore({ mainN: 3, qunN: 1, pickMain: 0, pickQun: 0 });
+    const { sent } = await wired();
+    expect(draftLists(sent).at(-1)!.main).toHaveLength(3); // 正面凭据：他那一格真带着三份候选
+
+    expect(deliverHostDraft({ kind: 'pick', peer: 'g-1', key: 'm2' })).toBe(true);
+    await wait(10);
+    // ⚠️ 派单第 5 条的硬证：线上传的只有 `m2` 这一个号，落进店里的是 `draftGenerals[2]` 这**一个**对象。
+    expect(useGameStore.getState().selectedDraftGenerals).toEqual([cards.main[2]]);
+    const last = draftLists(sent).at(-1)!;
+    expect(last.to).toBe('g-1');
+    expect(last.picked).toEqual(['m2']);
+    expect(JSON.stringify(last)).not.toContain('wei_002'); // 档案号压根没上线，也没因为他点了一下就多上线
+  });
+
+  it('还没轮到他那一席 ⇒ 店里的账一字不动，回给他的那一帧里写着为什么（拒不得静默）', async () => {
+    const cards = draftStore({ mainN: 3, qunN: 1, pickMain: 1, pickQun: 0, draftPlayerIndex: 0 });
+    const { sent } = await wired();
+    const before = useGameStore.getState().selectedDraftGenerals;
+
+    // 这一格返回的是"房主那侧有没有人接手"（`deliverHostDraft` 与上面那两格同一个口径），不是"这一条办没办"。
+    expect(deliverHostDraft({ kind: 'pick', peer: 'g-1', key: 'm0' })).toBe(true);
+    await wait(10);
+    expect(useGameStore.getState().selectedDraftGenerals).toBe(before);
+    expect(useGameStore.getState().draftPlayerIndex).toBe(0);
+    const last = draftLists(sent).at(-1)!;
+    expect(last.to).toBe('g-1');
+    expect(last.instruction).toContain('不是轮到你这一席');
+    // 那句拒话只换那一行字：他手上那一帧的名单还在（不许顺手把他的屏清空）。
+    expect(last.main).toHaveLength(0); // 第 2 席本来就没轮到，房主发的这一格就是空的——这是既有读数，不是被拒话改掉的
+    expect(cards.qun).toHaveLength(1);
+  });
+
+  it('那个号不在我发给他的那一帧上 ⇒ 不办事，也不给他补一张牌；那一格里回的是"不在名单上"', async () => {
+    draftStore({ mainN: 3, qunN: 1, pickMain: 0, pickQun: 0 });
+    const { sent } = await wired();
+    expect(deliverHostDraft({ kind: 'pick', peer: 'g-1', key: 'm9' })).toBe(true);
+    await wait(10);
+    expect(useGameStore.getState().selectedDraftGenerals).toEqual([]);
+    expect(draftLists(sent).at(-1)!.instruction).toContain('不在我发给你的那份名单上');
+    expect(draftLists(sent).at(-1)!.main).toHaveLength(3);
+  });
+
+  it('凑够了才让他交卷：房主自己先把闸算一遍，然后 store 真把这一席的池子定下来、光标走到下一席', async () => {
+    const cards = draftStore({ mainN: 9, qunN: 1, pickMain: 9, pickQun: 1 });
+    const { sent } = await wired();
+    expect(draftLists(sent).at(-1)!.canConfirm).toBe(true); // 正面凭据：房主那句"凑够了"已经上过线
+
+    expect(deliverHostDraft({ kind: 'confirm', peer: 'g-1' })).toBe(true);
+    await wait(10);
+    const s = useGameStore.getState();
+    expect(s.players[1].generalPool).toHaveLength(10);
+    expect(s.draftPlayerIndex).toBe(2);
+    // 交完卷，他那一格当场换成"已经完成"——不是客人屏自己猜的。
+    expect(draftLists(sent).at(-1)!.instruction).toContain('你这一席的征召已经完成了');
+    expect(s.players[1].generalPool.map((g) => g.name)).toEqual(
+      [...cards.main, ...cards.qun].map((g) => g.name),
+    );
+  });
+
+  it('没凑够就交卷 ⇒ 房主不转交：池子还是空的，那一格里回的是"还差几名"', async () => {
+    draftStore({ mainN: 9, qunN: 1, pickMain: 3, pickQun: 1 });
+    const { sent } = await wired();
+    expect(draftLists(sent).at(-1)!.canConfirm).toBe(false);
+
+    expect(deliverHostDraft({ kind: 'confirm', peer: 'g-1' })).toBe(true); // 递到了，但房主没办——办的凭据在下面那两行
+    await wait(10);
+    expect(useGameStore.getState().players[1].generalPool).toEqual([]);
+    expect(useGameStore.getState().draftPlayerIndex).toBe(1);
+    expect(draftLists(sent).at(-1)!.instruction).toContain('还交不了卷：现在 4/10 名、群势力 1 名');
+  });
+
+  it('退房以后那颗钮没有去处（接线拆了＝这一条连递都递不到，不往上一间房的店里写）', async () => {
+    draftStore({ mainN: 3, qunN: 1, pickMain: 0, pickQun: 0 });
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineTwo());
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    detachRoom();
+
+    expect(deliverHostDraft({ kind: 'pick', peer: 'g-1', key: 'm0' })).toBe(false);
+    expect(useGameStore.getState().selectedDraftGenerals).toEqual([]);
     expect(draftLists(sent)).toHaveLength(1);
   });
 });

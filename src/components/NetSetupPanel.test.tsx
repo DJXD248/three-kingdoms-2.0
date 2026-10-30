@@ -91,18 +91,21 @@ describe('㈢ 客人那一格：只画收到的数，不画自己摇的', () => 
     expect(text()).toContain('势力还没定');
   });
 
-  it('征召那一步：说的是"看下面那张进度表"，并写明名单在再下面那一格、点将还没做（⑤d）', () => {
+  it('征召那一步：说的是"看下面那张进度表"，并写明名单在再下面那一格、那一格现在点得动（腿3/⑤d）', () => {
     render(<NetSetupPanel snapshot={view({ phase: 'generalDraft', players: assigned.players })} />);
     expect(text()).toContain('各家挑到哪儿了看下面那张征召进度表');
     expect(text()).toContain('一张牌也没有');
     expect(text()).toContain('⑤c');
-    expect(text()).toContain('⑤d');
+    expect(text()).toContain('腿3');
     // ⑤c 已经做完 ⇒ 那句"这一段现在只有进度可看"必须消失（留着它就是把人往错误的地方引），
     // 换成"名单在再下面那一格"——那一格真的挂在这句下面（位置由 OnlineLobby 那组证人量）。
     expect(text()).not.toContain('这一段现在只有进度可看');
     expect(text()).toContain('你自己那一席的候选名单在再下面那一格');
     expect(text()).toContain('别人那一格不在里面');
-    expect(text()).toContain('点将与确认那颗钮还没做＝⑤d');
+    // ⑤d 已经做完 ⇒ "还没做"那句一个字不许留；换成说清交回去的是什么、以及办事的仍是房主那台机器。
+    expect(text()).not.toContain('点将与确认那颗钮还没做');
+    expect(text()).toContain('那一格现在点得动');
+    expect(text()).toContain('查牌与办事的仍是房主那台机器');
   });
 
   it('开局走完（drawing/playing/gameOver 都算）⇒ 说的是"跟着变的是下面牌桌那一份"', () => {

@@ -2,7 +2,8 @@ import { useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { probeSeatActions } from '../store/engineExecutionBridge';
 import { applyCanonicalAction } from '../store/applyCanonicalAction';
-import { getActiveRoom, getNetStatus, getSeatMap, receiveSeatMap, receiveReadyTable, receiveDraftProgress, setHostActionSink, setHostReadySink, subscribeNetRoom, type ActiveRoom } from '../network/netRoom';
+import { getActiveRoom, getNetStatus, getSeatMap, receiveSeatMap, receiveReadyTable, receiveDraftProgress, setHostActionSink, setHostDraftSink, setHostReadySink, subscribeNetRoom, type ActiveRoom } from '../network/netRoom';
+import type { General } from '../data/generals';
 import { startSnapshotBroadcaster, type SnapshotBroadcaster } from '../network/snapshotBroadcaster';
 import { startHostAuthority, type HostAuthority } from '../network/netHostAuthority';
 import { startHostReady, type HostReady } from '../network/netHostReady';
@@ -43,6 +44,7 @@ export default function NetRoomBridge() {
       rosterKey = '';
       setHostActionSink(null);
       setHostReadySink(null);
+      setHostDraftSink(null);
     };
 
     const start = (room: ActiveRoom) => {
@@ -65,8 +67,21 @@ export default function NetRoomBridge() {
       });
       // 切片⑤c：逐席候选名单。屋里每位客人各算一帧、**指名**发给他，别席那一格一个字节也不进。
       // 席位从 auth 算好抄进 netRoom 的那张表读（与 bc 按席位各出私有视图同一个来源，不自算第二遍）。
-      draftList = startHostDraftList({
+      //
+      // 切片⑤d 起这一位还管**进来的那一条**：客人点的那颗编号在这里查回房主自己的那张牌，再交给
+      // store 那颗 `selectDraftGeneral`（与热座点同一颗，不是这里另写一份执行）。三格读数的口径：
+      // `facts` 与 `cards` 都在同一个同步函数体里读 `getState()`（JS 是单线程、这两次读中间插不进别处写，
+      // 所以位置编号 `m${i}`/`q${i}` 与店里那两片数组的下标必然对得上——`draftListFactsOf` 就是按这个映射编的号）。
+      // ⚠️ 线上传来的字节一寸不当牌用：`cards` 给的是房主 store 里的对象，`msg.key` 只用来查它。
+      draftList = startHostDraftList<General>({
         facts: () => draftListFactsOf(useGameStore.getState()),
+        cards: () => {
+          const s = useGameStore.getState();
+          return { main: s.draftGenerals, qun: s.draftQunGenerals };
+        },
+        toggle: (card) => useGameStore.getState().selectDraftGeneral(card),
+        confirm: () => useGameStore.getState().confirmDraft(),
+        boundSeat: (peer) => getSeatMap()?.find((r) => r.peer === peer)?.seat ?? null,
         guests: () => {
           const rows = getSeatMap();
           return (bound?.connection.state.peers ?? [])
@@ -105,6 +120,10 @@ export default function NetRoomBridge() {
       });
       setHostActionSink((msg) => auth?.handleAction(msg));
       setHostReadySink((msg) => ready?.noteMark(msg.peer, msg.on));
+      // 切片⑤d：客人那颗点将钮／那一次确认递给名单发布者自己重判（判据＝他自己发出去的那一帧，
+      // 见 `netHostDraftList.handleIncoming`）。挂在 `draftList` 上而不是 `auth` 上，是因为那本按人头的账
+      // 就住在发布者这里——"我发给过他什么"只有这一个地方说得出，换房整套重建时它跟着一起清。
+      setHostDraftSink((msg) => draftList?.handleIncoming(msg));
       // 房主连着大厅没动牌、客人却已经进来了 ⇒ 先各给一份当下的，别让人家等下一次变化。
       // 顺序是 auth 先、bc 后：bc 要按席位各出一份，而席位表正是 auth 算出来抄进 netRoom 的
       // ——反过来的话，新进来那位第一次拿到的是"还没绑上"的全遮那份。
