@@ -159,7 +159,6 @@ describe('⑤c 逐席候选名单的隐私证人：真 store 走一遍，别席�
     expect(s.draftPlayerIndex).toBe(1);
 
     const faces = allFaces();
-    const poolNames = s.players[0].generalPool.map((g) => g.name);
     const frames = wireFrames();
     // 上一席那一格：整帧只剩一句人话 ⇒ 拿全桌人脸扫它，必须是空的。
     const done = frames.find((w) => w.seat === 1)!;
@@ -170,10 +169,27 @@ describe('⑤c 逐席候选名单的隐私证人：真 store 走一遍，别席�
     // 正在挑那一格：他自己的候选照旧上线（这一腿要的就是这个），但别人刚定下的那三张不许混进来。
     const picking = frames.find((w) => w.seat === 2)!;
     expect(picking.frame.main.length + picking.frame.qun.length).toBeGreaterThan(0);
-    for (const name of poolNames) {
-      expect(picking.outgoing).not.toContain(name);
-      expect(picking.incoming).not.toContain(name);
+    /**
+     * ⚠️ 撞的是**身份**（档案号），**不是名字**——名册上有两枚同名「关羽」（`wei_022` 魏／`shu_002` 蜀），
+     * 上一席那一格拿走其中一枚、这一席的候选里正好发着另一枚时，这一帧上出现「关羽」两个字是**合规的**
+     * （那本来就是他自己那一格的牌，⑥ 那条裁的就是"只上收信人自己那一份"）。
+     * 拿名字当身份证 ⇒ 这一场会假红，而且**红不红取决于这一桌发到哪些牌**＝同一套代码换一趟跑就能变绿（本轮实测：
+     * `npx vitest run` 那一趟通过、`npm run test:coverage` 那一趟红在这一句上）。故此处改成把位置号还原成档案号再撞。
+     */
+    const cardOfKey = (k: string): General =>
+      (k.startsWith('q') ? s.draftQunGenerals[Number(k.slice(1))] : s.draftGenerals[Number(k.slice(1))]);
+    const pickingIds = [...picking.frame.main, ...picking.frame.qun].map((item) => cardOfKey(item.key).id);
+    // 还原那把尺自己得是正的：每一颗位置号回到名单上，必须与那一帧上写着的那个名字同一个人，
+    // 否则下面那句"两边不相交"就只是拿一把歪尺量的空跑。
+    for (const item of [...picking.frame.main, ...picking.frame.qun]) {
+      expect(cardOfKey(item.key).name).toBe(item.name);
     }
+    expect(pickingIds).toHaveLength(picking.frame.main.length + picking.frame.qun.length); // 正面凭据：真的有牌在撞
+    const poolIds = s.players[0].generalPool.map((g) => g.id);
+    expect(poolIds).toHaveLength(3);
+    expect(pickingIds.filter((id) => poolIds.includes(id))).toEqual([]);
+    // 而档案号压根不许上线（线只认位置号）：上一席那三颗的号在这两串字符里一个都不该出现。
+    expect(leakedIds(picking.outgoing + picking.incoming, s.players[0].generalPool)).toEqual([]);
   });
 
   it('那句人话与热座那颗钮逐字一致，群牌人数两种数法在真材料上不许说两套', () => {
