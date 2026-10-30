@@ -122,7 +122,7 @@ describe('⑤d 这一格现在点得动：点下去交回去的只有那个位�
 
   it('那颗「确认征召」按房主送上来的那个布尔决定能不能按（本机不重算那条上下限）', () => {
     const notYet = show(frame());
-    const btn = cardButton('还没凑够');
+    const btn = cardButton('群势力1-3名');
     expect(btn.disabled).toBe(true);
     fireEvent.click(btn);
     expect(notYet.onConfirm).not.toHaveBeenCalled();
@@ -133,6 +133,38 @@ describe('⑤d 这一格现在点得动：点下去交回去的只有那个位�
     expect(go.disabled).toBe(false);
     fireEvent.click(go);
     expect(ready.onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('灰着时那颗钮上的字面＝房主那句 `instruction`，一个字节也不另写（更正㈠：屏上那句话必须与房主那笔账对得上）', () => {
+    // 人数早就够、缺的是群牌那一档的两种材料：`canConfirm` 为假 ≠ "还没凑够"。
+    const zeroQun = show(frame({ total: 10, picked: ['m0', 'm1'], main: [item({}), item({ key: 'm1', name: '张辽' })], qun: [], instruction: '选择10名将领（群势力1-3名，当前0名）' }));
+    expect(cardButton('群势力1-3名').textContent).toBe('选择10名将领（群势力1-3名，当前0名）');
+    expect(zeroQun.onConfirm).not.toHaveBeenCalled();
+
+    cleanup();
+    show(frame({ instruction: '名单凑够了但房主那边判这一卷还交不了（当前4名）' }));
+    expect(cardButton('当前4名').textContent).toBe('名单凑够了但房主那边判这一卷还交不了（当前4名）');
+  });
+
+  it('那颗钮再也不许替房主下结论：「还没凑够」这四个字全屏 0 命中，无论哪种成因', () => {
+    for (const instruction of [
+      '选择10名将领（群势力1-3名，当前0名）', // 10 名里 0 颗群牌：人数够了
+      '选择10名将领（群势力1-3名，当前4名）', // 10 名里 4 颗群牌：超了上限，更不是"没凑够"
+      '选择10名将领（群势力1-3名，当前1名）', // 真的还差几名
+    ]) {
+      show(frame({ instruction }));
+      expect(text()).not.toContain('还没凑够');
+      expect(cardButton('选择10名将领').textContent).toBe(instruction);
+      cleanup();
+    }
+  });
+
+  it('房主那句是拒话时，这颗灰着的钮也跟着说那句拒话（不许替他圆场成一句"还没凑够"）', () => {
+    const refused = '这一格已经勾满 10 颗了，这一颗加不进去——要先退掉一颗再点新的。';
+    show(frame({ instruction: refused }));
+    expect(cardButton('已经勾满 10 颗').textContent).toBe(refused);
+    expect(cardButton('已经勾满 10 颗').disabled).toBe(true);
+    expect(text()).toContain(`第 2 席：${refused}`);
   });
 
   it('牌那颗钮一律不灰（这里看不到房主那侧的上下限，灰掉＝让人对着一张不亮的钮瞎猜）', () => {

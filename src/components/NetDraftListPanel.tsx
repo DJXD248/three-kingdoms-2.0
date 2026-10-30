@@ -15,7 +15,9 @@ import type { NetDraftItem, NetDraftListFrame } from '../network/netProtocol';
  * ⚠️ 牌那颗钮**永远不 disable**（与热座面板的 `isSelectable` 不一样）：这里看不到也猜不出房主那侧的上下限，
  * 灰掉一颗牌等于让客人对着一张不亮的按钮瞎猜。所以点每一颗都必有回音——名单里那颗「已选」动了，
  * 或者上面那行"这一席该做什么"换成房主回他的那句拒话（派单逐字：「拒不得静默」）。
- * 只有「确认征召」读 `frame.canConfirm` 而灰着，因为那一个布尔是房主算好送上来的，不是本机猜的。
+ * 只有「确认征召」读 `frame.canConfirm` 而灰着，因为那一个布尔是房主算好送上来的，不是本机猜的；
+ * 灰着时那颗钮上的字面直接画 `frame.instruction`（房主那句"还差什么"原话），本机一个字也不另写——
+ * 房主那句是拒话时它也跟着变成那句拒话，这颗钮不会替他圆场。
  */
 
 const cardLine = (item: NetDraftItem): string =>
@@ -105,9 +107,12 @@ export function NetDraftListPanel({
                     : 'border-amber-700/25 bg-black/20 text-amber-200/40'
                 }`}
               >
-                {/* 文案与热座那颗钮同一句（`GeneralDraft.tsx:179-189`）：没凑够时说"还差什么"，凑够了才说"确认"。
-                    两者读的都是房主那一笔账（`netDraftList.draftTally`），界面上不另算一遍。 */}
-                {frame.canConfirm ? '✓ 确认征召' : `选择${frame.total}名将领（群势力1-3名，还没凑够）`}
+                {/* 灰着的时候画的**就是房主那句 `instruction`**（一个字也不另写）：它已经与热座那颗钮逐字同一句
+                    （`NetDraftParity.test.tsx` 把热座那颗、客人这颗、帧上那句三方逐字比过）。
+                    这里绝不写"还没凑够"那种替房主下结论的话——`canConfirm` 为假有三种成因，
+                    其中"10 名里 0 颗群牌"与"10 名里 4 颗群牌"恰恰是**人数早够了**，缺的是群牌那一档。
+                    够着时才换成「✓ 确认征召」，那一句与热座够了以后那颗钮也是同一句。 */}
+                {frame.canConfirm ? '✓ 确认征召' : frame.instruction}
               </button>
             </>
           )}

@@ -709,11 +709,14 @@ describe('⑤c/⑤d 大厅里的候选名单：只画指名发给我的那一份
     expect(text()).toContain('已选 2/10');
   });
 
-  it('那颗「确认征召」：房主说没凑够时按不动，说凑够了才交那一条', async () => {
+  it('那颗「确认征召」：房主说还不够时按不动，且那颗钮上写的就是房主那句原话；说够了才交那一条', async () => {
     const { socket, me } = await inRoomAsGuest();
     await receive(socket, { t: 'draftlist', from: 'host-9', to: me, ...frame() });
     const cell = screen.getByText(/你这一席的候选名单/).closest('div') as HTMLElement;
-    const confirmBtn = within(cell).getByText(/还没凑够/).closest('button') as HTMLButtonElement;
+    // 更正㈠：这份材料那句是"当前0名"——人数那一档早就够了，缺的是群牌。
+    // 界面上一律不许长出"还没凑够"那种替房主下结论的字；画的就是房主发来的那一句，逐字。
+    const confirmBtn = within(cell).getByText('选择10名将领（群势力1-3名，当前0名）').closest('button') as HTMLButtonElement;
+    expect(text()).not.toContain('还没凑够');
     expect(confirmBtn.disabled).toBe(true);
     socket.sent.length = 0;
     await act(async () => { confirmBtn.click(); });
