@@ -34,7 +34,7 @@ export interface GeneralTextDraft {
 }
 
 /** 只当连接词、不承载任何字段的值（忽略时必须回显给玩家）。 */
-const CONNECTIVES = ['一位', '一个', '名将', '新将', '新建将领', '请', '立即', '并且', '同时', '另外', '其中'];
+const CONNECTIVES = ['一位', '一个', '一名', '名将', '新将', '新建将领', '请', '立即', '并且', '同时', '另外', '其中'];
 
 /** 这一格要玩家自己定，一句话里出现了也不接（身份锁与归属都是人为决定，§H1）。 */
 const HUMAN_ONLY_KEYS = ['身份', '归属', '来源', '锁定', '白锁', '金锁'];
@@ -55,6 +55,30 @@ const BARE_NAME_RE = /^[一-龥A-Za-z·]{1,8}$/;
 function factionOf(text: string): Faction | undefined {
   const f = text.trim().replace(/国$/, '');
   return IMPORT_FACTIONS.find(candidate => candidate === f);
+}
+
+/**
+ * 剥掉段首那些"说话时带的帽子"（用户 2026-10-30 裁：「**一位郭淮**」这种显然只该认到「郭淮」）。
+ * 词表只有一份＝`CONNECTIVES`，这里不另起一张名单；每次只剥一枚**前缀**、剥下来的原样交给回显点名，
+ * 绝不静默丢。长词优先，免得「一名郭淮」先被短词切成「名郭淮」。
+ * 剥空了（剩下的什么都不是）就把原段整段交回去——宁可不剥，也不替玩家造一个名字。
+ */
+function stripLeadingConnective(fragment: string): { rest: string; dropped: string[] } {
+  const dropped: string[] = [];
+  let rest = fragment.trim();
+  for (;;) {
+    const hit = [...CONNECTIVES]
+      .sort((a, b) => b.length - a.length)
+      .find(word => {
+        if (!rest.startsWith(word)) return false;
+        const remainder = rest.slice(word.length).trim();
+        return remainder !== '' && !CONNECTIVES.includes(remainder);
+      });
+    if (hit === undefined) break;
+    rest = rest.slice(hit.length).trim();
+    dropped.push(hit);
+  }
+  return { rest, dropped };
 }
 
 /** 只认数字与汉字数目字，且必须大于 0；读不出来就交回点名，绝不兜底。 */
@@ -109,11 +133,14 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
   const draft: GeneralTextDraft = { nameFromPosition: false, skillNames: [], issues: [], ignored: [] };
   if (typeof text !== 'string' || text.trim() === '') return draft;
 
-  for (const fragment of splitFragments(text)) {
-    if (CONNECTIVES.includes(fragment)) {
-      draft.ignored.push(fragment);
+  for (const piece0 of splitFragments(text)) {
+    if (CONNECTIVES.includes(piece0)) {
+      draft.ignored.push(piece0);
       continue;
     }
+    const piece = stripLeadingConnective(piece0);
+    for (const word of piece.dropped) draft.ignored.push(word);
+    const fragment = piece.rest;
 
     let m = fragment.match(SKILLS_RE);
     if (m) {
@@ -203,7 +230,9 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
           reason: draft.nameFromPosition ? '前一句裸汉字已被当成将名，这一句没有覆盖它' : '将名写了两回，后一句没落进去',
         });
       } else {
-        draft.name = m[1].trim();
+        const val = stripLeadingConnective(m[1]);
+        for (const word of val.dropped) draft.ignored.push(word);
+        draft.name = val.rest;
       }
       continue;
     }

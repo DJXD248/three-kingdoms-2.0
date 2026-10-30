@@ -101,4 +101,19 @@ describe('新建那一排的一句话入口：读到的字段真的进了卡', (
     expect(speakAndAdopt('名：甲，魏，身份：三国有名')).toBe(true);
     expect(useGameStore.getState().authoredGenerals[0].identity).toBe('甲');
   });
+
+  // 用户 2026-10-30 裁：「**一位郭淮**」这种显然只该认到「**郭淮**」——这条钉的是"真落进卡的那个名"，
+  // 不是解析器内部的返回值（浏览器实测那趟就是把「一位郭淮」整串存成了将名，只测纯函数抓不到）。
+  it('段首那顶帽子不许进卡：说「一位郭淮，魏」落库的将名是「郭淮」，且回显把剥掉的词说出来', () => {
+    openCreateRow();
+    fireEvent.change(screen.getByLabelText('一句话生成将领'), { target: { value: '一位郭淮，魏' } });
+    fireEvent.click(btnByText('按这句生成')!);
+    expect(screen.getByText(/将名：郭淮/)).toBeTruthy();
+    expect(screen.getByText(/我当成连接词忽略掉的：一位/)).toBeTruthy();
+    expect(speakAndAdopt('一位郭淮，魏')).toBe(true);
+    const created = useGameStore.getState().authoredGenerals;
+    expect(created).toHaveLength(1);
+    expect(created[0].name).toBe('郭淮');
+    expect(created[0].identity).toBe('郭淮');
+  });
 });

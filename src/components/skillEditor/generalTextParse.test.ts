@@ -176,3 +176,53 @@ describe('第①步（改一张已有的卡）那句回显说"这一格不动"',
     expect(describeGeneralDraft(d, 'edit').some(l => l.includes('这两格不动'))).toBe(true);
   });
 });
+
+describe('段首那顶"帽子"要摘掉（用户 2026-10-30 裁：「一位郭淮」只该认到「郭淮」）', () => {
+  it('裸名带量词＝只取「郭淮」，摘下来的原样回显、不静默丢', () => {
+    const d = parseGeneralText('一位郭淮，魏');
+    expect(d.name).toBe('郭淮');
+    expect(d.nameFromPosition).toBe(true);
+    expect(d.ignored).toEqual(['一位']);
+    expect(d.issues).toEqual([]);
+    const echo = describeGeneralDraft(d);
+    expect(echo.some(l => l.includes('将名：郭淮'))).toBe(true);
+    expect(echo.some(l => l.includes('我当成连接词忽略掉的：一位'))).toBe(true);
+  });
+
+  it('「名：」那一路同样剥：「名：一位郭淮」与「名：一名郭淮」「名为名将郭淮」都落「郭淮」', () => {
+    for (const text of ['名：一位郭淮，魏', '名：一名郭淮，魏', '名为名将郭淮，魏']) {
+      const d = parseGeneralText(text);
+      expect(d.name).toBe('郭淮');
+      expect(d.nameFromPosition).toBe(false);
+      expect(d.ignored.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('帽子压在势力上也认：「一位蜀」＝势力蜀（剥完之后才送去比对五档）', () => {
+    const d = parseGeneralText('一位蜀');
+    expect(d.faction).toBe('蜀');
+    expect(d.ignored).toEqual(['一位']);
+    expect(d.name).toBeUndefined();
+  });
+
+  it('长词优先，切不出半个词：「一名郭淮」不许变成「名郭淮」', () => {
+    const d = parseGeneralText('一名郭淮，魏');
+    expect(d.name).toBe('郭淮');
+    expect(d.ignored).toEqual(['一名']);
+  });
+
+  it('剥到剩下还是一顶帽子＝不许剥（宁可不剥，也剥不出「一位」这种半个名字）', () => {
+    const d = parseGeneralText('一位一位');
+    expect(d.name).toBe('一位一位');
+    expect(d.ignored).toEqual([]);
+    const e = parseGeneralText('名：一位一位');
+    expect(e.name).toBe('一位一位');
+    expect(e.ignored).toEqual([]);
+  });
+
+  it('不带帽子的裸名照旧（这条不许被这刀碰坏）', () => {
+    const d = parseGeneralText('郭淮，魏');
+    expect(d.name).toBe('郭淮');
+    expect(d.ignored).toEqual([]);
+  });
+});
