@@ -7,6 +7,7 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import OnlineLobby from './OnlineLobby';
 import { NET_PROTOCOL_VERSION, encodeEnvelope, ourVersionStamp, type NetEnvelope } from '../network/netProtocol';
 import { buildBroadcastView } from '../network/snapshotView';
+import { MIN_BROADCAST_INTERVAL_MS } from '../network/snapshotBroadcaster';
 import { detachRoom, getActiveRoom } from '../network/netRoom';
 
 class FakeWebSocket {
@@ -744,6 +745,19 @@ describe('⑤·腿1（㈢ 演出刀）客人屏上的开局那一段：只画房
     const { socket, me } = await inRoomAsGuest();
     await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('diceRoll', twoSeats) });
     expect(socket.sent).toEqual([]);
+  });
+
+  /**
+   * 界面那句必须逐字对得上节流器的实际做法（监督台 2026-10-30 复算时挑出我那句"每动一次就推一份"是假的：
+   * `snapshotBroadcaster.ts:86-103` 是"变了记脏、至多每 MIN_BROADCAST_INTERVAL_MS 毫秒发一份当下最新的"）。
+   * 那个数不许在文案里手写——它跟着常量走，节流器改了那句话才不会留在屏上变成假话。
+   */
+  it('页脚那句说的是节流后的事实：至多每 N 毫秒一份当下最新的，不是"每动一次发一条"', async () => {
+    await inRoomAsGuest();
+    expect(text()).toContain(`至多每 ${MIN_BROADCAST_INTERVAL_MS} 毫秒推一份`);
+    expect(text()).toContain('看到的是最后那个样子');
+    expect(text()).toContain('一步一停');
+    expect(text()).not.toMatch(/每动一次就把当下这一份推出去|每动一次发一条|一变就发一条/);
   });
 });
 
