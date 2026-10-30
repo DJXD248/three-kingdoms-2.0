@@ -7,19 +7,24 @@ import {
   attachRoom,
   bumpNetRoom,
   clearRefusal,
+  deliverHostReady,
   detachRoom,
   getActiveRoom,
   getGuestSnapshot,
-  getNetStatus,
   getMyNetSeat,
+  getNetStatus,
+  getReadyTable,
   getRefusal,
   getSeatMap,
   getSeatMoves,
+  getStartGate,
   receiveGuestSnapshot,
   receiveNetStatus,
+  receiveReadyTable,
   receiveRefusal,
   receiveSeatMap,
   receiveSeatMoves,
+  setHostReadySink,
   subscribeNetRoom,
 } from './netRoom';
 import { joinRoom } from './netSession';
@@ -311,5 +316,173 @@ describe('getMyNetSeat：我这台机器坐第几席（视角轴唯一取数点�
     expect(seen).toHaveBeenCalledTimes(1);
     expect(getMyNetSeat()).toBe(2);
     unsubscribe();
+  });
+});
+
+/**
+ * 切片⑤a（v2.9.25）：那张准备表与从它派生出来的"还等谁"也住这一格。
+ *
+ * 三个判据各自有证人：㈠内容没变＝同一个引用（房主每两秒一次心跳惊不动那屏）；
+ * ㈡闸门只认房主那台机器——本地桌、纯 AI 桌、客人那侧一律 `applicable:false`，
+ * 今天那颗「开始游戏」什么形状，它们就还是什么形状；
+ * ㈢表还没上墙时不锁死房主（刚连线那一瞬读名册，屋里没客人就直接放行）。
+ */
+describe('⑤a 准备表与开始闸门也住这一格', () => {
+  const GUEST_A = { id: 'a', name: '客人甲', role: 'guest' as const };
+  const GUEST_B = { id: 'b', name: '客人乙', role: 'guest' as const };
+  const ONE = [{ peer: 'a', name: '客人甲', on: false, counted: true }];
+  const ONE_READY = [{ peer: 'a', name: '客人甲', on: true, counted: true }];
+  const TWO = [ONE[0], { peer: 'b', name: '客人乙', on: false, counted: true }];
+
+  /** 房主那台机器，名册上挂着 `guests` 这几位客人。 */
+  function hostWith(guests: unknown[]) {
+    const connection = { ...fakeConnection(), state: { ...fakeConnection().state, peers: guests } };
+    attachRoom({ role: 'host', name: '房主', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+  }
+  function guestSide() {
+    const connection = { ...fakeConnection(), state: { ...fakeConnection().state, role: 'guest', selfId: 'a', peers: [{ id: 'h', name: '房主', role: 'host' }, GUEST_A] } };
+    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+  }
+
+  it('没进房（本地桌、纯 AI 桌）＝闸门不适用而且开着：那颗钮今天的形状一个字不许变', () => {
+    expect(getReadyTable()).toBeNull();
+    expect(getStartGate()).toEqual({ applicable: false, open: true, waiting: [], gone: [] });
+  });
+
+  it('不适用那三种（没进房／客人那侧／退房）互换，引用仍是同一个——界面不会因为"换了个不适用"就重绘', () => {
+    const before = getStartGate();
+    hostWith([]);
+    const openRoom = getStartGate();
+    guestSide();
+    const asGuest = getStartGate();
+    detachRoom();
+    expect(before).toBe(openRoom);
+    expect(openRoom).toBe(asGuest);
+    expect(asGuest).toBe(getStartGate());
+    expect(getStartGate().applicable).toBe(false);
+  });
+
+  it('房里一个客人都没有＝也不适用（纯 AI 桌照样直接开局），表一到就按表说话', () => {
+    hostWith([]);
+    expect(getStartGate().applicable).toBe(false);
+    expect(getStartGate().open).toBe(true);
+    receiveReadyTable(ONE);
+    expect(getStartGate().applicable).toBe(true);
+    expect(getStartGate().open).toBe(false);
+    expect(getStartGate().waiting).toEqual(['客人甲']);
+  });
+
+  it('客人进了房、表还没算出来（刚连线那一瞬）＝按"还没齐"挡着，但一个名字也不编', () => {
+    hostWith([GUEST_A]);
+    expect(getReadyTable()).toBeNull();
+    expect(getStartGate().applicable).toBe(true);
+    expect(getStartGate().open).toBe(false);
+    expect(getStartGate().waiting).toEqual([]);
+    expect(getStartGate().gone).toEqual([]);
+  });
+
+  it('表原样重发＝没变：不换引用、不通知；内容真变了才两样都动', () => {
+    hostWith([GUEST_A]);
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+    const gate = getStartGate();
+
+    expect(receiveReadyTable(ONE)).toBe(true);
+    expect(getReadyTable()).toBe(ONE);
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(getStartGate()).not.toBe(gate);
+    const derived = getStartGate();
+
+    // 房主每次连线心跳、每次名册抖动都会把同一张表再算一遍——内容一致就该一声不响。
+    expect(receiveReadyTable(ONE.map((r) => ({ ...r })))).toBe(false);
+    expect(getReadyTable()).toBe(ONE);
+    expect(getStartGate()).toBe(derived);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    expect(receiveReadyTable(ONE_READY)).toBe(true);
+    expect(getStartGate()).not.toBe(derived);
+    expect(getStartGate().open).toBe(true);
+    expect(getStartGate().waiting).toEqual([]);
+    expect(seen).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it('房主每两秒一次的心跳惊不动那屏：bump 时表与名册都没动＝派生品不换引用', () => {
+    hostWith([GUEST_A]);
+    receiveReadyTable(ONE);
+    const derived = getStartGate();
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+    bumpNetRoom();
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(getStartGate()).toBe(derived);
+    unsubscribe();
+  });
+
+  it('空表是一句真话：表上没人＝没人在等，闸门开着（与 netstatus／seatmap 拒空反着来的一处）', () => {
+    hostWith([]);
+    expect(receiveReadyTable([])).toBe(true);
+    expect(getReadyTable()).toEqual([]);
+    expect(getStartGate().applicable).toBe(true);
+    expect(getStartGate().open).toBe(true);
+    expect(getStartGate().waiting).toEqual([]);
+  });
+
+  it('房主判成掉线那位不占分母：闸门开着，但他仍留在"已经不算在内"那份名单里让人看见', () => {
+    hostWith([GUEST_A, GUEST_B]);
+    receiveReadyTable([{ peer: 'a', name: '客人甲', on: true, counted: true }, { peer: 'b', name: '客人乙', on: false, counted: false }]);
+    expect(getStartGate().open).toBe(true);
+    expect(getStartGate().waiting).toEqual([]);
+    expect(getStartGate().gone).toEqual(['客人乙']);
+  });
+
+  it('客人中途退掉：名册与表一起缩，那句"还等谁"跟着重算，不会永远等一个已经不在的人', () => {
+    hostWith([GUEST_A, GUEST_B]);
+    receiveReadyTable(TWO);
+    expect(getStartGate().waiting).toEqual(['客人甲', '客人乙']);
+
+    hostWith([GUEST_A]);
+    expect(getStartGate().applicable).toBe(true);
+    expect(getStartGate().open).toBe(false);
+    receiveReadyTable(ONE);
+    expect(getStartGate().waiting).toEqual(['客人甲']);
+
+    hostWith([]);
+    receiveReadyTable([]);
+    expect(getStartGate().open).toBe(true);
+  });
+
+  it('客人那台机器不适用——它没有"开始游戏"这颗钮，也不该自己判一次闸门', () => {
+    guestSide();
+    receiveReadyTable(TWO);
+    expect(getReadyTable()).toBe(TWO);
+    expect(getStartGate().applicable).toBe(false);
+    expect(getStartGate().open).toBe(true);
+  });
+
+  it('attach／detach 把表与闸门一起清掉：换房不能抱着上一屋那几个人准备', () => {
+    hostWith([GUEST_A]);
+    receiveReadyTable(ONE);
+    attachRoom({ role: 'host', name: '乙', roomCode: 'B', address: 'ws://x', url: 'ws://x/B', connection: fakeConnection() as never });
+    expect(getReadyTable()).toBeNull();
+    expect(getStartGate().applicable).toBe(false);
+    receiveReadyTable(ONE);
+    detachRoom();
+    expect(getReadyTable()).toBeNull();
+    expect(getStartGate().applicable).toBe(false);
+  });
+
+  it('客人那颗钮要递给房主那台机器上的发布者：没挂上＝原样丢掉（他说"点了没反应"是有出处的），挂上＝只递一次', () => {
+    const got: { peer: string; on: boolean }[] = [];
+    expect(deliverHostReady({ peer: 'a', on: true })).toBe(false);
+    expect(got).toEqual([]);
+
+    setHostReadySink((msg) => got.push(msg));
+    expect(deliverHostReady({ peer: 'a', on: true })).toBe(true);
+    expect(got).toEqual([{ peer: 'a', on: true }]);
+
+    setHostReadySink(null);
+    expect(deliverHostReady({ peer: 'a', on: false })).toBe(false);
+    expect(got).toEqual([{ peer: 'a', on: true }]);
   });
 });

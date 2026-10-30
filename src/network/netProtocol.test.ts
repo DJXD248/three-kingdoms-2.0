@@ -4,6 +4,7 @@ import {
   MAX_NAME_LENGTH,
   MAX_MOVE_ITEMS,
   MAX_OMITTED_MOVES,
+  MAX_READY_ROWS,
   MAX_SEAT_ROWS,
   MAX_TRUSTED_PING_MS,
   MAX_WIRE_BYTES,
@@ -16,6 +17,7 @@ import {
   ourVersionStamp,
   parseEnvelope,
   versionMismatch,
+  type NetReadyRow,
   type VersionStamp,
 } from './netProtocol';
 
@@ -99,7 +101,7 @@ describe('版本握手：不一致就明确拒，绝不静默半连', () => {
   });
 });
 
-describe('线上证人：信封只认这九种形状', () => {
+describe('线上证人：信封只认这十五种形状', () => {
   it('往返一致', () => {
     const envelope = { t: 'hello', from: 'a', name: '张三', v: STAMP } as const;
     expect(parseEnvelope(encodeEnvelope(envelope))).toEqual(envelope);
@@ -359,6 +361,93 @@ describe('J4 四枚信封：席位表、能走的清单、客人交回的编号�
   });
 
   it('协议版本仍为 1：这四枚是同版本内的新形状，不是把老信封改了样子', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(1);
+    expect(ourVersionStamp().proto).toBe(1);
+  });
+});
+
+/**
+ * 切片⑤a（v2.9.25）那两枚：客人交回的那一颗准备钮，与房主算给全桌的那张准备表。
+ * 与前面每一枚同一纪律——协议层只认形状；「谁还算数、闸门开不开」是房主那台机器算的事。
+ */
+describe('⑤a 准备两枚信封：一个布尔与一张表', () => {
+  const ROWS: NetReadyRow[] = [
+    { peer: 'b', name: '客人甲', on: true, counted: true },
+    { peer: 'c', name: '客人乙', on: false, counted: true },
+    { peer: 'd', name: '客人丙', on: false, counted: false },
+  ];
+
+  it('往返一致：钮上只有"我点没点"，表上只有"这人是谁、点没点、还等不等他"', () => {
+    const btn = { t: 'ready', from: 'b', to: 'a', on: true } as const;
+    expect(parseEnvelope(encodeEnvelope(btn))).toEqual(btn);
+    expect(parseEnvelope(encodeEnvelope({ t: 'readytable', from: 'a', rows: ROWS })))
+      .toEqual({ t: 'readytable', from: 'a', rows: ROWS });
+  });
+
+  it('`on:false` 是个真话，不是缺字段（取消准备与没点过在账上是两笔，协议层都收得下）', () => {
+    expect(parseEnvelope('{"t":"ready","from":"b","to":"a","on":false}'))
+      .toEqual({ t: 'ready', from: 'b', to: 'a', on: false });
+  });
+
+  it('钮上多塞东西没有地方放：牌面、席位、"我要直接开始游戏"都跟着不上线', () => {
+    const trimmed = parseEnvelope('{"t":"ready","from":"b","to":"a","on":true,"seat":1,"general":{"name":"关羽"},"start":true}');
+    expect(trimmed).toEqual({ t: 'ready', from: 'b', to: 'a', on: true });
+    expect(trimmed).not.toHaveProperty('seat');
+    expect(trimmed).not.toHaveProperty('general');
+    expect(trimmed).not.toHaveProperty('start');
+  });
+
+  it('钮缺来路／缺收件人／`on` 不是布尔（字符串、数字、干脆没带）⇒ 整条拒', () => {
+    const bad = [
+      '{"t":"ready","to":"a","on":true}',
+      '{"t":"ready","from":"b","on":true}',
+      '{"t":"ready","from":"b","to":"a"}',
+      '{"t":"ready","from":"b","to":"a","on":"yes"}',
+      '{"t":"ready","from":"b","to":"a","on":1}',
+      '{"t":"ready","from":"b","to":"a","on":null}',
+      '{"t":"ready","from":"b","to":"","on":true}',
+      `{"t":"ready","from":"b","to":"${'x'.repeat(65)}","on":true}`,
+    ];
+    for (const text of bad) expect(parseEnvelope(text)).toBeNull();
+  });
+
+  it('空表在这里是**一句真话**：屋里一个客人都没有＝没人在等，闸门开着（与 netstatus／seatmap 反着来的一处）', () => {
+    expect(parseEnvelope('{"t":"readytable","from":"a","rows":[]}')).toEqual({ t: 'readytable', from: 'a', rows: [] });
+  });
+
+  it('表里少一样、名字超长或带控制字符、两个判据不是布尔 ⇒ 整条拒（半收＝界面上显示一条猜出来的行）', () => {
+    const bad = [
+      '{"t":"readytable","rows":[]}',
+      '{"t":"readytable","from":"a"}',
+      '{"t":"readytable","from":"a","rows":"b"}',
+      '{"t":"readytable","from":"a","rows":[{"name":"甲","on":true,"counted":true}]}',
+      '{"t":"readytable","from":"a","rows":[{"peer":"","name":"甲","on":true,"counted":true}]}',
+      '{"t":"readytable","from":"a","rows":[{"peer":"b","on":true,"counted":true}]}',
+      '{"t":"readytable","from":"a","rows":[{"peer":"b","name":"","on":true,"counted":true}]}',
+      `{"t":"readytable","from":"a","rows":[{"peer":"b","name":"${'一'.repeat(MAX_NAME_LENGTH + 1)}","on":true,"counted":true}]}`,
+      '{"t":"readytable","from":"a","rows":[{"peer":"b","name":"甲\\u0001","on":true,"counted":true}]}',
+      '{"t":"readytable","from":"a","rows":[{"peer":"b","name":"甲","on":"yes","counted":true}]}',
+      '{"t":"readytable","from":"a","rows":[{"peer":"b","name":"甲","on":true,"counted":1}]}',
+      '{"t":"readytable","from":"a","rows":[{"peer":"b","name":"甲","on":true}]}',
+    ];
+    for (const text of bad) expect(parseEnvelope(text)).toBeNull();
+    // 牌面没有地方跟着这张表上线：走私一个 `state` 进来，它被整段丢掉，
+    // 解析出来的仍然只有来路与那几行（与 `act` 那条同一纪律）。
+    const smuggled = parseEnvelope('{"t":"readytable","from":"a","rows":[],"state":{"deck":[{"id":"guan"}]}}');
+    expect(smuggled).toEqual({ t: 'readytable', from: 'a', rows: [] });
+    expect(smuggled).not.toHaveProperty('state');
+    expect(parseEnvelope(encodeEnvelope({ t: 'readytable', from: 'a', rows: [{ peer: 'b', name: '甲', on: true, counted: true }] })))
+      .toEqual({ t: 'readytable', from: 'a', rows: [{ peer: 'b', name: '甲', on: true, counted: true }] });
+  });
+
+  it('行数超过名册上界 ⇒ 整条拒（准备表一行都多不出名册之外）', () => {
+    const nine = Array.from({ length: 9 }, (_, i) => ({ peer: `p${i}`, name: `玩家${i}`, on: false, counted: true }));
+    expect(parseEnvelope(encodeEnvelope({ t: 'readytable', from: 'a', rows: nine.slice(0, MAX_READY_ROWS) })))
+      .not.toBeNull();
+    expect(parseEnvelope(encodeEnvelope({ t: 'readytable', from: 'a', rows: nine }))).toBeNull();
+  });
+
+  it('协议版本仍为 1：这两枚是同版本内的新形状，老信封一个字节没改', () => {
     expect(NET_PROTOCOL_VERSION).toBe(1);
     expect(ourVersionStamp().proto).toBe(1);
   });

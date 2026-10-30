@@ -380,6 +380,128 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
   });
 });
 
+/**
+ * 切片⑤a（v2.9.25）客人那一颗准备钮与那张照抄来的准备表。
+ *
+ * 两条硬判据：客人交回的是**一个布尔**（没有第二个字段、也没有"我替别人点"的余地），
+ * 而那张表只有房主发的那一份能上墙——别人冒充发一张，界面上一个字都不许变。
+ */
+describe('⑤a 大厅里那颗准备钮：交回一个布尔，照抄一张表', () => {
+  /** 走到"已连上、名册上有房主也有我"那一步；`me` 是在清空发件记录**之前**取下的。 */
+  async function inRoomAsGuest() {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('DDDDDD');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    const me = myId(socket);
+    await receive(socket, {
+      t: 'roster', from: 'host-9',
+      peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }],
+    });
+    socket.sent.length = 0;
+    return { socket, me };
+  }
+
+  it('表还没算出来时那句实话：不是"没人准备"，是"这张表还没到"', async () => {
+    await inRoomAsGuest();
+    expect(text()).toContain('准备情况');
+    expect(text()).toContain('房主那边还没把这张表算出来');
+  });
+
+  it('点一下「我准备好了」⇒ 线上只多出这一条，字段就只有来路、收件人与那个布尔', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await clickButton(/我准备好了/);
+    expect(socket.sent).toEqual([encodeEnvelope({ t: 'ready', from: me, to: 'host-9', on: true })]);
+  });
+
+  it('那颗钮只发给名册上那位真房主：名册还没到时它是按不动的（不能把"我准备好了"发给自己）', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('DDDDDD');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    socket.sent.length = 0;
+    const button = screen.getByRole('button', { name: /我准备好了/ });
+    expect(button.hasAttribute('disabled')).toBe(true);
+    await act(async () => { button.click(); });
+    expect(socket.sent).toEqual([]);
+  });
+
+  it('房主那张表上了墙：谁 ✓ 谁没点逐行照抄，我自己那一行标出（我）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'readytable', from: 'host-9',
+      rows: [
+        { peer: 'host-9', name: '房主乙', on: true, counted: true },
+        { peer: me, name: '玩家', on: false, counted: true },
+      ],
+    });
+    expect(text()).toContain('✓ 已准备');
+    expect(text()).toContain('还没点准备');
+    expect(text()).toContain('（我）');
+  });
+
+  it('表上我那一行翻了 ⇒ 那颗钮说的是"点这里取消"，再点交回的是 on:false', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'readytable', from: 'host-9', rows: [{ peer: me, name: '玩家', on: true, counted: true }] });
+    expect(text()).toContain('已准备（点这里取消）');
+    socket.sent.length = 0;
+    await clickButton(/点这里取消/);
+    expect(socket.sent).toEqual([encodeEnvelope({ t: 'ready', from: me, to: 'host-9', on: false })]);
+  });
+
+  it('房主判成掉线那位：行还在，但界面说的是"不等他"，不是"他没点"', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'readytable', from: 'host-9',
+      rows: [
+        { peer: me, name: '玩家', on: true, counted: true },
+        { peer: 'gone-1', name: '客人丙', on: false, counted: false },
+      ],
+    });
+    expect(text()).toContain('客人丙');
+    expect(text()).toContain('房主判他掉线，不等他');
+  });
+
+  it('不是房主发来的表上不了墙（别的客人也能往房间里发这一条）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'readytable', from: 'guest-x', rows: [{ peer: me, name: '玩家', on: true, counted: true }] });
+    expect(text()).toContain('房主那边还没把这张表算出来');
+    expect(text()).not.toContain('✓ 已准备');
+  });
+
+  it('客人这一侧不显示闸门那句话——"在等谁"是房主那台机器对用户说的话，两边不会各说一套', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'readytable', from: 'host-9',
+      rows: [
+        { peer: me, name: '玩家', on: true, counted: true },
+        { peer: 'other-1', name: '客人乙', on: false, counted: true },
+      ],
+    });
+    // 那句"还在等…"是房主那颗钮的专属说明（界面上只由 `gate.applicable` 那两处渲染）；
+    // 客人这一侧 applicable 恒为 false，所以这句动态文案一个字都不该出现——
+    // 页脚那段散文里当然提到"还在等谁"，所以判据取这句的后半段。
+    expect(text()).not.toContain('点准备——他们点完');
+    expect(text()).toContain('客人乙');
+  });
+
+  it('点准备不会顺手把牌桌那几格也点一遍（一颗钮只交一颗钮）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'moves', from: 'host-9', to: me, seat: 2,
+      items: [{ key: '0-END_TURN:abcd1234', label: '⏭️结束回合' }], omitted: 0,
+    });
+    socket.sent.length = 0;
+    await clickButton(/我准备好了/);
+    expect(socket.sent).toEqual([encodeEnvelope({ t: 'ready', from: me, to: 'host-9', on: true })]);
+  });
+
+  it('收尾那段说明写清了这一版做到哪儿、还没做到哪儿，且不谎称防作弊', async () => {
+    await inRoomAsGuest();
+    expect(text()).toContain('这一版不防作弊');
+    expect(text()).toContain('不会出现');
+    expect(text()).toContain('还没做的');
+  });
+});
+
 /** 房主那边算出来的、已经过 J2 遮蔽层的局面——界面拿到的就该长这样。 */
 function maskedView(): Record<string, unknown> {
   return buildBroadcastView({

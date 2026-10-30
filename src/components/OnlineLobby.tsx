@@ -6,15 +6,19 @@ import {
   bumpNetRoom,
   clearRefusal,
   deliverHostAction,
+  deliverHostReady,
   detachRoom,
   getActiveRoom,
   getGuestSnapshot,
   getNetStatus,
+  getReadyTable,
   getRefusal,
   getSeatMap,
   getSeatMoves,
+  getStartGate,
   receiveGuestSnapshot,
   receiveNetStatus,
+  receiveReadyTable,
   receiveRefusal,
   receiveSeatMap,
   receiveSeatMoves,
@@ -42,6 +46,8 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
  * 联机切片③（v2.9.25）把 J2 那"一份全桌通用的遮蔽局面"改成**按席位各出一份**：
  * 收件人自己那一席的手牌与征召池照发牌面，别人的仍只发数量；信封上多一个收件人，
  * 不是指名给自己的那一条客人不采纳。
+ * 联机切片⑤a（v2.9.25）再加上"进房的人各点一颗准备钮"：那张表由房主算（谁点了、谁还算数），
+ * 客人只照抄；全员准备之前房主那颗「开始游戏」按不下去（钮在、只是不亮，并写明还在等谁）。
  * 剩下：掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
@@ -59,8 +65,14 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const seatMap = useSyncExternalStore(subscribeNetRoom, getSeatMap, getSeatMap);
   const seatMoves = useSyncExternalStore(subscribeNetRoom, getSeatMoves, getSeatMoves);
   const refusal = useSyncExternalStore(subscribeNetRoom, getRefusal, getRefusal);
+  // 切片⑤a：那张准备表也是房主算好发来的（客人这边不自算"谁还算数"，更不自报自的家）。
+  const readyTable = useSyncExternalStore(subscribeNetRoom, getReadyTable, getReadyTable);
+  /** 闸门那句人话的唯一出处（房主那屏那颗「开始游戏」读的是同一格，两边不会说两套）。 */
+  const gate = useSyncExternalStore(subscribeNetRoom, getStartGate, getStartGate);
 
   const hostId = session?.peers.find((p) => p.role === 'host')?.id ?? session?.selfId ?? '';
+  /** 那颗准备钮只发给名册上那位真房主（`hostId` 在名册还没到时退回自己，那条路不能拿去点准备）。 */
+  const hostPeerId = session?.peers.find((p) => p.role === 'host')?.id ?? '';
 
   /** 客人交回一步：线上只走「第几席＋编号」，动作本体与牌面内容一个都不发。 */
   const playMove = (item: { key: string; label: string }) => {
@@ -68,6 +80,18 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
     if (!room || !seatMoves || !session) return;
     room.connection.send({ t: 'act', from: session.selfId, to: hostId, seat: seatMoves.seat, key: item.key });
   };
+
+  /**
+   * 客人那一颗准备钮交回去的只有一个布尔。他点没点由**房主算出的那张表**说了算：
+   * 按下去不算数（按钮不亮）直到表上自己那一行翻过来——客人这边绝不自家报自家。
+   */
+  const sendReady = (on: boolean) => {
+    const room = getActiveRoom();
+    if (!room || !session) return;
+    room.connection.send({ t: 'ready', from: session.selfId, to: hostPeerId, on });
+  };
+  /** 我这一行的读数来自房主那张表（还没回来＝按"没点"算，再点一次还是同一句话，不会多点出一步）。 */
+  const myReadyRow = session ? readyTable?.find((row) => row.peer === session.selfId) : undefined;
 
   const start = () => {
     setFormError(null);
@@ -107,6 +131,13 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         onAction: (msg) => {
           deliverHostAction(msg);
         },
+        // 切片⑤a：客人那颗准备钮递给房主那台机器上的准备发布者；那张表两边都进同一格，界面照抄。
+        onReadyMark: (msg) => {
+          deliverHostReady(msg);
+        },
+        onReadyTable: (rows) => {
+          if (receiveReadyTable(rows)) bumpNetRoom();
+        },
       },
       (next) => {
         setSession(next);
@@ -137,7 +168,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
             <h2 className="text-xl font-bold text-amber-300">🌐 联网对战</h2>
             <p className="text-xs text-amber-200/50 mt-1">
               牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌、
-              还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表，牌桌那一份按席位各发一条——各自看得见自己手里的牌"。
+              还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表，牌桌那一份按席位各发一条——各自看得见自己手里的牌，
+              进房的人各点一颗准备钮、全员准备之前房主那颗「开始游戏」按不下去"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -229,6 +261,54 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
+            {/* 切片⑤a：谁准备了。这张表由房主算（连"这个人还算不算数"一起算），两边都只照抄。 */}
+            <div className="rounded-lg border border-amber-700/25 bg-black/25 px-3 py-2">
+              <p className="text-xs text-amber-300/70 mb-1.5">准备情况（这张表由房主算，客人只照抄）</p>
+              {readyTable === null ? (
+                <p className="text-xs text-amber-200/40">房主那边还没把这张表算出来。</p>
+              ) : readyTable.length === 0 ? (
+                <p className="text-xs text-amber-200/40">屋里一个客人都没有，没有人在等。</p>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {readyTable.map(row => (
+                    <li key={row.peer} className="flex items-center gap-2 rounded border border-amber-700/20 bg-black/20 px-2 py-1 text-sm">
+                      <span className="font-bold">{row.name}</span>
+                      {row.peer === session.selfId && <span className="text-xs text-emerald-300/70">（我）</span>}
+                      <span className={row.on ? 'text-xs text-emerald-300/80' : 'text-xs text-amber-200/45'}>
+                        {row.on ? '✓ 已准备' : '还没点准备'}
+                      </span>
+                      {!row.counted && <span className="text-xs text-red-300/80">房主判他掉线，不等他</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {gate.applicable && !gate.open && (
+                <p className="text-xs text-amber-200/60 mt-1.5">
+                  {gate.waiting.length > 0
+                    ? `还在等 ${gate.waiting.join('、')} 点准备——他们点完，房主那颗「开始游戏」才会亮。`
+                    : '准备名单还在算（房主这边刚连上线）。'}
+                </p>
+              )}
+              {gate.applicable && gate.open && (readyTable?.length ?? 0) > 0 && (
+                <p className="text-xs text-emerald-300/80 mt-1.5">还在场的客人都准备了 ⇒ 房主那颗「开始游戏」按得下去。</p>
+              )}
+
+              {session.role === 'guest' && (
+                <button
+                  onClick={() => sendReady(myReadyRow?.on !== true)}
+                  disabled={!hostPeerId}
+                  className={`mt-2 w-full rounded-xl border px-4 py-2 text-sm font-bold ${
+                    myReadyRow?.on === true
+                      ? 'border-emerald-600/50 bg-emerald-950/40 text-emerald-100'
+                      : 'border-amber-600/40 bg-black/20 text-amber-200 hover:border-amber-400/70'
+                  } disabled:opacity-40`}
+                >
+                  {myReadyRow?.on === true ? '✓ 已准备（点这里取消）' : '🖐 我准备好了'}
+                </button>
+              )}
+            </div>
+
             {netRows !== null && netRows.length > 0 && (
               <NetPingPanel
                 rows={netRows}
@@ -280,6 +360,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           房主重算对得上才走、对不上退回并说明；清单一次最多列 32 步，没列出的条数会写在下面。
           牌桌那一份现在按席位各发一条（联机切片③）：指名给谁，谁才采纳那一条，而且只有他自己那一席的手牌与征召池发的是牌面，
           别人的、以及牌堆顺序仍只发数量。
+          准备那一段（联机切片⑤a）：每位客人一颗「我准备好了」，那张「谁点了、谁还算数」的表由房主算、全桌照抄；
+          还在场的客人都点之前，房主那边那颗「开始游戏」存在但按不下去，并且会写明还在等谁。
+          中途退掉的人不再有一行，被房主判成掉线的人留着那一行但已不进分母——不会出现"永远等一个已经不在的人"。
           这一版不防作弊：清单与局面都只指名发给那一席，但传话程序只认房间不认人，同桌理论上看得见发给别人的那几行文字与牌面。
           还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
         </p>

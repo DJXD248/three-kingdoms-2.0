@@ -10,6 +10,7 @@ import {
   type NetEnvelope,
   type NetLinkRow,
   type NetMoveItem,
+  type NetReadyRow,
   type NetSeatRow,
   type VersionStamp,
 } from './netProtocol';
@@ -776,6 +777,157 @@ describe('J4 座位与请求：各人的份各人收', () => {
     expect(acts).toEqual([{ peer: GUEST.id, seat: 2, key: '0-END_TURN:3f2a1c9d' }]);
 
     guest.leave();
+    host.leave();
+  });
+});
+
+/**
+ * 切片⑤a（v2.9.25）那两枚在线上的走向。与 J4 那几枚一个纪律：reducer 只搬运、只认来路，
+ * 「谁还算数、闸门开不开」是房主那台机器上的 `startHostReady` 拿着名册与连线表当场算的事。
+ */
+describe('⑤a 准备钮与准备表：谁的话谁听', () => {
+  const ROWS: NetReadyRow[] = [
+    { peer: GUEST.id, name: GUEST.name, on: true, counted: true },
+  ];
+  const OTHER = 'guest-2';
+  const inRoom = () => guestState({ phase: 'in-room', peers: [HOST, GUEST] });
+  const twoGuests = () => guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: OTHER, name: '客人乙', role: 'guest' }] });
+  const hostWithGuest = () => hostState({ phase: 'in-room', peers: [HOST, GUEST] });
+  const hostWithTwo = () => hostState({ phase: 'in-room', peers: [HOST, GUEST, { id: OTHER, name: '客人乙', role: 'guest' }] });
+
+  it('房主把来路对得上的那颗钮交给接线，名册与状态一个字节也不改（"算不算数"不在这里判）', () => {
+    const before = hostWithGuest();
+    const step = stepSession(before, text({ t: 'ready', from: GUEST.id, to: HOST.id, on: true }));
+    expect(step.ready).toEqual({ peer: GUEST.id, on: true });
+    expect(step.state).toBe(before);
+    expect(step.sends).toEqual([]);
+    expect(step.state.peers).toHaveLength(2);
+  });
+
+  it('取消准备是同一格上的另一个读数，不是把人从名册里摘掉', () => {
+    const step = stepSession(hostWithGuest(), text({ t: 'ready', from: GUEST.id, to: HOST.id, on: false }));
+    expect(step.ready).toEqual({ peer: GUEST.id, on: false });
+    expect(step.state.peers.map((p) => p.id)).toEqual([HOST.id, GUEST.id]);
+  });
+
+  it('他不能替别人点，也不能把话头递给第三个客人：发给别人的、不认识的、房主自己的 ⇒ 房主一概不理', () => {
+    const before = hostWithTwo();
+    expect(stepSession(before, text({ t: 'ready', from: GUEST.id, to: OTHER, on: true })).ready).toBeUndefined();
+    expect(stepSession(before, text({ t: 'ready', from: 'ghost', to: HOST.id, on: true })).ready).toBeUndefined();
+    expect(stepSession(before, text({ t: 'ready', from: HOST.id, to: HOST.id, on: true })).ready).toBeUndefined();
+    expect(stepSession(before, text({ t: 'ready', from: GUEST.id, to: HOST.id, on: true })).state).toBe(before);
+  });
+
+  it('客人冒充房主发准备表 ⇒ 不收并且写清为什么没动静（谁掉线、等谁，只有房主那台机器说得准）', () => {
+    const before = twoGuests();
+    const step = stepSession(before, text({ t: 'readytable', from: OTHER, rows: ROWS }));
+    expect(step.readyTable).toBeUndefined();
+    expect(step.state.note).toContain('不是房主发来');
+    expect(step.state).not.toBe(before);
+  });
+
+  it('房主发来的准备表照抄交出去：名册、状态一个也不动（客人这边不自算第二遍）', () => {
+    const before = inRoom();
+    const step = stepSession(before, text({ t: 'readytable', from: HOST.id, rows: ROWS }));
+    expect(step.readyTable).toEqual(ROWS);
+    expect(step.state).toBe(before);
+    expect(step.sends).toEqual([]);
+  });
+
+  it('客人收到房主的空表照样采纳——它是一句真话（屋里没客人＝没人在等），不是"没有消息"', () => {
+    const before = inRoom();
+    const step = stepSession(before, text({ t: 'readytable', from: HOST.id, rows: [] }));
+    expect(step.readyTable).toEqual([]);
+    expect(step.state).toBe(before);
+  });
+
+  it('还没进房（名册里根本没有房主）时收到的准备表也不收——没有"谁说的算"就没有可抄的', () => {
+    const step = stepSession(guestState(), text({ t: 'readytable', from: HOST.id, rows: ROWS }));
+    expect(step.readyTable).toBeUndefined();
+  });
+
+  it('房主一侧不采纳准备表（他自己就是出处），也不把客人发的表当名册用', () => {
+    const before = hostWithGuest();
+    const step = stepSession(before, text({ t: 'readytable', from: GUEST.id, rows: ROWS }));
+    expect(step.readyTable).toBeUndefined();
+    expect(step.state).toBe(before);
+  });
+
+  it('接上假传话线：客人交回钮 ⇒ 房主的 onReadyMark 收到；房主发表 ⇒ 客人的 onReadyTable 收到', async () => {
+    const relay = new FakeRelay();
+    const marks: { peer: string; on: boolean }[] = [];
+    const tables: NetReadyRow[][] = [];
+
+    const host = joinRoom(
+      {
+        role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id,
+        socketFactory: relay.factory, onReadyMark: (m) => marks.push(m),
+      },
+      () => {},
+    );
+    await nextTick();
+    const guest = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id,
+        socketFactory: relay.factory, onReadyTable: (r) => tables.push(r),
+      },
+      () => {},
+    );
+    await nextTick();
+
+    expect(guest.send({ t: 'ready', from: GUEST.id, to: HOST.id, on: true })).toBe(true);
+    await nextTick();
+    expect(marks).toEqual([{ peer: GUEST.id, on: true }]);
+
+    expect(host.send({ t: 'readytable', from: HOST.id, rows: ROWS })).toBe(true);
+    await nextTick();
+    expect(tables).toEqual([ROWS]);
+
+    guest.leave();
+    host.leave();
+  });
+
+  it('假传话线会把客人发的那张表也递到另一位客人那儿——采纳与否仍看来路，不来看它是不是恰好长得像房主那份', async () => {
+    const relay = new FakeRelay();
+    const tablesA: NetReadyRow[][] = [];
+    const tablesB: NetReadyRow[][] = [];
+
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    await nextTick();
+    const guestA = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id,
+        socketFactory: relay.factory, onReadyTable: (r) => tablesA.push(r),
+      },
+      () => {},
+    );
+    const guestB = joinRoom(
+      {
+        role: 'guest', name: '客人乙', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: OTHER,
+        socketFactory: relay.factory, onReadyTable: (r) => tablesB.push(r),
+      },
+      () => {},
+    );
+    await nextTick();
+    expect(host.state.peers).toHaveLength(3);
+
+    // 客人自己发一张表进屋里（传话程序照样把它递给另一位）⇒ 两位都不采纳；
+    // 换成房主真发的一份，两位收到的是同一张表。
+    expect(guestA.send({ t: 'readytable', from: GUEST.id, rows: ROWS })).toBe(true);
+    await nextTick();
+    expect(tablesA).toEqual([]);
+    expect(tablesB).toEqual([]);
+
+    expect(host.send({ t: 'readytable', from: HOST.id, rows: ROWS })).toBe(true);
+    await nextTick();
+    expect(tablesA).toEqual([ROWS]);
+    expect(tablesB).toEqual([ROWS]);
+
+    guestA.leave();
+    guestB.leave();
     host.leave();
   });
 });

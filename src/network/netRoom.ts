@@ -5,11 +5,15 @@
  * 房主那边得离开大厅去开局，客人那边得一直看着牌桌——所以连接不能住在任何
  * 一屏里。这一格只做三件事：收着一份当前连接、收着客人最新看到的那份局面、
  * 变了就通知订阅者。没有规则、没有状态转移。
+ * （切片⑤a 起这里还多收着房主算好的那张准备表，以及从它派生出来的那句"还等谁"——
+ *  派生物单独占一格的存在理由只有一个：界面要一个稳定的引用，每次现算就会每次都说"变了"。）
  */
 import type { EngineState } from '../core/GameState';
-import type { NetLinkRow, NetSeatRow } from './netProtocol';
+import type { NetLinkRow, NetReadyRow, NetSeatRow } from './netProtocol';
 import type { NetRole, RoomConnection } from './netSession';
 import type { IncomingAction } from './netHostAuthority';
+import type { IncomingReady, ReadyGate } from './netReady';
+import { gateOfReadyRows, sameReadyRows } from './netReady';
 import { isRestorableEngineState } from '../store/gameStateAdapter';
 import { sameRows } from './netHeartbeat';
 import { seatOfPeer, sameMoveLists, sameSeatRows, type SeatMoveList } from './netSeat';
@@ -38,10 +42,59 @@ let netStatus: NetLinkRow[] | null = null;
 let seatMap: NetSeatRow[] | null = null;
 let seatMoves: SeatMoveList | null = null;
 let refusal: { key: string; reason: string } | null = null;
+/**
+ * 房主那颗「开始游戏」按不按得下去（切片⑤a）。`applicable:false`＝这格闸门管不着这台机器：
+ * 本地热座（没开联机房）、这台机器是客人、刚退房——三种都照今天的样子直接放行，
+ * 用户 2026-10-30 裁的是"联机时客人都要点准备"，本地那一套形状一个字不许动。
+ * `waiting`／`gone` 是界面那句话的两个名单（还在等的／房主判成掉线、已经不等的）。
+ */
+export type StartGate = ReadyGate & { applicable: boolean };
+const NO_GATE: StartGate = { applicable: false, open: true, waiting: [], gone: [] };
+/**
+ * 切片⑤a（v2.9.25）那两格：那张准备表，与从它派生出来的那句"还等谁"。
+ *
+ * 表与派生品分两格存是有原因的：界面（房主那颗「开始游戏」）要的是**一个稳定的引用**——
+ * `useSyncExternalStore` 认的是引用，每次现算就会每次都说"变了"，那屏会一直重画。
+ * 所以派生品只在**输入真换了**的时候重造（`syncStartGate` 比的是表那个引用与名册里的客人条数），
+ * 房主每两秒一次的心跳惊不动它。
+ */
+let readyTable: NetReadyRow[] | null = null;
+let startGate: StartGate = NO_GATE;
+let gateRows: NetReadyRow[] | null = null;
+let gateGuests = -1;
 const listeners = new Set<() => void>();
 
 function notify() {
   for (const listener of listeners) listener();
+}
+
+/**
+ * 重算那句"还等谁"。不适用时给同一个常量对象（三种不适用互相换＝引用也不动）。
+ * 适用时，表还没上墙（房主刚连线、接线那头还没算出第一遍）才退回名册里数客人：
+ * 屋里还有客人就按"还没齐"处理，一个客人都没有就直接放行——
+ * 纯 AI 桌与本地桌因此一位不动，也不会出现"表没到就把房主永远锁在门外"。
+ */
+function syncStartGate(): void {
+  const applicable = active !== null && active.role === 'host';
+  if (!applicable || !active) {
+    if (startGate !== NO_GATE) {
+      startGate = NO_GATE;
+      gateRows = null;
+      gateGuests = -1;
+    }
+    return;
+  }
+  const rows = readyTable;
+  const guests = active.connection.state.peers.filter((p) => p.role === 'guest').length;
+  if (rows === gateRows && guests === gateGuests) return;
+  gateRows = rows;
+  gateGuests = guests;
+  if (rows === null) {
+    startGate = guests === 0 ? NO_GATE : { applicable: true, open: false, waiting: [], gone: [] };
+    return;
+  }
+  const gate = gateOfReadyRows(rows);
+  startGate = { applicable: true, open: gate.open, waiting: gate.waiting, gone: gate.gone };
 }
 
 export function attachRoom(room: ActiveRoom): void {
@@ -52,6 +105,8 @@ export function attachRoom(room: ActiveRoom): void {
   seatMap = null;
   seatMoves = null;
   refusal = null;
+  readyTable = null;
+  syncStartGate();
   notify();
 }
 
@@ -63,6 +118,8 @@ export function detachRoom(): void {
   seatMap = null;
   seatMoves = null;
   refusal = null;
+  readyTable = null;
+  syncStartGate();
   notify();
 }
 
@@ -149,6 +206,32 @@ export function clearRefusal(): void {
 }
 
 /**
+ * 切片⑤a：那张准备表。房主那份是自己算出来抄进来的，客人那份是房主发来的——
+ * 与席位表同一格纪律：**内容没变就保留同一个引用并返回 false**（房主每次名册、
+ * 每次连线表变化都会重发一遍，而多数时候那张表根本没动）。
+ * 空表在这里是一句真话（屋里没客人＝没人在等），不像 netstatus／seatmap 那样拒空。
+ */
+export function receiveReadyTable(rows: NetReadyRow[]): boolean {
+  if (sameReadyRows(readyTable, rows)) return false;
+  readyTable = rows;
+  syncStartGate();
+  notify();
+  return true;
+}
+
+export function getReadyTable(): NetReadyRow[] | null {
+  return readyTable;
+}
+
+/**
+ * 房主那颗「开始游戏」现在的读数（唯一取数点，界面不自算第二遍——与 `getMyNetSeat` 一样）。
+ * 返回的是**缓存下来的那个对象**：没换输入就不换引用，`useSyncExternalStore` 才不会白重绘。
+ */
+export function getStartGate(): StartGate {
+  return startGate;
+}
+
+/**
  * 收下这张表。内容一模一样时保留原来那个引用并返回 false——界面上每秒都在重画
  * 一张没变的表是白费劲（`useSyncExternalStore` 也要求"没变就得给同一个引用"）。
  */
@@ -191,7 +274,26 @@ export function deliverHostAction(msg: IncomingAction): boolean {
   return true;
 }
 
+/**
+ * 切片⑤a：与上面那格一模一样的一根线——客人交回的那颗准备钮要递给房主那台机器上的准备发布者，
+ * 而连线是在大厅里建的、发布者住在 App 上，两边碰不到对方。没有挂上＝这条原样丢掉
+ * （那位客人表现为"点了没反应"，而下一次名册或连线表变化会把这张表整个重算一遍）。
+ */
+let hostReadySink: ((msg: IncomingReady) => void) | null = null;
+
+export function setHostReadySink(sink: ((msg: IncomingReady) => void) | null): void {
+  hostReadySink = sink;
+}
+
+export function deliverHostReady(msg: IncomingReady): boolean {
+  if (!hostReadySink) return false;
+  hostReadySink(msg);
+  return true;
+}
+
 /** 名册或连线状态变了（谁进来、谁走了）⇒ 让房主侧的接线重新对齐。这里不搬运局面。 */
 export function bumpNetRoom(): void {
+  // 准备表还没上墙时，闸门那句"还等谁"读的就是名册——名册一动它得跟着动（房主侧接线随后会把表算出来）。
+  syncStartGate();
   notify();
 }

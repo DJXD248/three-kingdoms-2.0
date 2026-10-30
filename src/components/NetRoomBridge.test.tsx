@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render } from '@testing-library/react';
 import NetRoomBridge from './NetRoomBridge';
-import { attachRoom, bumpNetRoom, deliverHostAction, detachRoom, getSeatMap, type ActiveRoom } from '../network/netRoom';
+import { attachRoom, bumpNetRoom, deliverHostAction, deliverHostReady, detachRoom, getReadyTable, getSeatMap, getStartGate, type ActiveRoom } from '../network/netRoom';
 import type { RoomConnection } from '../network/netSession';
 import type { EngineState } from '../core/GameState';
 import { useGameStore, type Player } from '../store/gameStore';
@@ -351,5 +351,132 @@ describe('NetRoomBridge：J4 席位表、清单与客人交回来的一步', () 
 
     expect(deliverHostAction({ peer: 'g-1', seat: 2, key: '0-END_TURN:ffffffff' })).toBe(false);
     expect(wire(sent, 'actno')).toHaveLength(0);
+  });
+});
+
+/**
+ * 切片⑤a（v2.9.25）的接线证人：那张准备表是**这根接线**发出去的，不是某个弹窗的私事。
+ *
+ * 要钉住的三句：房主一接上就有一张表上墙（客人不必等谁再动一下）；客人那颗钮经大厅递给
+ * 这根接线、算完再上线并同时抄给房主自己那屏；名册一换就重算——「永远等一个已经不在的人」
+ * 这一句在接线这一层也留了证人，因为它才是真跑起来的那条路。
+ */
+const tables = (sent: Record<string, unknown>[]) => wire(sent, 'readytable');
+
+describe('NetRoomBridge：房主那张准备表从这里出', () => {
+  it('接上房间那一刻就发一张并抄进那一格：客人不必等谁再动一下牌', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+
+    expect(tables(sent)).toHaveLength(1);
+    expect(tables(sent)[0].rows).toEqual([{ peer: 'g-1', name: '客人甲', on: false, counted: true }]);
+    expect(getReadyTable()).toEqual([{ peer: 'g-1', name: '客人甲', on: false, counted: true }]);
+    expect(getStartGate()).toEqual({ applicable: true, open: false, waiting: ['客人甲'], gone: [] });
+  });
+
+  it('客人那颗钮走大厅递给这根接线：算完上线、同时更新那一格，闸门跟着开', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(deliverHostReady({ peer: 'g-1', on: true })).toBe(true);
+    await wait(10);
+
+    expect(tables(sent)).toHaveLength(2);
+    expect(tables(sent)[1].rows).toEqual([{ peer: 'g-1', name: '客人甲', on: true, counted: true }]);
+    expect(getStartGate().open).toBe(true);
+    expect(getStartGate().waiting).toEqual([]);
+  });
+
+  it('同一个客人把同一颗钮再点一次＝线上一条也不多发', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    deliverHostReady({ peer: 'g-1', on: true });
+    await wait(10);
+    const before = tables(sent).length;
+    deliverHostReady({ peer: 'g-1', on: true });
+    bumpNetRoom();
+    await wait(30);
+    expect(tables(sent)).toHaveLength(before);
+  });
+
+  it('客人退掉（名册少一位）⇒ 那一格当场换成空表、闸门当场开：不会永远等一个已经不在的人', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(getStartGate().open).toBe(false);
+
+    // 房主那台机器的名册少了客人甲（真线路上这是 roster 那条消息，接线读的就是连接里的名册）。
+    (room.connection.state.peers as Array<{ id: string }>).splice(1);
+    bumpNetRoom();
+    await wait(30);
+
+    // 屋里已经没有客人可发了 ⇒ 线上不多发一条；房主自己那一格却当场换了——闸门靠这一笔开。
+    expect(tables(sent)).toHaveLength(1);
+    expect(getReadyTable()).toEqual([]);
+    expect(getStartGate()).toEqual({ applicable: true, open: true, waiting: [], gone: [] });
+  });
+
+  it('两位客人退掉一位：剩下那位收到的是重算过的那张表，不是抱着旧的那张', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    (room.connection.state.peers as Array<{ id: string; name: string; role: 'host' | 'guest' }>)
+      .push({ id: 'g-2', name: '客人乙', role: 'guest' });
+    bumpNetRoom();
+    await wait(30);
+    expect(tables(sent).at(-1)!.rows).toEqual([
+      { peer: 'g-1', name: '客人甲', on: false, counted: true },
+      { peer: 'g-2', name: '客人乙', on: false, counted: true },
+    ]);
+
+    (room.connection.state.peers as Array<{ id: string }>).splice(2, 1); // 客人乙退房
+    bumpNetRoom();
+    await wait(30);
+    expect(tables(sent)).toHaveLength(3);
+    expect(tables(sent).at(-1)!.rows).toEqual([{ peer: 'g-1', name: '客人甲', on: false, counted: true }]);
+    expect(getStartGate().waiting).toEqual(['客人甲']);
+  });
+
+  it('退房以后那颗钮没有去处（接线已经拆了，不往上一间房里递）', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    detachRoom();
+
+    expect(deliverHostReady({ peer: 'g-1', on: true })).toBe(false);
+    expect(tables(sent)).toHaveLength(1);
+  });
+
+  it('换房间＝整套接线重建：上一间房那位客人的准备账不带进下一间', async () => {
+    const first = fakeRoom(true);
+    setEngine(engineState('a'));
+    attachRoom(first.room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    deliverHostReady({ peer: 'g-1', on: true });
+    await wait(10);
+    expect(getStartGate().open).toBe(true);
+
+    const second = fakeRoom(true);
+    attachRoom(second.room);
+    await wait(30);
+
+    expect(tables(second.sent)).toHaveLength(1);
+    expect(tables(second.sent)[0].rows).toEqual([{ peer: 'g-1', name: '客人甲', on: false, counted: true }]);
+    expect(getStartGate().open).toBe(false);
   });
 });

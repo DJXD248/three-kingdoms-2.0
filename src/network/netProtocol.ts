@@ -22,10 +22,20 @@ export type NetSeatRow = { peer: string | null; seat: number; name: string };
 /** J4 清单里的一条：房主当场算出来的"这一席现在能走的一步"。
  *  线上只走编号与人读的那句话，**动作本体绝不上线**。 */
 export type NetMoveItem = { key: string; label: string };
+/**
+ * 联机切片⑤a（v2.9.25）准备表里的一行：**这一位客人**准备到哪儿了。
+ * `on`＝他点没点；`counted`＝房主还等不等他。两个数分开是有原因的：
+ * 用户 2026-10-30 那句「客人中途退掉／掉线⇒闸门重算（不许出现"永远等一个已经不在的人"）」
+ * 说的是"别把不在场的人算进分母"，而不是"把那一行抹掉"——那一行还得留在桌上让人看见他掉了。
+ * 表里只有客人：房主自己那一席不等谁准备（他那颗钮就是开始游戏）。
+ */
+export type NetReadyRow = { peer: string; name: string; on: boolean; counted: boolean };
 
 /** 往返耗时的可信上限：超过就当没量到（对面时钟被改、或攒了很久的一条回话）。 */
 export const MAX_TRUSTED_PING_MS = 600_000;
 export const MAX_SEAT_ROWS = 8;
+/** 准备表的行数上界＝名册上界（`roster` 那条也封顶 8）：一行都多不出来。 */
+export const MAX_READY_ROWS = 8;
 export const MAX_MOVE_ITEMS = 32;
 /** 封顶后"还有多少步没列出"的可信上界：合法集现实中到不了这个数，超过即坏消息。 */
 export const MAX_OMITTED_MOVES = 10_000;
@@ -68,6 +78,13 @@ export type NetEnvelope =
   | { t: 'act'; from: string; to: string; seat: number; key: string }
   /** J4：房主没让走这一步，附一句人读的原因（界面原文显示，不二次加工）。 */
   | { t: 'actno'; from: string; to: string; key: string; reason: string }
+  /** 切片⑤a：客人交回的那一颗准备钮——只有"我"与"点没点"，别的什么都不带。
+   *  这里不判合法性：他点没点对房主那台机器而言只是个事实，闸门算的是**谁还算数**。 */
+  | { t: 'ready'; from: string; to: string; on: boolean }
+  /** 切片⑤a：房主算给全桌的那张准备表（客人照抄，跟席位表一个纪律：不自算第二遍）。
+   *  与 netstatus／seatmap 那两张不同，**空表在这里是一句真话**＝屋里一个客人都没有，
+   *  因此没有人在等，闸门开着。 */
+  | { t: 'readytable'; from: string; rows: NetReadyRow[] }
   | { t: 'bye'; from: string };
 
 export function ourVersionStamp(): VersionStamp {
@@ -109,7 +126,7 @@ export function encodeEnvelope(envelope: NetEnvelope): string {
   return JSON.stringify(envelope);
 }
 
-/** 线上证人：解析器只认这十三种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
+/** 线上证人：解析器只认这十五种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
 export function parseEnvelope(text: string): NetEnvelope | null {
   if (typeof text !== 'string' || text.length === 0 || text.length > MAX_WIRE_BYTES) return null;
   let parsed: unknown;
@@ -230,6 +247,25 @@ export function parseEnvelope(text: string): NetEnvelope | null {
       // 原因必须非空：退回而不说为什么，等于让客人对着一张不亮的按钮瞎猜。
       if (!isId(raw.from) || !isId(raw.to) || !isBounded(raw.key, MAX_MOVE_KEY_LENGTH) || !isBounded(raw.reason, MAX_REFUSAL_LENGTH)) return null;
       return { t: 'actno', from: raw.from, to: raw.to, key: raw.key, reason: raw.reason };
+    case 'ready':
+      // 客人交回的那一颗钮只有一个布尔：别的什么都不许跟着上来（他不能替别人点，
+      // 也不能顺手把"我要开始游戏"塞进同一条里）。
+      return isId(raw.from) && isId(raw.to) && typeof raw.on === 'boolean'
+        ? { t: 'ready', from: raw.from, to: raw.to, on: raw.on }
+        : null;
+    case 'readytable': {
+      // 与 netstatus／seatmap 那两条反着来的地方只有一处：空表在这里是一句真话
+      // （屋里一个客人都没有＝没人在等），所以只封顶、不要求"至少一行"。
+      if (!isId(raw.from) || !Array.isArray(raw.rows) || raw.rows.length > MAX_READY_ROWS) return null;
+      const rows = (raw.rows as unknown[]).map((r) => {
+        if (!r || typeof r !== 'object') return null;
+        const o = r as Record<string, unknown>;
+        if (!isId(o.peer) || !isBounded(o.name, MAX_NAME_LENGTH)) return null;
+        if (typeof o.on !== 'boolean' || typeof o.counted !== 'boolean') return null;
+        return { peer: o.peer, name: o.name, on: o.on, counted: o.counted };
+      });
+      return rows.every(Boolean) ? { t: 'readytable', from: raw.from, rows: rows as NetReadyRow[] } : null;
+    }
     default:
       return null;
   }

@@ -8,8 +8,10 @@ import {
   type NetLinkRow,
   type NetMoveItem,
   type NetPeer,
+  type NetReadyRow,
   type NetSeatRow,
 } from './netProtocol';
+import type { IncomingReady } from './netReady';
 import {
   DISCONNECT_SILENCE_MS,
   HEARTBEAT_PROBE_INTERVAL_MS,
@@ -70,6 +72,13 @@ export type StepResult = {
   refusal?: { key: string; reason: string };
   /** J4（房主侧）：某位客人交回来的一步。这里只搬运，合法性由接线那头当场重算再判。 */
   action?: { peer: string; seat: number; key: string };
+  /**
+   * 切片⑤a（房主侧）：某位客人交回的那一颗准备钮。与上面那条同一手法——这里只搬运，
+   * "谁还算数、闸门开不开"由接线那头的 `startHostReady` 当场重算再判（它还得看名册与连线表）。
+   */
+  ready?: IncomingReady;
+  /** 切片⑤a（客人侧）：房主算好的那张准备表。客人照抄，自己不在这里判谁还算数。 */
+  readyTable?: NetReadyRow[];
 };
 
 export function newPeerId(): string {
@@ -189,6 +198,14 @@ export function stepSession(
     if (!fromHost || envelope.to !== state.selfId) return { state, sends: [], saw };
     return { state, sends: [], refusal: { key: envelope.key, reason: envelope.reason }, saw };
   }
+  // ── 切片⑤a：准备表同样只认房主那一份。客人不自算"谁还算数"──
+  if (envelope.t === 'readytable') {
+    const fromHost = state.peers.some((p) => p.id === envelope.from && p.role === 'host');
+    if (!fromHost) {
+      return { state: { ...state, note: '收到不是房主发来的准备表，已忽略' }, sends: [], saw };
+    }
+    return { state, sends: [], readyTable: envelope.rows, saw };
+  }
   return { state, sends: [], saw };
 }
 
@@ -229,6 +246,15 @@ function hostStep(state: SessionState, envelope: NetEnvelope): StepResult {
     if (envelope.to !== state.selfId) return { state, sends: [] };
     if (!state.peers.some((p) => p.id === envelope.from && p.role === 'guest')) return { state, sends: [] };
     return { state, sends: [], action: { peer: envelope.from, seat: envelope.seat, key: envelope.key } };
+  }
+
+  // 切片⑤a：客人那一颗准备钮。把关的两句与上面一模一样（这条是发给我的、发信人确实是名册上的
+  // 一位客人），交回来的就是一个布尔——**他不能替别人点**。至于这个人还算不算数（掉线？退了？），
+  // 那是 `startHostReady` 拿着名册与连线表当场算的事，不在这里。
+  if (envelope.t === 'ready') {
+    if (envelope.to !== state.selfId) return { state, sends: [] };
+    if (!state.peers.some((p) => p.id === envelope.from && p.role === 'guest')) return { state, sends: [] };
+    return { state, sends: [], ready: { peer: envelope.from, on: envelope.on } };
   }
 
   // 客人之间互发的消息、以及发给别人的 welcome/refuse/roster，房主一概不当名册用。
@@ -285,6 +311,16 @@ export function joinRoom(
     onMoves?: (msg: { seat: number; items: NetMoveItem[]; omitted: number }) => void;
     /** J4（客人侧）：房主退回那一步时附的那句话。 */
     onRefusal?: (msg: { key: string; reason: string }) => void;
+    /**
+     * 切片⑤a（房主侧）：某位客人交回的那一颗准备钮（只有一个布尔）。
+     * 与 `onAction` 同一手法：这里只搬运，闸门那笔账由接线那头的 `startHostReady` 当场重算。
+     */
+    onReadyMark?: (msg: IncomingReady) => void;
+    /**
+     * 切片⑤a：那张准备表。房主那边是自己算出来的（抄一格给自己那屏），客人那边是房主发来的那一份
+     * ——两边都只住 `netRoom` 那一格，界面照抄，与席位表一个纪律。
+     */
+    onReadyTable?: (rows: NetReadyRow[]) => void;
   },
   onChange: (state: SessionState) => void,
 ): RoomConnection {
@@ -366,6 +402,10 @@ export function joinRoom(
     if (next.moves) args.onMoves?.(next.moves);
     if (next.refusal) args.onRefusal?.(next.refusal);
     if (next.action) args.onAction?.(next.action);
+    // 切片⑤a：客人那颗钮递给房主那台机器上的准备发布者（只有房主那台机器会收到那一条）；
+    // 准备表两边都递进同一格——房主那份是自己算的，客人那份是房主发来的。
+    if (next.ready) args.onReadyMark?.(next.ready);
+    if (next.readyTable) args.onReadyTable?.(next.readyTable);
   };
 
   link = openNetLink(args.url, {
