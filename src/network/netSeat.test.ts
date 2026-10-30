@@ -156,7 +156,12 @@ describe('编号：同一个局面重算两次，得到的必须是同一批编�
 
 describe('那句话：措辞逐字对齐牌桌已有的按钮', () => {
   const st = state([
-    player(0, { name: '曹操', fieldGenerals: [{ general: general('g1', '夏侯惇'), ownerId: 0 }] }),
+    player(0, {
+      name: '曹操',
+      hand: [general('gx', '关羽'), general('gy', '张飞')],
+      generalPool: [general('gp', '黄忠')],
+      fieldGenerals: [{ general: general('g1', '夏侯惇'), ownerId: 0 }],
+    }),
     player(1, { name: '孙权', fieldGenerals: [{ general: general('g9', '周瑜'), ownerId: 1 }] }),
   ]);
   const say = (type: GameAction['type'], payload?: unknown) => describeMove(st, createAction(type, 0, payload as never));
@@ -175,24 +180,68 @@ describe('那句话：措辞逐字对齐牌桌已有的按钮', () => {
     expect(say('DRAW', { fromGeneralPool: 0, fromCardPool: 0 })).toContain('抽取 0 张');
   });
 
-  it('前进／攻击／补给／叠甲／登场都点名到具体的人与位置', () => {
+  it('前进／攻击／补给／叠甲都点名到具体的人与位置（场上那一格本来就公开）', () => {
     expect(say('MOVE_GENERAL', { generalId: 'g1', target: { zone: 'camp', slot: 0, areaOwnerId: 0 } })).toBe('🚶前进：夏侯惇 → 曹操的营地区域第1格');
     expect(say('MOVE_GENERAL', { generalId: 'g1', target: { zone: 'battle', slot: 2, areaOwnerId: null }, consumeCard: { id: 'c' } })).toBe('🚶前进：夏侯惇 → 战场第3格（消耗1张）');
     expect(say('ATTACK', { attackerId: 'g1', targetId: 'g9', ranged: true, consumeCard: { id: 'c' } })).toBe('🏹远程攻击：夏侯惇 → 周瑜（消耗1张）');
     expect(say('ATTACK', { attackerId: 'g1', targetId: 'base_1' })).toBe('⚔️近战攻击：夏侯惇 → 孙权的营地');
     expect(say('SUPPLY', { generalId: 'g1', consumeCards: [{ id: 'a' }, { id: 'b' }] })).toBe('💊补给：夏侯惇（用2张）');
     expect(say('EQUIP_ARMOR', { generalId: 'g1', armorCards: [{ id: 'a' }] })).toBe('🛡️叠甲：夏侯惇（军备1张）');
-    expect(say('DEPLOY_GENERAL', { general: general('gx', '关羽'), slot: 2, consumeCards: [{ id: 'a' }] })).toBe('⚔️登场将领：关羽 → 营地区域第3格（消耗1张）');
   });
 
-  it('找不到的引用不编名字，只说这句真话', () => {
+  it('切片④：住在手牌／征召池／牌堆里的牌，那句话只给位置、不给牌名', () => {
+    // 登场打的就是自己手里的将——名字在落场之前不许上线（传话线是全屋抄送的）。
+    expect(say('DEPLOY_GENERAL', { general: general('gx', '关羽'), slot: 2, consumeCards: [{ id: 'a' }] })).toBe('⚔️登场将领：手牌第1张 → 营地区域第3格（消耗1张）');
+    expect(say('DEPLOY_GENERAL', { general: general('gy', '张飞'), slot: 0, consumeCards: [{ id: 'a' }] })).toBe('⚔️登场将领：手牌第2张 → 营地区域第1格（消耗1张）');
+    // 引用一个住在别人手里的牌号：既不给牌名，也要说清是哪一席的手牌。
     expect(say('ATTACK', { attackerId: 'gone', targetId: 'g1' })).toBe('⚔️近战攻击：不在场上的将 → 夏侯惇');
+    const otherSeat = state([
+      player(0, { name: '曹操', fieldGenerals: [{ general: general('g1', '夏侯惇'), ownerId: 0 }] }),
+      player(1, { name: '孙权', hand: [general('hidden', '周泰')] }),
+    ]);
+    expect(describeMove(otherSeat, createAction('ATTACK', 0, { attackerId: 'g1', targetId: 'hidden' } as never)))
+      .toBe('⚔️近战攻击：夏侯惇 → 孙权的手牌第1张');
+    // 征召池同理：那一格也只放开给本席。
+    expect(describeMove(st, createAction('ATTACK', 0, { attackerId: 'g1', targetId: 'gp' } as never)))
+      .toBe('⚔️近战攻击：夏侯惇 → 征召池第1员');
+    // 牌堆最严：次序连本席都不发，所以不报第几张。
+    const deckOnly = state([player(0, { name: '曹操' })], { deck: [general('d1', '马超'), general('d2', '关羽')] } as never);
+    expect(describeMove(deckOnly, createAction('DEPLOY_GENERAL', 0, { general: general('d2', '关羽'), slot: 0, consumeCards: [] } as never)))
+      .toBe('⚔️登场将领：牌堆里的一张 → 营地区域第1格（消耗0张）');
+    // 哪儿都查不到（载荷带来的名字压根不在牌桌上）⇒ 同样不许把那个名字念出去。
+    expect(say('DEPLOY_GENERAL', { general: general('nowhere', '吕布'), slot: 1, consumeCards: [] })).toBe('⚔️登场将领：手里的一张将 → 营地区域第2格（消耗0张）');
   });
 
   it('抉择那一格照着状态里记录的选项念（房主侧才有这份原文）', () => {
     const withChoice = state([player(0, { name: '曹操' })], { pendingChoice: { key: 'k1', playerId: 0, options: [{ label: '弃一张牌', enabled: true }, { label: '什么都不做', enabled: false }] } } as never);
     expect(describeMove(withChoice, createAction('CHOOSE_OPTION', 0, { choiceKey: 'k1', optionIndex: 1 }))).toBe('🔀选项2：什么都不做（曹操）');
     expect(describeMove(withChoice, createAction('CHOOSE_OPTION', 0, { choiceKey: 'k1', optionIndex: 7 }))).toContain('这一项没有文字');
+  });
+
+  it('抉择那一格：选项动的是私格里的牌 ⇒ 念位置，绝不把选项原文那个牌名念出去', () => {
+    // 真实形态：征召/弃牌那类问句把牌名写进 label，把运行时牌号冻在 events[].data.cardKeys 里。
+    // 判据取牌号落在哪一格，不取 label 的字符串——名字互相同字太常见（手牌「乐」与场上「乐进」）。
+    const ask = state([
+      player(0, { name: '曹操', hand: [general('h1', '闪电'), general('h2', '乐')] }),
+      player(1, { name: '孙权', fieldGenerals: [{ general: general('g9', '乐进'), ownerId: 1 }] }),
+    ], {
+      pendingChoice: {
+        key: 'k1',
+        playerId: 0,
+        options: [
+          { label: '闪电', enabled: true, events: [{ type: 'DISCARD', data: { cardKeys: ['h1'] } }] },
+          { label: '乐', enabled: true, events: [{ type: 'DISCARD', data: { cardKeys: ['h2'] } }] },
+          { label: '乐进', enabled: true, events: [{ type: 'DISCARD', data: { cardKeys: ['g9'] } }] },
+          { label: '什么都不做', enabled: true, events: [] },
+        ],
+      },
+    } as never);
+    const choose = (optionIndex: number) => describeMove(ask, createAction('CHOOSE_OPTION', 0, { choiceKey: 'k1', optionIndex } as never));
+    expect(choose(0)).toBe('🔀选项1：手牌第1张（曹操）');
+    expect(choose(1)).toBe('🔀选项2：手牌第2张（曹操）');
+    // 场上那一格本来就公开：号查到了名字就不许再被换成位置（过度遮蔽＝这一席读不懂在问什么）。
+    expect(choose(2)).toBe('🔀选项3：乐进（曹操）');
+    expect(choose(3)).toBe('🔀选项4：什么都不做（曹操）');
   });
 
   it('技能那一格：读不到候选时只说"发动技能"，绝不拿机器编号糊到界面上', () => {

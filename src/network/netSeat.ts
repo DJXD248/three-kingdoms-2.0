@@ -18,6 +18,13 @@
  * 措辞对齐牌桌（§12-112：显示那句必须逐字对得上引擎行为）——「⏭️结束回合」「🚶前进」
  * 「💊补给」「🛡️叠甲」「⚔️登场将领」「🚫 跳过」「结算失去体力」「✓ 确认」与
  * 「选项N：…」都取自热座界面已有的那几行，不另立第二套词。
+ *
+ * **这句话里不许有牌名**（切片④＝v2.9.25）：传话线把屋里每一条文字帧抄给每一台机器
+ * （`scripts/net-relay.mjs:182-186`），「指名发给某一席」在传输层不是一堵墙——牌名只要
+ * 进了这句话，全屋都读得到。所以住在别人看不见的格子里的那些牌（手牌／征召池＝切片③只
+ * 放开给本席的那两格，牌堆更严＝次序连本席都不发）一律换成**位置引用**：「手牌第2张」
+ * 「征召池第1员」。欠答那一席照样答得了——他自己的手牌在他的私有快照里是照发的，
+ * 编号又已经锁死了载荷，位置只是让人读得懂。场上的将、弃牌堆与阵亡堆本来就公开，照旧点名。
  */
 import type { ActionType, GameAction } from '../action/ActionTypes';
 import type { EngineState } from '../core/GameState';
@@ -194,8 +201,47 @@ function playerById(state: EngineState, playerId: number | null | undefined) {
   return state.players.find(p => p.id === playerId);
 }
 
+/**
+ * 这一张牌此刻是不是住在别人看不见的格子里。是 ⇒ 给一句位置引用；否 ⇒ null（那句话照旧点名）。
+ * 口径与切片③的遮蔽面同一处：`hand`／`generalPool` 只放开给本席（`PRIVATE_REVEALED_KEYS`），
+ * `deck` 连本席都不给次序，所以只说"牌堆里的一张"、不说第几张。场上／弃牌堆／阵亡堆公开。
+ * 「手牌第几张」只有站在牌的主人口径才读得通，所以引用别人的牌时带上那是哪一席。
+ */
+function hiddenCardRef(state: EngineState, cardId: string, actorId: number | null | undefined): string | null {
+  if (!cardId) return null;
+  const privateZones = [
+    { key: 'hand', noun: '手牌', unit: '张' },
+    { key: 'generalPool', noun: '征召池', unit: '员' },
+  ] as const;
+  for (const p of listOf<Record<string, unknown>>(state.players)) {
+    for (const zone of privateZones) {
+      const index = listOf(p[zone.key]).findIndex(card => runtimeId(card) === cardId);
+      if (index < 0) continue;
+      const where = `${zone.noun}第${index + 1}${zone.unit}`;
+      return Number(p.id) === actorId ? where : `${clampText(p.name, MAX_NAME_LENGTH, '玩家')}的${where}`;
+    }
+  }
+  return listOf(state.deck).some(card => runtimeId(card) === cardId) ? '牌堆里的一张' : null;
+}
+
+/**
+ * 抉择那一项要点名动用哪些牌：要约里冻结的事件带着运行时牌号（`cardKeys`）。
+ * 有一张住在别人看不见的格子里，这一项就整句换成位置引用——**判据是牌号落在哪一格，
+ * 不是拿 label 去比字符串**（牌名互相同字很常见，用字符串比对要么漏、要么误伤公开的名字）。
+ */
+function optionCardRef(state: EngineState, option: Record<string, unknown> | undefined, actorId: number | null | undefined): string | null {
+  const refs: string[] = [];
+  for (const event of listOf<{ data?: unknown }>(option?.events)) {
+    for (const cardKey of listOf((event?.data as { cardKeys?: unknown } | undefined)?.cardKeys)) {
+      const where = hiddenCardRef(state, String(cardKey), actorId);
+      if (where && !refs.includes(where)) refs.push(where);
+    }
+  }
+  return refs.length > 0 ? refs.join('＋') : null;
+}
+
 /** 场上／手里的将，按运行时实例号找名字；`base_3` 是营地。 */
-function nameOfRef(state: EngineState, ref: string): string {
+function nameOfRef(state: EngineState, ref: string, actorId: number | null | undefined): string {
   if (!ref) return '未知';
   const base = /^base_(\d+)$/.exec(ref);
   if (base) {
@@ -206,11 +252,9 @@ function nameOfRef(state: EngineState, ref: string): string {
     for (const fg of listOf<{ general?: { name?: unknown } }>(p.fieldGenerals)) {
       if (runtimeId(fg?.general) === ref) return clampText(fg?.general?.name, MAX_NAME_LENGTH, '将领');
     }
-    for (const card of listOf<{ name?: unknown }>(p.hand)) {
-      if (runtimeId(card) === ref) return clampText(card.name, MAX_NAME_LENGTH, '牌');
-    }
   }
-  return '不在场上的将';
+  // 场上找不到、却住在某一席看不见的那两格里 ⇒ 只给位置，不给牌名（切片④）。
+  return hiddenCardRef(state, ref, actorId) ?? '不在场上的将';
 }
 
 function zoneName(state: EngineState, target: unknown): string {
@@ -234,7 +278,7 @@ function skillLabel(state: EngineState, playerId: number, skillId: string, gener
     ? ask.options.find(o => o.skillId === skillId)
     : undefined;
   if (reaction) {
-    const who = clampText(ask?.generalName ?? nameOfRef(state, generalId), MAX_NAME_LENGTH, '将');
+    const who = clampText(ask?.generalName ?? nameOfRef(state, generalId, playerId), MAX_NAME_LENGTH, '将');
     return `⚡${who}【${clampText(reaction.skillName, MAX_NAME_LENGTH, '技能')}】`;
   }
   const candidate = listTurnEndSkillCandidates(state, playerId).find(c => c.definition.id === skillId);
@@ -266,35 +310,40 @@ export function describeMove(state: EngineState, action: GameAction): string {
       return '✓ 确认（抽完了）';
     case 'RESOLVE_BASE_LOSS':
       return '🏯结算失去体力';
-    case 'DEPLOY_GENERAL':
+    case 'DEPLOY_GENERAL': {
+      // 登场打的是自己手里的将：这一员在落场之前不许报名字（切片④）。真名册扫描里 148 条登场
+      // 标签全部能在动作者手里查到位置（`netSeatPrivacy.test.ts` 钉着这个数），查不到只是理论
+      // 形状，所以那里给一句不点名的真话。
+      const which = hiddenCardRef(state, runtimeId(p?.general), action.playerId) ?? '手里的一张将';
       return clampText(
-        `⚔️登场将领：${mine(p?.general?.name)} → 营地区域第${Number(p?.slot ?? 0) + 1}格（消耗${cardCount(p, 'consumeCards')}张）`,
+        `⚔️登场将领：${which} → 营地区域第${Number(p?.slot ?? 0) + 1}格（消耗${cardCount(p, 'consumeCards')}张）`,
         MAX_MOVE_LABEL_LENGTH,
-        `⚔️登场将领：${mine(p?.general?.name)}`,
+        `⚔️登场将领：${which}`,
       );
+    }
     case 'MOVE_GENERAL':
       return clampText(
-        `🚶前进：${nameOfRef(state, String(p?.generalId ?? ''))} → ${zoneName(state, p?.target)}`
+        `🚶前进：${nameOfRef(state, String(p?.generalId ?? ''), action.playerId)} → ${zoneName(state, p?.target)}`
         + (p?.consumeCard ? '（消耗1张）' : ''),
         MAX_MOVE_LABEL_LENGTH,
         '🚶前进',
       );
     case 'ATTACK':
       return clampText(
-        `${p?.ranged === true ? '🏹远程' : '⚔️近战'}攻击：${nameOfRef(state, String(p?.attackerId ?? ''))} → ${nameOfRef(state, String(p?.targetId ?? ''))}`
+        `${p?.ranged === true ? '🏹远程' : '⚔️近战'}攻击：${nameOfRef(state, String(p?.attackerId ?? ''), action.playerId)} → ${nameOfRef(state, String(p?.targetId ?? ''), action.playerId)}`
         + (p?.consumeCard ? '（消耗1张）' : ''),
         MAX_MOVE_LABEL_LENGTH,
         '攻击',
       );
     case 'SUPPLY':
       return clampText(
-        `💊补给：${nameOfRef(state, String(p?.generalId ?? ''))}（用${cardCount(p, 'consumeCards')}张）`,
+        `💊补给：${nameOfRef(state, String(p?.generalId ?? ''), action.playerId)}（用${cardCount(p, 'consumeCards')}张）`,
         MAX_MOVE_LABEL_LENGTH,
         '💊补给',
       );
     case 'EQUIP_ARMOR':
       return clampText(
-        `🛡️叠甲：${nameOfRef(state, String(p?.generalId ?? ''))}（军备${cardCount(p, 'armorCards')}张）`,
+        `🛡️叠甲：${nameOfRef(state, String(p?.generalId ?? ''), action.playerId)}（军备${cardCount(p, 'armorCards')}张）`,
         MAX_MOVE_LABEL_LENGTH,
         '🛡️叠甲',
       );
@@ -308,9 +357,12 @@ export function describeMove(state: EngineState, action: GameAction): string {
       return '🚫 跳过（这一格一个也不发动）';
     case 'CHOOSE_OPTION': {
       const index = Number(p?.optionIndex ?? 0);
-      const option = listOf<{ label?: unknown }>(state.pendingChoice?.options)[index];
+      const option = listOf<Record<string, unknown>>(state.pendingChoice?.options)[index];
+      // 选项要点名的牌若在别人看不见的格子里 ⇒ 换成位置引用；公开格子的名字照旧念。
+      const said = optionCardRef(state, option, action.playerId)
+        ?? clampText(option?.label, MAX_MOVE_LABEL_LENGTH, '（这一项没有文字）');
       // 欠答那一席就是动作者（合法集只发给 pending.playerId），所以名字取本席。
-      return clampText(`🔀选项${index + 1}：${option?.label ?? '（这一项没有文字）'}（${seatName}）`, MAX_MOVE_LABEL_LENGTH, `🔀选项${index + 1}`);
+      return clampText(`🔀选项${index + 1}：${said}（${seatName}）`, MAX_MOVE_LABEL_LENGTH, `🔀选项${index + 1}`);
     }
     case 'END_TURN':
       return '⏭️结束回合';
