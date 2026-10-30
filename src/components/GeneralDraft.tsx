@@ -1,6 +1,7 @@
 import { useGameStore } from '../store/gameStore';
 import { factionColors, General } from '../data/generals';
 import { identitiesOf, identityOf, lockKeyOf, QUN_FACTION } from '../domain/identity';
+import { draftQuotaBlockFor } from '../domain/draftQuota';
 
 export default function GeneralDraft() {
   const players = useGameStore(s => s.players);
@@ -47,15 +48,9 @@ export default function GeneralDraft() {
     const isSelected = selectedDraftGenerals.some(sg => sg.id === g.id);
     if (isSelected) return true; // always allow deselecting
     if (lockConflicts(g)) return false;
-    if (totalCount >= 10) return false;
-    if (g.faction === '群') {
-      return qunCount < 3;
-    } else {
-      // Need at least 1 qun, so max main is 9
-      // Also can't exceed 10 total minus minimum qun needed
-      const maxMain = 10 - Math.max(1, qunCount);
-      return mainCount < maxMain || qunCount >= 1;
-    }
+    // 数量那一档与联机客人那条路共用同一把尺（`domain/draftQuota`）：分支逐字未改，只是叫出了一个名字。
+    // 身份锁那一半留在上面那行——它要读数据层的 identity 机器，联机那一层不 import 数据层（已知差异，登记在册）。
+    return draftQuotaBlockFor({ total: 10, totalCount, qunCount, mainCount }, g.faction === '群') === null;
   };
 
   return (

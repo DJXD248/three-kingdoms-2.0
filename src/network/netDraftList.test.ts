@@ -154,7 +154,7 @@ describe('⑤c 算给哪一席（㈠ 收件人先于内容）', () => {
 });
 
 describe('⑤c 那句人话（㈢ 由房主按真闸算，字面跟着热座那句走）', () => {
-  /** `components/GeneralDraft.tsx:188` 那颗钮没凑够时的文案，逐字：
+  /** `components/GeneralDraft.tsx:183` 那颗钮没凑够时的文案，逐字：
    *  `选择10名将领（群势力1-3名，当前${qunCount}名）`。 */
   const HOT_SEAT_BUTTON = (qunCount: number) => `选择10名将领（群势力1-3名，当前${qunCount}名）`;
 
@@ -165,7 +165,7 @@ describe('⑤c 那句人话（㈢ 由房主按真闸算，字面跟着热座那�
     expect(buildDraftListFrame(oneQun, 1)!.instruction).toBe(HOT_SEAT_BUTTON(1));
   });
 
-  /** 凑够那一支的闸与热座 `canConfirm` 同一条（`GeneralDraft.tsx:21`）：人数、群至少一名、群至多三名，三者一起判。 */
+  /** 凑够那一支的闸与热座 `canConfirm` 同一条（`GeneralDraft.tsx:22`）：人数、群至少一名、群至多三名，三者一起判。 */
   const tenOf = (qunCount: number) => {
     const mainN = 10 - qunCount;
     const main = Array.from({ length: mainN }, (_, i) => card({ id: `mm${i}`, name: `将${i}` }));
@@ -390,10 +390,14 @@ describe('⑤d 房主重判客人交回来的那两下（唯一依据＝他自�
     expect(judgeDraftConfirm(READY(), frameTo1(early), 1).ok).toBe(true);
   });
 
-  it('点将那一档不看人数：还没凑够也照样能勾（闸只拦确认那颗钮）', () => {
-    const f = draftMaterial(9, 1, 9, 0);
-    expect(frameTo1(f).canConfirm).toBe(false);
-    expect(judgeDraftPick(f, frameTo1(f), 1, 'm0').ok).toBe(true);
+  /** 更正轮㈡ 给点将那一档补了数量闸，这一条的说法得跟着换：那道闸拦的是「加不进去」那三种形状，
+   *  不是「还没凑够」——凑够没有只归确认那颗钮管。 */
+  it('点将那一档不看「凑够没凑够」：人数还差着一大截，一颗加得进去的牌照样能勾', () => {
+    const f = draftMaterial(9, 1, 5, 0); // 只勾了 5 颗主：离 10 名差 5 颗，三档上限一档没撞
+    const sent = frameTo1(f);
+    expect(sent.canConfirm).toBe(false); // 「够不够交卷」由确认那一档说，这里照旧是 false
+    expect(judgeDraftPick(f, sent, 1, 'm8').ok).toBe(true); // 一颗没勾过的主牌
+    expect(judgeDraftPick(f, sent, 1, 'q0').ok).toBe(true); // 群势力当下 0 名，第一颗群牌正该勾得动
   });
 
   it('拿那个号查回店里那张牌的对象：命中的是同一个引用，查不到给 null', () => {
@@ -420,5 +424,90 @@ describe('⑤d 房主重判客人交回来的那两下（唯一依据＝他自�
     const sent = frameTo1(f);
     expect(sent.main).toHaveLength(9);
     expect(cardAtKey(main.slice(0, 2), [], sent.main, sent.qun, 'm5')).toBeNull();
+  });
+});
+
+/**
+ * 更正轮（㈡）：`judgeDraftPick` 里那第五道——数量闸。
+ *
+ * 派单逮到的形态是"房主放行了、store 自己却静默不办"：`selectDraftGeneral` 只挡满 10 颗那一档，
+ * 于是那一帧与上一帧一字未动 ⇒ `sameDraftListFrames` 判定"没变"、一条也不发，客人屏幕上真的什么都没发生。
+ * 另一头是群牌那一档 store 压根不挡 ⇒ 客人做出一种热座永远点不出来的形状。
+ * 这两条各有一枚证人，句子与热座那颗牌共用 `domain/draftQuota` 同一把尺。
+ */
+describe('更正轮㈡ 点将那一档补上的数量闸：store 会静默不办的那一颗，房主先当面拒掉', () => {
+  const frameOfSeat1 = (f: ReturnType<typeof draftMaterial>) => buildDraftListFrame(f, 1)!;
+
+  it('已经勾满 10 颗，再点一颗没勾的 ⇒ 拒，且给的是"满 10 颗、先退一颗"那一句（不是"没凑够"）', () => {
+    const f = draftMaterial(9, 2, 9, 1); // 11 张候选、勾着 10 颗（9 主 + 1 群）：人数这一档早就够了
+    const sent = frameOfSeat1(f);
+    expect(sent.picked).toHaveLength(10); // 正面凭据：材料真的摆满了 10 颗
+    expect(sent.canConfirm).toBe(true);
+    const verdict = judgeDraftPick(f, sent, 1, 'q1'); // q1 是唯一那颗没勾的群牌
+    expect(verdict.ok).toBe(false);
+    expect((verdict as { reason: string }).reason).toContain('已经勾满 10 颗');
+    expect((verdict as { reason: string }).reason).toContain('要先退掉一颗');
+  });
+
+  it('群牌到 3 名上限，再点第 4 颗群 ⇒ 拒那一句；同一份材料点本势力那颗照样放行（拒的是那一条，不是一片）', () => {
+    const f = draftMaterial(6, 4, 6, 3); // 9 颗里 6 主 3 群
+    const sent = frameOfSeat1(f);
+    expect(sent.picked.filter((k) => k.startsWith('q'))).toHaveLength(3);
+    const qun = judgeDraftPick(f, sent, 1, 'q3');
+    expect(qun.ok).toBe(false);
+    expect((qun as { reason: string }).reason).toContain('群势力最多 3 名');
+    expect((qun as { reason: string }).reason).toContain('现在 3 名');
+    expect(judgeDraftPick(f, sent, 1, 'm0').ok).toBe(true); // m0 已勾 ⇒ 退一颗，恒放行
+  });
+
+  it('9 主 0 群时点第 10 颗本势力 ⇒ 那是热座点不出来的形状，房主当面拒；点那颗群牌照样放行', () => {
+    const f = draftMaterial(10, 1, 9, 0); // 10 主 1 群候选，勾着 9 颗主
+    const sent = frameOfSeat1(f);
+    expect(sent.picked).toHaveLength(9);
+    const main = judgeDraftPick(f, sent, 1, 'm9');
+    expect(main.ok).toBe(false);
+    expect((main as { reason: string }).reason).toContain('得给群势力留一颗位置');
+    expect(judgeDraftPick(f, sent, 1, 'q0').ok).toBe(true); // 补上那一名群，位置就腾出来了
+  });
+
+  it('三句拒话分得开（派单逐字：「人数满 10／群牌已 3 名，两句要分得开」）', () => {
+    const full = (judgeDraftPick(draftMaterial(9, 2, 9, 1), frameOfSeat1(draftMaterial(9, 2, 9, 1)), 1, 'q1') as { reason: string }).reason;
+    const qun = (judgeDraftPick(draftMaterial(6, 4, 6, 3), frameOfSeat1(draftMaterial(6, 4, 6, 3)), 1, 'q3') as { reason: string }).reason;
+    const main = (judgeDraftPick(draftMaterial(10, 1, 9, 0), frameOfSeat1(draftMaterial(10, 1, 9, 0)), 1, 'm9') as { reason: string }).reason;
+    expect(new Set([full, qun, main]).size).toBe(3);
+    for (const line of [full, qun, main]) expect(line).not.toBe('');
+  });
+
+  it('这颗是群还是主，取的是号落在房主自己哪一份名单上，不是牌面那个势力字', () => {
+    // 一颗牌面写着"群"的本势力候选（今天真材料里不会出现：`runtimeSetup.ts` 那两格是按势力筛的）。
+    // 按牌面数 ⇒ 它算群牌、`qunCount` 才 0 名于是放行；按名单归属数 ⇒ 它是第 10 颗主，被"给群留位置"那一条拦下。
+    const main = [...Array.from({ length: 9 }, (_, i) => card({ id: `mm${i}`, name: `将${i}` })), card({ id: 'mm9', name: '牌面写着群的怪卡', faction: '群' })];
+    const qun = [card({ id: 'qq0', name: '群0', faction: '群' })];
+    const f = draftListFactsOf({
+      phase: 'generalDraft', draftPlayerIndex: 0, draftGenerals: main, draftQunGenerals: qun,
+      selectedDraftGenerals: main.slice(0, 9), players: [{ id: 1 }, { id: 2 }],
+    });
+    const sent = buildDraftListFrame(f, 1)!;
+    expect(sent.main.at(-1)!.faction).toBe('群'); // 正面凭据：帧上那个字确实是"群"，拦下它的不是那个字
+    const verdict = judgeDraftPick(f, sent, 1, 'm9');
+    expect(verdict.ok).toBe(false);
+    expect((verdict as { reason: string }).reason).toContain('得给群势力留一颗位置');
+  });
+
+  it('满 10 颗也照样退得掉：退一颗恒放行（与热座那句 `always allow deselecting` 同向）', () => {
+    const f = draftMaterial(9, 2, 9, 1); // 勾满 10 颗
+    const sent = frameOfSeat1(f);
+    expect(sent.picked).toHaveLength(10);
+    for (const key of ['m0', 'm8', 'q0']) {
+      expect(judgeDraftPick(f, sent, 1, key).ok, key).toBe(true);
+    }
+  });
+
+  it('数量闸不许顺手把"够不够交卷"也判了：还差几名照样勾得动', () => {
+    const f = draftMaterial(10, 2, 2, 0); // 只勾了 2 颗，离 10 名还远
+    const sent = frameOfSeat1(f);
+    expect(sent.canConfirm).toBe(false);
+    expect(judgeDraftPick(f, sent, 1, 'm5').ok).toBe(true);
+    expect(judgeDraftPick(f, sent, 1, 'q1').ok).toBe(true);
   });
 });

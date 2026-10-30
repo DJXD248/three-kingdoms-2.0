@@ -185,6 +185,21 @@ const readyView = (): StoreView => {
   return { ...VIEW, draftGenerals: main, draftQunGenerals: qun, selectedDraftGenerals: [...main, ...qun] };
 };
 
+/** 更正轮㈡ 的两份材料：名单上还剩一颗没勾的，而那一颗恰好加不进去。 */
+const tenPickedView = (): StoreView => {
+  const main = Array.from({ length: 10 }, (_, i) => card(`t-m${i}`, `将${i}`));
+  const qun = [card('t-q0', '群将', '群')];
+  // 勾着 9 主 + 1 群 = 10 名；`m9` 是那份名单上唯一没勾的一颗，而人数早就满了。
+  return { ...VIEW, draftGenerals: main, draftQunGenerals: qun, selectedDraftGenerals: [...main.slice(0, 9), ...qun] };
+};
+
+const threeQunView = (): StoreView => {
+  const main = Array.from({ length: 6 }, (_, i) => card(`n-m${i}`, `本${i}`));
+  const qun = Array.from({ length: 4 }, (_, i) => card(`n-q${i}`, `群${i}`, '群'));
+  // 勾着 6 主 + 3 群 = 9 名：还差一颗，可群势力那一档已经到顶。
+  return { ...VIEW, draftGenerals: main, draftQunGenerals: qun, selectedDraftGenerals: [...main, ...qun.slice(0, 3)] };
+};
+
 describe('⑤d 客人交回来的那两下：房主按自己发过的那一帧重判，办事只走 store 那颗', () => {
   it('合法的那一颗 ⇒ 交出去的是店里那个对象，紧接着的那一帧把「已选」带上线', () => {
     const h = harness(MID, TWO_GUESTS);
@@ -319,5 +334,54 @@ describe('⑤d 客人交回来的那两下：房主按自己发过的那一帧�
     const before = h.sent.length;
     h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm0' });
     expect(h.sent.slice(before).map((s) => s.peer)).toEqual(['g-1']);
+  });
+
+  /**
+   * ⚠️ 派单逐字：这一条**不能只断言返回 `false`，要断言 `send` 被调用过**——
+   * "返回 false 但一条也没发"正是改之前那一处 bug 的签名：
+   * `judgeDraftPick` 当时放行 ⇒ 房主叫 store 那颗 `selectDraftGeneral`，而它自己写着 `sd.length<10 ? [...sd,g] : sd`
+   * 把第 11 颗按在原地不动 ⇒ 房主重算出来的那一帧与上一帧一字不差 ⇒ 一条不发 ⇒ 客人屏上点了一颗毫无回音。
+   * 这一条打的就是"默"本身，不是那句判据。
+   */
+  it('更正轮㈡ 专打默：已勾满 10 颗、客人再点一颗没勾的 ⇒ 真的多发了一帧，那一帧上写的就是那句拒话', () => {
+    const v = tenPickedView();
+    const h = harness(draftListFactsOf(v), [{ peer: 'g-1', seat: 1 }], v);
+    h.host.syncNow();
+    const before = h.sent.length;
+    const beforeFrame = h.host.frameSentTo('g-1')!;
+    // 材料自己的凭据：10 颗全勾着、人数那档早就够了（`canConfirm` 是 true），所以这一颗不是"还没凑够"挡的。
+    expect(beforeFrame.picked).toHaveLength(10);
+    expect(beforeFrame.canConfirm).toBe(true);
+    expect(beforeFrame.main.map((i) => i.key)).toContain('m9');
+
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'm9' })).toBe(false);
+    expect(h.sent.length, '拒话必须真的上线：客人屏上不能对着一点不动的名单干等').toBe(before + 1);
+    expect(h.sent[before].peer).toBe('g-1');
+    expect(h.sent[before].frame.instruction).toContain('已经勾满 10 颗');
+    expect(h.toggled, 'store 那颗压根不该被叫到（改之前正是它静默不办）').toEqual([]);
+    // 而那一格的内容一个字也没被这句拒话改掉：名单与「已选」仍是他自己的那一份。
+    expect(h.sent[before].frame.main).toEqual(beforeFrame.main);
+    expect(h.sent[before].frame.picked).toEqual(beforeFrame.picked);
+  });
+
+  it('更正轮㈡ 同一处的第二个形状：第 4 颗群牌加不进去（人数还差一颗也照样挡），退一颗仍然办得动', () => {
+    const v = threeQunView();
+    const h = harness(draftListFactsOf(v), [{ peer: 'g-1', seat: 1 }], v);
+    h.host.syncNow();
+    const before = h.sent.length;
+    const frame = h.host.frameSentTo('g-1')!;
+    // 正面凭据：9/10 名、群 3 名 ⇒ 人数这一档还没够（那颗确认钮是灰的），挡下 `q3` 的只可能是群上限那一条。
+    expect(frame.picked).toHaveLength(9);
+    expect(frame.canConfirm).toBe(false);
+    expect(frame.qun.map((i) => i.key)).toContain('q3');
+
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'q3' })).toBe(false);
+    expect(h.sent.length).toBe(before + 1);
+    expect(h.sent[before].frame.instruction).toContain('群势力最多 3 名');
+    expect(h.toggled).toEqual([]);
+    // 闸只拦"加不进去"这一侧：退一颗（号已在 `picked` 里）永远放行，方向与热座那句"已勾的永远可退"一致。
+    expect(h.host.handleIncoming({ kind: 'pick', peer: 'g-1', key: 'q0' })).toBe(true);
+    expect(h.toggled).toEqual([v.draftQunGenerals[0]]);
+    expect(h.host.frameSentTo('g-1')!.picked).not.toContain('q0');
   });
 });

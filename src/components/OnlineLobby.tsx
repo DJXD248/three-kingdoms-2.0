@@ -76,7 +76,8 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
  * 收的那一侧也不采信他说的话——房主拿**自己发给这一席的那一帧**重判（`network/netDraftList.judgeDraftPick`），
  * 判得过才去 store 里查出那张牌、调与热座同一颗 `selectDraftGeneral`／`confirmDraft`；判不过就当面回他一句为什么不走。
  * 「凑够 10 名、群势力 1-3 名」那条上下限只有一份抄本（`draftTally`）：那句人话、帧上那个 `canConfirm`、
- * 房主重判那一步读的都是它，界面上不另算一遍（那条真闸今天仍长在热座面板 `GeneralDraft.tsx:21`，本轮那一格一字未改）。
+ * 房主重判那一步读的都是它，界面上不另算一遍（那条上下限今天仍长在热座面板 `GeneralDraft.tsx:22` 的 `canConfirm`，
+ * 点将那一档的数量闸与客人这一条共用 `domain/draftQuota` 同一把尺）。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。

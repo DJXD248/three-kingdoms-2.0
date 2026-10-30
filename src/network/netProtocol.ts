@@ -70,7 +70,7 @@ export type NetDraftListFrame = {
   /**
    * 切片⑤d 多出来的那一个布尔：**房主算出来的**「这一席现在凑够了没有」。
    * 客人屏上那颗「✓ 确认征召」能不能按，读的就是这一格——他不在自己这边重算那条上下限
-   * （那条真闸今天长在热座界面 `GeneralDraft.tsx:21`，store 里那份 `confirmDraft()` 自己不查人数）。
+   * （那条真闸今天长在热座界面 `GeneralDraft.tsx:22` 的 `canConfirm`，store 里那份 `confirmDraft()` 自己不查人数）。
    * 线上送的是一个由同一笔账派生的布尔，不是一句要客人自己读的话。
    */
   canConfirm: boolean;

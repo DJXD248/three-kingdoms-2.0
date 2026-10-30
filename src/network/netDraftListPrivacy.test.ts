@@ -185,7 +185,7 @@ describe('⑤c 逐席候选名单的隐私证人：真 store 走一遍，别席�
     for (const g of s.draftGenerals.slice(0, 2)) s.selectDraftGeneral(g);
 
     const state = useGameStore.getState();
-    // 热座面板的那把尺（`GeneralDraft.tsx:17`）：按牌面势力那个字数群。
+    // 热座面板的那把尺（`GeneralDraft.tsx:18`）：按牌面势力那个字数群。
     const hotSeatQunCount = state.selectedDraftGenerals.filter((g) => g.faction === '群').length;
     const mine = wireFrames().find((w) => w.seat === Number(state.players[state.draftPlayerIndex].id))!;
     expect(mine.frame.instruction).toBe(`选择10名将领（群势力1-3名，当前${hotSeatQunCount}名）`);

@@ -24,9 +24,12 @@
  *
  * 腿3（⑤d）之后，这一层还多装了**重判**那一半：`judgeDraftPick`／`judgeDraftConfirm` 拿的是房主自己发过的那一帧
  * 与 `draftTally` 那笔账（句子与判据共用同一个函数，派单要的"单一真值"），怎么执行住在 `netHostDraftList`。
- * 这里依然没有网络、没有 store、没有 React。
+ * 更正轮（㈡）起，`judgeDraftPick` 还多过一道数量闸，用的是热座那颗牌同一把尺 `domain/draftQuota`——
+ * 少这一道就会有"房主说合法、店里什么也没发生、客人屏上因此一动不动"那种静默。
+ * 这里依然没有网络、没有 store、没有 React（`domain/draftQuota` 只吃数，自己也不读任何东西）。
  */
 import { DRAFT_PICK_TOTAL } from './netDraftProgress';
+import { DRAFT_QUN_MAX, draftQuotaBlockFor, type DraftQuotaBlock } from '../domain/draftQuota';
 import { clampText } from './netSeat';
 import {
   MAX_DRAFT_INSTRUCTION_LENGTH,
@@ -159,7 +162,9 @@ function frameOf(seat: number, total: number, instruction: string, picked: strin
  * 三处共用同一个函数，就长不出"界面上按得下去、房主说这条不合法"那种两套口径。
  *
  * 那条上下限的字面（`total` 名、群势力 1-3 名）与热座面板那颗钮的 `disabled` 判据是同一句
- * （`components/GeneralDraft.tsx:21`，本轮那一格一字不改），由 `NetDraftParity.test.tsx` 拿真 store 三方逐字比对钉住。
+ * （`components/GeneralDraft.tsx:22` 的 `canConfirm`，更正轮里这一格仍一字未动；点将那一档的数量闸原长在它的
+ * `isSelectable` 里，现已**逐字搬进** `domain/draftQuota`，热座与下面这条重判读的是同一把尺），
+ * 由 `NetDraftParity.test.tsx` 拿真 store 逐字比对钉住。
  *
  * ⚠️ 这里**不**判"这位发送者是不是当下那一席"——那是 `judgeDraftPick`／`judgeDraftConfirm` 的活；
  * 这一笔账只算数量，谁问都算得出同一个数。
@@ -280,6 +285,18 @@ function judgeShared(facts: DraftListFacts, sent: NetDraftListFrame | null, send
 /**
  * 重判客人交回来的那一颗点将钮。派单逐字：唯一依据＝房主**自己发给这一席的那一帧**。
  * 所以第四条件是"这个编号在那一帧的两份名单上"——不在就拒，绝不按客人带来的名字自己去凑一张牌。
+ *
+ * 更正轮㈡在其后补了第五道：**这一颗是新加的**（号不在当下那笔 `picked` 里）时，还要过一遍数量闸
+ * （`domain/draftQuota`，与热座那颗牌点不点得动同一把尺）。不补这一道的后果是两条实打实的错：
+ * `store/gameStore.ts` 那颗 `selectDraftGeneral` 只挡"满 10 颗"，其余照加，于是
+ * ㈠房主放行而店里一字未改 ⇒ 重算出来的那一帧与上一帧完全相同 ⇒ `sameDraftListFrames` 判定"没变"、一条也不发，
+ *   客人屏幕上真的什么都没发生（这就是「拒不得静默」要避免的那个形态）；
+ * ㈡群牌那一档 store 压根不挡 ⇒ 客人做出一种热座永远点不出来的形状，再在确认那一档被拒。
+ * 退一颗（号已经在 `picked` 里）**永远放行**——与热座那句 `always allow deselecting` 同向。
+ *
+ * ⚠️ 这一道里**没有**热座面板那半边的身份锁（`lockConflicts`）：它要读数据层的 identity 机器，
+ * 而这一层不 import 数据层。这是一条登记在册的已知差异（客人那一侧不加这一档），不是"两边一致"。
+ *
  * 判下来之后怎么办（查那张牌、调 store 那颗）住在 `netHostDraftList`，这一层只说不合法不合法。
  */
 export function judgeDraftPick(
@@ -294,14 +311,35 @@ export function judgeDraftPick(
   if (!frame.main.some((item) => item.key === key) && !frame.qun.some((item) => item.key === key)) {
     return { ok: false, reason: REFUSE_OFF_LIST };
   }
+  const tally = draftTally(frame.main, frame.qun, facts.pickedKeys, facts.total);
+  if (tally.picked.includes(key)) return { ok: true }; // 退一颗：恒放行
+  // 这颗是群还是主，取的是**位置号落在房主自己哪一份名单上**（`m…`／`q…` 那两格的下标口径），
+  // 不是帧上那个 `faction` 字数，更不是线上来的任何字节——与 `draftTally` 数群牌的同一个理由。
+  const block = draftQuotaBlockFor(
+    {
+      total: facts.total,
+      totalCount: tally.picked.length,
+      qunCount: tally.qunCount,
+      mainCount: tally.picked.length - tally.qunCount,
+    },
+    frame.qun.some((item) => item.key === key),
+  );
+  if (block !== null) return { ok: false, reason: quotaRefusal(block, tally, facts.total) };
   return { ok: true };
+}
+
+/** 三条各说各的（派单逐字：「人数满 10／群牌已 3 名，两句要分得开」）。 */
+function quotaRefusal(block: DraftQuotaBlock, tally: DraftTally, total: number): string {
+  if (block === 'totalFull') return `这一格已经勾满 ${total} 颗了，这一颗加不进去——要先退掉一颗再点新的。`;
+  if (block === 'qunFull') return `群势力最多 ${DRAFT_QUN_MAX} 名（现在 ${tally.qunCount} 名），这一颗群牌加不进去。`;
+  return `得给群势力留一颗位置（最少 1 名，现在 ${tally.qunCount} 名），这一颗本势力的加不进去。`;
 }
 
 /**
  * 重判客人交回来的那一次"确认"。比上面多两条：
  * ②这一席还没确认过（`draftPlayerIndex` 还指着这一席；交过卷那一格会往前挪，所以这一条同时挡住重复交卷）；
  * ③人数与群牌上下限**由房主自己再算一遍**——`store/gameStore.ts:345` 那颗 `confirmDraft()` 今天不查这些，
- *   收到就转交等于把热座界面那道闸（`GeneralDraft.tsx:21`）绕过去。算的是 `draftTally`，与那句人话同一个函数。
+ *   收到就转交等于把热座界面那道闸（`GeneralDraft.tsx:22` 的 `canConfirm`）绕过去。算的是 `draftTally`，与那句人话同一个函数。
  */
 export function judgeDraftConfirm(facts: DraftListFacts, sent: NetDraftListFrame | null, senderSeat: number | null): DraftVerdict {
   const shared = judgeShared(facts, sent, senderSeat);

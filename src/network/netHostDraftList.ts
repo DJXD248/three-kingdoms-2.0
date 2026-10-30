@@ -19,7 +19,7 @@
  *   拒他的那句，不新增出口）。这一句是一次性的：下一次 `sync` 把它带上墙就消费掉，之后真有了变化，
  *   正常那句会重新拼出来、内容一变照样发得出去（`sameDraftListFrames` 比的就是那一句）。
  * ㈣**确认那一档房主自己先把闸算一遍**：`store/gameStore.ts:345` 那颗 `confirmDraft()` 不查人数与群牌上下限
- *   （那条真闸今天长在热座界面 `GeneralDraft.tsx:21`），所以这一条绝不"收到就转交"。
+ *   （那条真闸今天长在热座界面 `GeneralDraft.tsx:22` 的 `canConfirm`），所以这一条绝不"收到就转交"。
  */
 import {
   buildDraftListFrame,
