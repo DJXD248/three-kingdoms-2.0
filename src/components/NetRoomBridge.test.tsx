@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render } from '@testing-library/react';
 import NetRoomBridge from './NetRoomBridge';
-import { attachRoom, bumpNetRoom, deliverHostAction, deliverHostReady, detachRoom, getReadyTable, getSeatMap, getStartGate, type ActiveRoom } from '../network/netRoom';
+import { attachRoom, bumpNetRoom, deliverHostAction, deliverHostReady, detachRoom, getDraftProgress, getReadyTable, getSeatMap, getStartGate, type ActiveRoom } from '../network/netRoom';
 import type { RoomConnection } from '../network/netSession';
 import type { EngineState } from '../core/GameState';
 import { useGameStore, type Player } from '../store/gameStore';
@@ -478,5 +478,125 @@ describe('NetRoomBridge：房主那张准备表从这里出', () => {
     expect(tables(second.sent)).toHaveLength(1);
     expect(tables(second.sent)[0].rows).toEqual([{ peer: 'g-1', name: '客人甲', on: false, counted: true }]);
     expect(getStartGate().open).toBe(false);
+  });
+});
+
+const progressFrames = (sent: Record<string, unknown>[]) => wire(sent, 'draftprogress');
+
+/**
+ * 切片⑤b 的接线证人：征召那一段**不住在 engineState 里**（候选名单与勾了谁都是 store 那几格），
+ * 所以房主侧这根线要读的是 store，不是引擎。这里拿真 store 状态走，发的仍是同一套遮蔽口径——
+ * 线上一旦出现任何将名，那格隐私证人（`netDraftProgressPrivacy.test.ts`）会先红。
+ */
+describe('NetRoomBridge：房主那张征召进度表从这里出', () => {
+  /** 把房主那台机器摆成"正在征召、勾了 `picked` 名"（两份道具都是半身的：进度表只读座次、称呼与个数）。 */
+  function setDraftTable(picked: number, phase: 'generalDraft' | 'diceRoll' = 'generalDraft') {
+    const patch = {
+      phase,
+      draftPlayerIndex: 0,
+      selectedDraftGenerals: Array.from({ length: picked }, (_, i) => ({ id: `wei_00${i}`, name: `将${i}` })),
+      players: [
+        { id: 1, name: '房主甲', faction: '魏', generalPool: [] },
+        { id: 2, name: '客人甲', faction: '蜀', generalPool: [] },
+      ],
+    } as unknown as Partial<ReturnType<typeof useGameStore.getState>>;
+    act(() => {
+      useGameStore.setState(patch);
+    });
+  }
+
+  it('接上那一刻正在征召 ⇒ 立刻发一张并抄进那一格：客人不必等房主再点一名将', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    setDraftTable(3);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+
+    expect(progressFrames(sent)).toHaveLength(1);
+    expect(progressFrames(sent)[0].rows).toEqual([
+      { seat: 1, name: '房主甲', state: 'picking', picked: 3, total: 10 },
+      { seat: 2, name: '客人甲', state: 'waiting', picked: 0, total: 10 },
+    ]);
+    expect(getDraftProgress()).toEqual(progressFrames(sent)[0].rows);
+  });
+
+  it('房主每勾一名 ⇒ 线上一帧跟着动；只是界面重绘（那几格没换）⇒ 一条也不多发', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    setDraftTable(0);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(progressFrames(sent)).toHaveLength(1);
+
+    setDraftTable(1);
+    await wait(10);
+    setDraftTable(2);
+    await wait(10);
+    expect(progressFrames(sent)).toHaveLength(3);
+    expect(progressFrames(sent).at(-1)!.rows).toMatchObject([
+      { seat: 1, picked: 2, state: 'picking' },
+      { seat: 2, picked: 0, state: 'waiting' },
+    ]);
+
+    // 同样的内容再 setState 一次（store 换了引用、表却没动）：房主每次点将都会问一遍，多数时候不该刷屏
+    const same = useGameStore.getState().selectedDraftGenerals.slice();
+    act(() => {
+      useGameStore.setState({ selectedDraftGenerals: same });
+    });
+    await wait(10);
+    expect(progressFrames(sent)).toHaveLength(3);
+  });
+
+  it('掷骰／分势力那一段这张表没话要说 ⇒ 一帧也不发（不发空表让人误以为"征召卡住了"）', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    setDraftTable(0, 'diceRoll');
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(progressFrames(sent)).toHaveLength(0);
+    expect(getDraftProgress()).toBeNull();
+
+    setDraftTable(1, 'generalDraft');
+    await wait(10);
+    expect(progressFrames(sent)).toHaveLength(1);
+  });
+
+  it('名册变了而这张表一个字没动 ⇒ 照样重发一遍：迟来的那位一进来就得有得看', async () => {
+    const { room, sent } = fakeRoom(false);
+    setEngine(engineState('a'));
+    setDraftTable(4);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    expect(progressFrames(sent)).toHaveLength(1);
+    const cell = getDraftProgress();
+
+    (room.connection.state.peers as Array<{ id: string; name: string; role: 'host' | 'guest' }>)
+      .push({ id: 'g-1', name: '客人甲', role: 'guest' });
+    bumpNetRoom();
+    await wait(30);
+
+    expect(progressFrames(sent)).toHaveLength(2);
+    expect(progressFrames(sent)[1].rows).toEqual(progressFrames(sent)[0].rows);
+    // 重发给的是同一张内容 ⇒ 界面那一格不换引用（客人那屏不会为了一件没变的事重绘）
+    expect(getDraftProgress()).toBe(cell);
+  });
+
+  it('退房后这张表不再往外发（接线整套拆掉，不往上一间房里递进度）', async () => {
+    const { room, sent } = fakeRoom(true);
+    setEngine(engineState('a'));
+    setDraftTable(1);
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+    detachRoom();
+
+    setDraftTable(2);
+    await wait(10);
+    expect(progressFrames(sent)).toHaveLength(1);
+    expect(getDraftProgress()).toBeNull();
   });
 });

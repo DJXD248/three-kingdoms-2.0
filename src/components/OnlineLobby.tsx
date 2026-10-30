@@ -9,6 +9,7 @@ import {
   deliverHostReady,
   detachRoom,
   getActiveRoom,
+  getDraftProgress,
   getGuestSnapshot,
   getNetStatus,
   getReadyTable,
@@ -16,6 +17,7 @@ import {
   getSeatMap,
   getSeatMoves,
   getStartGate,
+  receiveDraftProgress,
   receiveGuestSnapshot,
   receiveNetStatus,
   receiveReadyTable,
@@ -27,6 +29,7 @@ import {
 import NetSpectator from './NetSpectator';
 import { NetSeatPanel } from './NetSeatPanel';
 import { NetPingPanel } from './NetPingPanel';
+import { NetDraftProgressPanel } from './NetDraftProgressPanel';
 
 const DEFAULT_ADDRESS = 'ws://127.0.0.1:8787';
 const PHASE_LABEL: Record<SessionState['phase'], string> = {
@@ -67,6 +70,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const refusal = useSyncExternalStore(subscribeNetRoom, getRefusal, getRefusal);
   // 切片⑤a：那张准备表也是房主算好发来的（客人这边不自算"谁还算数"，更不自报自的家）。
   const readyTable = useSyncExternalStore(subscribeNetRoom, getReadyTable, getReadyTable);
+  // 切片⑤b：那张征召进度表——同样只照抄房主算好的那一份（里面只有座次与两个数，没有牌）。
+  const draftProgress = useSyncExternalStore(subscribeNetRoom, getDraftProgress, getDraftProgress);
   /** 闸门那句人话的唯一出处（房主那屏那颗「开始游戏」读的是同一格，两边不会说两套）。 */
   const gate = useSyncExternalStore(subscribeNetRoom, getStartGate, getStartGate);
 
@@ -137,6 +142,10 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         },
         onReadyTable: (rows) => {
           if (receiveReadyTable(rows)) bumpNetRoom();
+        },
+        // 切片⑤b：房主算好的那张征召进度表进同一格（房主自己那屏读的也是这一格，两边同一份）。
+        onDraftProgress: (rows) => {
+          if (receiveDraftProgress(rows)) bumpNetRoom();
         },
       },
       (next) => {
@@ -308,6 +317,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
                 </button>
               )}
             </div>
+
+            {/* 切片⑤b：房主开始征召之后，这一格才有线上读数；之前一直是"还没开始征召"。 */}
+            <NetDraftProgressPanel rows={draftProgress} />
 
             {netRows !== null && netRows.length > 0 && (
               <NetPingPanel

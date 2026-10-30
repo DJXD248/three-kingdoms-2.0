@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NETWORK_SNAPSHOT_VERSION } from './StateSerializer';
 import {
+  MAX_DRAFT_PICK_COUNT,
+  MAX_DRAFT_PROGRESS_ROWS,
   MAX_NAME_LENGTH,
   MAX_MOVE_ITEMS,
   MAX_OMITTED_MOVES,
@@ -17,6 +19,7 @@ import {
   ourVersionStamp,
   parseEnvelope,
   versionMismatch,
+  type NetDraftProgressRow,
   type NetReadyRow,
   type VersionStamp,
 } from './netProtocol';
@@ -101,7 +104,7 @@ describe('版本握手：不一致就明确拒，绝不静默半连', () => {
   });
 });
 
-describe('线上证人：信封只认这十五种形状', () => {
+describe('线上证人：信封只认这十六种形状', () => {
   it('往返一致', () => {
     const envelope = { t: 'hello', from: 'a', name: '张三', v: STAMP } as const;
     expect(parseEnvelope(encodeEnvelope(envelope))).toEqual(envelope);
@@ -448,6 +451,104 @@ describe('⑤a 准备两枚信封：一个布尔与一张表', () => {
   });
 
   it('协议版本仍为 1：这两枚是同版本内的新形状，老信封一个字节没改', () => {
+    expect(NET_PROTOCOL_VERSION).toBe(1);
+    expect(ourVersionStamp().proto).toBe(1);
+  });
+});
+
+/**
+ * 切片⑤b（v2.9.25）那一枚：房主算给全桌的征召进度表。
+ * 这一枚存在的意义是"客人有权知道走到哪儿了"，而它**能说的只有数量**——
+ * 用户 2026-10-30 裁：「和热座一样」不延伸到别人那几格的私有信息。
+ * 所以形状里压根没有放牌的地方：行内五个字段，两个是数，三个是座次与称呼。
+ */
+describe('⑤b 征召进度表信封：一席一行，只有座次与两个数', () => {
+  const ROWS: NetDraftProgressRow[] = [
+    { seat: 1, name: '玩家1', state: 'done', picked: 10, total: 10 },
+    { seat: 2, name: '假客人', state: 'picking', picked: 7, total: 10 },
+    { seat: 3, name: 'AI·平衡', state: 'waiting', picked: 0, total: 10 },
+  ];
+
+  it('往返一致：房主发的表原样收回来，一个字段不多、一个不少', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'draftprogress', from: 'a', rows: ROWS })))
+      .toEqual({ t: 'draftprogress', from: 'a', rows: ROWS });
+  });
+
+  it('牌面没有地方跟着这张表上线：走私 `state`／`generals` 进来，整段被丢掉', () => {
+    const smuggled = parseEnvelope('{"t":"draftprogress","from":"a","rows":[{"seat":2,"name":"甲","state":"picking","picked":1,"total":10}],"generals":["关羽"]}');
+    expect(smuggled).toEqual({ t: 'draftprogress', from: 'a', rows: [{ seat: 2, name: '甲', state: 'picking', picked: 1, total: 10 }] });
+    expect(smuggled).not.toHaveProperty('generals');
+    expect(smuggled).not.toHaveProperty('state');
+    // 行里多塞一个牌名 ⇒ 整条拒（这一行不是"顺带多个字段"，是这张表根本不该有的东西）
+    expect(parseEnvelope('{"t":"draftprogress","from":"a","rows":[{"seat":2,"name":"甲","state":"picking","picked":1,"total":10,"general":{"name":"关羽"}}]}'))
+      .toEqual({ t: 'draftprogress', from: 'a', rows: [{ seat: 2, name: '甲', state: 'picking', picked: 1, total: 10 }] });
+  });
+
+  it('空表＝坏消息（与 netstatus／seatmap 同一判据）：没话可说的时候房主根本不发这一条', () => {
+    expect(parseEnvelope('{"t":"draftprogress","from":"a","rows":[]}')).toBeNull();
+  });
+
+  it('缺来路／rows 不是数组／行不是对象 ⇒ 整条拒', () => {
+    const bad = [
+      '{"t":"draftprogress","rows":[]}',
+      '{"t":"draftprogress","from":"a"}',
+      '{"t":"draftprogress","from":"a","rows":"b"}',
+      '{"t":"draftprogress","from":"a","rows":[null]}',
+      '{"t":"draftprogress","from":"a","rows":[[]]}',
+    ];
+    for (const text of bad) expect(parseEnvelope(text)).toBeNull();
+  });
+
+  it('行里少一样、座次不是整数席位号、名字空或超长、状态第三种说法 ⇒ 整条拒（半收＝界面上显示一条猜出来的进度）', () => {
+    const row = { seat: 2, name: '甲', state: 'picking', picked: 1, total: 10 };
+    const cases: [string, Record<string, unknown> | null][] = [
+      ['缺 seat', { name: '甲', state: 'picking', picked: 1, total: 10 }],
+      ['seat 是字符串', { ...row, seat: '2' }],
+      ['seat 不是整数', { ...row, seat: 1.5 }],
+      ['seat 超出席位上界', { ...row, seat: 65 }],
+      ['name 是空的', { ...row, name: '' }],
+      [`name 超过 ${MAX_NAME_LENGTH} 个字`, { ...row, name: '一'.repeat(MAX_NAME_LENGTH + 1) }],
+      ['name 带控制字符', { ...row, name: '甲\u0001' }],
+      ['state 是这张表不该有的说法', { ...row, state: 'drafting' }],
+      ['state 干脆没带', { seat: 2, name: '甲', picked: 1, total: 10 }],
+      ['picked 是字符串', { ...row, picked: '1' }],
+      ['picked 是负数', { ...row, picked: -1 }],
+      ['picked 不是整数', { ...row, picked: 1.5 }],
+      ['picked 没带', { seat: 2, name: '甲', state: 'picking', total: 10 }],
+      ['total 没带', { seat: 2, name: '甲', state: 'picking', picked: 1 }],
+      ['total 是 null', { ...row, total: null }],
+    ];
+    for (const [, mutated] of cases) {
+      expect(parseEnvelope(JSON.stringify({ t: 'draftprogress', from: 'a', rows: [mutated] }))).toBeNull();
+    }
+  });
+
+  it('`picked > total` 照样收：已完成那一行的数是照着那一席的池子抄的，沙盒能填出任何数——宁可显示一个真怪数，不可把一帧真话判成假消息', () => {
+    expect(parseEnvelope(encodeEnvelope({ t: 'draftprogress', from: 'a', rows: [{ seat: 1, name: '甲', state: 'done', picked: 12, total: 10 }] })))
+      .not.toBeNull();
+  });
+
+  it('两个数各自的封顶：合法征召到不了那个数，到了就是坏消息', () => {
+    const huge: NetDraftProgressRow = { seat: 1, name: '甲', state: 'done', picked: MAX_DRAFT_PICK_COUNT, total: MAX_DRAFT_PICK_COUNT };
+    expect(parseEnvelope(encodeEnvelope({ t: 'draftprogress', from: 'a', rows: [huge] }))).not.toBeNull();
+    expect(parseEnvelope(encodeEnvelope({ t: 'draftprogress', from: 'a', rows: [{ ...huge, picked: MAX_DRAFT_PICK_COUNT + 1 }] }))).toBeNull();
+    expect(parseEnvelope(encodeEnvelope({ t: 'draftprogress', from: 'a', rows: [{ ...huge, total: MAX_DRAFT_PICK_COUNT + 1 }] }))).toBeNull();
+  });
+
+  it('行数超过一桌的席位上界 ⇒ 整条拒（进度表多出来的那一行没有椅子坐）', () => {
+    const rows = Array.from({ length: MAX_DRAFT_PROGRESS_ROWS }, (_, i) => ({ seat: i + 1, name: `玩家${i}`, state: 'waiting' as const, picked: 0, total: 10 }));
+    expect(parseEnvelope(encodeEnvelope({ t: 'draftprogress', from: 'a', rows }))).not.toBeNull();
+    expect(parseEnvelope(encodeEnvelope({ t: 'draftprogress', from: 'a', rows: [...rows, { seat: 9, name: '第九席', state: 'waiting', picked: 0, total: 10 }] })))
+      .toBeNull();
+  });
+
+  it('这张表不指名（`to` 不是它的字段）：它是全桌广播的那一种，指名的那条路这一版没建', () => {
+    const pointed = parseEnvelope('{"t":"draftprogress","from":"a","to":"b","rows":[{"seat":1,"name":"甲","state":"done","picked":10,"total":10}]}');
+    expect(pointed).toEqual({ t: 'draftprogress', from: 'a', rows: [{ seat: 1, name: '甲', state: 'done', picked: 10, total: 10 }] });
+    expect(pointed).not.toHaveProperty('to');
+  });
+
+  it('协议版本仍为 1：这一枚是同版本内的新形状，老信封一个字节没改', () => {
     expect(NET_PROTOCOL_VERSION).toBe(1);
     expect(ourVersionStamp().proto).toBe(1);
   });

@@ -30,6 +30,15 @@ export type NetMoveItem = { key: string; label: string };
  * 表里只有客人：房主自己那一席不等谁准备（他那颗钮就是开始游戏）。
  */
 export type NetReadyRow = { peer: string; name: string; on: boolean; counted: boolean };
+/**
+ * 联机切片⑤b（v2.9.25）征召进度表里的一行：**这一席**征召到哪儿了。
+ * 用户 2026-10-30 裁死了这张表能说什么：「和热座一样」**不**延伸到别人那几格的私有信息⇒
+ * 别席的候选牌永不上线，客人看得见的只有进度那一行话（「第 2 席正在征召（已选 7/10）」）。
+ * 所以这里一个牌名、一个档案号都没有：`seat`＋人读的名字＋三个数。
+ * `seat`＝引擎的 playerId（与席位表同一个口径，绝不另立一套座次）。
+ */
+export type NetDraftState = 'waiting' | 'picking' | 'done';
+export type NetDraftProgressRow = { seat: number; name: string; state: NetDraftState; picked: number; total: number };
 
 /** 往返耗时的可信上限：超过就当没量到（对面时钟被改、或攒了很久的一条回话）。 */
 export const MAX_TRUSTED_PING_MS = 600_000;
@@ -43,6 +52,12 @@ export const MAX_OMITTED_MOVES = 10_000;
 export const MAX_MOVE_KEY_LENGTH = 64;
 export const MAX_MOVE_LABEL_LENGTH = 60;
 export const MAX_REFUSAL_LENGTH = 120;
+/** 征召进度表的行数上界＝一桌的席位上界（与 `MAX_SEAT_ROWS` 同一个数、同一个理由：多出来的行没有椅子坐）。 */
+export const MAX_DRAFT_PROGRESS_ROWS = 8;
+/** 已选／应选两个数的线上上界：正常征召到不了这个数，超过即坏消息（与 `MAX_OMITTED_MOVES` 同一口径）。
+ *  这里**不**要求 `picked <= total`——已完成那一行的 `picked` 直接取自那一席的征召池长度，
+ *  沙盒与测试工具能把它填成任何数；宁可多显示一个真实的怪数，不可把一帧真话判成假消息。 */
+export const MAX_DRAFT_PICK_COUNT = 1000;
 
 /** 席位号就是引擎的 playerId；给个硬上界免得一个荒谬的数钻进界面。 */
 function isSeatNumber(value: unknown): value is number {
@@ -85,6 +100,14 @@ export type NetEnvelope =
    *  与 netstatus／seatmap 那两张不同，**空表在这里是一句真话**＝屋里一个客人都没有，
    *  因此没有人在等，闸门开着。 */
   | { t: 'readytable'; from: string; rows: NetReadyRow[] }
+  /**
+   * 切片⑤b：房主算给全桌的那张征召进度表（客人照抄，与准备表／席位表同一个纪律）。
+   * 全桌广播、不指名：它说的只有"每一席走到哪儿了"，没有一张牌——指名发给某一席的那条路
+   * 是征召问答通道，用户 2026-10-30 明令**这一版不许建**（等外部评审二检）。
+   * 表在征召那一段之外没有话要说⇒房主那时一格也不发；这一格因此不存在"空表"这种形状，
+   * 与 netstatus／seatmap 一样把空表当坏消息拒掉。
+   */
+  | { t: 'draftprogress'; from: string; rows: NetDraftProgressRow[] }
   | { t: 'bye'; from: string };
 
 export function ourVersionStamp(): VersionStamp {
@@ -126,7 +149,7 @@ export function encodeEnvelope(envelope: NetEnvelope): string {
   return JSON.stringify(envelope);
 }
 
-/** 线上证人：解析器只认这十五种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
+/** 线上证人：解析器只认这十六种信封，形状不对/未知类型/超长一律拒（返回 null，不猜）。 */
 export function parseEnvelope(text: string): NetEnvelope | null {
   if (typeof text !== 'string' || text.length === 0 || text.length > MAX_WIRE_BYTES) return null;
   let parsed: unknown;
@@ -265,6 +288,21 @@ export function parseEnvelope(text: string): NetEnvelope | null {
         return { peer: o.peer, name: o.name, on: o.on, counted: o.counted };
       });
       return rows.every(Boolean) ? { t: 'readytable', from: raw.from, rows: rows as NetReadyRow[] } : null;
+    }
+    case 'draftprogress': {
+      // 空表＝坏消息（与 netstatus／seatmap 同一判据）：一张"谁都不在征召"的进度表
+      // 不是"征召还没开始"——那时房主根本不发这一条（见信封上那段注释）。
+      if (!isId(raw.from) || !Array.isArray(raw.rows) || raw.rows.length === 0 || raw.rows.length > MAX_DRAFT_PROGRESS_ROWS) return null;
+      const rows = (raw.rows as unknown[]).map((r) => {
+        if (!r || typeof r !== 'object') return null;
+        const o = r as Record<string, unknown>;
+        if (!isSeatNumber(o.seat) || !isBounded(o.name, MAX_NAME_LENGTH)) return null;
+        if (o.state !== 'waiting' && o.state !== 'picking' && o.state !== 'done') return null;
+        if (!isPing(o.picked) || o.picked > MAX_DRAFT_PICK_COUNT) return null;
+        if (!isPing(o.total) || o.total > MAX_DRAFT_PICK_COUNT) return null;
+        return { seat: o.seat, name: o.name, state: o.state, picked: o.picked, total: o.total };
+      });
+      return rows.every(Boolean) ? { t: 'draftprogress', from: raw.from, rows: rows as NetDraftProgressRow[] } : null;
     }
     default:
       return null;

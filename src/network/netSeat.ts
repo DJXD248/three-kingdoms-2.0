@@ -44,7 +44,8 @@ export type SeatSpec = { seat: number; isAi: boolean; label: string };
 /** 在场的人：id＝连线里的 peerId，name＝自报并被房主校验过的名字。 */
 export type PeerSpec = { id: string; name: string };
 
-function clampText(raw: unknown, max: number, fallback: string): string {
+/** 名字类字段的线上收口（切片⑤b 那张进度表读的是同一个口径，不另立第二份）。 */
+export function clampText(raw: unknown, max: number, fallback: string): string {
   // 这些字符是客人自报的：一个换行就能把席位表那行拆成两行，所以整段控制字符一律抹掉。
   // eslint-disable-next-line no-control-regex
   const text = String(raw ?? '').replace(/[\u0000-\u001f]/g, '').trim();

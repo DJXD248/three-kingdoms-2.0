@@ -10,6 +10,7 @@ import {
   deliverHostReady,
   detachRoom,
   getActiveRoom,
+  getDraftProgress,
   getGuestSnapshot,
   getMyNetSeat,
   getNetStatus,
@@ -18,6 +19,7 @@ import {
   getSeatMap,
   getSeatMoves,
   getStartGate,
+  receiveDraftProgress,
   receiveGuestSnapshot,
   receiveNetStatus,
   receiveReadyTable,
@@ -484,5 +486,71 @@ describe('⑤a 准备表与开始闸门也住这一格', () => {
     setHostReadySink(null);
     expect(deliverHostReady({ peer: 'a', on: false })).toBe(false);
     expect(got).toEqual([{ peer: 'a', on: true }]);
+  });
+});
+
+describe('⑤b 征召进度表也住这一格（房主算、客人照抄，两边读同一格）', () => {
+  const SEAT1 = { seat: 1, name: '玩家1', state: 'picking' as const, picked: 3, total: 10 };
+  const SEAT2 = { seat: 2, name: '玩家2', state: 'waiting' as const, picked: 0, total: 10 };
+  const TWO_ROWS = [SEAT1, SEAT2];
+
+  /** 房主／客人两侧各建一间屋（连线是那枚假的，进度表这一段不碰连线）。 */
+  function side(role: 'host' | 'guest') {
+    const connection = {
+      ...fakeConnection(),
+      state: { ...fakeConnection().state, role, selfId: role === 'host' ? 'h' : 'a', name: role === 'host' ? '房主' : '客人甲' },
+    };
+    attachRoom({ role, name: connection.state.name, roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+  }
+
+  it('没进房＝这一格是空的（本地桌、纯 AI 桌从来不有一张征召进度表）', () => {
+    expect(getDraftProgress()).toBeNull();
+  });
+
+  it('同一张表原样重发＝没变：不换引用、不通知界面（房主每勾一名都会问一遍，多数时候表没动）', () => {
+    side('host');
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+    expect(receiveDraftProgress(TWO_ROWS)).toBe(true);
+    expect(getDraftProgress()).toBe(TWO_ROWS);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    expect(receiveDraftProgress(TWO_ROWS.map((r) => ({ ...r })))).toBe(false);
+    expect(getDraftProgress()).toBe(TWO_ROWS);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    // 勾到第 4 名：内容真变了 ⇒ 换引用 + 通知一次
+    expect(receiveDraftProgress([{ ...SEAT1, picked: 4 }, SEAT2])).toBe(true);
+    expect(seen).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it('「还没开始征召」是一句真话：null 收得下，再收一次 null 不惊动界面', () => {
+    side('host');
+    receiveDraftProgress(TWO_ROWS);
+    const seen = vi.fn();
+    const unsubscribe = subscribeNetRoom(seen);
+    expect(receiveDraftProgress(null)).toBe(true);
+    expect(getDraftProgress()).toBeNull();
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(receiveDraftProgress(null)).toBe(false);
+    expect(seen).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it('客人那侧照抄房主发来的一份，自己不算第二遍', () => {
+    side('guest');
+    expect(receiveDraftProgress(TWO_ROWS)).toBe(true);
+    expect(getDraftProgress()).toEqual(TWO_ROWS);
+  });
+
+  it('attach／detach 把这张表一起清掉：换房不能抱着上一屋的征召进度', () => {
+    side('host');
+    receiveDraftProgress(TWO_ROWS);
+    side('guest');
+    expect(getDraftProgress()).toBeNull();
+    receiveDraftProgress(TWO_ROWS);
+    detachRoom();
+    expect(getDraftProgress()).toBeNull();
   });
 });

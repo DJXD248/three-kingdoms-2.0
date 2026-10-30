@@ -502,6 +502,73 @@ describe('⑤a 大厅里那颗准备钮：交回一个布尔，照抄一张表',
   });
 });
 
+describe('⑤b 大厅里的征召进度：客人看见"走到第几席"，看不见别人挑了什么', () => {
+  /** 走到"已连上、名册上有房主也有我"那一步（与 ⑤a 同一个入口，抄一份是为了两组证人互不牵动）。 */
+  async function inRoomAsGuest() {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('DDDDDD');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    const me = myId(socket);
+    await receive(socket, {
+      t: 'roster', from: 'host-9',
+      peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }],
+    });
+    socket.sent.length = 0;
+    return { socket, me };
+  }
+
+  it('表还没到＝一句实话（不是"没人征召"，也不是一块让人以为卡住的空白）', async () => {
+    await inRoomAsGuest();
+    expect(text()).toContain('征召进度');
+    expect(text()).toContain('还没开始征召');
+  });
+
+  it('房主发来的表逐行上墙：那句「已选 n/10」与热座面板同一个形状', async () => {
+    const { socket } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'draftprogress', from: 'host-9',
+      rows: [
+        { seat: 1, name: '房主乙', state: 'done', picked: 10, total: 10 },
+        { seat: 2, name: '玩家', state: 'picking', picked: 7, total: 10 },
+      ],
+    });
+    expect(text()).toContain('第 1 席');
+    expect(text()).toContain('已征召 10/10');
+    expect(text()).toContain('正在征召（已选 7/10）');
+    expect(text()).toContain('现在轮到第 2 席');
+    expect(text()).not.toContain('还没开始征召');
+  });
+
+  it('这张表里一张牌也没有：界面上明写，客人不该以为是自己看不到的那几格', async () => {
+    const { socket } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'draftprogress', from: 'host-9',
+      rows: [{ seat: 1, name: '房主乙', state: 'picking', picked: 1, total: 10 }],
+    });
+    expect(text()).toContain('一张牌也没有');
+  });
+
+  it('不是房主发来的进度表不上墙（客人也能往房间里发这一条，说"某席挑了谁"就成了假通告）', async () => {
+    const { socket } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'draftprogress', from: 'guest-x',
+      rows: [{ seat: 2, name: '玩家', state: 'done', picked: 10, total: 10 }],
+    });
+    expect(text()).toContain('还没开始征召');
+    expect(text()).not.toContain('已征召 10/10');
+    expect(text()).not.toContain('第 2 席');
+  });
+
+  it('客人收到进度表不往外回话：这一格是给人看的，不是一条请求', async () => {
+    const { socket } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'draftprogress', from: 'host-9',
+      rows: [{ seat: 1, name: '房主乙', state: 'picking', picked: 2, total: 10 }],
+    });
+    expect(socket.sent).toEqual([]);
+  });
+});
+
 /** 房主那边算出来的、已经过 J2 遮蔽层的局面——界面拿到的就该长这样。 */
 function maskedView(): Record<string, unknown> {
   return buildBroadcastView({

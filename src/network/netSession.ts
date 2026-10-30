@@ -5,6 +5,7 @@ import {
   parseEnvelope,
   versionMismatch,
   type NetEnvelope,
+  type NetDraftProgressRow,
   type NetLinkRow,
   type NetMoveItem,
   type NetPeer,
@@ -79,6 +80,11 @@ export type StepResult = {
   ready?: IncomingReady;
   /** 切片⑤a（客人侧）：房主算好的那张准备表。客人照抄，自己不在这里判谁还算数。 */
   readyTable?: NetReadyRow[];
+  /**
+   * 切片⑤b（客人侧）：房主算好的那张征召进度表——只有第几席、走到哪一步、几名/该几名，
+   * **一张牌也不在这张表里**（用户 2026-10-30 裁：「和热座一样」不延伸到别人那几格的私有信息）。
+   */
+  draftProgress?: NetDraftProgressRow[];
 };
 
 export function newPeerId(): string {
@@ -206,6 +212,14 @@ export function stepSession(
     }
     return { state, sends: [], readyTable: envelope.rows, saw };
   }
+  // ── 切片⑤b：征召进度表同样只认房主那一份。客人不自算"谁征召到哪儿了"──
+  if (envelope.t === 'draftprogress') {
+    const fromHost = state.peers.some((p) => p.id === envelope.from && p.role === 'host');
+    if (!fromHost) {
+      return { state: { ...state, note: '收到不是房主发来的征召进度表，已忽略' }, sends: [], saw };
+    }
+    return { state, sends: [], draftProgress: envelope.rows, saw };
+  }
   return { state, sends: [], saw };
 }
 
@@ -321,6 +335,11 @@ export function joinRoom(
      * ——两边都只住 `netRoom` 那一格，界面照抄，与席位表一个纪律。
      */
     onReadyTable?: (rows: NetReadyRow[]) => void;
+    /**
+     * 切片⑤b（客人侧）：房主算好的那张征召进度表（全桌广播，不指名）。
+     * 与准备表同一格纪律：客人只照抄进 `netRoom`，自己不在这里算进度。
+     */
+    onDraftProgress?: (rows: NetDraftProgressRow[]) => void;
   },
   onChange: (state: SessionState) => void,
 ): RoomConnection {
@@ -406,6 +425,8 @@ export function joinRoom(
     // 准备表两边都递进同一格——房主那份是自己算的，客人那份是房主发来的。
     if (next.ready) args.onReadyMark?.(next.ready);
     if (next.readyTable) args.onReadyTable?.(next.readyTable);
+    // 切片⑤b：那张进度表只有客人会收到（发的人正是房主自己）。
+    if (next.draftProgress) args.onDraftProgress?.(next.draftProgress);
   };
 
   link = openNetLink(args.url, {

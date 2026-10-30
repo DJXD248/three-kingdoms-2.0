@@ -8,6 +8,7 @@ import {
   ourVersionStamp,
   parseEnvelope,
   type NetEnvelope,
+  type NetDraftProgressRow,
   type NetLinkRow,
   type NetMoveItem,
   type NetReadyRow,
@@ -925,6 +926,91 @@ describe('⑤a 准备钮与准备表：谁的话谁听', () => {
     await nextTick();
     expect(tablesA).toEqual([ROWS]);
     expect(tablesB).toEqual([ROWS]);
+
+    guestA.leave();
+    guestB.leave();
+    host.leave();
+  });
+});
+
+describe('⑤b 征召进度表：只有房主那台机器说得准走到第几席', () => {
+  const ROWS: NetDraftProgressRow[] = [
+    { seat: 1, name: '玩家1', state: 'picking', picked: 3, total: 10 },
+    { seat: 2, name: '客人甲', state: 'waiting', picked: 0, total: 10 },
+  ];
+  const OTHER = 'guest-2';
+  const inRoom = () => guestState({ phase: 'in-room', peers: [HOST, GUEST] });
+  const hostWithGuest = () => hostState({ phase: 'in-room', peers: [HOST, GUEST] });
+
+  it('房主发来的那张表照抄交出去：名册、状态、回程各一个字节也不动（客人不自算第二遍）', () => {
+    const before = inRoom();
+    const step = stepSession(before, text({ t: 'draftprogress', from: HOST.id, rows: ROWS }));
+    expect(step.draftProgress).toEqual(ROWS);
+    expect(step.state).toBe(before);
+    expect(step.sends).toEqual([]);
+  });
+
+  it('客人冒充房主发表 ⇒ 不收，并且写清为什么没动静（征召走到哪儿只有房主那台机器知道）', () => {
+    const before = guestState({ phase: 'in-room', peers: [HOST, GUEST, { id: OTHER, name: '客人乙', role: 'guest' }] });
+    const step = stepSession(before, text({ t: 'draftprogress', from: OTHER, rows: ROWS }));
+    expect(step.draftProgress).toBeUndefined();
+    expect(step.state.note).toContain('不是房主发来');
+    expect(step.state).not.toBe(before);
+  });
+
+  it('还没进房（名册里根本没有房主）时收到的表也不收——没有"谁说的算"就没有可抄的', () => {
+    const step = stepSession(guestState(), text({ t: 'draftprogress', from: HOST.id, rows: ROWS }));
+    expect(step.draftProgress).toBeUndefined();
+  });
+
+  it('房主一侧不采纳这张表（他自己就是出处），也不把客人发来的当进度用', () => {
+    const before = hostWithGuest();
+    const step = stepSession(before, text({ t: 'draftprogress', from: GUEST.id, rows: ROWS }));
+    expect(step.draftProgress).toBeUndefined();
+    expect(step.state).toBe(before);
+  });
+
+  it('假传话线：房主发一帧 ⇒ 屋里每位客人的 onDraftProgress 都收到；客人自己发 ⇒ 谁都不采纳', async () => {
+    const relay = new FakeRelay();
+    const tablesA: NetDraftProgressRow[][] = [];
+    const tablesB: NetDraftProgressRow[][] = [];
+
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    await nextTick();
+    const guestA = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id,
+        socketFactory: relay.factory, onDraftProgress: (r) => tablesA.push(r),
+      },
+      () => {},
+    );
+    const guestB = joinRoom(
+      {
+        role: 'guest', name: '客人乙', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: OTHER,
+        socketFactory: relay.factory, onDraftProgress: (r) => tablesB.push(r),
+      },
+      () => {},
+    );
+    await nextTick();
+
+    expect(guestA.send({ t: 'draftprogress', from: GUEST.id, rows: ROWS })).toBe(true);
+    await nextTick();
+    expect(tablesA).toEqual([]);
+    expect(tablesB).toEqual([]);
+
+    expect(host.send({ t: 'draftprogress', from: HOST.id, rows: ROWS })).toBe(true);
+    await nextTick();
+    expect(tablesA).toEqual([ROWS]);
+    expect(tablesB).toEqual([ROWS]);
+
+    // 迟来的人补一份：房主那边强制重发，内容一模一样，客人照样收（去重住在界面那一格，不在这条线上）。
+    expect(host.send({ t: 'draftprogress', from: HOST.id, rows: ROWS })).toBe(true);
+    await nextTick();
+    expect(tablesA).toEqual([ROWS, ROWS]);
+    expect(tablesB).toEqual([ROWS, ROWS]);
 
     guestA.leave();
     guestB.leave();

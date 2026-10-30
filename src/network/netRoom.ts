@@ -7,13 +7,15 @@
  * 变了就通知订阅者。没有规则、没有状态转移。
  * （切片⑤a 起这里还多收着房主算好的那张准备表，以及从它派生出来的那句"还等谁"——
  *  派生物单独占一格的存在理由只有一个：界面要一个稳定的引用，每次现算就会每次都说"变了"。）
+ * （切片⑤b 起再多收一张征召进度表：还是那句"房主算、客人抄"，表里只有数量，没有牌。）
  */
 import type { EngineState } from '../core/GameState';
-import type { NetLinkRow, NetReadyRow, NetSeatRow } from './netProtocol';
+import type { NetDraftProgressRow, NetLinkRow, NetReadyRow, NetSeatRow } from './netProtocol';
 import type { NetRole, RoomConnection } from './netSession';
 import type { IncomingAction } from './netHostAuthority';
 import type { IncomingReady, ReadyGate } from './netReady';
 import { gateOfReadyRows, sameReadyRows } from './netReady';
+import { sameDraftProgressRows } from './netDraftProgress';
 import { isRestorableEngineState } from '../store/gameStateAdapter';
 import { sameRows } from './netHeartbeat';
 import { seatOfPeer, sameMoveLists, sameSeatRows, type SeatMoveList } from './netSeat';
@@ -62,6 +64,12 @@ let readyTable: NetReadyRow[] | null = null;
 let startGate: StartGate = NO_GATE;
 let gateRows: NetReadyRow[] | null = null;
 let gateGuests = -1;
+/**
+ * 切片⑤b（v2.9.25）：那张征召进度表。房主那份是自己算出来抄进来的，客人那份是房主发来的——
+ * 与准备表同一格纪律（内容没变就保留同一个引用）。`null`＝这一格现在没话要说：
+ * 掷骰、分势力那几段还没有进度可报，不是"报了一张空表"。
+ */
+let draftProgress: NetDraftProgressRow[] | null = null;
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -106,6 +114,7 @@ export function attachRoom(room: ActiveRoom): void {
   seatMoves = null;
   refusal = null;
   readyTable = null;
+  draftProgress = null;
   syncStartGate();
   notify();
 }
@@ -119,6 +128,7 @@ export function detachRoom(): void {
   seatMoves = null;
   refusal = null;
   readyTable = null;
+  draftProgress = null;
   syncStartGate();
   notify();
 }
@@ -221,6 +231,22 @@ export function receiveReadyTable(rows: NetReadyRow[]): boolean {
 
 export function getReadyTable(): NetReadyRow[] | null {
   return readyTable;
+}
+
+/**
+ * 切片⑤b：那张征召进度表。与准备表一个纪律——内容没变就保留同一个引用并返回 false。
+ * 这里**接受 null**（＝这一格现在没话要说），因为发的那一侧在掷骰、分势力那几段真的无话可说；
+ * 客人那边则只会收到房主算出来的实表（`netSession` 那道闸只认房主，解析层不认空表）。
+ */
+export function receiveDraftProgress(rows: NetDraftProgressRow[] | null): boolean {
+  if (sameDraftProgressRows(draftProgress, rows)) return false;
+  draftProgress = rows;
+  notify();
+  return true;
+}
+
+export function getDraftProgress(): NetDraftProgressRow[] | null {
+  return draftProgress;
 }
 
 /**
