@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 import OnlineLobby from './OnlineLobby';
-import { NET_PROTOCOL_VERSION, encodeEnvelope, ourVersionStamp, type NetDraftItem, type NetDraftListFrame, type NetEnvelope } from '../network/netProtocol';
+import { NET_PROTOCOL_VERSION, encodeEnvelope, formatRoomTicket, ourVersionStamp, type NetDraftItem, type NetDraftListFrame, type NetEnvelope } from '../network/netProtocol';
 import { buildBroadcastView } from '../network/snapshotView';
 import { MIN_BROADCAST_INTERVAL_MS } from '../network/snapshotBroadcaster';
 import { detachRoom, getActiveRoom } from '../network/netRoom';
@@ -77,10 +77,11 @@ async function receive(socket: FakeWebSocket, envelope: NetEnvelope) {
   });
 }
 
-/** 切到客人、填房间码、点进房间、线通，返回那条假线。 */
-async function dialRoom(code: string) {
+/** 切到客人、填房间码与进场字、点进房间、线通，返回那条假线。 */
+async function dialRoom(code: string, key = 'ABCDEFGHJKLM') {
   await clickButton(/^我去别人房间/);
   await typeInto(screen.getByPlaceholderText('例如 K7M2QX'), code);
+  await typeInto(screen.getByPlaceholderText('例如 ABCD-EFGH-JKMN'), key);
   await clickButton(/^🚪 进房间/);
   const socket = FakeWebSocket.created[FakeWebSocket.created.length - 1];
   await openLine(socket);
@@ -101,7 +102,7 @@ afterEach(() => {
 });
 
 describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
-  it('开房间：当场生成六位房间码，连接地址是"地址/房间码/本机身份号"', async () => {
+  it('开房间：当场生成六位房间码与一串进场字，连接地址是"地址/房间码/本机身份号?k=进场字"', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     expect(text()).toContain('我开房间');
 
@@ -113,13 +114,19 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     // 身份号，六位大写那条正则当场会红）。这里按段取，"房间码的形状"与"身份号的形状"各立一条断言。
     const segments = socket.url.split('/');
     const code = segments[3];
-    const peerInUrl = segments[4];
     expect(code).toMatch(/^[A-Z0-9]{6}$/);
-    expect(socket.url).toBe(`ws://127.0.0.1:8787/${code}/${peerInUrl}`);
+    // 切片⑦第一档：老断言 `toBe(.../${code}/${peerInUrl})` 到此为止不再成立——网址尾部多了 `?k=`。
+    // 改它不是照红改绿：这条证人钉的是"第二段就是那个身份号、形状过得了传话程序那道门"，
+    // 那一句判据一字没动，只是把"整条网址"换成"网址的那一段"来对，并当场把进场字也量了形状。
+    const [peerSegment, keySegment] = [segments[4].split('?')[0], socket.url.split('?k=')[1]];
+    expect(socket.url).toBe(`ws://127.0.0.1:8787/${code}/${peerSegment}?k=${keySegment}`);
+    expect(peerSegment).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+    expect(keySegment).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/);
     // 身份号必须过传话程序那道形状门（它按这一串绑定连接；越界的号进路径会把网址切成三段）。
-    expect(peerInUrl).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
     expect(text()).toContain(code);
     expect(text()).toContain('等别人输房间码进来');
+    // 房主屏幕上要看得见那串字（客人得抄它），而且显示的是分组好抄的样子。
+    expect(text()).toContain(formatRoomTicket(keySegment));
   });
 
   it('地址填错（少了 ws://）⇒ 界面给一句人读的拒因，一条线都不建', async () => {
@@ -131,17 +138,46 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     expect(FakeWebSocket.created).toHaveLength(0);
   });
 
-  it('客人：填同一个地址＋房间码就报到，hello 里带本机三样版本', async () => {
+  it('客人：填同一个地址＋房间码＋进场字就报到，hello 里带本机三样版本', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('k7m2qx');
-    expect(socket.url).toMatch(/^ws:\/\/127\.0\.0\.1:8787\/K7M2QX\/[A-Za-z0-9_-]{1,64}$/);
+    expect(socket.url).toMatch(/^ws:\/\/127\.0\.0\.1:8787\/K7M2QX\/[A-Za-z0-9_-]{1,64}\?k=[A-Z0-9]{12}$/);
     // 切片⑥：网址上那串号与 hello 里自报的那串号必须出自同一次取数。分成两次取数就会出现
     // "网址绑的是甲、帧里自报的是乙"，那份指名给乙的信就没人收——这一条量的就是那个错位。
-    expect(socket.url.endsWith(`/${myId(socket)}`)).toBe(true);
+    // 切片⑦第一档起尾部多了一段 `?k=`，所以那句 endsWith('/号') 换成"号后面紧跟 ?k="——
+    // 判据（同一串号既进路径又进 hello）没变，只是不再允许号当尾巴。
+    expect(socket.url).toContain(`/${myId(socket)}?k=`);
     expect(text()).toContain('正在对上版本');
 
     expect(socket.lastSent).toMatchObject({ t: 'hello', name: '玩家', v: ourVersionStamp() });
     expect(myId(socket).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * 切片⑦第一档：界面这一侧的门。
+   * 传话程序那侧的「门外拒」在 scripts/net-relay.test.mjs 里立了证人；这里钉的是另一半——
+   * **没填/填错时点「进房间」压根不建那条线**，因为建了就是"连上了但什么都收不到"的空屏，
+   * 玩家看到的是一句"没连上"，猜不到是自己那串字少了一个字符。
+   */
+  it('客人没填进场字 / 填的形状不对 ⇒ 点进房间一句人话，一条线都不建', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    await clickButton(/^我去别人房间/);
+    await typeInto(screen.getByPlaceholderText('例如 K7M2QX'), 'K7M2QX');
+
+    await clickButton(/^🚪 进房间/);
+    expect(text()).toContain('进场字得是房主给的那 12 个字符');
+    expect(FakeWebSocket.created).toHaveLength(0);
+
+    await typeInto(screen.getByPlaceholderText('例如 ABCD-EFGH-JKMN'), 'ABCDEFGHJKL'); // 少一个字符
+    await clickButton(/^🚪 进房间/);
+    expect(FakeWebSocket.created).toHaveLength(0);
+    expect(text()).toContain('现在填的是「ABCDEFGHJKL」');
+  });
+
+  it('手抄时带的小写、短横、空格不算错：界面归一后照样拼得出网址（绝不让人对着一串字符数字数）', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('K7M2QX', ' abcd-efgh-jklm ');
+    expect(socket.url.split('?k=')[1]).toBe('ABCDEFGHJKLM');
   });
 
   it('房主 welcome 且版本一致 ⇒ 状态变成已连上，写明连上了谁', async () => {
@@ -515,7 +551,10 @@ describe('⑤a 大厅里那颗准备钮：交回一个布尔，照抄一张表',
    * 切片⑥的改述证人。立项时点过的一句话是"传话程序只认房间不认人"——这一版它认人了，
    * 那句话就成了假话，留在界面上＝界面在说一件已经不成立的事（§112：显示那句必须对得上实际行为）；
    * 反过来"认人投递"绝不许写成"别人再也看不见"：这堵墙加的只是"不再抄给全屋"，
-   * 线上仍是明文、身份号仍是连接自己带进来的、没有钥匙也没有验证。所以一正一反各一条。
+   * 线上仍是明文、身份号仍是连接自己带进来的。所以一正一反各一条。
+   * 切片⑦第一档就地更正这一句里那半句假话：原来写"没有钥匙也没有验证"，现在门外确实有一串
+   * 进场字在逐字符比，那句话留着＝注释在说一件已经不成立的事；被划掉的仍然是"防得住偷看"，
+   * 不是"有没有一道门"。
    */
   it('切片⑥之后收尾那段改述了传话程序：按人投递与"照样看得见"两句同时在场，老那句不许留着', async () => {
     await inRoomAsGuest();

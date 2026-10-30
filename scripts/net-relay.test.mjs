@@ -47,18 +47,50 @@ describe('传话程序：房间码与握手', () => {
   });
 });
 
-describe('传话程序：握手网址的两段（切片⑥）', () => {
-  it('/房间码/身份号 ⇒ 房间码取第一段，身份号取第二段', () => {
-    expect(parseUpgradeTarget('/K7M2QX/p-1-2-aabbccdd')).toEqual({ code: 'K7M2QX', peer: 'p-1-2-aabbccdd' });
-    expect(parseUpgradeTarget('/k7m2qx/3f8a9b0c-1d2e-4f30-9a1b-2c3d4e5f6071')).toEqual({
+describe('传话程序：握手网址的两段＋一串进场字（切片⑥＋⑦第一档）', () => {
+  it('/房间码/身份号?k=进场字 ⇒ 三段各归各位', () => {
+    expect(parseUpgradeTarget('/K7M2QX/p-1-2-aabbccdd?k=ABCDEFGHJKLM')).toEqual({
+      code: 'K7M2QX', peer: 'p-1-2-aabbccdd', ticket: 'ABCDEFGHJKLM',
+    });
+    expect(parseUpgradeTarget('/k7m2qx/3f8a9b0c-1d2e-4f30-9a1b-2c3d4e5f6071?k=KMNPKMNPABCD')).toEqual({
       code: 'K7M2QX',
       peer: '3f8a9b0c-1d2e-4f30-9a1b-2c3d4e5f6071',
+      ticket: 'KMNPKMNPABCD',
     });
   });
 
-  it('查询串与井号不算进身份号（浏览器自己会带上那些）', () => {
-    expect(parseUpgradeTarget('/K7M2QX/GUEST-B?x=1')).toEqual({ code: 'K7M2QX', peer: 'GUEST-B' });
-    expect(parseUpgradeTarget('/K7M2QX/GUEST-B#frag')).toEqual({ code: 'K7M2QX', peer: 'GUEST-B' });
+  /**
+   * 抄写宽容：屏幕上给的是 `ABCD-EFGH-JKMN`，客人手打可能带短横、也可能打成小写。
+   * 归一化在**门外**就做（与客户端 `normalizeRoomTicket` 同一口径），比对的是归一化后那串。
+   */
+  it('进场字认小写与短横：形状一样就算同一串', () => {
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B?k=abcd-efgh-jkmn').ticket).toBe('ABCDEFGHJKMN');
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B?k=ABCDEFGHJKMN').ticket).toBe('ABCDEFGHJKMN');
+  });
+
+  /**
+   * ⚠️ 这一条改掉了切片⑦之前的既有期望值（原来 `/K7M2QX/身份号` 也算有效握手），不是"照红改绿"：
+   * 门装了就必须锁——不带进场字的老网址如果还能连上，那串字就成了摆设。
+   * 老证人那句"查询串与井号不算进身份号"仍然逐句留着（下面两条各一枚），只是多带一个 `ticket: null`。
+   */
+  it('没带进场字的老网址＝形状还在、钥匙没有 ⇒ ticket 给 null（上层据此拒握手）', () => {
+    expect(parseUpgradeTarget('/K7M2QX/p-1-2-aabbccdd')).toEqual({ code: 'K7M2QX', peer: 'p-1-2-aabbccdd', ticket: null });
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B?x=1')).toEqual({ code: 'K7M2QX', peer: 'GUEST-B', ticket: null });
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B#frag')).toEqual({ code: 'K7M2QX', peer: 'GUEST-B', ticket: null });
+    // 井号后面那一段整个不算数（老形状里 `#` 就是被丢掉的），所以 `?` 出现在它后面也别想当钥匙。
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B#frag?k=ABCDEFGHJKLM').ticket).toBeNull();
+  });
+
+  it('进场字形状不对（少一个／多一个／混进易混字符／半个转义）⇒ null，不猜', () => {
+    for (const bad of ['ABCDEFGHJKL', 'ABCDEFGHJKLMN', 'ABCDEFGHIJKLMN', 'ABCD-EFGH-JKM0', 'ABCDEFGHJKM%']) {
+      expect(parseUpgradeTarget(`/K7M2QX/GUEST-B?k=${bad}`).ticket).toBeNull();
+    }
+    // 带了 `k=` 但是空串，与根本没带同一处置：门不认空钥匙。
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B?k=').ticket).toBeNull();
+    // 同一个网址写了两遍 `k` ⇒ 认后一个（与 `routeFrame` 那条"重复 to 键取最后一个"同一套规矩）。
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B?k=ZZZZZZZZZZZZ&k=ABCDEFGHJKLM').ticket).toBe('ABCDEFGHJKLM');
+    // 百分号转义进来的那串一样认（客户端那边是原样拼上去的，这里不能只认明文）。
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B?k=%41BCDEFGHJKLM').ticket).toBe('ABCDEFGHJKLM');
   });
 
   it('老网址（只有一段）＝没有身份号 ⇒ 拒：那条连接没法按人投递，任何一份指名快照都落不到它手里', () => {
@@ -69,11 +101,11 @@ describe('传话程序：握手网址的两段（切片⑥）', () => {
   });
 
   it('房间码坏、或多出第三段、或身份号形状不对 ⇒ 一样给 null（上层据此拒握手，不猜）', () => {
-    expect(parseUpgradeTarget('/AB-CD/GUEST-B')).toEqual({ code: null, peer: null });
-    expect(parseUpgradeTarget('/K7M2QX/GUEST-B/extra')).toEqual({ code: null, peer: null });
+    expect(parseUpgradeTarget('/AB-CD/GUEST-B')).toEqual({ code: null, peer: null, ticket: null });
+    expect(parseUpgradeTarget('/K7M2QX/GUEST-B/extra')).toEqual({ code: null, peer: null, ticket: null });
     // 带斜杠的号会把路径拆成三段；带空格/中文的号一进 URL 就变形；65 个字符越过协议那条 isId 的界。
     for (const bad of ['a%2Fb', 'a%20b', '%E7%94%B2', 'x'.repeat(65)]) {
-      expect(parseUpgradeTarget(`/K7M2QX/${bad}`)).toEqual({ code: 'K7M2QX', peer: null });
+      expect(parseUpgradeTarget(`/K7M2QX/${bad}?k=ABCDEFGHJKLM`)).toEqual({ code: 'K7M2QX', peer: null, ticket: 'ABCDEFGHJKLM' });
     }
     // 半个转义（'%4'）decode 会抛：宁可拒握手，也不把一条读不懂的网址猜成某个身份号。
     expect(parseUpgradeTarget('/K7M2QX/%4').peer).toBeNull();
@@ -211,14 +243,21 @@ describe('传话程序：真连接投递（Node 自带 WebSocket 客户端）', 
    */
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  /**
+   * 切片⑦第一档以后，每条连接都得带进场字，否则一律在门外被拒。
+   * 所以下面 `open` 的第三个参数给了默认值：老证人只管"投给谁"，不该被这道门绊倒——
+   * 门本身另有专门的证人（见「进门这道门」那一段），一条都不混进这里。
+   */
+  const KEY = 'ABCDEFGHJKLM';
+
   async function stage() {
     const { createRelay } = await import('./net-relay.mjs');
     const { server, rooms } = createRelay();
     await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
     const port = server.address().port;
 
-    const open = (code, peer) => new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/${code}/${peer}`);
+    const open = (code, peer, ticket = KEY) => new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/${code}/${peer}?k=${ticket}`);
       const inbox = [];
       ws.addEventListener('message', (ev) => inbox.push(String(ev.data)));
       ws.addEventListener('open', () => resolve({ ws, inbox }));
@@ -365,7 +404,8 @@ describe('传话程序：真连接投递（Node 自带 WebSocket 客户端）', 
 
   it('握手网址没带身份号（老形状 /房间码）⇒ 拒，不开房', async () => {
     const { rooms, refused, open, teardown } = await stage();
-    await refused('/ROOMAA');
+    // 带上合法进场字，确保拒它是缺第二段那一条判据在起作用，不是这道门误伤。
+    await refused(`/ROOMAA?k=${KEY}`);
     expect(rooms.size).toBe(0);
 
     // 同一次运行里带上身份号就连得上 ⇒ 拒的是那一段，不是别的什么。
@@ -379,7 +419,7 @@ describe('传话程序：真连接投递（Node 自带 WebSocket 客户端）', 
     const first = await open('ROOMAA', 'GUEST-B');
     const host = await open('ROOMAA', 'HOST-1');
 
-    await refused('/ROOMAA/GUEST-B');
+    await refused(`/ROOMAA/GUEST-B?k=${KEY}`);
 
     const frame = JSON.stringify({ t: 'netstatus', from: 'HOST-1', rows: [] });
     host.ws.send(frame);
@@ -391,7 +431,129 @@ describe('传话程序：真连接投递（Node 自带 WebSocket 客户端）', 
 
   it('房间码不对 ⇒ 拒绝握手，不开房', async () => {
     const { rooms, refused } = await stage();
-    await refused('/x/GUEST-B');
+    await refused(`/x/GUEST-B?k=${KEY}`);
     expect(rooms.size).toBe(0);
+  });
+});
+
+/**
+ * 切片⑦第一档：进门这道门。
+ * 立的判据是"外人只知道房间码，连握手都过不了，一个字也收不到"，
+ * 所以这里的证人全部盯着"收不到"那一侧：门外的连接没有 inbox 可查，它压根没连上。
+ */
+describe('传话程序：进门要进场字（切片⑦第一档）', () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const KEY = 'ABCDEFGHJKLM';
+  const OTHER = 'ZZZZ2222YYYY';
+
+  async function stage() {
+    const { createRelay } = await import('./net-relay.mjs');
+    const { server, rooms } = createRelay();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = server.address().port;
+
+    const dial = (path) => new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+      const inbox = [];
+      ws.addEventListener('message', (ev) => inbox.push(String(ev.data)));
+      ws.addEventListener('open', () => resolve({ ws, inbox }));
+      ws.addEventListener('error', () => reject(new Error('refused')));
+    });
+    const open = (code, peer, ticket = KEY) => dial(`/${code}/${peer}?k=${ticket}`);
+    const refused = async (path) => {
+      await expect(dial(path)).rejects.toThrow('refused');
+    };
+    const teardown = (...conns) => new Promise((resolve) => {
+      for (const c of conns) { try { c.ws?.close(); } catch { /* 已经断了 */ } }
+      server.close(() => resolve());
+    });
+    return { rooms, open, refused, teardown };
+  }
+
+  it('没带进场字 ⇒ 拒，而且不开房（一间房也没被陌生人占上）', async () => {
+    const { rooms, refused, open, teardown } = await stage();
+    await refused('/ROOMAA/HOST-1');
+    await refused('/ROOMAA/HOST-1?k=');
+    expect(rooms.size).toBe(0);
+
+    const host = await open('ROOMAA', 'HOST-1');
+    expect(rooms.size).toBe(1);
+    await teardown(host);
+  });
+
+  it('形状不对的进场字（短一截、含字母表外的 I/O/0/1、含中文）⇒ 一律当"没带"，拒', async () => {
+    const { refused, teardown } = await stage();
+    for (const bad of ['ABCDEFGHJKL', 'ABCDEFGHIJKLM', 'IOIOIOIOIOIO', '010101010101', '中文中文中文']) {
+      await refused(`/ROOMAA/HOST-1?k=${bad}`);
+    }
+    await teardown();
+  });
+
+  it('第一条带进场字的连接把这一间房的字定下来；后来的必须一字不差，不对的在门外被拒', async () => {
+    const { rooms, open, refused, teardown } = await stage();
+    const host = await open('ROOMAA', 'HOST-1', KEY);
+
+    await refused(`/ROOMAA/GUEST-B?k=${OTHER}`);
+    expect(host.inbox).toEqual([]); // 被拒的那条连一句也递不进来
+    expect(rooms.get('ROOMAA').ticket).toBe(KEY); // 也没被那一条改掉
+
+    const b = await open('ROOMAA', 'GUEST-B', KEY);
+    const frame = JSON.stringify({ t: 'netstatus', from: 'HOST-1', rows: [] });
+    host.ws.send(frame);
+    await wait(140);
+    expect(b.inbox).toEqual([frame]); // 门开后正常投递 ⇒ 上面那个空是"拒在门外"，不是投递坏了
+
+    await teardown(host, b);
+  });
+
+  it('大小写与短横/空格随意 ⇒ 同一串字认成同一个（照页面口径归一）', async () => {
+    const { open, refused, teardown } = await stage();
+    const host = await open('ROOMAA', 'HOST-1', 'abcd-efgh-jklm');
+    const b = await open('ROOMAA', 'GUEST-B', ' ABCDEFGHJKLM ');
+    await refused(`/ROOMAA/GUEST-C?k=${OTHER}`);
+    expect(host.inbox).toEqual([]);
+    await teardown(host, b);
+  });
+
+  it('屋里全空了仍然记得自己的进场字：陌生人不能趁房间码空着把它占走（占了就等于把房主锁在门外）', async () => {
+    const { rooms, open, refused, teardown } = await stage();
+    const host = await open('ROOMAA', 'HOST-1', KEY);
+    const first = rooms.get('ROOMAA').ticket;
+    host.ws.close();
+    await wait(220);
+
+    await refused('/ROOMAA/STRANGER?k=QQQQQQQQQQQQ'); // 空房也不认陌生字
+    await refused('/ROOMAA/STRANGER'); // 空房也不认"没带字"
+    expect(rooms.get('ROOMAA')?.ticket).toBe(first); // 也没被改掉
+
+    const back = await open('ROOMAA', 'HOST-1', KEY); // 房主拿原样那串回来，照进
+    expect(back.inbox).toEqual([]);
+    await teardown(back);
+  });
+
+  it('两个房间各认各的进场字：拿隔壁那串来敲这间门的，同样拒', async () => {
+    const { open, refused, teardown } = await stage();
+    const a = await open('ROOMAA', 'HOST-1', KEY);
+    const b = await open('ROOMBB', 'HOST-1', OTHER);
+
+    await refused('/ROOMAA/GUEST-X?k=' + OTHER);
+    await refused('/ROOMBB/GUEST-X?k=' + KEY);
+    expect(a.inbox).toEqual([]);
+    expect(b.inbox).toEqual([]);
+
+    await teardown(a, b);
+  });
+
+  it('进场字只在握手那一次用：连上以后线上传什么都与它无关（它不是消息内容，也不是游戏里的凭据）', async () => {
+    const { open, teardown } = await stage();
+    const host = await open('ROOMAA', 'HOST-1');
+    const b = await open('ROOMAA', 'GUEST-B');
+
+    const frame = JSON.stringify({ t: 'netstatus', from: 'HOST-1', rows: [], k: '不是那串字' });
+    host.ws.send(frame);
+    await wait(140);
+    expect(b.inbox).toEqual([frame]); // 帧里写什么"k"都照投 ⇒ 门只管进门那一刻
+
+    await teardown(host, b);
   });
 });

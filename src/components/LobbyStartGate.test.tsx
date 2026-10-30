@@ -29,6 +29,7 @@ function room(role: 'host' | 'guest', peers: NetPeer[]): ActiveRoom {
     role,
     name: '甲',
     roomCode: 'ROOMAA',
+    ticket: 'TK4TK4TK4TK4',
     address: 'ws://x',
     url: 'ws://x/ROOMAA',
     connection: connection as never,

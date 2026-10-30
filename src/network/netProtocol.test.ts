@@ -20,8 +20,11 @@ import {
   checkPeerName,
   composeRoomUrl,
   createRoomCode,
+  createRoomTicket,
   encodeEnvelope,
+  formatRoomTicket,
   normalizeRoomCode,
+  normalizeRoomTicket,
   ourVersionStamp,
   parseEnvelope,
   versionMismatch,
@@ -68,25 +71,30 @@ describe('房间码：界面随机绝不借引擎那颗对局种子', () => {
 });
 
 describe('地址可填＝A/C 只换这一行', () => {
-  it('拼出 ws://地址/房间码/身份号，并给出归一化后的码', () => {
-    const ok = composeRoomUrl('ws://192.168.1.5:8787/', 'k7m2qx', 'p-1l2m3n-4-aabbccdd');
-    expect(ok).toEqual({ ok: true, url: 'ws://192.168.1.5:8787/K7M2QX/p-1l2m3n-4-aabbccdd', roomCode: 'K7M2QX' });
-    const cloud = composeRoomUrl('wss://relay.example.com:9000', 'AB23CD', 'd9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f');
-    expect(cloud.ok && cloud.url).toBe('wss://relay.example.com:9000/AB23CD/d9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f');
+  it('拼出 ws://地址/房间码/身份号?k=进场字，并给出归一化后的码与字', () => {
+    const ok = composeRoomUrl('ws://192.168.1.5:8787/', 'k7m2qx', 'p-1l2m3n-4-aabbccdd', 'abcd-efgh-jklm');
+    expect(ok).toEqual({
+      ok: true,
+      url: 'ws://192.168.1.5:8787/K7M2QX/p-1l2m3n-4-aabbccdd?k=ABCDEFGHJKLM',
+      roomCode: 'K7M2QX',
+      ticket: 'ABCDEFGHJKLM',
+    });
+    const cloud = composeRoomUrl('wss://relay.example.com:9000', 'AB23CD', 'd9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f', 'ABCDEFGHJKLM');
+    expect(cloud.ok && cloud.url).toBe('wss://relay.example.com:9000/AB23CD/d9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f?k=ABCDEFGHJKLM');
   });
 
   it('切片⑥：身份号原样进路径（合法形状里没有需要转义的字符）⇒ 传话程序拆出来的第二段与 selfId 逐字相同', () => {
     const uuid = 'd9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f';
-    const composed = composeRoomUrl('ws://10.0.0.5:8787', 'K7M2QX', uuid);
+    const composed = composeRoomUrl('ws://10.0.0.5:8787', 'K7M2QX', uuid, 'ABCDEFGHJKLM');
     if (!composed.ok) throw new Error('正例不该被拒');
-    expect(composed.url.endsWith(`/${uuid}`)).toBe(true);
+    expect(composed.url).toContain(`/${uuid}?k=`);
     expect(composed.url).not.toContain('%');
   });
 
   it('身份号形状不对 ⇒ 当场拒一句人话，不拼一条"连得上但什么也收不到"的网址', () => {
     // 最后那两个是路径的形状炸弹：带斜杠的号会被拆成三段，带空格的号一进 URL 就变了样。
     for (const bad of ['', '有中文', 'a b', 'x'.repeat(65), 'a/b', '%41']) {
-      const res = composeRoomUrl('ws://127.0.0.1:8787', 'ABCD', bad) as { ok: false; reason: string };
+      const res = composeRoomUrl('ws://127.0.0.1:8787', 'ABCD', bad, 'ABCDEFGHJKLM') as { ok: false; reason: string };
       expect(res.ok).toBe(false);
       expect(res.reason).toContain('身份号');
     }
@@ -94,10 +102,72 @@ describe('地址可填＝A/C 只换这一行', () => {
 
   it('三种填错各回一句人读的原因，不抛错也不静默兜底', () => {
     const ME = 'p-1-1-aabbccdd';
-    expect(composeRoomUrl('', 'ABCD', ME).ok).toBe(false);
-    expect((composeRoomUrl('http://127.0.0.1', 'ABCD', ME) as { reason: string }).reason).toContain('ws://');
-    expect((composeRoomUrl('ws://127.0.0.1:8787', '12', ME) as { reason: string }).reason).toContain('房间码');
-    expect((composeRoomUrl('', 'ABCD', ME) as { reason: string }).reason).toContain('连接地址没填');
+    const KEY = 'ABCDEFGHJKLM';
+    expect(composeRoomUrl('', 'ABCD', ME, KEY).ok).toBe(false);
+    expect((composeRoomUrl('http://127.0.0.1', 'ABCD', ME, KEY) as { reason: string }).reason).toContain('ws://');
+    expect((composeRoomUrl('ws://127.0.0.1:8787', '12', ME, KEY) as { reason: string }).reason).toContain('房间码');
+    expect((composeRoomUrl('', 'ABCD', ME, KEY) as { reason: string }).reason).toContain('连接地址没填');
+  });
+
+  /**
+   * ⚠️ 改了切片⑥那条既有证人的网址形状（原来第三段没有 `?k=`）。不是照红改绿：
+   * 那条钉的是"身份号原样进路径"，这一句判据一字没动，只是后面多了一段查询串；
+   * 断言从 `endsWith('/' + uuid)` 换成 `contains('/' + uuid + '?k=')`——比原来更严（原来允许号后面什么都没有）。
+   */
+  it('切片⑦第一档：进场字也是必填，缺了或不对 ⇒ 一句人话，不拼一条"到了门口才被拒、界面只显示没连上"的网址', () => {
+    const ME = 'p-1-1-aabbccdd';
+    for (const bad of ['', '  ', 'ABCDEFGHJKL', 'ABCDEFGHIJKLM', 'IOIOIOIOIOIO', '010101010101', '有中文']) {
+      const res = composeRoomUrl('ws://127.0.0.1:8787', 'ABCD', ME, bad) as { ok: false; reason: string };
+      expect(res.ok).toBe(false);
+      expect(res.reason).toContain('进场字');
+    }
+  });
+
+  it('界面只归一一次：拼出来的那串与网址上 `?k=` 后面那一份逐字相同（抄给客人的与递给传话程序的不能是两个说法）', () => {
+    const res = composeRoomUrl('ws://127.0.0.1:8787', 'ABCD', 'p-1-1-aabbccdd', ' abcd efgh jklm ');
+    if (!res.ok) throw new Error('正例不该被拒');
+    expect(res.ticket).toBe(res.url.split('?k=')[1]);
+    expect(res.ticket).toBe('ABCDEFGHJKLM');
+  });
+});
+
+describe('进场字：房主开房当场生成那一串（切片⑦第一档）', () => {
+  it('12 位、只用不混淆字符表（没有 I O 0 1），连出 200 个也不重复', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const key = createRoomTicket();
+      expect(key).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/);
+      seen.add(key);
+    }
+    expect(seen.size).toBe(200);
+  });
+
+  it('生成出来的字自己就能通过归一化（一边造、一边认，两套规矩得对得上）', () => {
+    const key = createRoomTicket();
+    expect(normalizeRoomTicket(key.toLowerCase())).toBe(key);
+  });
+
+  it('归一化认大小写／空格／短横，但字数与字母表不认错：少一个、多一个、含 I O 0 1 都算没填', () => {
+    expect(normalizeRoomTicket(' abcd-efgh-jklm ')).toBe('ABCDEFGHJKLM');
+    expect(normalizeRoomTicket('ABCDEFGHJKLM')).toBe('ABCDEFGHJKLM');
+    for (const bad of ['', 'ABCDEFGHJKL', 'ABCDEFGHIJKLM', 'ABCDEFGHIJKI', 'ABCDEFGHIJKO', 'ABCDEFGHIJK0', 'ABCDEFGHIJK1', 'ABCDEFGHIJK_']) {
+      expect(normalizeRoomTicket(bad)).toBeNull();
+    }
+  });
+
+  it('显示的样子＝每 4 个一组好抄；认不出来的原样退回，绝不用半串去糊弄人', () => {
+    expect(formatRoomTicket('abcdefghjklm')).toBe('ABCD-EFGH-JKLM');
+    expect(formatRoomTicket('abcdefghijklmnop')).toBe('abcdefghijklmnop'); // 16 个字符＝不是那 12 个 ⇒ 原样退回，绝不截半串糊弄人
+    expect(formatRoomTicket('ABC')).toBe('ABC');
+    expect(formatRoomTicket('')).toBe('');
+  });
+
+  it('非安全上下文（`http://<一串 IP>`，没有 getRandomValues）⇒ 房主照样开得出进场字', () => {
+    vi.stubGlobal('crypto', null);
+    const key = createRoomTicket();
+    expect(key).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/);
+    expect(normalizeRoomTicket(key)).toBe(key);
+    vi.unstubAllGlobals();
   });
 });
 

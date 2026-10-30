@@ -76,7 +76,7 @@ describe('挂在屏幕左上角的那一份：住在屏幕上，不住在大厅�
     expect(container.firstChild).toBeNull();
 
     act(() => {
-      attachRoom({ role: 'guest', name: '甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection('guest') });
+      attachRoom({ role: 'guest', name: '甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection('guest') });
     });
     render(<NetPingOverlay />);
     expect(getNetStatus()).toBeNull();
@@ -84,7 +84,7 @@ describe('挂在屏幕左上角的那一份：住在屏幕上，不住在大厅�
   });
 
   it('进了房又收到表 ⇒ 左上角固定那一格出现，且整块不挡点击', () => {
-    attachRoom({ role: 'host', name: '乙', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection('host') });
+    attachRoom({ role: 'host', name: '乙', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection('host') });
     receiveNetStatus(online);
     const { container } = render(<NetPingOverlay />);
     const corner = container.querySelector('div.fixed.left-3.top-3');
@@ -93,7 +93,7 @@ describe('挂在屏幕左上角的那一份：住在屏幕上，不住在大厅�
   });
 
   it('表一更新，左上角那一格跟着换（订阅的是 netRoom 那份，不是打开弹窗时抓的快照）', () => {
-    attachRoom({ role: 'host', name: '乙', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection('host') });
+    attachRoom({ role: 'host', name: '乙', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection('host') });
     receiveNetStatus(online);
     render(<NetPingOverlay />);
     expect(text()).toContain('37 毫秒');

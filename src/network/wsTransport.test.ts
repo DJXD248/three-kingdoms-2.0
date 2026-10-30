@@ -79,6 +79,22 @@ describe('传输层薄皮：什么时候算发出去了、什么时候算断了'
     expect(notices[0]).toContain('连不上这个地址');
   });
 
+  /**
+   * 切片⑦第一档：门外被拒时，浏览器**读不到**传话程序回的那句原因（握手响应的头与正文
+   * 都不交给页面上的 WebSocket，`onclose` 的 reason 也是空的）。所以这句兜底话必须把
+   * "进场字不对"也算进可能原因——不是"更详细一点"，而是漏了它就有一个人抄错一个字符、
+   * 却去查传话程序开没开、网络通不通，真正的原因一个字也看不见。
+   */
+  it('那句兜底把"被挡在门外"列进了可能原因：进场字不对的人不会只看见"网络不通"', () => {
+    const socket = new FakeSocket();
+    const { notices } = linkWith(socket);
+    socket.fireOpen();
+    socket.onerror?.();
+    expect(notices[0]).toContain('进场字');
+    expect(notices[0]).toContain('传话程序没开'); // 原来那三条原因一条不许被换掉
+    expect(notices[0]).toContain('网络不通');
+  });
+
   it('断开事件没带原因 ⇒ 兜一句人读的，界面那句话不会空着', () => {
     const socket = new FakeSocket();
     const { notices } = linkWith(socket);

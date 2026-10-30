@@ -224,12 +224,44 @@ export function normalizeRoomCode(raw: string): string | null {
   return /^[A-Z0-9]+$/.test(code) ? code : null;
 }
 
+/**
+ * 防作弊·第一档（v2.9.27）「进场字」的长度：12 个字符。
+ * 为什么比房间码长一倍——房间码是"哪间房"，六个字符、三十多亿分之一并不重要；
+ * 这一串是"钥匙"，猜对的概率要低到一个人连上一百次也撞不出来（32^12）。
+ * 随机源与房间码共用那颗（浏览器自己的，绝不碰引擎对局种子）。
+ */
+const ROOM_TICKET_LENGTH = 12;
+
+export function createRoomTicket(): string {
+  const bytes = randomBytes(ROOM_TICKET_LENGTH);
+  return Array.from(bytes, (b) => ROOM_CODE_ALPHABET[b % ROOM_CODE_ALPHABET.length]).join('');
+}
+
+/**
+ * 进场字认"数对就行"：大小写、空格、短横都不算数（房主那屏显示成 `XXXX-XXXX-XXXX`，
+ * 客人手抄时很自然会带上短横、也可能打成小写）。筛完必须是**整整 12 个**且都在房间码那套
+ * 字母表里（没有 I O 0 1），否则返回 null——"少一个字符也算对"会让钥匙形同虚设。
+ */
+export function normalizeRoomTicket(raw: string): string | null {
+  const ticket = String(raw ?? '').trim().toUpperCase().replace(/[\s-]/g, '');
+  if (ticket.length !== ROOM_TICKET_LENGTH) return null;
+  return /^[A-Z0-9]+$/.test(ticket) && [...ticket].every((c) => ROOM_CODE_ALPHABET.includes(c)) ? ticket : null;
+}
+
+/** 房主那屏显示的样子（每 4 个字符一组，好抄）。认的时候仍按上面那句"短横不算数"。 */
+export function formatRoomTicket(raw: string): string {
+  const ticket = normalizeRoomTicket(raw);
+  if (!ticket) return String(raw ?? '');
+  return ticket.match(/.{1,4}/g)!.join('-');
+}
+
 /** 地址可填＝A/C 只换这里；返回拒因（人读）而不是抛错，界面照原文显示。 */
 export function composeRoomUrl(
   address: string,
   roomCode: string,
   peerId: string,
-): { ok: true; url: string; roomCode: string } | { ok: false; reason: string } {
+  ticket: string,
+): { ok: true; url: string; roomCode: string; ticket: string } | { ok: false; reason: string } {
   const trimmed = String(address ?? '').trim().replace(/\/+$/, '');
   if (!trimmed) return { ok: false, reason: '连接地址没填。局域网填 ws://对方IP:8787，中转填 ws://服务器地址:端口' };
   if (!/^wss?:\/\//i.test(trimmed)) return { ok: false, reason: `地址要以 ws:// 或 wss:// 开头，现在填的是「${trimmed}」` };
@@ -241,7 +273,16 @@ export function composeRoomUrl(
   if (!PEER_ID_URL_PATTERN.test(String(peerId ?? ''))) {
     return { ok: false, reason: `这台机器没算出自己的身份号（现在是「${peerId}」），先刷新页面再试` };
   }
-  return { ok: true, url: `${trimmed}/${code}/${encodeURIComponent(peerId)}`, roomCode: code };
+  // 防作弊·第一档（v2.9.27）：进场字是**必填**的第四个参数（不是可选，可选就会有人漏传，
+  // 漏传的那条连接到了门口才被传话程序拒，界面上一句"没连上"看不出为什么）。
+  // 这里先验形状，为的是"点进房间那一刻就说明白"，而不是让人对着一块空屏猜。
+  const key = normalizeRoomTicket(ticket);
+  if (!key) {
+    return { ok: false, reason: `进场字得是房主给的那 12 个字符（短横和空格随便写都行），现在填的是「${ticket}」` };
+  }
+  // 成功时把归一化后的那一串也交回：界面留着它（要显示给客人抄、要存进这一间房），
+  // 让它与网址上那一份出自同一处，绝不在外面再归一化第二遍。
+  return { ok: true, url: `${trimmed}/${code}/${encodeURIComponent(peerId)}?k=${key}`, roomCode: code, ticket: key };
 }
 
 export function encodeEnvelope(envelope: NetEnvelope): string {

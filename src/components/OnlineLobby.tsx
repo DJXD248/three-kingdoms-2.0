@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from 'react';
-import { composeRoomUrl, createRoomCode } from '../network/netProtocol';
+import { composeRoomUrl, createRoomCode, createRoomTicket, formatRoomTicket } from '../network/netProtocol';
 // 界面上那句"至多每多久推一份"必须跟着节流器自己那个数走，不许在文案里再抄一遍常量。
 import { MIN_BROADCAST_INTERVAL_MS } from '../network/snapshotBroadcaster';
 import { joinRoom, newPeerId, type NetRole, type SessionState } from '../network/netSession';
@@ -78,6 +78,15 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
  * 「凑够 10 名、群势力 1-3 名」那条上下限只有一份抄本（`draftTally`）：那句人话、帧上那个 `canConfirm`、
  * 房主重判那一步读的都是它，界面上不另算一遍（那条上下限今天仍长在热座面板 `GeneralDraft.tsx:22` 的 `canConfirm`，
  * 点将那一档的数量闸与客人这一条共用 `domain/draftQuota` 同一把尺）。
+ * 防作弊·第一档＝联机切片⑦第一档（v2.9.27）在这一格加了**进门那一道门**：房主点「开房间」时他那台机器
+ * 生成一串 12 个字符的进场字（`network/netProtocol.ts:createRoomTicket`，与房间码同一套不混淆字母表、同一个随机源），
+ * 客人必须把地址、房间码、进场字三样都填对——三样合成握手网址 `地址/房间码/身份号?k=进场字`，
+ * 第一个进房的人把那串字定下来，之后逐字符对不上的一律在门外被传话程序拒（`scripts/net-relay.mjs`），
+ * 没带或形状不对也拒；界面这一侧在点「进房间」那一刻就先验形状并回一句人话，不建那条必被拒的线。
+ * 它**防的**是"只打听到房间码就连进来偷看的人"；它**不防**的写在页脚那段里（线上仍是明文、帧里那句"我是谁"
+ * 仍由发的人自己写、这串字不是账号也不是密码），所以「这一版不防作弊」那句仍然在场，不许改成"已防偷看"。
+ * 一处诚实的边角：门外那句拒因（"进场字不对，进不了这个房间"）浏览器**读不到**——握手响应的头与正文都不交给
+ * 页面上的 WebSocket，所以客人看见的是 `network/wsTransport.ts` 那句兜底，它已把"被挡在门外"列进可能原因里。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。
@@ -86,6 +95,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const [address, setAddress] = useState(() => getActiveRoom()?.address ?? DEFAULT_ADDRESS);
   const [name, setName] = useState(() => getActiveRoom()?.name ?? '玩家');
   const [roomCode, setRoomCode] = useState(() => getActiveRoom()?.roomCode ?? '');
+  // 防作弊·第一档（v2.9.27）：房主开房时生成、客人进场时填的那串进场字。
+  const [ticket, setTicket] = useState(() => getActiveRoom()?.ticket ?? '');
   const [formError, setFormError] = useState<string | null>(null);
 
   const guestSnapshot = useSyncExternalStore(subscribeNetRoom, getGuestSnapshot, getGuestSnapshot);
@@ -151,15 +162,24 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const start = () => {
     setFormError(null);
     const code = role === 'host' ? createRoomCode() : roomCode;
+    // 防作弊·第一档：进场字**由房主在自己这台机器上生成**（点「开房间」或「换个房间码重开」那一刻）。
+    // 两条硬规矩都写在这里：
+    //  1) 房主一定要**先开房**——传话程序认的是"第一个带字进来的人"，客人要是抢先连上，
+    //     这间房就认了客人那串、房主反倒进不去（同一台机器上房主先点，这条不会撞）。
+    //  2) 重开房间码时**跟着换一串新字**，绝不让新旧两串并存——旧字还在别人笔记本里。
+    const key = role === 'host' ? createRoomTicket() : ticket;
     // 切片⑥：这一串号既进握手网址、又当线上那个 `selfId`，两边必须是同一个值——
     // 分成两次取数就会出现"网址上绑的是甲、帧里自报的是乙"，那份指名给乙的信就没人收了。
     const selfId = newPeerId();
-    const composed = composeRoomUrl(address, code, selfId);
+    const composed = composeRoomUrl(address, code, selfId, key);
     if (!composed.ok) {
       setFormError(composed.reason);
       return;
     }
-    if (role === 'host') setRoomCode(composed.roomCode);
+    if (role === 'host') {
+      setRoomCode(composed.roomCode);
+      setTicket(composed.ticket);
+    }
     const connection = joinRoom(
       {
         role,
@@ -215,7 +235,15 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         bumpNetRoom();
       },
     );
-    attachRoom({ role, name, roomCode: composed.roomCode, address, url: composed.url, connection });
+    attachRoom({
+      role,
+      name,
+      roomCode: composed.roomCode,
+      ticket: composed.ticket,
+      address,
+      url: composed.url,
+      connection,
+    });
   };
 
   const leave = () => {
@@ -226,6 +254,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
 
   const connected = session !== null;
   const shownCode = session?.roomCode ?? roomCode;
+  /** 房主屏幕上那串进场字（开房那一刻生成；重开这个弹窗时从这一间房里读回来，两边同一份）。 */
+  const shownTicket = getActiveRoom()?.ticket ?? ticket;
   const guestCount = (session?.peers ?? []).filter((p) => p.role === 'guest').length;
 
   return (
@@ -241,7 +271,8 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌、
               还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表，牌桌那一份按席位各发一条——各自看得见自己手里的牌，
               进房的人各点一颗准备钮、全员准备之前房主那颗「开始游戏」按不下去，开局那一段客人只画房主定下来发过来的数，
-              征召那一段每个人看得见房主指名发给自己的那一格候选名单，还能点自己那一格的牌与那颗「确认征召」（交回的都是房主那一帧上的位置编号，办事的仍是房主那台机器）"。
+              征召那一段每个人看得见房主指名发给自己的那一格候选名单，还能点自己那一格的牌与那颗「确认征召」（交回的都是房主那一帧上的位置编号，办事的仍是房主那台机器），
+              进这一间房还要一串进场字——只打听到房间码的人卡在门外"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -273,9 +304,22 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               </Field>
             )}
 
+            {role === 'guest' && (
+              <Field label="进场字（房主屏幕上那 12 个字符；短横和空格随便打都行，大小写也一样）">
+                <input
+                  value={ticket}
+                  onChange={e => setTicket(e.target.value.toUpperCase())}
+                  className={inputClass}
+                  placeholder="例如 ABCD-EFGH-JKMN"
+                  maxLength={20}
+                />
+              </Field>
+            )}
+
             {role === 'host' && (
               <p className="text-xs text-amber-200/45">
-                点「开房间」会当场生成一个房间码；客人填同一个地址＋同一个房间码就能进来。
+                点「开房间」会当场生成一个房间码**和一串进场字**；客人要把地址、房间码、进场字三样都填对才进得来。
+                别人只知道房间码的话会卡在门外，一个字也收不到。
               </p>
             )}
 
@@ -303,10 +347,12 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
 
             {session.role === 'host' && shownCode && (
               <div className="rounded-lg border border-amber-700/25 bg-black/25 px-3 py-2 text-xs">
-                <p className="text-amber-300/80 mb-1">客人要填的两样东西</p>
+                <p className="text-amber-300/80 mb-1">客人要填的三样东西</p>
                 <p>地址：<span className="select-all text-amber-100">{address}</span></p>
                 <p>房间码：<span className="select-all text-amber-100">{shownCode}</span></p>
+                <p>进场字：<span className="select-all text-amber-100">{formatRoomTicket(shownTicket)}</span></p>
                 <p className="text-amber-200/40 mt-1">同一屋里填上面这行；异地经虚拟网或服务器时，把地址换成那台机器的地址。</p>
+                <p className="text-amber-200/40">进场字别发到公开群里——拿到它的人就能进这一间房（这串字只在握手那一次用，线上传的话仍是明文）。</p>
                 {guestCount > 0 && (
                   <p className="text-emerald-300/80 mt-1">
                     现在有 {guestCount} 位客人正在看这一局。每次局面变化都按席位**各发一份**指名的局面：
@@ -426,7 +472,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               </button>
               {session.role === 'host' && (
                 <button onClick={start} className="flex-1 rounded-xl border border-amber-700/30 bg-black/20 px-4 py-2 text-sm text-amber-200/70">
-                  换个房间码重开
+                  换个房间码与进场字重开
                 </button>
               )}
             </div>
@@ -459,8 +505,14 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           将名与档案号压根不上线，上线了房主也不读。他那一台机器拿**自己发给这一席的那一帧**重判：判得过才去自己的名单里查出那张牌、
           调与热座同一颗钮，判不过就把"第几席该做什么"那一行换成回他的那句人话——没有"点了没反应"这一种安静。
           那颗「确认征召」按不按得下去读的是房主送上来的那一个布尔（凑够 10 名、群势力 1-3 名那条上下限只有一份抄本，界面上不另算一遍）。
-          这一版不防作弊：它仍然只是传话，线上是明文，而它信的是连接自己带来的那串身份号，没有钥匙也没有验证；
-          所以跑传话程序的那台机器、以及在网络上偷听这条线的人，照样看得见别人那一席的那些字与牌面。
+          进房这一档现在多了一道门（联机切片⑦·第一档，v2.9.27）＝"**进门要一串进场字**"：房主开房间时他那台机器生成 12 个字符，
+          客人要把地址、房间码、进场字三样都填对才连得上——传话程序认的是第一个进房的人（正常就是房主）带来的那一串，
+          之后每一条逐字符对不上就在门外拒掉、一个字也不给他；没带进场字的老网址一样拒。
+          这一道门**防得住**的是"只打听到房间码就连进来偷看的人"；把这串字转给别人，那个人就能进来，所以房主换房间码时这串字也跟着换。
+          这一版不防作弊：进了门之后它仍然只是传话，线上是明文，帧里那句"我是谁"仍是发的人自己写的，
+          这串进场字也不是账号也不是密码（没有登录、没有加密，更不证明"这个人真是我朋友"）；
+          所以跑传话程序的那台机器、在网络上偷听这条线的人、还有房主自己那台机器（牌归它算，它想看谁的手牌就能看），
+          照样看得见别人那一席的那些字与牌面。
           还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
         </p>
       </div>

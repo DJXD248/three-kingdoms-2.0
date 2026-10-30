@@ -74,7 +74,7 @@ function attachGuestRoom(selfId: string) {
     send: vi.fn(() => true),
   };
   attachRoom({
-    role: 'guest', name: '客人', roomCode: 'APPVIEWS',
+    role: 'guest', name: '客人', roomCode: 'APPVIEWS', ticket: 'TK4TK4TK4TK4',
     address: 'ws://x', url: 'ws://x/APPVIEWS', connection: connection as never,
   });
   return connection;

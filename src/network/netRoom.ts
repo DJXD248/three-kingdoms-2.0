@@ -29,6 +29,12 @@ export type ActiveRoom = {
   role: NetRole;
   name: string;
   roomCode: string;
+  /**
+   * 防作弊·第一档（v2.9.27）那一串进场字（归一化后的 12 个字符）。
+   * 房主那份是自己生成的（屏幕上要给客人抄），客人那份是他填进来的——两边都只在这一格留一份，
+   * 重开这个弹窗时还能把"要填的三样"原样告诉用户；它绝不上线当消息内容，只在那一次握手网址里出现。
+   */
+  ticket: string;
   /** 原样留着填进来的那个地址（重开这个窗时还能告诉客人要填什么）；url 是拼好的完整线址。 */
   address: string;
   url: string;

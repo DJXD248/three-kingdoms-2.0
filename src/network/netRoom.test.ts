@@ -68,7 +68,7 @@ describe('netRoom：连接与客人快照的唯一持有者', () => {
 
   it('attach 之后能读到同一份连接，detach 之后清干净（连快照一起）', () => {
     const connection = fakeConnection();
-    attachRoom({ role: 'host', name: '房主', roomCode: 'ROOMAA', address: 'ws://x', url: 'ws://x/ROOMAA', connection: connection as never });
+    attachRoom({ role: 'host', name: '房主', roomCode: 'ROOMAA', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/ROOMAA', connection: connection as never });
     expect(getActiveRoom()?.connection).toBe(connection);
 
     receiveGuestSnapshot(VALID);
@@ -82,8 +82,8 @@ describe('netRoom：连接与客人快照的唯一持有者', () => {
   it('换房时上一根线自己道别（不留后台幽灵）', () => {
     const first = fakeConnection();
     const second = fakeConnection();
-    attachRoom({ role: 'host', name: '甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: first as never });
-    attachRoom({ role: 'host', name: '乙', roomCode: 'B', address: 'ws://x', url: 'ws://x/B', connection: second as never });
+    attachRoom({ role: 'host', name: '甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: first as never });
+    attachRoom({ role: 'host', name: '乙', roomCode: 'B', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/B', connection: second as never });
     expect(first.leave).toHaveBeenCalledTimes(1);
     expect(getActiveRoom()?.name).toBe('乙');
   });
@@ -98,7 +98,7 @@ describe('netRoom：连接与客人快照的唯一持有者', () => {
     const seen = vi.fn();
     const unsubscribe = subscribeNetRoom(seen);
 
-    attachRoom({ role: 'guest', name: '甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    attachRoom({ role: 'guest', name: '甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
     receiveGuestSnapshot(VALID);
     bumpNetRoom();
     unsubscribe();
@@ -124,7 +124,7 @@ describe('netRoom：连接与客人快照的唯一持有者', () => {
       () => {},
     );
     socket.onopen?.();
-    attachRoom({ role: 'guest', name: '甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection });
+    attachRoom({ role: 'guest', name: '甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     getActiveRoom()?.connection.leave();
@@ -165,7 +165,7 @@ describe('J3 连线表也住这一格（房主关了大厅、客人只开牌桌�
 
   it('attach／detach 把表一起清掉：换房不能留着上一屋那张', () => {
     receiveNetStatus(ROWS);
-    attachRoom({ role: 'host', name: '甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    attachRoom({ role: 'host', name: '甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
     expect(getNetStatus()).toBeNull();
     receiveNetStatus(ROWS);
     detachRoom();
@@ -250,7 +250,7 @@ describe('J4 席位表、清单与退回说明也住这一格', () => {
     receiveSeatMap(SEATS);
     receiveSeatMoves(MOVES);
     receiveRefusal(REFUSAL);
-    attachRoom({ role: 'guest', name: '甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    attachRoom({ role: 'guest', name: '甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
     expect(getSeatMap()).toBeNull();
     expect(getSeatMoves()).toBeNull();
     expect(getRefusal()).toBeNull();
@@ -283,20 +283,20 @@ describe('getMyNetSeat：我这台机器坐第几席（视角轴唯一取数点�
   });
 
   it('房主那台机器问出自己那一席；客人那台机器问出自己那一席（同一张表、同一句话）', () => {
-    attachRoom({ role: 'host', name: '房主', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    attachRoom({ role: 'host', name: '房主', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
     expect(getMyNetSeat()).toBeNull();
     receiveSeatMap(SEATS);
     // fakeConnection 的 selfId 是 'h'：房主读出第 1 席。
     expect(getMyNetSeat()).toBe(1);
 
     const guestConn = { ...fakeConnection(), state: { ...fakeConnection().state, role: 'guest', selfId: 'g' } };
-    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: guestConn as never });
+    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: guestConn as never });
     receiveSeatMap(SEATS);
     expect(getMyNetSeat()).toBe(2);
   });
 
   it('椅子被收回（那一行改成空位）⇒ 立刻回 null，不抱着旧席位看', () => {
-    attachRoom({ role: 'host', name: '房主', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    attachRoom({ role: 'host', name: '房主', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
     receiveSeatMap(SEATS);
     expect(getMyNetSeat()).toBe(1);
     receiveSeatMap([{ peer: null, seat: 1, name: '空位' }, { peer: 'g', seat: 2, name: '客人甲' }]);
@@ -304,7 +304,7 @@ describe('getMyNetSeat：我这台机器坐第几席（视角轴唯一取数点�
   });
 
   it('退房把视角一起收干净：下一屋没绑到我之前，画面退回本地形状', () => {
-    attachRoom({ role: 'host', name: '房主', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
+    attachRoom({ role: 'host', name: '房主', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: fakeConnection() as never });
     receiveSeatMap(SEATS);
     expect(getMyNetSeat()).toBe(1);
     detachRoom();
@@ -312,7 +312,7 @@ describe('getMyNetSeat：我这台机器坐第几席（视角轴唯一取数点�
   });
 
   it('订阅者看得见它跟着席位表变（界面靠同一个通知重取，不自算）', () => {
-    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: { ...fakeConnection(), state: { ...fakeConnection().state, role: 'guest', selfId: 'g' } } as never });
+    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: { ...fakeConnection(), state: { ...fakeConnection().state, role: 'guest', selfId: 'g' } } as never });
     const seen = vi.fn();
     const unsubscribe = subscribeNetRoom(seen);
     expect(getMyNetSeat()).toBeNull();
@@ -345,11 +345,11 @@ describe('⑤a 准备表与开始闸门也住这一格', () => {
   /** 房主那台机器，名册上挂着 `guests` 这几位客人。 */
   function hostWith(guests: unknown[]) {
     const connection = { ...fakeConnection(), state: { ...fakeConnection().state, peers: guests } };
-    attachRoom({ role: 'host', name: '房主', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+    attachRoom({ role: 'host', name: '房主', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
   }
   function guestSide() {
     const connection = { ...fakeConnection(), state: { ...fakeConnection().state, role: 'guest', selfId: 'a', peers: [{ id: 'h', name: '房主', role: 'host' }, GUEST_A] } };
-    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
   }
 
   it('没进房（本地桌、纯 AI 桌）＝闸门不适用而且开着：那颗钮今天的形状一个字不许变', () => {
@@ -471,7 +471,7 @@ describe('⑤a 准备表与开始闸门也住这一格', () => {
   it('attach／detach 把表与闸门一起清掉：换房不能抱着上一屋那几个人准备', () => {
     hostWith([GUEST_A]);
     receiveReadyTable(ONE);
-    attachRoom({ role: 'host', name: '乙', roomCode: 'B', address: 'ws://x', url: 'ws://x/B', connection: fakeConnection() as never });
+    attachRoom({ role: 'host', name: '乙', roomCode: 'B', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/B', connection: fakeConnection() as never });
     expect(getReadyTable()).toBeNull();
     expect(getStartGate().applicable).toBe(false);
     receiveReadyTable(ONE);
@@ -506,7 +506,7 @@ describe('⑤b 征召进度表也住这一格（房主算、客人照抄，两�
       ...fakeConnection(),
       state: { ...fakeConnection().state, role, selfId: role === 'host' ? 'h' : 'a', name: role === 'host' ? '房主' : '客人甲' },
     };
-    attachRoom({ role, name: connection.state.name, roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+    attachRoom({ role, name: connection.state.name, roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
   }
 
   it('没进房＝这一格是空的（本地桌、纯 AI 桌从来不有一张征召进度表）', () => {
@@ -578,7 +578,7 @@ describe('⑤c 我自己那一席的候选名单也住这一格（与那张全�
       ...fakeConnection(),
       state: { ...fakeConnection().state, role, selfId: role === 'host' ? 'h' : 'a', name: role === 'host' ? '房主' : '客人甲' },
     };
-    attachRoom({ role, name: connection.state.name, roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+    attachRoom({ role, name: connection.state.name, roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
   }
 
   it('没进房＝这一格是空的（本地桌、纯 AI 桌从来不有一张指名发给我的名单）', () => {
@@ -646,7 +646,7 @@ describe('⑤d 拒话与交回来的那两下也住这一格', () => {
       ...fakeConnection(),
       state: { ...fakeConnection().state, role: 'guest' as const, selfId: 'a', name: '客人甲' },
     };
-    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
+    attachRoom({ role: 'guest', name: '客人甲', roomCode: 'A', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/A', connection: connection as never });
   }
 
   it('只有那一行字换了（名单与"已选"一字未动）⇒ 算一次变化：换引用、通知界面（拒话不是"没动"）', () => {

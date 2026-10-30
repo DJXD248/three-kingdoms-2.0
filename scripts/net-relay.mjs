@@ -3,6 +3,9 @@
 // 切片⑥（v2.9.25）加的是"投递"而不是"裁判"：握手时把这条连接绑在网址带来的那串身份号上，
 // 帧里写了 `to` ⇒ 只交给绑到这个身份号的那条连接，查不到收件人就丢掉（绝不退回全房群发）；
 // 没写 `to` ⇒ 照旧发给全屋（观战那条路必须留着）。
+// 防作弊·第一档（v2.9.27）加的还是"投递与收人"，不是"裁判"：握手网址多带一串进场字（`?k=`），
+// 一间房认下第一个进房的人（正常就是房主）带来的那一串，之后逐字符对不上的一律在门外拒掉——
+// 它仍然不懂玩法、不算牌，也不会去查"这个人是不是房主本人"（谁先带字进来，那串就算这间房的）。
 // 零依赖 Node 内置模块：浏览器页面的 WebSocket 握手与帧格式在这里手工实现，
 // 目的是不往游戏依赖里加第三方包（依赖安全闸必须保持零高危）。
 import http from 'node:http';
@@ -15,12 +18,25 @@ const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_PEERS_PER_ROOM = 8;
 const MAX_ROOMS = 64;
 /**
+ * 一间房空了以后，它还把认下的那串进场字记住多久。
+ * 为什么要记住：人一走光就忘，那么只打听到房间码的人可以抢在房主回来之前用一个乱填的字
+ * 把这间房占下来，房主反倒被自己的门锁在门外。10 分钟足够覆盖"房主切个窗口、重连一趟"，
+ * 又不至于让废弃的房间码长期占着那 64 格。
+ */
+const IDLE_ROOM_RETENTION_MS = 10 * 60 * 1000;
+/**
  * 身份号的形状：**与客户端 `netProtocol.ts` 里那条 `isId` 同一个数、同一个理由**
  * （非空、不超过 64 个字符）。两边不共用一个模块（这个文件必须零依赖），所以这里抄一份，
  * 抄错了的表现是"客户端连得上、传话程序拒握手"——不会静默半连。
  * 允许的字符就是 `netRandom.ts` 那两种号用到的：UUID 的十六进制与短横、兜底号的前缀与数字。
  */
 const PEER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/**
+ * 进场字（防作弊·第一档，v2.9.27）：**与客户端 `netProtocol.ts` 那一串同一个数、同一个字母表**
+ * （12 位，去掉易混的 I O 0 1）。这里必须自己抄一份——本文件零依赖，不能去 import 浏览器侧的模块。
+ * 抄错了的表现是"客人填了房主给的字仍被拒"，所以两边各有一份测试钉住同一形状。
+ */
+const TICKET_PATTERN = /^[A-HJ-NP-Z2-9]{12}$/;
 
 export function webSocketAccept(key) {
   return crypto.createHash('sha1').update(String(key) + WS_GUID).digest('base64');
@@ -32,26 +48,60 @@ export function normalizeRoomCode(raw) {
 }
 
 /**
- * 握手网址的两段：`/<房间码>/<身份号>`。
+ * 与客户端 `normalizeRoomTicket` 同一口径：大小写、空格、短横都不算数，筛完必须整整 12 位。
+ * 传话程序比的是**归一化后的那串**，所以"抄的时候多打了两个短横"进得来、"少打一个字符"进不来。
+ */
+export function normalizeTicket(raw) {
+  const ticket = String(raw ?? '').trim().toUpperCase().replace(/[\s-]/g, '');
+  return TICKET_PATTERN.test(ticket) ? ticket : null;
+}
+
+/**
+ * 握手网址：`/<房间码>/<身份号>?k=<进场字>`。
  * 房间码取**第一段**（切片⑥之前它是最后一段，那时路径里只有它）。
  * 身份号取第二段，必须先百分号解码再验形状：`crypto.randomUUID` 那种号本来就只用十六进制与短横，
  * 兜底号（`netRandom.ts`）也一样，所以正常情况下解码前后是同一串；这里做严格校验，
  * 是为了"形状不对就连不上"而不是"连上了但收不到指名给他的那份"。
+ * 进场字取查询串里那个 `k`，同样先归一化；**没有/形状不对就是 null**，交给外面那句"没带钥匙就拒"。
  * ⚠️ 这一版**不**接受路径里只有房间码的老网址：那条连接没法按人投递，
  * 收不到任何一份快照（快照全都指名），留着它只会让人对着一块空屏猜原因。
+ * ⚠️ 也不接受**没带 `k` 的老两段网址**（v2.9.27 起）：那就等于门装了却没锁。
+ * 一个房间码里只认**第一个进房的人带来的那一串**（房主先开房，所以那串就是房主的），
+ * 之后每一条必须与它逐字符相等——传话程序不懂玩法，它只做这一件事，仍然不算牌、不存局面。
  */
 export function parseUpgradeTarget(rawUrl) {
-  const parts = String(rawUrl ?? '').split('?')[0].split('#')[0].split('/').filter(Boolean);
-  if (parts.length !== 2) return { code: null, peer: null };
+  const full = String(rawUrl ?? '');
+  // 先去掉 `#` 后面那一段（老网址也是这么处理的），剩下的才分路径与查询串。
+  const [pathPart = '', ...queryParts] = full.split('#')[0].split('?');
+  const parts = pathPart.split('/').filter(Boolean);
+  if (parts.length !== 2) return { code: null, peer: null, ticket: null };
   const code = normalizeRoomCode(parts[0]);
-  if (!code) return { code: null, peer: null };
+  if (!code) return { code: null, peer: null, ticket: null };
   let peer;
   try {
     peer = decodeURIComponent(parts[1]);
   } catch {
-    return { code, peer: null }; // 半个百分号转义＝坏网址，别猜
+    return { code, peer: null, ticket: null }; // 半个百分号转义＝坏网址，别猜
   }
-  return { code, peer: PEER_ID_PATTERN.test(peer) ? peer : null };
+  let raw = null;
+  for (const item of queryParts.join('&').split('&')) {
+    const eq = item.indexOf('=');
+    if (eq < 0) continue;
+    if (item.slice(0, eq) === 'k') {
+      // 同一个网址里写了两个 `k` ⇒ 认后一个（与 `routeFrame` 那条"重复 to 键"同一套规矩，
+      // 别让门这边和投递那边各信一半）。
+      raw = item.slice(eq + 1);
+    }
+  }
+  let ticket = null;
+  if (raw !== null) {
+    try {
+      ticket = normalizeTicket(decodeURIComponent(raw));
+    } catch {
+      ticket = null;
+    }
+  }
+  return { code, peer: PEER_ID_PATTERN.test(peer) ? peer : null, ticket };
 }
 
 /**
@@ -184,11 +234,21 @@ export function decodeFrames(buffer, state = createFragmentState()) {
 
 export function createRelay() {
   /**
-   * 房间码 → (身份号 → 那条连接)。按身份号存是这堵墙的全部结构：
+   * 房间码 → 那一间房。按身份号存是这堵墙的全部结构：
    * 投递时查的是"这个号在这儿绑着谁"，而不是"屋里有哪些 socket"。
-   * @type {Map<string, Map<string, { socket: import('node:net').Socket, peer: string }>>}
+   *
+   * 防作弊·第一档（v2.9.27）给每一间房多带了一格 `ticket`：那串进场字由**第一个进房的人**
+   * （正常流程就是房主）带来并被这间房认下，此后每一条必须逐字符相等才让进。
+   * `emptySince`＝屋里最后一个人离开的那一刻（0＝还在用人）。这一格存在的理由是别的一种坑：
+   * 人一走光就把这间房连同它认下的字一起忘掉，那么只打听到房间码的人可以**抢在房主回来之前**
+   * 用一个乱填的字把这间房占下来，房主反倒被自己的门锁在门外。所以空房要留一段时间
+   * （见 `IDLE_ROOM_RETENTION_MS` 与那个 30 秒的清扫），到期再忘。
+   * @type {Map<string, { ticket: string, peers: Map<string, { socket: import('node:net').Socket, peer: string }>, emptySince: number }>}
    */
   const rooms = new Map();
+
+  /** 这一间房现在的人（没人住过就是 0）——容量与"身份号重了"两道检查都读它。 */
+  const peersOf = (code) => rooms.get(code)?.peers ?? new Map();
 
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
@@ -196,21 +256,29 @@ export function createRelay() {
       '三国卡牌 联机传话程序正在运行。\n'
       + '它只转发文字消息，不算牌；牌由房主那台机器算。\n'
       + '写了收件人的话只交给那一个人，查不到收件人就丢掉。\n'
-      + '游戏里请填地址：ws://<本机IP>:<端口>，再填房间码。\n',
+      + '进房要两样：房间码＋房主给的那串进场字，缺一样或不对都在门外被拒。\n'
+      + '游戏里请填地址：ws://<本机IP>:<端口>，再填房间码与进场字。\n',
     );
   });
 
   server.on('upgrade', (req, socket) => {
     const key = req.headers['sec-websocket-key'];
-    const { code, peer } = parseUpgradeTarget(req.url);
+    const { code, peer, ticket } = parseUpgradeTarget(req.url);
     if (!key || socket.destroyed) return void socket.destroy();
     if (!code) return void rejectUpgrade(socket, '房间码格式不对：需要 4-10 位字母或数字');
     if (!peer) return void rejectUpgrade(socket, '握手网址里没有可用的身份号：需要 /房间码/身份号 两段');
-    if ((rooms.get(code)?.size ?? 0) >= MAX_PEERS_PER_ROOM) return void rejectUpgrade(socket, '这个房间人满了');
-    if (rooms.size >= MAX_ROOMS && !rooms.has(code)) return void rejectUpgrade(socket, '传话程序房间数已满');
+    // 门的两句判据，顺序也有讲究：先问"你有没有带字"，再问"这间房认不认这个字"。
+    // 没带字＝连老网址都没了这条路（v2.9.27 起），所以这里明确说一句，别让人以为是不匹配。
+    if (!ticket) return void rejectUpgrade(socket, '没带进场字：请填房主屏幕上那 12 个字符');
+    const room = rooms.get(code);
+    if (room && room.ticket !== ticket) {
+      return void rejectUpgrade(socket, '进场字不对，进不了这个房间');
+    }
+    if (peersOf(code).size >= MAX_PEERS_PER_ROOM) return void rejectUpgrade(socket, '这个房间人满了');
+    if (rooms.size >= MAX_ROOMS && !room) return void rejectUpgrade(socket, '传话程序房间数已满');
     // 两条连接报同一个身份号 ⇒ 指名给他的那份会分成两份信箱。这里拒后来那一个，
     // 而不是"顶掉"前一个：被顶掉的那位会一声不响地收不到东西，那比连不上更难查。
-    if (rooms.get(code)?.has(peer)) return void rejectUpgrade(socket, '这个身份号已经在这间房里了');
+    if (room?.peers.has(peer)) return void rejectUpgrade(socket, '这个身份号已经在这间房里了');
 
     socket.write(
       'HTTP/1.1 101 Switching Protocols\r\n'
@@ -221,21 +289,26 @@ export function createRelay() {
     );
     socket.setNoDelay(true);
 
-    let room = rooms.get(code);
     if (!room) {
-      room = new Map();
-      rooms.set(code, room);
+      // 这间房现在才成立，认下这一条带来的字（判据在上面：走到这里的一定带了字）。
+      rooms.set(code, { ticket, peers: new Map(), emptySince: 0 });
     }
+    const held = rooms.get(code);
+    held.emptySince = 0;
     // close 里删的那一格必须是"我自己这一格"：同一秒里若有同房间码的新连接占了这格，
-    // 无脑 room.delete(peer) 会把人家的绑定删掉，那位就成了查不到收件人的信。
+    // 无脑 peers.delete(peer) 会把人家的绑定删掉，那位就成了查不到收件人的信。
     const conn = { socket, peer };
-    room.set(peer, conn);
+    held.peers.set(peer, conn);
+    const roomPeers = held.peers;
 
     let carry = Buffer.alloc(0);
     const frag = createFragmentState();
     const close = () => {
-      if (room.get(peer) === conn) room.delete(peer);
-      if (room.size === 0) rooms.delete(code);
+      if (roomPeers.get(peer) === conn) roomPeers.delete(peer);
+      if (roomPeers.size === 0 && rooms.get(code)?.peers === roomPeers) {
+        const stillThere = rooms.get(code);
+        if (stillThere) stillThere.emptySince = Date.now();
+      }
       if (!socket.destroyed) {
         try { socket.write(encodeFrame(0x8, Buffer.alloc(0))); } catch { /* 对端已走 */ }
         socket.destroy();
@@ -255,7 +328,7 @@ export function createRelay() {
         const route = routeFrame(text);
         if (route.drop) continue;
         const named = route.broadcast ? null : route.to;
-        for (const [id, other] of room) {
+        for (const [id, other] of roomPeers) {
           if (named !== null && id !== named) continue; // 写了收件人 ⇒ 别人一格也不给
           if (other.socket === socket || other.socket.destroyed) continue; // 发话人自己听不见（原行为）
           try { other.socket.write(encodeFrame(0x1, text)); } catch { /* 交给下一次的 data/close 事件清理 */ }
@@ -295,9 +368,14 @@ if (isMain) {
   });
   setInterval(() => {
     for (const [code, room] of rooms) {
-      for (const [peer, conn] of room) if (conn.socket.destroyed) room.delete(peer);
-      if (!room.size) rooms.delete(code);
-      else console.log(`[${code}] 在场 ${room.size} 人`);
+      for (const [peer, conn] of room.peers) if (conn.socket.destroyed) room.peers.delete(peer);
+      if (room.peers.size === 0) {
+        // 空房不立刻忘：它还得记着认下的那串进场字（见 `IDLE_ROOM_RETENTION_MS` 那段理由）。
+        if (room.emptySince === 0) room.emptySince = Date.now();
+        else if (Date.now() - room.emptySince >= IDLE_ROOM_RETENTION_MS) rooms.delete(code);
+      } else {
+        console.log(`[${code}] 在场 ${room.peers.size} 人`);
+      }
     }
   }, 30_000).unref();
 }

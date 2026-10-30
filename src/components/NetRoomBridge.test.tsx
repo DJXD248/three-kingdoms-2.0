@@ -53,7 +53,7 @@ function fakeRoom(withGuest: boolean): { room: ActiveRoom; sent: Record<string, 
       return true;
     },
   };
-  return { room: { role: 'host', name: '房主甲', roomCode: 'ROOMAA', address: 'ws://x', url: 'ws://x/ROOMAA', connection: connection as unknown as RoomConnection }, sent };
+  return { room: { role: 'host', name: '房主甲', roomCode: 'ROOMAA', ticket: 'TK4TK4TK4TK4', address: 'ws://x', url: 'ws://x/ROOMAA', connection: connection as unknown as RoomConnection }, sent };
 }
 
 function setEngine(state: EngineState) {

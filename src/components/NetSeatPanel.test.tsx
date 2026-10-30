@@ -148,6 +148,7 @@ describe('右上角那一格（房主关了大厅去开局时还挂着）', () =
       role,
       name: '甲',
       roomCode: 'ROOMAA',
+      ticket: 'TK4TK4TK4TK4',
       address: 'ws://x',
       url: 'ws://x/ROOMAA',
       connection: connection as unknown as RoomConnection,
