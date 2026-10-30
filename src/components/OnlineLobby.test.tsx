@@ -594,6 +594,159 @@ describe('⑤b 大厅里的征召进度：客人看见"走到第几席"，看不
   });
 });
 
+describe('⑤·腿1（㈢ 演出刀）客人屏上的开局那一段：只画房主定下来发过来的数', () => {
+  /** 走到"已连上、名册上有房主也有我"那一步（入口与 ⑤a／⑤b 那两组各抄一份，互不牵动）。 */
+  async function inRoomAsGuest() {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('FFFFFF');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    const me = myId(socket);
+    await receive(socket, {
+      t: 'roster', from: 'host-9',
+      peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }],
+    });
+    socket.sent.length = 0;
+    return { socket, me };
+  }
+
+  /**
+   * 房主 store 里开局那一段的样子，**走一遍真实的遮蔽层**再上线——这一格量的就是"那条线上
+   * 本来就有什么"：阶段名与点数／座次／势力都照样过得了 `buildBroadcastView`（它们全在公开白名单里），
+   * 所以本刀不需要新信封。`viewSeat` 给 1 ⇒ 第 1 席自己的手牌与征召池照发牌面，
+   * 那些引用正是这一格绝不该画上去的东西。
+   */
+  function openingView(phase: string, seats: Record<string, unknown>[], viewSeat: number | null = 1) {
+    return buildBroadcastView({
+      version: 1,
+      phase,
+      timelinePhase: 'SETUP',
+      players: seats.map((s, i) => ({
+        id: s.id,
+        name: s.name,
+        faction: s.faction ?? '',
+        diceRoll: s.diceRoll ?? 0,
+        seatOrder: s.seatOrder ?? i,
+        isAlive: true,
+        hp: 6,
+        baseHp: 6,
+        hand: [{ id: `p${s.id}-hand-SECRET` }],
+        generalPool: [{ id: `p${s.id}-pool-SECRET` }],
+        graveyard: [],
+        statuses: [],
+        fieldGenerals: [],
+      })),
+      currentPlayerId: 1,
+      turn: 0,
+      round: 0,
+      deck: [{ id: 'deck-SECRET' }],
+      discardPile: [],
+      metadata: { roomId: 'FFFFFF' },
+      rngState: { s: 123456789 },
+    } as never, viewSeat) as unknown as Record<string, unknown>;
+  }
+
+  const twoSeats = [
+    { id: 1, name: '房主乙', diceRoll: 11, seatOrder: 0, faction: '蜀' },
+    { id: 2, name: '玩家', diceRoll: 4, seatOrder: 1, faction: '魏' },
+  ];
+
+  it('还没收到任何局面 ⇒ 说的是"现在没有开局那一段的读数"，不是一块空白', async () => {
+    await inRoomAsGuest();
+    expect(text()).toContain('现在没有开局那一段的读数');
+    expect(text()).toContain('本机一颗骰子也不摇');
+  });
+
+  it('收到的那一份里点数与势力都定了 ⇒ 那两个数逐字上屏（画的就是收到的，不是本机摇的）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('diceRoll', twoSeats) });
+    expect(text()).toContain('🎲 11');
+    expect(text()).toContain('🎲 4');
+    expect(text()).toContain('骰子停下');
+    expect(text()).toContain('座次第 1 位');
+  });
+
+  /** 用户那句"主机先走定下数据（骰子停下），把数据传给客人，客人画面变动"里，客人这边只有"变动"：
+   *  房主 store 在掷骰前那一格写的是 0（点数至少 1 才算掷过），所以那一刻只能写"还没定"。 */
+  it('房主那边骰子还没停 ⇒ 客人屏上写「还没定」，一个假点数都不补', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, {
+      t: 'snapshot', from: 'host-9', to: me,
+      state: openingView('diceRoll', [{ id: 1, name: '房主乙' }, { id: 2, name: '玩家' }]),
+    });
+    expect(text()).toContain('房主那边骰子还在滚');
+    expect(text()).toContain('还没定');
+    expect(text()).not.toMatch(/🎲 \d/);
+  });
+
+  it('分势力那一步同样跟着变：势力也是收到的那两个值，字面出自房主那边', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('factionAssign', twoSeats) });
+    expect(text()).toContain('势力也由房主那边定下并发来了');
+    expect(text()).toContain('接着是各家征召');
+  });
+
+  /** 迟到者的那条路：房主在名册变化时 flush 当下这一份（`NetRoomBridge.tsx:123`），
+   *  那些数早就定了 ⇒ 他第一帧看到的就是已经停下的骰子，这一格不回放滚动。 */
+  it('已进对局的那一份 ⇒ 说"开局那一段走完了"，而不是停在"还没开局"', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('playing', twoSeats) });
+    expect(text()).toContain('开局那一段走完了');
+    expect(text()).not.toContain('现在没有开局那一段的读数');
+  });
+
+  it('别人的牌面上不了这一格：连指名给我自己那份里放开的手牌与征召池也不画', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('generalDraft', twoSeats) });
+    expect(text()).toContain('各家挑到哪儿了看下面那张征召进度表');
+    expect(text()).not.toMatch(/SECRET/);
+    // ⑤c／⑤d 还没做 ⇒ 这一格必须自己说破，不能让人以为"看不见是我这边的问题"。
+    // （页脚那段散文里也提到 ⑤c／⑤d，所以判据取这一格的专属那句，不取编号。）
+    expect(text()).toContain('这一段现在只有进度可看');
+  });
+
+  it('那句「下面那张征召进度表」得对得上位置：开局那一格真的排在进度表上面', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('generalDraft', twoSeats) });
+    await receive(socket, {
+      t: 'draftprogress', from: 'host-9',
+      rows: [{ seat: 1, name: '房主乙', state: 'picking', picked: 3, total: 10 }],
+    });
+    const setupRow = screen.getByText(/开局那一段 · 掷骰/);
+    const draftRow = screen.getByText(/征召进度（这张表由房主算/);
+    expect(setupRow.compareDocumentPosition(draftRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  /** 视角轴与动手轴分家之后，指名的快照仍只有收件人采纳（切片③那条判据住在 netSession）；
+   *  这一条量的是那一格界面**没跟着别人的那份变动**——别人的私有视图里连"第几席"都是另一套。 */
+  it('指名给别人的那一份不上这一格：不拿别人的读数画自己这一屏', async () => {
+    const { socket } = await inRoomAsGuest();
+    await receive(socket, { t: 'snapshot', from: 'host-9', to: 'someone-else', state: openingView('diceRoll', twoSeats) });
+    expect(text()).toContain('现在没有开局那一段的读数');
+    expect(text()).not.toContain('🎲 11');
+  });
+
+  it('不是房主发来的那一份不上这一格（客人也能往房间里发快照）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'snapshot', from: 'guest-x', to: me, state: openingView('diceRoll', twoSeats) });
+    expect(text()).not.toContain('🎲 11');
+    expect(text()).toContain('现在没有开局那一段的读数');
+  });
+
+  it('这一格只给客人看：房主那屏的真相住在 store 里，不该对着正在掷骰的人说"房主还没开局"', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    await clickButton(/^🏠 开房间/);
+    await settle();
+    expect(text()).not.toContain('本机一颗骰子也不摇');
+    expect(text()).not.toContain('开局那一段 · 掷骰');
+  });
+
+  it('收到开局读数不往外回话：这一格是给人看的，不是一条请求（更不替客人摇一颗）', async () => {
+    const { socket, me } = await inRoomAsGuest();
+    await receive(socket, { t: 'snapshot', from: 'host-9', to: me, state: openingView('diceRoll', twoSeats) });
+    expect(socket.sent).toEqual([]);
+  });
+});
+
 /** 房主那边算出来的、已经过 J2 遮蔽层的局面——界面拿到的就该长这样。 */
 function maskedView(): Record<string, unknown> {
   return buildBroadcastView({

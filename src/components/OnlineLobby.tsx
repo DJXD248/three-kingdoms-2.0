@@ -30,6 +30,7 @@ import NetSpectator from './NetSpectator';
 import { NetSeatPanel } from './NetSeatPanel';
 import { NetPingPanel } from './NetPingPanel';
 import { NetDraftProgressPanel } from './NetDraftProgressPanel';
+import { NetSetupPanel } from './NetSetupPanel';
 
 const DEFAULT_ADDRESS = 'ws://127.0.0.1:8787';
 const PHASE_LABEL: Record<SessionState['phase'], string> = {
@@ -51,7 +52,12 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
  * 不是指名给自己的那一条客人不采纳。
  * 联机切片⑤a（v2.9.25）再加上"进房的人各点一颗准备钮"：那张表由房主算（谁点了、谁还算数），
  * 客人只照抄；全员准备之前房主那颗「开始游戏」按不下去（钮在、只是不亮，并写明还在等谁）。
- * 剩下：掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
+ * 联机切片⑤·腿1（v2.9.25，㈢ 演出刀）再加上"开局那一段客人也看得见"：房主那边先把这一步算完
+ * 就**立刻推**、推送不等回信，客人这一屏只画收到的那些数、没收到的写着「还没定」，本机一颗骰子也不摇。
+ * 这一格**没有新增信封**：房主 store 的那段相位名本来就随每一条指名快照一起上线
+ * （`store/engineAwareSetter.ts:20-27`＋`store/gameStateAdapter.ts:80`），点数／势力／座次又都是公开字段，
+ * 所以"走到第几步"与"那一步定下的数"在同一份快照里一次到位，跨消息接头的空档不存在。
+ * 剩下：客人自己那一席的候选名单与点将＝⑤c／⑤d、掉线后那两选一＝J5、局外开新局投票＝J6，都还没做。
  */
 export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。
@@ -181,7 +187,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
             <p className="text-xs text-amber-200/50 mt-1">
               牌由房主那台机器算，传话程序只转发。现在做到"连得上、版本对得上、看得见谁在场，客人能看见房主那一局的牌桌、
               还能点自己那一席（按钮由房主算好发过来），全桌共用一张公开连线表，牌桌那一份按席位各发一条——各自看得见自己手里的牌，
-              进房的人各点一颗准备钮、全员准备之前房主那颗「开始游戏」按不下去"。
+              进房的人各点一颗准备钮、全员准备之前房主那颗「开始游戏」按不下去，开局那一段客人只画房主定下来发过来的数"。
             </p>
           </div>
           <button onClick={onClose} className="text-amber-300/60 hover:text-amber-200 text-lg leading-none">✕</button>
@@ -321,6 +327,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
+            {/* 切片⑤·腿1（㈢ 演出刀）：开局那一段的读数。读的还是那一条指名快照，客人只照抄。 */}
+            {session.role === 'guest' && <NetSetupPanel snapshot={guestSnapshot} />}
+
             {/* 切片⑤b：房主开始征召之后，这一格才有线上读数；之前一直是"还没开始征召"。 */}
             <NetDraftProgressPanel rows={draftProgress} />
 
@@ -380,9 +389,13 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           中途退掉的人不再有一行，被房主判成掉线的人留着那一行但已不进分母——不会出现"永远等一个已经不在的人"。
           传话程序这一侧（联机切片⑥）现在做的是按人投递：连接进来时把它网址上那串身份号与该身份号绑在一起，
           帧里写了收件人就只交给绑着那串号的那条连接、查不到收件人就整帧丢掉（绝不退回抄给全屋），没写收件人的照旧全房——观战那条路留着。
+          开局那一段（联机切片⑤·腿1）现在客人那屏也跟着变：房主那边每动一次就把当下这一份推出去、推完不等任何人回话
+          （"推了就完、不等人回话"本来就是传话那侧的做法，这一格没改它），客人这边只画收到的点数、势力与座次，
+          还没收到的那一格写着「还没定」——本机不摇骰子，也不画一个没收到的数。
+          迟到或中途重连的人一进来拿到的就是已经定下来的那一份，所以他那一屏直接落定，不会补看一遍滚动。
           这一版不防作弊：它仍然只是传话，线上是明文，而它信的是连接自己带来的那串身份号，没有钥匙也没有验证；
           所以跑传话程序的那台机器、以及在网络上偷听这条线的人，照样看得见别人那一席的那些字与牌面。
-          还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
+          还没做的：客人自己那一席的候选名单与点将＝⑤c／⑤d、掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
         </p>
       </div>
     </div>
