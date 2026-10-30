@@ -100,7 +100,7 @@ afterEach(() => {
 });
 
 describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
-  it('开房间：当场生成六位房间码，连接地址就是"地址/房间码"', async () => {
+  it('开房间：当场生成六位房间码，连接地址是"地址/房间码/本机身份号"', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     expect(text()).toContain('我开房间');
 
@@ -108,9 +108,15 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     await settle();
 
     const socket = FakeWebSocket.created[0];
-    const code = socket.url.split('/').pop() ?? '';
+    // 切片⑥：网址多了第二段 ⇒ 房间码不再等于"最后一段"（老写法 `.split('/').pop()` 在这一版取到的是
+    // 身份号，六位大写那条正则当场会红）。这里按段取，"房间码的形状"与"身份号的形状"各立一条断言。
+    const segments = socket.url.split('/');
+    const code = segments[3];
+    const peerInUrl = segments[4];
     expect(code).toMatch(/^[A-Z0-9]{6}$/);
-    expect(socket.url).toBe(`ws://127.0.0.1:8787/${code}`);
+    expect(socket.url).toBe(`ws://127.0.0.1:8787/${code}/${peerInUrl}`);
+    // 身份号必须过传话程序那道形状门（它按这一串绑定连接；越界的号进路径会把网址切成三段）。
+    expect(peerInUrl).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
     expect(text()).toContain(code);
     expect(text()).toContain('等别人输房间码进来');
   });
@@ -127,7 +133,10 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
   it('客人：填同一个地址＋房间码就报到，hello 里带本机三样版本', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('k7m2qx');
-    expect(socket.url).toBe('ws://127.0.0.1:8787/K7M2QX');
+    expect(socket.url).toMatch(/^ws:\/\/127\.0\.0\.1:8787\/K7M2QX\/[A-Za-z0-9_-]{1,64}$/);
+    // 切片⑥：网址上那串号与 hello 里自报的那串号必须出自同一次取数。分成两次取数就会出现
+    // "网址绑的是甲、帧里自报的是乙"，那份指名给乙的信就没人收——这一条量的就是那个错位。
+    expect(socket.url.endsWith(`/${myId(socket)}`)).toBe(true);
     expect(text()).toContain('正在对上版本');
 
     expect(socket.lastSent).toMatchObject({ t: 'hello', name: '玩家', v: ourVersionStamp() });
@@ -499,6 +508,22 @@ describe('⑤a 大厅里那颗准备钮：交回一个布尔，照抄一张表',
     expect(text()).toContain('这一版不防作弊');
     expect(text()).toContain('不会出现');
     expect(text()).toContain('还没做的');
+  });
+
+  /**
+   * 切片⑥的改述证人。立项时点过的一句话是"传话程序只认房间不认人"——这一版它认人了，
+   * 那句话就成了假话，留在界面上＝界面在说一件已经不成立的事（§112：显示那句必须对得上实际行为）；
+   * 反过来"认人投递"绝不许写成"别人再也看不见"：这堵墙加的只是"不再抄给全屋"，
+   * 线上仍是明文、身份号仍是连接自己带进来的、没有钥匙也没有验证。所以一正一反各一条。
+   */
+  it('切片⑥之后收尾那段改述了传话程序：按人投递与"照样看得见"两句同时在场，老那句不许留着', async () => {
+    await inRoomAsGuest();
+    expect(text()).toContain('按人投递');
+    expect(text()).toContain('查不到收件人就整帧丢掉');
+    expect(text()).toContain('观战那条路留着');
+    expect(text()).toContain('照样看得见别人那一席的那些字与牌面');
+    expect(text()).not.toContain('只认房间不认人');
+    expect(text()).not.toMatch(/已防偷看|防住了偷看|再也看不见别人/);
   });
 });
 

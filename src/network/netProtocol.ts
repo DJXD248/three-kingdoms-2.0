@@ -58,6 +58,16 @@ export const MAX_DRAFT_PROGRESS_ROWS = 8;
  *  这里**不**要求 `picked <= total`——已完成那一行的 `picked` 直接取自那一席的征召池长度，
  *  沙盒与测试工具能把它填成任何数；宁可多显示一个真实的怪数，不可把一帧真话判成假消息。 */
 export const MAX_DRAFT_PICK_COUNT = 1000;
+/**
+ * 联机切片⑥（v2.9.25）：身份号进握手网址第二段时允许的字符。
+ * 它比解析器里那条 `isId`（非空、≤64 个字符）**严**，严出来的不是协议、是路：
+ * 这一串要走在 URL 路径里，所以只能用百分号编码之外也不会变形的字符。
+ * `netRandom.ts` 那两种号（`crypto.randomUUID` 的十六进制＋短横、兜底号的 `p`＋数字＋短横）天然满足，
+ * 这条约束在 `netRandom.test.ts` 里有证人——改了随机源的字母表会当场红，而不是等连不上时才查。
+ * ⚠️ `scripts/net-relay.mjs` 里抄了同一个形状（那个文件必须零依赖、不能 import 这里）：
+ * 两处不一致的表现是"这边发得出去、那边拒握手"， loud 且不静默。
+ */
+export const PEER_ID_URL_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** 席位号就是引擎的 playerId；给个硬上界免得一个荒谬的数钻进界面。 */
 function isSeatNumber(value: unknown): value is number {
@@ -136,13 +146,20 @@ export function normalizeRoomCode(raw: string): string | null {
 export function composeRoomUrl(
   address: string,
   roomCode: string,
+  peerId: string,
 ): { ok: true; url: string; roomCode: string } | { ok: false; reason: string } {
   const trimmed = String(address ?? '').trim().replace(/\/+$/, '');
   if (!trimmed) return { ok: false, reason: '连接地址没填。局域网填 ws://对方IP:8787，中转填 ws://服务器地址:端口' };
   if (!/^wss?:\/\//i.test(trimmed)) return { ok: false, reason: `地址要以 ws:// 或 wss:// 开头，现在填的是「${trimmed}」` };
   const code = normalizeRoomCode(roomCode);
   if (!code) return { ok: false, reason: `房间码得是 4-10 位字母或数字，现在填的是「${roomCode}」` };
-  return { ok: true, url: `${trimmed}/${code}`, roomCode: code };
+  // 切片⑥：身份号进网址第二段＝握手那一刻就把这条连接绑在这个人身上，
+  // 传话程序往后不必去信帧里自报的 `from`。这里先验形状：形状不对的老连接
+  // 会连上但一格指名快照也收不到（空屏），所以宁可在点「进房间」时就拒一句人话。
+  if (!PEER_ID_URL_PATTERN.test(String(peerId ?? ''))) {
+    return { ok: false, reason: `这台机器没算出自己的身份号（现在是「${peerId}」），先刷新页面再试` };
+  }
+  return { ok: true, url: `${trimmed}/${code}/${encodeURIComponent(peerId)}`, roomCode: code };
 }
 
 export function encodeEnvelope(envelope: NetEnvelope): string {

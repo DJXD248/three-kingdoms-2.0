@@ -101,7 +101,10 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const start = () => {
     setFormError(null);
     const code = role === 'host' ? createRoomCode() : roomCode;
-    const composed = composeRoomUrl(address, code);
+    // 切片⑥：这一串号既进握手网址、又当线上那个 `selfId`，两边必须是同一个值——
+    // 分成两次取数就会出现"网址上绑的是甲、帧里自报的是乙"，那份指名给乙的信就没人收了。
+    const selfId = newPeerId();
+    const composed = composeRoomUrl(address, code, selfId);
     if (!composed.ok) {
       setFormError(composed.reason);
       return;
@@ -113,7 +116,7 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         name,
         url: composed.url,
         roomCode: composed.roomCode,
-        selfId: newPeerId(),
+        selfId,
         onSnapshot: (snapshot) => {
           if (receiveGuestSnapshot(snapshot)) bumpNetRoom();
         },
@@ -375,7 +378,10 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
           准备那一段（联机切片⑤a）：每位客人一颗「我准备好了」，那张「谁点了、谁还算数」的表由房主算、全桌照抄；
           还在场的客人都点之前，房主那边那颗「开始游戏」存在但按不下去，并且会写明还在等谁。
           中途退掉的人不再有一行，被房主判成掉线的人留着那一行但已不进分母——不会出现"永远等一个已经不在的人"。
-          这一版不防作弊：清单与局面都只指名发给那一席，但传话程序只认房间不认人，同桌理论上看得见发给别人的那几行文字与牌面。
+          传话程序这一侧（联机切片⑥）现在做的是按人投递：连接进来时把它网址上那串身份号与该身份号绑在一起，
+          帧里写了收件人就只交给绑着那串号的那条连接、查不到收件人就整帧丢掉（绝不退回抄给全屋），没写收件人的照旧全房——观战那条路留着。
+          这一版不防作弊：它仍然只是传话，线上是明文，而它信的是连接自己带来的那串身份号，没有钥匙也没有验证；
+          所以跑传话程序的那台机器、以及在网络上偷听这条线的人，照样看得见别人那一席的那些字与牌面。
           还没做的：掉线之后那两选一（保存并退出／交给 AI 继续）＝J5、局外开新局投票＝J6。
         </p>
       </div>

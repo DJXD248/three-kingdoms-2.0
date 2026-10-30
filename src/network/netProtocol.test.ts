@@ -59,18 +59,36 @@ describe('房间码：界面随机绝不借引擎那颗对局种子', () => {
 });
 
 describe('地址可填＝A/C 只换这一行', () => {
-  it('拼出 ws://地址/房间码，并给出归一化后的码', () => {
-    const ok = composeRoomUrl('ws://192.168.1.5:8787/', 'k7m2qx');
-    expect(ok).toEqual({ ok: true, url: 'ws://192.168.1.5:8787/K7M2QX', roomCode: 'K7M2QX' });
-    const cloud = composeRoomUrl('wss://relay.example.com:9000', 'AB23CD');
-    expect(cloud.ok && cloud.url).toBe('wss://relay.example.com:9000/AB23CD');
+  it('拼出 ws://地址/房间码/身份号，并给出归一化后的码', () => {
+    const ok = composeRoomUrl('ws://192.168.1.5:8787/', 'k7m2qx', 'p-1l2m3n-4-aabbccdd');
+    expect(ok).toEqual({ ok: true, url: 'ws://192.168.1.5:8787/K7M2QX/p-1l2m3n-4-aabbccdd', roomCode: 'K7M2QX' });
+    const cloud = composeRoomUrl('wss://relay.example.com:9000', 'AB23CD', 'd9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f');
+    expect(cloud.ok && cloud.url).toBe('wss://relay.example.com:9000/AB23CD/d9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f');
+  });
+
+  it('切片⑥：身份号原样进路径（合法形状里没有需要转义的字符）⇒ 传话程序拆出来的第二段与 selfId 逐字相同', () => {
+    const uuid = 'd9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f';
+    const composed = composeRoomUrl('ws://10.0.0.5:8787', 'K7M2QX', uuid);
+    if (!composed.ok) throw new Error('正例不该被拒');
+    expect(composed.url.endsWith(`/${uuid}`)).toBe(true);
+    expect(composed.url).not.toContain('%');
+  });
+
+  it('身份号形状不对 ⇒ 当场拒一句人话，不拼一条"连得上但什么也收不到"的网址', () => {
+    // 最后那两个是路径的形状炸弹：带斜杠的号会被拆成三段，带空格的号一进 URL 就变了样。
+    for (const bad of ['', '有中文', 'a b', 'x'.repeat(65), 'a/b', '%41']) {
+      const res = composeRoomUrl('ws://127.0.0.1:8787', 'ABCD', bad) as { ok: false; reason: string };
+      expect(res.ok).toBe(false);
+      expect(res.reason).toContain('身份号');
+    }
   });
 
   it('三种填错各回一句人读的原因，不抛错也不静默兜底', () => {
-    expect(composeRoomUrl('', 'ABCD').ok).toBe(false);
-    expect((composeRoomUrl('http://127.0.0.1', 'ABCD') as { reason: string }).reason).toContain('ws://');
-    expect((composeRoomUrl('ws://127.0.0.1:8787', '12') as { reason: string }).reason).toContain('房间码');
-    expect((composeRoomUrl('', 'ABCD') as { reason: string }).reason).toContain('连接地址没填');
+    const ME = 'p-1-1-aabbccdd';
+    expect(composeRoomUrl('', 'ABCD', ME).ok).toBe(false);
+    expect((composeRoomUrl('http://127.0.0.1', 'ABCD', ME) as { reason: string }).reason).toContain('ws://');
+    expect((composeRoomUrl('ws://127.0.0.1:8787', '12', ME) as { reason: string }).reason).toContain('房间码');
+    expect((composeRoomUrl('', 'ABCD', ME) as { reason: string }).reason).toContain('连接地址没填');
   });
 });
 
@@ -551,5 +569,35 @@ describe('⑤b 征召进度表信封：一席一行，只有座次与两个数',
   it('协议版本仍为 1：这一枚是同版本内的新形状，老信封一个字节没改', () => {
     expect(NET_PROTOCOL_VERSION).toBe(1);
     expect(ourVersionStamp().proto).toBe(1);
+  });
+});
+
+/**
+ * 切片⑥（v2.9.25）：传话程序按 `to` 投递，客户端按 `to` 决定采不采纳这一份。
+ * 两边必须是**同一个收件人**，否则墙会被绕过：`{"to":"甲","to":"乙"}` 这种重复键，
+ * 如果 `JSON.parse` 认后者而传话程序自己写的扫描认前者，那么本该只给乙的那份交给了甲，
+ * 甲这边解析出的收件人又是自己 ⇒ 采纳 ⇒ 他看见了别人那一席的私有画面。
+ * 下面的判据一律取"客户端解析出的收件人"，与 `scripts/net-relay.test.mjs` 里那条
+ * 「重复 to 键：投递认的那一个 ＝ JSON.parse 认的那一个」逐字对得上——同一段字符串、同一个赢家。
+ */
+describe('⑥ 重复 to 键：客户端与传话程序认同一个收件人', () => {
+  const recipientOf = (text: string): unknown =>
+    (parseEnvelope(text) as { to?: unknown } | null)?.to;
+
+  it('快照：指名给谁的那一份，线上与客户端都说是后者', () => {
+    expect(recipientOf('{"t":"snapshot","from":"HOST-1","to":"GUEST-B","to":"GUEST-C","state":{"players":[]}}'))
+      .toBe('GUEST-C');
+    expect(recipientOf('{"t":"snapshot","from":"HOST-1","to":"GUEST-C","state":{"players":[]}}')).toBe('GUEST-C');
+  });
+
+  it('清单与准备钮同样取后者（这三枚是装着某个席位私有内容的全部三种形状）', () => {
+    expect(recipientOf('{"t":"moves","from":"H","to":"B","to":"C","seat":2,"items":[],"omitted":0}')).toBe('C');
+    expect(recipientOf('{"t":"ready","from":"H","to":"B","to":"C","on":true}')).toBe('C');
+    expect(recipientOf('{"t":"act","from":"B","to":"H","to":"C","seat":2,"key":"0-END_TURN:abcd1234"}')).toBe('C');
+  });
+
+  it('后者那个号不合法 ⇒ 整条拒（不是"退回去用前者"）：投出去就是一次按坏消息投递', () => {
+    expect(parseEnvelope('{"t":"snapshot","from":"HOST-1","to":"GUEST-B","to":"","state":{"players":[]}}')).toBeNull();
+    expect(parseEnvelope('{"t":"snapshot","from":"HOST-1","to":"GUEST-B","to":123,"state":{"players":[]}}')).toBeNull();
   });
 });

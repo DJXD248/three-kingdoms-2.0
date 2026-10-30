@@ -8,6 +8,7 @@
  * 正面断言的是**照样领得到号码**，不是"没抛异常"（后者只证了半句：领到号才算进得了房）。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PEER_ID_URL_PATTERN } from './netProtocol';
 import { randomBytes, randomPeerId } from './netRandom';
 
 afterEach(() => {
@@ -70,5 +71,23 @@ describe('非安全上下文（http://一串 IP）：号码照样领得到，这
     expect(bytes).toHaveLength(8);
     expect(Array.from(bytes)).toEqual([128, 128, 128, 128, 128, 128, 128, 128]);
     for (const one of randomBytes(32)) expect(one).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('切片⑥：领到的号必须进得了握手网址的第二段', () => {
+  /**
+   * 判据取 `netProtocol.ts` 里那枚 `PEER_ID_URL_PATTERN`——它和 `scripts/net-relay.mjs` 里抄的那枚
+   * 是同一道形状门。为什么在这儿证而不是在联机测试里证：这一版传话程序按"网址上的身份号"绑定连接，
+   * 号过不了门 ⇒ 握手直接被拒，客人那边表现为"连不上这个地址"，排查起来最费时间。
+   * 随机源的字母表哪天改了（比如想加下划线以外的符号），这一条先红，不用等到线上。
+   */
+  it('安全上下文那条路（真 UUID）过门', () => {
+    vi.stubGlobal('crypto', { randomUUID: () => 'd9f2c1e4-7a3b-4c8d-9e0f-1a2b3c4d5e6f' });
+    expect(randomPeerId()).toMatch(PEER_ID_URL_PATTERN);
+  });
+
+  it('非安全上下文那条路（兜底号）也过门——局域网直连走的正是这一条', () => {
+    vi.stubGlobal('crypto', null);
+    for (let i = 0; i < 20; i++) expect(randomPeerId()).toMatch(PEER_ID_URL_PATTERN);
   });
 });
