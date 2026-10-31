@@ -28,6 +28,7 @@ import {
   ourVersionStamp,
   parseEnvelope,
   versionMismatch,
+  ROSTER_CONTENT_UNREPORTED,
   type NetDraftItem,
   type NetEnvelope,
   type NetDraftProgressRow,
@@ -36,7 +37,9 @@ import {
 } from './netProtocol';
 import { PRIVATE_REVEALED_KEYS } from './snapshotView';
 
-const STAMP: VersionStamp = ourVersionStamp();
+// 第四格（名册那串字）在这一档文件里只是个占位值：协议层不自己读存档，取料住在
+// `src/store/rosterContent.ts`。这里给一个字面量，正好把"协议层与这份料互不依赖"钉成可见的。
+const STAMP: VersionStamp = ourVersionStamp('名单甲');
 
 describe('房间码：界面随机绝不借引擎那颗对局种子', () => {
   it('六位、只用不混淆字符表（没有 I O 0 1），连出 200 个也不重复', () => {
@@ -194,10 +197,53 @@ describe('版本握手：不一致就明确拒，绝不静默半连', () => {
   });
 
   it('本机读数取自 package.json 与 StateSerializer，不是写死的字面量', () => {
-    const ours = ourVersionStamp();
+    const ours = ourVersionStamp('名单甲');
     expect(ours.proto).toBe(NET_PROTOCOL_VERSION);
     expect(ours.app).toMatch(/^\d+\.\d+\.\d+/);
     expect(ours.snapshot).toBe(NETWORK_SNAPSHOT_VERSION);
+  });
+
+  // 乙 线第三片㈁：握手第四格＝这一台机器此刻真在用的那份名单按效力取的那串字。
+  // 判据（用户已裁死，见 ARCH_MAP §G 第 12 条 ㈡）＝不一致就明说"名册不同、开局会分叉、禁止开始"，
+  // **绝不静默兼容**；界面上不许出现"已自动兼容／已按对面调整"这类话。
+  it('第四格不同 ⇒ 拒，说的是"名单不是同一份"而不是版本，且没有一句"已自动兼容"', () => {
+    const why = versionMismatch({ ...STAMP, content: '名单乙' }, STAMP);
+    expect(why).toContain('名单不是同一份');
+    expect(why).toContain('这一局不能开始');
+    expect(why).toContain('名单乙');
+    expect(why).toContain('名单甲');
+    expect(why).not.toContain('版本');
+    expect(why).not.toMatch(/自动兼容|已按对面调整/);
+  });
+
+  it('第四格分叉的判序排在前三样之后：同一份程序、不同名单，说的是名单', () => {
+    expect(versionMismatch({ ...STAMP, content: '名单乙', app: '9.9.9' }, STAMP)).toContain('游戏版本对不上');
+  });
+
+  it('一边没接上这一格（旧文件／接线断了）⇒ 单独一句话，且它与"名单确实不同"不是一句', () => {
+    const why = versionMismatch({ ...STAMP, content: ROSTER_CONTENT_UNREPORTED }, STAMP);
+    expect(why).toContain('没报出自己那份名单');
+    expect(why).not.toContain('名单不是同一份');
+    const reversed = versionMismatch(STAMP, { ...STAMP, content: ROSTER_CONTENT_UNREPORTED });
+    expect(reversed).toContain('没报出自己那份名单');
+  });
+
+  it('两边都没接上这一格 ⇒ 这一格不作数，握手照旧放行（这一条是分叉预警的边界，不是安全承诺）', () => {
+    const bare: VersionStamp = { ...STAMP, content: ROSTER_CONTENT_UNREPORTED };
+    expect(versionMismatch(bare, bare)).toBeNull();
+  });
+
+  it('对面那封信压根没带第四格 ⇒ 不当看不懂丢掉，补成那句"没报"并说给人听', () => {
+    const parsed = parseEnvelope(JSON.stringify({ t: 'hello', from: 'a', name: '甲', v: { app: STAMP.app, proto: STAMP.proto, snapshot: STAMP.snapshot } }));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.t).toBe('hello');
+    if (parsed?.t !== 'hello') throw new Error('这一封信没被认成 hello');
+    expect(parsed.v.content).toBe(ROSTER_CONTENT_UNREPORTED);
+    expect(versionMismatch(parsed.v, STAMP)).toContain('没报出自己那份名单');
+  });
+
+  it('第四格给了空串 ⇒ 与"没报"同一句（空串不是一种名单，是一次没交上来）', () => {
+    expect(ourVersionStamp('').content).toBe(ROSTER_CONTENT_UNREPORTED);
   });
 });
 
@@ -230,7 +276,7 @@ describe('线上证人：信封只认这十九种形状（⑤d 加了客人交�
   });
 
   it('这十九种各给一条合法消息：一种都收不下，就是信封上少了一格（与上面那句"只认这十九种"逐字对账）', () => {
-    const V = { app: '2.9.25', proto: NET_PROTOCOL_VERSION, snapshot: NETWORK_SNAPSHOT_VERSION };
+    const V = { app: '2.9.25', proto: NET_PROTOCOL_VERSION, snapshot: NETWORK_SNAPSHOT_VERSION, content: '名单甲' };
     const ITEM: NetDraftItem = { key: 'm0', name: '夏侯惇', faction: '魏', type: '武将', hp: 4, meleeAtk: 2, rangedAtk: 1, skills: [] };
     const ROW = { peer: 'b', seat: 2, name: '客人甲' };
     const kinds: [string, NetEnvelope][] = [
@@ -495,7 +541,7 @@ describe('J4 四枚信封：席位表、能走的清单、客人交回的编号�
 
   it('协议版本仍为 1：这四枚是同版本内的新形状，不是把老信封改了样子', () => {
     expect(NET_PROTOCOL_VERSION).toBe(1);
-    expect(ourVersionStamp().proto).toBe(1);
+    expect(ourVersionStamp('名单甲').proto).toBe(1);
   });
 });
 
@@ -582,7 +628,7 @@ describe('⑤a 准备两枚信封：一个布尔与一张表', () => {
 
   it('协议版本仍为 1：这两枚是同版本内的新形状，老信封一个字节没改', () => {
     expect(NET_PROTOCOL_VERSION).toBe(1);
-    expect(ourVersionStamp().proto).toBe(1);
+    expect(ourVersionStamp('名单甲').proto).toBe(1);
   });
 });
 
@@ -680,7 +726,7 @@ describe('⑤b 征召进度表信封：一席一行，只有座次与两个数',
 
   it('协议版本仍为 1：这一枚是同版本内的新形状，老信封一个字节没改', () => {
     expect(NET_PROTOCOL_VERSION).toBe(1);
-    expect(ourVersionStamp().proto).toBe(1);
+    expect(ourVersionStamp('名单甲').proto).toBe(1);
   });
 });
 
@@ -807,7 +853,7 @@ describe('⑤c 逐席候选名单信封：牌面上线，但只许上一个收�
 
   it('这一枚协议版本仍为 1：新增的是同版本内的一种信封形状，私有视图那份放开名单一格没加', () => {
     expect(NET_PROTOCOL_VERSION).toBe(1);
-    expect(ourVersionStamp().proto).toBe(1);
+    expect(ourVersionStamp('名单甲').proto).toBe(1);
     // 名单一格没加＝这一枚新信封没有顺手把别人的牌面放进私有视图（派单硬要求 4）。
     expect(PRIVATE_REVEALED_KEYS).toEqual(['hand', 'generalPool']);
   });

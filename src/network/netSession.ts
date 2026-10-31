@@ -4,6 +4,7 @@ import {
   ourVersionStamp,
   parseEnvelope,
   versionMismatch,
+  ROSTER_CONTENT_UNREPORTED,
   type NetEnvelope,
   type NetDraftListFrame,
   type NetDraftProgressRow,
@@ -12,6 +13,7 @@ import {
   type NetPeer,
   type NetReadyRow,
   type NetSeatRow,
+  type VersionStamp,
 } from './netProtocol';
 import type { IncomingReady } from './netReady';
 import type { IncomingDraft } from './netDraftList';
@@ -105,7 +107,12 @@ export function newPeerId(): string {
   return randomPeerId();
 }
 
-export function initialSessionState(role: NetRole, selfId: string, name: string, roomCode: string | null): SessionState {
+export function initialSessionState(
+  role: NetRole,
+  selfId: string,
+  name: string,
+  roomCode: string | null,
+): SessionState {
   return {
     role,
     selfId,
@@ -118,13 +125,35 @@ export function initialSessionState(role: NetRole, selfId: string, name: string,
 }
 
 /**
+ * 这一台机器**此刻真在用的那份名单**按效力算出来的一串字（握手第四格 `content`）怎么交进来：
+ * 走 `stepSession` 的第三个入参，而且交的是**取料的动作**、不是取好的值。
+ * 三个理由，按重要性排：
+ *  ① 现取才对得上这句话要防的事——房主开着房间中途装了一份内容包／关掉了几个将，
+ *     下一枚握手戳就该跟着变；连线建好那一刻冻一份存着＝把名单换了还照旧报旧字。
+ *  ② 它只在**真要发/比那一枚戳**的时候才算一次。实测一份 335 张的名单算一遍指纹要
+ *     4 毫秒（`--games` 那种量级），而 `stepSession` 每条来信都要跑一趟——把它放进
+ *     `SessionState` 里"每个事件现算"会把 4 毫秒摊到每一条消息上，那是白交的钱。
+ *  ③ 不进 `SessionState`＝那份字不落进界面照抄的那格，也就不会被顺手显示出去。
+ * ⚠️ 它是**分叉预警**（两边名单不同 ⇒ 开局会各发各的牌 ⇒ 禁止开始），不是防人偷看那一档；
+ *    老调用方／老测试不给＝那句"没报出名册"，两边都是这一句时握手仍放行（这一格由
+ *    `OnlineLobby.test.tsx` 那枚正面证人钉着，见 ARCH_MAP §12 那条判据）。
+ */
+export type RosterContentReader = () => string;
+
+export const unreportedRosterContent: RosterContentReader = () => ROSTER_CONTENT_UNREPORTED;
+
+/**
  * 纯 reducer：谁在门口、谁进了房、谁被拒，全在这里算，界面只负责显示。
- * 房主是唯一的名册来源（客人不发 roster），这样名单不会两边各说一套。
+ * 房主是唯一的名册来源（客人不发 `t:'roster'` 那份"屋里坐着哪些人"的名单），这样名单不会两边各说一套。
+ * ⚠️ 别把这句读成"名册那串字也只有房主报"：握手第四格 `content`（本机名单按效力的指纹）**两边都报**，
+ *    乙 线第三片㈁ 起它是比对的一格——同词不同义，这条属于本表反复登记的"名字不能当身份证"那一族。
  */
 export function stepSession(
   state: SessionState,
   event: WireEvent,
+  readRosterContent: RosterContentReader = unreportedRosterContent,
 ): StepResult {
+  const ourStamp = (): VersionStamp => ourVersionStamp(readRosterContent());
   if (event.type === 'close') {
     return { state: { ...state, phase: 'left', note: event.why }, sends: [] };
   }
@@ -135,7 +164,7 @@ export function stepSession(
     }
     return {
       state: { ...state, phase: 'dialing', note: '连上了，正报版本' },
-      sends: [{ t: 'hello', from: state.selfId, name: state.name, v: ourVersionStamp() }],
+      sends: [{ t: 'hello', from: state.selfId, name: state.name, v: ourStamp() }],
     };
   }
 
@@ -146,11 +175,11 @@ export function stepSession(
       ? { from: envelope.from, kind: envelope.t, at: envelope.at }
       : { from: envelope.from, kind: envelope.t };
 
-  if (state.role === 'host') return { ...hostStep(state, envelope), saw };
+  if (state.role === 'host') return { ...hostStep(state, envelope, ourStamp), saw };
 
   if (envelope.t === 'welcome') {
     if (envelope.to !== state.selfId) return { state, sends: [], saw };
-    const mismatch = versionMismatch(envelope.v, ourVersionStamp());
+    const mismatch = versionMismatch(envelope.v, ourStamp());
     if (mismatch) return { state: { ...state, phase: 'refused', note: mismatch }, sends: [], saw };
     return {
       state: { ...state, phase: 'in-room', note: `已连上房主「${envelope.name}」` },
@@ -257,7 +286,11 @@ export function stepSession(
   return { state, sends: [], saw };
 }
 
-function hostStep(state: SessionState, envelope: NetEnvelope): StepResult {
+function hostStep(
+  state: SessionState,
+  envelope: NetEnvelope,
+  ourStamp: () => VersionStamp,
+): StepResult {
   if (envelope.t === 'hello') {
     const known = state.peers.some((p) => p.id === envelope.from);
     if (known) return { state, sends: [] };
@@ -266,7 +299,10 @@ function hostStep(state: SessionState, envelope: NetEnvelope): StepResult {
     if (!nameCheck.ok) {
       return { state, sends: [{ t: 'refuse', from: state.selfId, to: envelope.from, reason: nameCheck.reason }] };
     }
-    const mismatch = versionMismatch(envelope.v, ourVersionStamp());
+    // 同一趟只取一次料：比的是这一枚、回给对面那枚也是这一枚。取两趟就可能出现
+    // "按甲的字判了放行、按乙的字发了回执"——那种回执本身就成了新的一处分叉源。
+    const ours = ourStamp();
+    const mismatch = versionMismatch(envelope.v, ours);
     if (mismatch) {
       return { state, sends: [{ t: 'refuse', from: state.selfId, to: envelope.from, reason: mismatch }] };
     }
@@ -275,7 +311,7 @@ function hostStep(state: SessionState, envelope: NetEnvelope): StepResult {
     return {
       state: { ...state, peers, note: `${nameCheck.name} 进房了` },
       sends: [
-        { t: 'welcome', from: state.selfId, to: envelope.from, name: state.name, v: ourVersionStamp() },
+        { t: 'welcome', from: state.selfId, to: envelope.from, name: state.name, v: ours },
         { t: 'roster', from: state.selfId, peers },
       ],
     };
@@ -352,6 +388,16 @@ export function joinRoom(
     url: string;
     roomCode: string;
     selfId?: string;
+    /**
+     * 乙 线第三片㈁：这一台机器此刻真在用的那份名单按效力的那串字（握手第四格）。
+     * ⚠️ 这一格是**每一次要发/比握手戳时现取**的，不在连线建好那一刻冻一份存着：
+     *    房主开着房装了个自制内容包、或关掉了一个将，那份"效力"当场就变了——冻着的戳会把旧的当新的报出去，
+     *    这一格的全部用处就没了。取料口＝`src/store/rosterContent.ts`（唯一那一个）。
+     * 不给＝送那句"没报出名册"（老调用方与老测试不必跟着改，与 `heartbeat` 同一手法），
+     * 对面报了真值而本机没报 ⇒ 当场拒；生产那条路由 `OnlineLobby.tsx` 交上 `localRosterContent`，
+     * 那条接线有没有断由 `OnlineLobby.test.tsx` 那枚正面证人钉着（不是靠这句注释）。
+     */
+    rosterContent?: RosterContentReader;
     socketFactory?: SocketFactory;
     /** 客人端：每收到一份房主发来的局面快照回调一次（内容已由协议层认出是对象）。 */
     onSnapshot?: (snapshot: Record<string, unknown>) => void;
@@ -403,6 +449,8 @@ export function joinRoom(
   onChange: (state: SessionState) => void,
 ): RoomConnection {
   const selfId = args.selfId ?? newPeerId();
+  /** 交进来的是**取料的动作**，每次真要发/比一枚握手戳时才算一遍（理由与量到的 4 毫秒见 `RosterContentReader` 那段）。 */
+  const readRosterContent = args.rosterContent ?? unreportedRosterContent;
   let state = initialSessionState(args.role, selfId, args.name, args.roomCode);
   const publish = () => onChange(state);
   publish();
@@ -459,7 +507,7 @@ export function joinRoom(
   };
 
   const apply = (event: WireEvent) => {
-    const next = stepSession(state, event);
+    const next = stepSession(state, event, readRosterContent);
     state = next.state;
     for (const envelope of next.sends) link?.send(encodeEnvelope(envelope));
     if (event.type === 'close') stopHeartbeat();

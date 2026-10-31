@@ -11,7 +11,22 @@ const MAX_ROOM_CODE_LENGTH = 10;
 export const MAX_WIRE_BYTES = 512 * 1024;
 export const MAX_NAME_LENGTH = 12;
 
-export type VersionStamp = { app: string; proto: number; snapshot: number };
+/**
+ * 握手那一枚戳。乙 线第三片㈁ 起多第四格 `content`＝**这一台机器此刻真在用的那份名单**按效力算出来的一串字
+ * （取料与算法都不住在这里，见 `src/store/rosterContent.ts`＋`src/setup/rosterHandover.ts`，本文件只搬运）。
+ * ⚠️ 这一格是**分叉预警**、不是安全机制：它抓的是"两边名单不是同一份、开局会各发各的牌"这类意外，
+ *    复用那颗摘要自带的边界（只抓下载不全／被人改过一个字，不扛有心人伪造）；措辞不许往"防作弊"上长。
+ * ⚠️ 这一格绝不叫 `roster`——协议里 `t:'roster'`（下面那支信封）说的是"屋里坐着哪些人"，同词两义必混。
+ */
+export type VersionStamp = { app: string; proto: number; snapshot: number; content: string };
+/**
+ * 没接上这一格时送的那句"我没报"。生产那条路不该发它——`OnlineLobby.test.tsx` 有一条正面证人钉着
+ * 送出去的那一串就是本机名单的效力指纹（没有这条证人时，两边都发这个值＝这一格白比、谁也看不见）。
+ * 一边报了真值、另一边报这个值 ⇒ 当场拒并说一句人话（绝不静默放行）；两边都报这个值才作"没这一格"放过，
+ * 因为对面那台多半是同一份没接上的文件——它跟"名单确实不同"是两回事，分开写清。
+ */
+export const ROSTER_CONTENT_UNREPORTED = '没报出名册';
+
 export type NetPeer = { id: string; name: string; role: 'host' | 'guest' };
 /** J3 连线表里的一行：房主算出来的，客人只是照抄显示（判定权不在客人手里）。 */
 export type NetLinkState = 'online' | 'lost';
@@ -202,8 +217,18 @@ export type NetEnvelope =
   | { t: 'draftconfirm'; from: string; to: string; seat: number }
   | { t: 'bye'; from: string };
 
-export function ourVersionStamp(): VersionStamp {
-  return { app: pkg.version, proto: NET_PROTOCOL_VERSION, snapshot: NETWORK_SNAPSHOT_VERSION };
+/**
+ * 本机那一枚戳。第四格由调用方交进来（`rosterContent`）：这枚文件是纯协议层，绝不自己去读存档，
+ * 读"此刻真在用的那份名单"那一格住在 `src/store/rosterContent.ts`——把取料挡在协议层外面，
+ * 协议层才能既被浏览器用、也被算牌进程用（乙 线那条"同一把尺"的纪律）。
+ */
+export function ourVersionStamp(rosterContent: string): VersionStamp {
+  return {
+    app: pkg.version,
+    proto: NET_PROTOCOL_VERSION,
+    snapshot: NETWORK_SNAPSHOT_VERSION,
+    content: typeof rosterContent === 'string' && rosterContent.length > 0 ? rosterContent : ROSTER_CONTENT_UNREPORTED,
+  };
 }
 
 /**
@@ -316,7 +341,11 @@ export function parseEnvelope(text: string): NetEnvelope | null {
   const isStamp = (v: unknown): v is VersionStamp => {
     if (!v || typeof v !== 'object') return false;
     const s = v as Record<string, unknown>;
-    return typeof s.app === 'string' && typeof s.proto === 'number' && typeof s.snapshot === 'number';
+    if (typeof s.app !== 'string' || typeof s.proto !== 'number' || typeof s.snapshot !== 'number') return false;
+    // 第四格（名册那串字）是这一轮新加的。对面那台要是还没接上（旧文件），这里补成那句"没报"，
+    // 让下面的握手比对说一句人话——而不是把整封信当看不懂丢掉，让人对着一个不动的界面干猜。
+    if (typeof s.content !== 'string' || s.content.length === 0) s.content = ROSTER_CONTENT_UNREPORTED;
+    return true;
   };
   /**
    * 一张候选卡（切片⑤c）。`type` 只按"一小串非空字符"收而不钉死那两种写法：
@@ -515,8 +544,12 @@ export function parseEnvelope(text: string): NetEnvelope | null {
 }
 
 /**
- * 版本握手：应用版本／协议版本／快照版本三样任一不符 ⇒ 给出一句人读的拒因。
+ * 版本握手：应用版本／协议版本／快照版本／名册那串字，四样任一不符 ⇒ 给出一句人读的拒因。
  * 注意这是"不一致就拒"，不是"新旧排序"——联机要求两边同一份文件，没有向下兼容承诺。
+ * 判序＝协议→应用→快照→名册：前三样说的是"两边打开的不是同一份程序"，最后一样说的是
+ * "程序是同一份，但两边此刻真在用的那份名单不一样"（装了不同的自制内容、关掉了不同的将）。
+ * ⚠️ 第四格是**分叉预警**：两边名单不同 ⇒ 开局会各发各的牌，所以**禁止开始**、绝不静默兼容；
+ *    它不防任何人偷看或伪造（那句边界住在 `rosterHandover.ts` 取指纹那一格）。
  */
 export function versionMismatch(theirs: VersionStamp, ours: VersionStamp): string | null {
   if (typeof theirs.proto !== 'number' || theirs.proto !== ours.proto) {
@@ -528,7 +561,13 @@ export function versionMismatch(theirs: VersionStamp, ours: VersionStamp): strin
   if (theirs.snapshot !== ours.snapshot) {
     return `局面快照版本对不上：对面 ${theirs.snapshot}，本机 ${ours.snapshot}——两边请打开同一份游戏文件`;
   }
-  return null;
+  const theirsContent = typeof theirs.content === 'string' && theirs.content.length > 0 ? theirs.content : ROSTER_CONTENT_UNREPORTED;
+  const oursContent = typeof ours.content === 'string' && ours.content.length > 0 ? ours.content : ROSTER_CONTENT_UNREPORTED;
+  if (theirsContent === oursContent) return null;
+  if (theirsContent === ROSTER_CONTENT_UNREPORTED || oursContent === ROSTER_CONTENT_UNREPORTED) {
+    return `有一边没报出自己那份名单的那串字（对面 ${theirsContent}，本机 ${oursContent}）——多半两边打开的不是同一份游戏文件，先换成同一份再连`;
+  }
+  return `两边此刻用的名单不是同一份（对面 ${theirsContent}，本机 ${oursContent}）——开局会各发各的牌，这一局不能开始：请两边装上同一份名单（有人装了自制内容、或关掉了不同的将，都会让这一串变掉）`;
 }
 
 /** 名字是客人自报的 ⇒ 房主校验后回提示，不照收也不静默截断（契约 §G 玩家账户名行）。 */

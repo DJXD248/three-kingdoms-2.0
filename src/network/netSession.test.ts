@@ -7,6 +7,7 @@ import {
   encodeEnvelope,
   ourVersionStamp,
   parseEnvelope,
+  ROSTER_CONTENT_UNREPORTED,
   type NetEnvelope,
   type NetDraftListFrame,
   type NetDraftProgressRow,
@@ -19,8 +20,13 @@ import {
 import { initialSessionState, joinRoom, newPeerId, stepSession, type SessionState } from './netSession';
 import type { IncomingDraft } from './netDraftList';
 
-/** 本机戳＝握手比对的那一份；写死版本号会让这组测试在每次抬版本时假红。 */
-const STAMP: VersionStamp = ourVersionStamp();
+/**
+ * 本机戳＝握手比对的那一份；写死版本号会让这组测试在每次抬版本时假红。
+ * 第四格在这里是那句"没报出名册"：这一档的 `stepSession` 调用都不交取料的动作（走默认值），
+ * 两边都落在同一个默认值上 ⇒ 握手照旧。第四格本身的行为由下面那组新证人钉，
+ * 生产那条线接没接上由 `OnlineLobby.test.tsx` 那枚正面证人钉。
+ */
+const STAMP: VersionStamp = ourVersionStamp(ROSTER_CONTENT_UNREPORTED);
 const HOST = { id: 'host-1', name: '房主', role: 'host' as const };
 const GUEST = { id: 'guest-1', name: '客人甲', role: 'guest' as const };
 
@@ -125,10 +131,77 @@ describe('客人侧：只在房主那里对上版本才算进房', () => {
     expect(state.note).toContain('看不懂');
   });
 
-  it('线断了 ⇒ 状态是"已离开"，界面那句话就有出处', () => {
+  it('线断了 ⇒ 状态是“已离开”，界面那句话就有出处', () => {
     const { state } = stepSession(guestState(), { type: 'close', why: '连不上这个地址' });
     expect(state.phase).toBe('left');
     expect(state.note).toBe('连不上这个地址');
+  });
+});
+
+// 乙 线第三片㈁：握手第四格（本机那份名单按效力取的那串字）在会话层这一头的行为。
+// 判据原文（用户已裁死）＝名册不同就明说“开局会分叉、禁止开始”，绝不静默兼容。
+describe('握手第四格：两边名单不是同一份 ⇒ 谁都进不了这一局', () => {
+  const MINE = () => '本机名单';
+  const THEIRS = ourVersionStamp('对面名单');
+
+  it('房主侧：客人报的名单与本机不同 ⇒ 不回 welcome、不入册，拒因说的是名单', () => {
+    const { state, sends } = stepSession(hostState(), text({ t: 'hello', from: GUEST.id, name: GUEST.name, v: THEIRS }), MINE);
+    expect(state.peers).toHaveLength(1);
+    expect(sends).toHaveLength(1);
+    expect(sends[0].t).toBe('refuse');
+    expect((sends[0] as { reason: string }).reason).toContain('名单不是同一份');
+    expect((sends[0] as { reason: string }).reason).toContain('这一局不能开始');
+  });
+
+  it('房主侧：交进来的那串字确实随取料口变（送出去的 welcome 带的就是它）', () => {
+    const { sends } = stepSession(hostState(), text({ t: 'hello', from: GUEST.id, name: GUEST.name, v: ourVersionStamp('本机名单') }), MINE);
+    expect(sends[0]).toEqual({ t: 'welcome', from: HOST.id, to: GUEST.id, name: HOST.name, v: ourVersionStamp('本机名单') });
+  });
+
+  it('房主侧：同一封信只取料一遍——比的与回的是同一枚戳（不许“按甲判放行、按乙发回执”）', () => {
+    let reads = 0;
+    stepSession(hostState(), text({ t: 'hello', from: GUEST.id, name: GUEST.name, v: ourVersionStamp('本机名单') }), () => {
+      reads += 1;
+      return '本机名单';
+    });
+    expect(reads).toBe(1);
+  });
+
+  it('客人侧：welcome 里的名单与本机不同 ⇒ 不算连上（不半连），说的是名单', () => {
+    const dialed = stepSession(guestState(), { type: 'open' }, MINE).state;
+    const { state } = stepSession(dialed, text({ t: 'welcome', from: HOST.id, to: GUEST.id, name: HOST.name, v: THEIRS }), MINE);
+    expect(state.phase).toBe('refused');
+    expect(state.note).toContain('名单不是同一份');
+  });
+
+  it('客人侧：报到那封信带的就是本机这一串（第四格不是只在收的方向起作用）', () => {
+    const { sends } = stepSession(guestState(), { type: 'open' }, MINE);
+    expect(sends[0]).toEqual({ t: 'hello', from: GUEST.id, name: GUEST.name, v: ourVersionStamp('本机名单') });
+  });
+
+  it('现取，不是冻存：连线建好之后中途换了名单，下一枚戳跟着变', () => {
+    let roster = '装包前的名单';
+    const read = () => roster;
+    const hello = stepSession(guestState(), { type: 'open' }, read).sends[0];
+    roster = '装包后的名单';
+    const hello2 = stepSession(guestState(), { type: 'open' }, read).sends[0];
+    expect((hello as { v: VersionStamp }).v.content).toBe('装包前的名单');
+    expect((hello2 as { v: VersionStamp }).v.content).toBe('装包后的名单');
+  });
+
+  it('每条来信不白算这一遍：与握手无关的一封信到了，取料口一次也不被叫', () => {
+    let reads = 0;
+    const dialed = stepSession(guestState(), { type: 'open' }, () => '本机名单').state;
+    stepSession(dialed, text({ t: 'roster', from: HOST.id, peers: [HOST, GUEST] }), () => {
+      reads += 1;
+      return '本机名单';
+    });
+    expect(reads).toBe(0);
+  });
+
+  it('两边都没接上取料口（老调用方）⇒ 这一格不作数，握手照旧放行', () => {
+    const { sends } = stepSession(hostState(), text({ t: 'hello', from: GUEST.id, name: GUEST.name, v: STAMP }));
+    expect(sends[0]?.t).toBe('welcome');
   });
 });
 
@@ -265,6 +338,74 @@ describe('两端接上真 reducer（假传话线，走完整握手）', () => {
     // 不经 leave()：直接掐线，模拟进程被杀／网线被拔
     host.leave();
     guest.leave();
+  });
+
+  // 乙 线第三片㈁：走真连线（`joinRoom`）的那一头。上面那组证人是直接喂 `stepSession` 的，
+  // 它们钉得住“reducer 会现取”，钉不住“连线那一头把取料的动作交下去了、而且没在半路冻一份存着”。
+  it('真连线上取的是当下的那份名单：房主中途换了名单，带新名单来的客人照样进得来', async () => {
+    const relay = new FakeRelay();
+    let hostRoster = '装包前的名单';
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory, rosterContent: () => hostRoster },
+      () => {},
+    );
+    await nextTick();
+
+    // 房主开着房装了一份内容包 ⇒ 本机那份“效力”当场变了。这时带新名单进来的客人才是同一份名单的人。
+    hostRoster = '装包后的名单';
+    const fresh = joinRoom(
+      { role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id, socketFactory: relay.factory, rosterContent: () => '装包后的名单' },
+      () => {},
+    );
+    await nextTick();
+    // 若这一格在连线建好那一刻被冻住（送的是“装包前”），甲会被当成名单不同而拒在门外——那是误伤，不是防范。
+    expect(fresh.state.phase).toBe('in-room');
+
+    // 反面对照：还带着旧名单来的那一位 ⇒ 当场拒，说的就是名单。
+    const stale = joinRoom(
+      { role: 'guest', name: '客人乙', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: 'guest-2', socketFactory: relay.factory, rosterContent: () => '装包前的名单' },
+      () => {},
+    );
+    await nextTick();
+    expect(stale.state.phase).toBe('refused');
+    expect(stale.state.note).toContain('名单不是同一份');
+
+    fresh.leave();
+    stale.leave();
+    host.leave();
+  });
+
+  it('连线上的取料次数＝握手那几趟，不是每条来信一遍（每条信白算 4 毫秒是不该有的开销）', async () => {
+    const relay = new FakeRelay();
+    let reads = 0;
+    const count = () => {
+      reads += 1;
+      return '本机名单';
+    };
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory, rosterContent: count },
+      () => {},
+    );
+    await nextTick();
+    // 房主这边：一个客人也没来 ⇒ 一次都不该取（连上了不等于要算这串字）。
+    expect(reads).toBe(0);
+
+    const guest = joinRoom(
+      { role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: GUEST.id, socketFactory: relay.factory, rosterContent: count },
+      () => {},
+    );
+    await nextTick();
+    // 客人发 hello 取一次、房主比＋回 welcome 取一次、客人比 welcome 取一次 ⇒ 三趟，不多算。
+    expect(reads).toBe(3);
+    expect(guest.state.phase).toBe('in-room');
+
+    // 之后再来一条与握手无关的信（房主广播的名单）⇒ 一次也不取。
+    host.send({ t: 'roster', from: HOST.id, peers: [HOST, GUEST] });
+    await nextTick();
+    expect(reads).toBe(3);
+
+    guest.leave();
+    host.leave();
   });
 });
 

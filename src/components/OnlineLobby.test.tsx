@@ -5,7 +5,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 import OnlineLobby from './OnlineLobby';
-import { NET_PROTOCOL_VERSION, encodeEnvelope, formatRoomTicket, ourVersionStamp, type NetDraftItem, type NetDraftListFrame, type NetEnvelope } from '../network/netProtocol';
+import { NET_PROTOCOL_VERSION, encodeEnvelope, formatRoomTicket, ourVersionStamp, ROSTER_CONTENT_UNREPORTED, type NetDraftItem, type NetDraftListFrame, type NetEnvelope } from '../network/netProtocol';
+// 乙 线第三片㈁：界面那一条线交出去的取料口与这里验的是同一个函数——正因如此它才能当正面证人：
+// 那行接线一断，线上送的就退回那句“没报出名册”，下面第一条立刻红（详见文件里那组证人）。
+import { localRosterContent } from '../store/rosterContent';
 import { buildBroadcastView } from '../network/snapshotView';
 import { MIN_BROADCAST_INTERVAL_MS } from '../network/snapshotBroadcaster';
 import { detachRoom, getActiveRoom } from '../network/netRoom';
@@ -149,7 +152,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     expect(socket.url).toContain(`/${myId(socket)}?k=`);
     expect(text()).toContain('正在对上版本');
 
-    expect(socket.lastSent).toMatchObject({ t: 'hello', name: '玩家', v: ourVersionStamp() });
+    expect(socket.lastSent).toMatchObject({ t: 'hello', name: '玩家', v: ourVersionStamp(localRosterContent()) });
     expect(myId(socket).length).toBeGreaterThan(0);
   });
 
@@ -183,7 +186,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
   it('房主 welcome 且版本一致 ⇒ 状态变成已连上，写明连上了谁', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('AAAAAA');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
 
     expect(text()).toContain('已连上房主「房主乙」');
   });
@@ -200,6 +203,43 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
 
     expect(text()).toContain('被拒（没连上）');
     expect(text()).toContain('没让进房，原因是：协议版本对不上');
+    expect(text()).not.toContain('已连上房主');
+  });
+
+  // 乙 线第三片㈁：握手第四格（名单那串字）在界面这一头的三条证人。
+  // 判据（用户已裁死）＝名册不同就明说“开局会分叉、禁止开始”，**绝不静默兼容**——
+  // 所以这里除了要有“说了什么”的正面断言，还要有“没说什么”的反面断言（已自动兼容／已按对面调整）。
+  it('交出去的 hello 带的就是本机那份名单的效力那串字（这一格不是空挂着）', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('K7M2QX');
+    const sent = socket.lastSent;
+    if (!sent || sent.t !== 'hello') throw new Error('客人一连上就该发 hello');
+    // 反面对照：这行断言单独看没意思，配上下面那句“不是那句‘没报出名册’”才是正面证人——
+    // `OnlineLobby.tsx` 里那行 `rosterContent: localRosterContent` 一断，送出去的就退回占位值，这里立刻红。
+    expect(sent.v.content).toBe(localRosterContent());
+    expect(sent.v.content).not.toBe(ROSTER_CONTENT_UNREPORTED);
+    expect(sent.v.content).toMatch(/^[0-9a-f]{8}-[0-9a-f]{8}$/);
+  });
+
+  it('房主报的是另一份名单 ⇒ 客人这边当场不连，界面写明“名单不是同一份、这一局不能开始”', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('AAAAAA');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp('对面那份名单') });
+
+    expect(text()).toContain('被拒（没连上）');
+    expect(text()).toContain('名单不是同一份');
+    expect(text()).toContain('这一局不能开始');
+    expect(text()).not.toContain('已连上房主');
+    expect(text()).not.toMatch(/自动兼容|已按对面调整/);
+  });
+
+  it('房主那边没接上这一格（旧文件）⇒ 说的是“有一边没报出”，与“名单不同”不混为一谈', async () => {
+    render(<OnlineLobby onClose={() => {}} />);
+    const socket = await dialRoom('AAAAAA');
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(ROSTER_CONTENT_UNREPORTED) });
+
+    expect(text()).toContain('没报出自己那份名单');
+    expect(text()).not.toContain('名单不是同一份');
     expect(text()).not.toContain('已连上房主');
   });
 
@@ -248,7 +288,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('PPPPPP');
     const me = myId(socket);
-    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }] });
     socket.sent.length = 0;
 
@@ -264,7 +304,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
   it('J3：房主算好的那张表在客人屏上原样显示，含"这是往返时间"那句如实话', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('QQQQQQ');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: myId(socket), name: '玩家', role: 'guest' }] });
 
     expect(text()).not.toContain('连线情况');
@@ -297,7 +337,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
   it('J3：不是房主发来的表不上屏（谁都能喊一句"某某掉线了"就成了假通告）', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('RRRRRR');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: myId(socket), name: '玩家', role: 'guest' }] });
 
     await receive(socket, {
@@ -311,7 +351,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
   it('J2：客人收到房主的遮蔽局面 ⇒ 屏幕上出现同一局的牌桌，牌桌那一格只画局面', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('DDDDDD');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: myId(socket), name: '玩家', role: 'guest' }] });
 
     expect(text()).toContain('还没收到房主发来的局面');
@@ -332,7 +372,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
   it('J2：关掉这个小窗不退房——连线还在；点「离开房间」才道别', async () => {
     const { unmount } = render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('EEEEEE');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     await receive(socket, { t: 'roster', from: 'host-9', peers: [{ id: 'host-9', name: '房主乙', role: 'host' }] });
 
     unmount();
@@ -354,7 +394,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('JJJJJJ');
     const me = myId(socket);
-    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     await receive(socket, {
       t: 'roster', from: 'host-9',
       peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }],
@@ -403,7 +443,7 @@ describe('主菜单的联网大厅：连得上、看得懂、不夸大', () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('KKKKKK');
     const me = myId(socket);
-    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: me, name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     await receive(socket, {
       t: 'roster', from: 'host-9',
       peers: [{ id: 'host-9', name: '房主乙', role: 'host' }, { id: me, name: '玩家', role: 'guest' }, { id: 'guest-x', name: '路人', role: 'guest' }],
@@ -437,7 +477,7 @@ describe('⑤a 大厅里那颗准备钮：交回一个布尔，照抄一张表',
   async function inRoomAsGuest() {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('DDDDDD');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     const me = myId(socket);
     await receive(socket, {
       t: 'roster', from: 'host-9',
@@ -462,7 +502,7 @@ describe('⑤a 大厅里那颗准备钮：交回一个布尔，照抄一张表',
   it('那颗钮只发给名册上那位真房主：名册还没到时它是按不动的（不能把"我准备好了"发给自己）', async () => {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('DDDDDD');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     socket.sent.length = 0;
     const button = screen.getByRole('button', { name: /我准备好了/ });
     expect(button.hasAttribute('disabled')).toBe(true);
@@ -572,7 +612,7 @@ describe('⑤b 大厅里的征召进度：客人看见"走到第几席"，看不
   async function inRoomAsGuest() {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('DDDDDD');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     const me = myId(socket);
     await receive(socket, {
       t: 'roster', from: 'host-9',
@@ -649,7 +689,7 @@ describe('⑤c/⑤d 大厅里的候选名单：只画指名发给我的那一份
   async function inRoomAsGuest() {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('DDDDDD');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     const me = myId(socket);
     await receive(socket, {
       t: 'roster', from: 'host-9',
@@ -814,7 +854,7 @@ describe('⑤·腿1（㈢ 演出刀）客人屏上的开局那一段：只画房
   async function inRoomAsGuest() {
     render(<OnlineLobby onClose={() => {}} />);
     const socket = await dialRoom('FFFFFF');
-    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp() });
+    await receive(socket, { t: 'welcome', from: 'host-9', to: myId(socket), name: '房主乙', v: ourVersionStamp(localRosterContent()) });
     const me = myId(socket);
     await receive(socket, {
       t: 'roster', from: 'host-9',

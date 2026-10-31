@@ -3,6 +3,9 @@ import { composeRoomUrl, createRoomCode, createRoomTicket, formatRoomTicket } fr
 // 界面上那句"至多每多久推一份"必须跟着节流器自己那个数走，不许在文案里再抄一遍常量。
 import { MIN_BROADCAST_INTERVAL_MS } from '../network/snapshotBroadcaster';
 import { joinRoom, newPeerId, type NetRole, type SessionState } from '../network/netSession';
+// 乙 线第三片㈁：握手第四格那串字唯一的取料口。界面这里只交"去哪儿取"这个动作，
+// 不在这台机器上冻一份存着——房主开着房换了名单，下一枚戳得跟着变（取料纪律见那个文件）。
+import { localRosterContent } from '../store/rosterContent';
 import {
   attachRoom,
   bumpNetRoom,
@@ -187,6 +190,9 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         url: composed.url,
         roomCode: composed.roomCode,
         selfId,
+        // 乙 线第三片㈁：交的是取料的动作（每次真要发/比一枚握手戳才算一遍，一遍约 4 毫秒）。
+        // 这一行断了不会有人报错——它由下面 `OnlineLobby.test.tsx` 那枚正面证人钉着。
+        rosterContent: localRosterContent,
         onSnapshot: (snapshot) => {
           if (receiveGuestSnapshot(snapshot)) bumpNetRoom();
         },
