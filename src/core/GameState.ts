@@ -211,8 +211,14 @@ export function createInitialEngineState(): EngineState {
     discardPile: [],
     drawState: null,
     isFirstTurn: true,
-    // Default cursor; real matches re-seed at room creation (createRoom) so a
-    // deterministic run can also be reproduced from a chosen seed.
+    // Default cursor only. The live browser path does re-seed, but not here and
+    // not from a chosen seed: building the store's initial frame goes through
+    // `storeStateToEngineState` → `seedRngState` (store/gameStateAdapter.ts),
+    // which mixes Date.now() with Math.random() — so a browser room is NOT
+    // reproducible from a seed, and this factory's cursor reaches production
+    // with zero consumers (tests only). Only the headless assembly path
+    // (`ai/matchSetup.buildMatchState`) takes an explicit config.seed.
+    // Corrected 2026-10-31 per PROJECT_ARCH_MAP 联机立项契约第 11 条 ㈠ 就地更正.
     rngState: createRngState(0x9e3779b9),
   };
 }
