@@ -2,6 +2,8 @@
 // 将领体力上限3点及以下为文将，4点及以上为武将
 // 武将默认近战攻击力2远程攻击力1，文将默认近战攻击力1远程攻击力2
 // 多势力或可转换势力的将领均视为群势力
+import { createGeneral } from './createGeneral';
+import { SHEET_GENERALS } from './generalsConverted';
 
 export type Faction = '魏' | '蜀' | '吴' | '群' | '晋';
 
@@ -482,26 +484,12 @@ export interface General {
   source?: GeneralSource;
 }
 
-function createGeneral(
-  id: string,
-  name: string,
-  faction: Faction,
-  hp: number,
-  skills: Array<string | Skill>,
-): General {
-  const type = hp >= 4 ? '武将' : '文将';
-  return {
-    id,
-    name,
-    faction,
-    hp,
-    type,
-    meleeAtk: type === '武将' ? 2 : 1,
-    rangedAtk: type === '武将' ? 1 : 2,
-    armor: 0,
-    skills: skills.map(s => (typeof s === 'string' ? { name: s } : s)),
-  };
-}
+/**
+ * 造卡函数**不在这里**：v2.9.28 读法㈁（318 将真进名册）起，名册里多了一批由
+ * `scripts/make-converted-generals.mjs` 从转换表生成的卡，那张生成文件也要用同一支
+ * `createGeneral`——两边都从 `./createGeneral` 取，避免「体力 4 点及以上＝武将」这套
+ * 换算长第二份。
+ */
 
 /**
  * 2.4.1 batch one (v2.4.0 §G tier-1, Wei+Shu+Qun): built-in skills carrying
@@ -1107,6 +1095,10 @@ export const allGenerals: General[] = [
   ...wuGenerals,
   ...qunGenerals,
   ...jinGenerals,
+  // v2.9.28 读法㈁：转换表里官方名册还没有的那一批将，**排在最后追加**。
+  // 位置是有意的：名册前面那 96 张的次序一个字不许动，全库靠"第一张满足条件的卡"
+  // 定位样本的测试才不会随这批内容一起漂。
+  ...SHEET_GENERALS,
 ];
 
 /** Canonical faction order — shared by the AI battle seat picker and reports. */

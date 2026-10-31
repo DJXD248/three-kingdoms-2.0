@@ -72,7 +72,10 @@ describe('限次刀用词的单一出处', () => {
 
   it('卡面那句的拼法只有 turnLimitHead 一个出处，全库零处手抄拼好的整串', () => {
     // 写死的「每回合限＋数字＋次」一律不许出现在代码里（数字必须是插值出来的）。
-    expect(files.filter(f => /每回合限\s*[0-9１-９]\s*次/.test(codeOf(f))).map(rel).sort()).toEqual([]);
+    // 唯一认得的例外＝`data/generalsConverted.ts`：那是玩家自己那张转换表里的**卡面原文**
+    // 被逐字搬进名册（读法㈁），不是有人在代码里抄这一句来拼；它一声不响，也不参与判据。
+    const handCopied = files.filter(f => /每回合限\s*[0-9１-９]\s*次/.test(codeOf(f))).map(rel).sort();
+    expect(handCopied.filter(f => f !== 'data/generalsConverted.ts')).toEqual([]);
     expect(holdersOf('每回合限${turnLimit}次')).toEqual(['skills/skillSentence.ts']);
     // 拼法现取：非法值一律不给句子，界面与 Excel 都问同一支。
     expect(turnLimitHead(3)).toBe('每回合限3次');

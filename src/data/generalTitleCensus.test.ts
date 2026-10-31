@@ -10,10 +10,10 @@ import { createAuthoredGeneral } from '../domain/generalProvenance';
 type HasTitleKey = 'title' extends keyof General ? true : false;
 
 describe('称号已从将领记录里删除（v2.9.5）', () => {
-  it('官方名册每一条都不带 title 键，且张数仍是 96', () => {
-    // 96＝95＋魏关羽（v2.9.6 内容刀）。这一格数的是"名册有没有多出带称号的条目"，
-    // 加一张卡就得改一个数——它不是玩法判据，只是普查。
-    expect(allGenerals).toHaveLength(96);
+  it('官方名册每一条都不带 title 键，且张数与来源构成当场钉住', () => {
+    // 335＝95＋魏关羽（v2.9.6）＋转换表带入的 239 张（v2.9.28 读法㈁）。
+    // 这一格数的是"名册有没有多出带称号的条目"，加一张卡就得改一个数——它不是玩法判据，只是普查。
+    expect(allGenerals).toHaveLength(335);
     for (const g of allGenerals) {
       expect(Object.keys(g)).not.toContain('title');
     }

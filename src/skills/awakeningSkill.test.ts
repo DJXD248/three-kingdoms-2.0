@@ -234,11 +234,17 @@ describe('觉醒技 · 编译面（徽章⇒编译位，额度与限定技同键
    * 钉子改成"动在哪、动几张"：官方池逐字＝['关羽']，仓库固定 DIY 样本仍然一张没有
    * （ fixture 池不动＝B21 那一锚的输入面没被这刀碰，实测见登记）。
    */
-  it('普查钉子：官方池只有魏关羽一枚挂「觉醒技」，DIY 样本池仍是一张没有', () => {
+  it('普查钉子：挂「觉醒技」徽章的现在有三张，但会真响的仍只有魏关羽一枚', () => {
     const taggedIn = (pool: readonly General[]) => pool.filter(general =>
       (general.skills ?? []).some(skill => tagsOf(skill).includes('觉醒技')));
-    expect(taggedIn(allGenerals).map(g => g.name)).toEqual(['关羽']);
-    expect(taggedIn(allGenerals).map(g => g.id)).toEqual(['wei_022']);
+    // 2026-10-31 读法㈁（转换表 239 张卡进名册）之后现场量：毋丘俭「鸿举」、诸葛诞「举义」
+    // 两张是表里带来的，只印了徽章与文字、没有结算载荷⇒编译时逐条记成诚实跳过，一声不响。
+    expect(taggedIn(allGenerals).map(g => g.name)).toEqual(['关羽', '毋丘俭', '诸葛诞']);
+    expect(taggedIn(allGenerals).map(g => g.id)).toEqual(['wei_022', 'sheet_wei_005', 'sheet_wei_014']);
+    // 会响的那一枚＝带真载荷的，名册里当场只数得出魏关羽。
+    const armed = allGenerals.filter(g => (g.skills ?? []).some(skill =>
+      tagsOf(skill).includes('觉醒技') && compileSkill(g, skill).definitions.length > 0));
+    expect(armed.map(g => g.id)).toEqual(['wei_022']);
     expect(taggedIn(DIY_FIXTURE_GENERALS).map(g => g.name)).toEqual([]);
   });
 });

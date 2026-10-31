@@ -379,11 +379,12 @@ describe('真名册扫描：每一局、每一席、每一条标签都拿私格�
     }
     // 下面三个数＝这一趟种子（1000…1011）固定跑出来的实测读数，钉死是为了证明这一趟
     // 真的走遍了那两条路；哪天枚举面变了，这里会响，而不是悄悄变成"零命中"的空跑。
-    expect(labels).toBe(1183);
-    expect(kinds.DEPLOY_GENERAL).toBe(148);
-    expect(kinds.CHOOSE_OPTION).toBe(2);
+    // 2026-10-31 读法㈁（转换表 239 张卡进名册）之后现场复量：牌堆与候选面变大⇒三个数一起涨。
+    expect(labels).toBe(1378);
+    expect(kinds.DEPLOY_GENERAL).toBe(163);
+    expect(kinds.CHOOSE_OPTION).toBe(33);
     // 登场这一步在真名册里总能在动作者手里查到位置：位置引用不会退化成那句兜底的话。
-    expect(deployTotal).toBe(148);
+    expect(deployTotal).toBe(163);
     expect(hits).toEqual([]);
   });
 });

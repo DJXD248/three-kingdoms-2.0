@@ -93,7 +93,9 @@ describe('2.4.2 批量二 · 编译形态（§G 施工图逐字核对）', () =>
   it('24 条编译入局：全库共 43 条 runtime 定义（含 v2.6.0 EQUIP_STRIP 两条、v2.6.2 onCardLost 两条与 v2.9.6 三条）', () => {
     expect(definitions).toHaveLength(43);
     expect(definitions.map(d => d.id).sort()).toEqual([...ALL_IDS].sort());
-    expect(skipped).toHaveLength(128);
+    // 600＝128（v2.9.27 及以前）＋472：读法㈁ 把转换表那 239 张卡的 472 枚技能并进名册，
+    // 它们**只带卡面文字、没有结算载荷**⇒一枚不响、全部记成诚实跳过。定义那条一枚没多＝这刀不改玩法。
+    expect(skipped).toHaveLength(600);
     expect(skipped.every(s => s.reason === 'NO_RUNTIME_PAYLOAD')).toBe(true);
   });
 

@@ -24,6 +24,7 @@ import {
   __setSkillNameTableForTests,
 } from './skillNameIndex';
 import { allGenerals, type General, type Skill } from '../data/generals';
+import { SHEET_GENERALS } from '../data/generalsConverted';
 import {
   SKILL_TABLE_OWNER_LABEL,
   authoredSkillTableEntries,
@@ -32,6 +33,10 @@ import {
   skillTable,
 } from '../data/skillTable';
 import { compileGeneralSkills } from './skillCompiler';
+
+/** 名册里用户自己写的那一半（v2.9.28 读法㈁ 之后 `allGenerals` 还含转换表带入的 239 张，号都在 `sheet_` 名下）。 */
+const SHEET_IDS = new Set(SHEET_GENERALS.map(g => g.id));
+const AUTHORED_GENERALS = allGenerals.filter(g => !SHEET_IDS.has(g.id));
 
 /** 与投影同一算法的独立序列化：证人要能自己算一遍，不复用被测实现的话术。 */
 function sig(v: unknown): string {
@@ -43,10 +48,10 @@ function sig(v: unknown): string {
   return JSON.stringify(v ?? null);
 }
 
-/** 直接在**卡面**上量一遍（不走解析点），用来跟表上的读数对账。 */
-function cardCensus() {
+/** 直接在**卡面**上量一遍（不走解析点），用来跟表上的读数对账。默认量整本名册，也可以只量一半。 */
+function cardCensus(pool: readonly General[] = allGenerals) {
   const names = new Map<string, string[]>();
-  for (const g of allGenerals) {
+  for (const g of pool) {
     for (const s of g.skills ?? []) {
       const name = String(s?.name ?? '').trim();
       if (!name) continue;
@@ -54,7 +59,7 @@ function cardCensus() {
     }
   }
   const contentNames = [...names.keys()].filter(name => {
-    const printed = allGenerals.flatMap(g => g.skills ?? []).find(s => s.name === name)!;
+    const printed = pool.flatMap(g => g.skills ?? []).find(s => s.name === name)!;
     return hasSettleableContent(printed);
   });
   const duplicated = [...names.entries()].filter(([, sigs]) => sigs.length > 1);
@@ -78,19 +83,28 @@ describe('skillNameIndex · 技能表是唯一来源（2.9.7 刀）', () => {
   afterEach(() => __resetSkillNameIndexForTests());
 
   /**
-   * 生产数据普查。这一条是「技能表只做有真内容的」那句话的落点：
-   * 三个数（卡面不同名 163／有真内容 40／空壳 123）全部**现场量**，表上的行数＝40＋自建那 1 枚。
+   * 生产数据普查。这一条是「技能表只做有真内容的」那句话的落点。
+   * 2026-10-31 读法㈁（转换表 239 张卡并进名册）之后名册分两半各量一遍：
+   *  · 用户自己写的那 96 张＝163 个名字／有真内容 40／空壳 123（一个数没动）；
+   *  · 整本 335 张＝607 个名字／有真内容仍是 40／空壳涨到 567 ⇒ 带进来的那批一枚都不会响。
+   * 表上的行数＝40＋自建那 1 枚，与名册变大无关。
    */
-  it('普查：卡上 163 个名字里有真内容的 40 枚全进表，123 个空壳一个都没进', () => {
-    const census = cardCensus();
-    expect(census.totalNames).toBe(163);
-    expect(census.contentNames).toHaveLength(40);
-    expect(census.shellNames).toHaveLength(123);
+  it('普查：有真内容的 40 枚全进表，空壳一个都没进（读法㈁ 前后同一口径）', () => {
+    const full = cardCensus();
+    expect(full.totalNames).toBe(607);
+    expect(full.contentNames).toHaveLength(40);
+    expect(full.shellNames).toHaveLength(567);
+    // 只数用户写的那 96 张：三个数与 v2.9.27 逐字相同＝这刀没碰他写的东西。
+    const authored = cardCensus(AUTHORED_GENERALS);
+    expect(authored.totalNames).toBe(163);
+    expect(authored.contentNames).toHaveLength(40);
+    expect(authored.shellNames).toHaveLength(123);
+    expect(authored.contentNames).toEqual(full.contentNames);
     // 表＝有真内容的（同名同内容并成一行）＋表上自建的那一枚。
     expect(skillTable).toHaveLength(41);
-    expect(skillTable.map(row => row.skill.name)).toEqual([...census.contentNames, '怒斩']);
+    expect(skillTable.map(row => row.skill.name)).toEqual([...full.contentNames, '怒斩']);
     // 空壳一个都不在表上；表上没有一行是空壳。
-    for (const name of census.shellNames) expect(skillTable.some(r => r.skill.name === name)).toBe(false);
+    for (const name of full.shellNames) expect(skillTable.some(r => r.skill.name === name)).toBe(false);
     expect(skillTable.filter(r => !hasSettleableContent(r.skill))).toEqual([]);
   });
 
@@ -121,15 +135,72 @@ describe('skillNameIndex · 技能表是唯一来源（2.9.7 刀）', () => {
     expect(lookupSkillByName('屯田').status).toBe('found');
   });
 
-  it('官方名册里没有"同名但内容不同"的两枚——用户那条裁决今天是实测成立的', () => {
-    const census = cardCensus();
-    expect(census.conflictingNames).toEqual([]);
+  it('用户写的那 96 张里没有"同名但内容不同"的两枚；读法㈁ 带进来的新事实另钉一条', () => {
+    // 用户 2026-10-08 那条裁决（「官方目前不存在不同效果但重名的技能」）在他自己写的名册上照旧成立。
+    const authored = cardCensus(AUTHORED_GENERALS);
+    expect(authored.conflictingNames).toEqual([]);
     // 实测（2026-10-16 现场量的）：163 个名字、7 个重名，全部是同一枚技能印在两张卡上。
-    expect(census.duplicatedNames).toEqual(['凿险', '屯田', '巧变', '权计', '武圣', '自立', '马术']);
+    expect(authored.duplicatedNames).toEqual(['凿险', '屯田', '巧变', '权计', '武圣', '自立', '马术']);
     // 重名的这两枚（有真内容的那两支）走"并成一行"这条路，而不是被当成歧义拦下。
     for (const name of ['屯田', '武圣']) {
       expect(lookupSkillByName(name).status).toBe('found');
       expect(skillTable.filter(r => r.skill.name === name)).toHaveLength(1);
+    }
+  });
+
+  /**
+   * 读法㈁ 带进来的新事实（2026-10-31 现场量）：转换表那 239 张卡里，有 21 个技能名与用户写过的
+   * 卡**同名而文字不同**（如「龙胆」在赵云(蜀)与赵襄(蜀)上是两回事）。这撞的是用户那条裁决的字面，
+   * 所以必须当场钉清楚它到底有没有伤到引擎：
+   *  · 引擎问名字只问技能表（2.9.7 起），表上只有带真内容的⇒表上 41 个名字一个不撞；
+   *  · 那 472 枚带进来的技能一枚都不带真内容⇒整本名册的投影与"剔掉这批后的投影"逐字一样；
+   *  · 表上仅有的两处「一行两个归属」＝屯田（邓艾魏／邓艾晋）与武圣（关羽魏／关羽蜀），
+   *    两组都是用户自己名册内部同名同内容（逐字节一样才并成一行），与转换表无关。
+   * 哪天用户把表里某枚同名技能填上真内容，下面第二条立刻红——那是一条要他裁决的数据缺陷，不是 bug。
+   */
+  it('卡面 21 组"同名不同内容"全部来自转换表，而引擎那张表一枚都不撞', () => {
+    const full = cardCensus();
+    expect(full.conflictingNames).toHaveLength(21);
+    expect(full.duplicatedNames).toHaveLength(27);
+    // 表上（引擎真正会问的那一份）名字唯一⇒没有第二套答案。
+    const tableNames = skillTable.map(r => r.skill.name);
+    expect(new Set(tableNames).size).toBe(tableNames.length);
+    // 每一组同名不同内容里，至少一枚来自转换表（用户自己那批内部没有这种分叉）。
+    for (const name of full.conflictingNames) {
+      const holders = allGenerals.filter(g => (g.skills ?? []).some(s => s.name === name));
+      expect(
+        holders.some(g => SHEET_IDS.has(g.id)),
+        `「${name}」在卡面上有两种写法，可两枚都不在转换表里⇒名册里凭空多了一组分叉`,
+      ).toBe(true);
+    }
+  });
+
+  it('转换表那批一枚都没进技能表：两份投影逐字一样（不止数行数）', () => {
+    const k = (r: readonly General[]) => projectSkillTable(r)
+      .map(x => [x.skill.name, sig(x.skill)].join('|')).sort();
+    expect(k(allGenerals)).toEqual(k(AUTHORED_GENERALS));
+    expect(k(allGenerals)).toHaveLength(41);
+    expect(SHEET_GENERALS.flatMap(g => (g.skills ?? []).filter(s => hasSettleableContent(s)))).toEqual([]);
+  });
+
+  /**
+   * 表上"一行两个归属"只有两处，且两处的每一枚都是用户自己名册里的（内容逐字节一样才并成一行）——
+   * 读法㈁ 没有往这两行上添任何一个归属。这一条钉的是投影既有的合并纪律：
+   * 同名且**内容一样**＝同一枚（归属都留）；同名而内容不同＝两行都进、绝不合并（实测 0 组）。
+   */
+  it('表上带两个归属的只有屯田与武圣，两组都出自用户名册内部同名同内容', () => {
+    const multi = skillTable.filter(r => r.owners.length > 1)
+      .map(r => `${r.skill.name}:${r.owners.map(o => o.label).sort().join('/')}`).sort();
+    expect(multi).toEqual(['屯田:邓艾（晋）/邓艾（魏）', '武圣:关羽（蜀）/关羽（魏）']);
+    // 合并的资格＝两枚内容逐字节一样；各归属的 label 必须都对得上名册里真实的那张卡。
+    for (const row of skillTable.filter(r => r.owners.length > 1)) {
+      const printed = AUTHORED_GENERALS
+        .filter(g => row.owners.some(o => `${g.name}（${g.faction}）` === o.label))
+        .map(g => (g.skills ?? []).find(s => s.name === row.skill.name))
+        .filter(s => s !== undefined);
+      expect(printed, `「${row.skill.name}」的归属在名册里找不到对应的卡`).toHaveLength(row.owners.length);
+      expect(new Set(printed.map(s => sig(s))).size, `「${row.skill.name}」两个归属不是同一枚`).toBe(1);
+      expect(sig(row.skill), `「${row.skill.name}」表上那枚与卡面那枚内容分叉了`).toBe(sig(printed[0]));
     }
   });
 

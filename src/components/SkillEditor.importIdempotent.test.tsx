@@ -79,10 +79,15 @@ function fireImport(file: File) {
   fireEvent.change(input, { target: { files: [file] } });
 }
 
-/** 回执自动消失前会一直是上一条文案⇒每次都等到本条真出现才往下走。 */
+/**
+ * 回执自动消失前会一直是上一条文案⇒每次都等到本条真出现才往下走。
+ * 上限抬到 20 秒是 v2.9.28 读法㈁ 之后的实测：全表导出再导回这一趟，进料从 96 张变成 335 张。
+ * 单独跑这一条 2,200 ms，而覆盖率插桩＋并发跑时那条回执在默认 1 秒内还没换过来（红在
+ * 「expected '✅ 已导出Excel文件' to contain '名等你在下方决定'」）。等的是真东西，不是放宽挂死判据。
+ */
 async function importFile(file: File, expectText: string) {
   fireImport(file);
-  await waitFor(() => expect(toastText()).toContain(expectText));
+  await waitFor(() => expect(toastText()).toContain(expectText), { timeout: 20_000 });
   return toastText();
 }
 

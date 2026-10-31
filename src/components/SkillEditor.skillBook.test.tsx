@@ -123,6 +123,9 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
     expect(screen.queryByText(/技能表里暂时没有「自创摸一张」/)).toBeNull();
   });
 
+  // v2.9.28 读法㈁ 之后这一条实测要 12 秒（单独跑）／全量并发跑要越过 20 秒：册子按用户 2026-10-21
+  // 那句「每次都重算」走，而进料从 96 张卡变成 335 张（技能格 163→607）。这不是挂死，是给这一条
+  // 单独抬上限；全局 20 秒那道"真挂死"的尺一律没动。
   it('④ 今天自动重算开着⇒那颗刷新按钮不出现；关掉自动重算它就在（用户要留的那一套）', () => {
     expect(screen.queryByRole('button', { name: '刷新技能册' })).toBeNull();
 
@@ -132,7 +135,7 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
     // 点了不能炸：它就是把册子按这台机器现在的内容重算一遍。
     fireEvent.click(button);
     expect(screen.getByRole('button', { name: '刷新技能册' })).toBeTruthy();
-  });
+  }, 60_000);
 
   it('⑤ 手动档下点那颗按钮＝界面真的换成此刻的册子（不是只把账重算了一遍、界面上看不见）', () => {
     setSkillBookAutoRecompute(false);

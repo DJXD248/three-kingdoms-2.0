@@ -388,7 +388,7 @@ const NON_EVENT_IDS = ['shu_002:武圣:e1', 'wei_022:单骑:chain', 'wei_022:武
 const FEED_ENTRIES = ENTRIES.filter(e => !NON_EVENT_IDS.includes(e.def.id));
 
 describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', () => {
-  it('账本钉：43 条 runtime 定义 / 128 条诚实跳过，触发类别覆盖 8+onTurnEnd 全谱', () => {
+  it('账本钉：43 条 runtime 定义 / 600 条诚实跳过，触发类别覆盖 8+onTurnEnd 全谱', () => {
     expect(ENTRIES).toHaveLength(43);
     // v2.9.6 内容刀现场量的：43＝40＋武圣两枚（蜀／魏各一，passive）＋单骑一枚（链式）。
     const allIds = ENTRIES.map(e => e.def.id);
@@ -398,7 +398,8 @@ describe('2.5.4 逐技能强制触发可达性专项（40/40 定义全谱）', (
     expect(FEED_ENTRIES).toHaveLength(40);
     let skipped = 0;
     for (const g of allGenerals) skipped += compileGeneralSkills(g).skipped.length;
-    expect(skipped).toBe(128);
+    // 600＝128＋472（读法㈁ 从转换表带入的那 472 枚技能全是"只有文字、没有载荷"⇒一枚不响，逐条记成诚实跳过）。
+    expect(skipped).toBe(600);
     const triggers = new Set(FEED_ENTRIES.map(e => `${e.def.trigger}${e.def.damageTypeFilter ? `:${e.def.damageTypeFilter}` : ''}`));
     expect([...triggers].sort()).toEqual([
       'onBecomingTarget', 'onCardLost', 'onDamageDealt:attack', 'onDamageTaken',
