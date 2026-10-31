@@ -1,0 +1,6 @@
+# CI 的 runner 是 windows-latest，它的 git 默认 core.autocrlf=true ⇒ 检出时把 LF 换成 CRLF。
+# 下面这份是生成物，守卫测试（scripts/generalsConverted.test.mjs）拿它和生成器的输出**逐字**对账，
+# 生成器写的是 LF。一次换行改写就能让"内容一个字没变"的文件在 CI 上红（v2.9.28 的 CI #335 就是这么红的）。
+# 所以把这一份钉死成 LF，不跟着机器的默认走。
+# 只列这一份：仓库里另有 58 个在册文件的本地工作副本本来就是 CRLF，全局规则会把它们一夜之间变成"待提交"。
+src/data/generalsConverted.ts text eol=lf
