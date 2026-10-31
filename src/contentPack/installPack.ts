@@ -9,7 +9,7 @@
  *  ① 包只能带玩家自制将领；编号不在 `D-` 名下、来源不是 `'DIY'`、或撞仓库官方名册的一律拒。
  *  ② 同编号且内容一模一样＝"你已经有这张了"，跳过不算失败；同编号内容不一样＝整包拒绝，
  *     绝不覆盖本机已有的卡（覆盖是拿别人的文件改玩家的资产，比装不上更糟）。
- *  ③ 落库前先按已知字段名筛一遍（`sanitizeRecord`），野字段不进本机存档。
+ *  ③ 落库前先按已知字段名筛一遍（`sanitizeGeneralRecord`），野字段不进本机存档。
  */
 import type { General, Skill } from '../data/generals';
 import { allSkillTags, isValidTurnLimit } from '../data/generals';
@@ -52,6 +52,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
  * 逐条挑毛病；返回第一句人读的理由，没问题返回 null。
  * **导出这一侧也用它**（ContentPackPanel）——写出去的文件必须能装进别人的机器，
  * 两侧各写一份判据迟早会分叉：这边放行、那边整包拒，玩家拿到的是一个永远装不上的包。
+ *
+ * ⚠️ 这个函数是**装包那一侧的判据**，含"包只装玩家自制"那半段（编号必须在 `D-` 名下、
+ * 来源必须写着玩家自制、不许撞官方卡）。字段那半段单独导出＝`findGeneralFieldProblem`，
+ * 因为乙 线第二片（名册交料）递过来的是**编辑合并后的整份效力面**，官方卡本来就在里面，
+ * 它要的是同一把字段尺、不是"只收 DIY"那条范围；两处各抄一份，抄的那一刻起
+ * "这边放行、那边拒"就迟早对不上同一个字。
  */
 export function findRecordProblem(raw: unknown): string | null {
   const g = asRecord(raw);
@@ -63,7 +69,15 @@ export function findRecordProblem(raw: unknown): string | null {
     return `编号「${id}」的记录缺了认账要用的字段（编号、来源或名字对不上）`;
   }
   if (isRepositoryOfficial(g)) return `编号「${g.id}」撞上了程序自带的官方卡——这张不会被写进本机自制清单`;
-  if (typeof g.name !== 'string' || g.name.trim() === '') return `编号「${g.id}」没有将名`;
+  return findGeneralFieldProblem(g);
+}
+
+/**
+ * 卡面字段合不合本程序认的字（**不含**"必须是玩家自制"那半段，范围由调用方自己定）。
+ * v2.9.12 装包与乙 线第二片名册交料共读这一支；措辞是给玩家看的，不是给日志看的。
+ */
+export function findGeneralFieldProblem(g: Record<string, unknown>): string | null {
+  if (typeof g.name !== 'string' || g.name.trim() === '') return `编号「${String(g.id)}」没有将名`;
   if (!PACK_FACTIONS.includes(g.faction as never)) return `「${g.name}」的势力「${String(g.faction)}」不是本程序认的字（只认 ${PACK_FACTIONS.join('/')}）`;
   if (!isFiniteNumber(g.hp) || g.hp <= 0) return `「${g.name}」的体力「${String(g.hp)}」不是正数`;
   if (g.type !== '武将' && g.type !== '文将') return `「${g.name}」的类型「${String(g.type)}」不是本程序认的字`;
@@ -89,8 +103,8 @@ export function findRecordProblem(raw: unknown): string | null {
   return null;
 }
 
-/** 已知字段名筛一遍再落库：外来文件不能往本机存档里塞野键。 */
-function sanitizeRecord(raw: unknown): General {
+/** 已知字段名筛一遍再落库：外来文件不能往本机存档里塞野键。导出的理由＝乙 线第二片的名册交料收料时也要同一道筛（那两侧各写一份就会有一侧漏放野键）。 */
+export function sanitizeGeneralRecord(raw: unknown): General {
   const g = asRecord(raw) as Record<string, unknown>;
   const clean: Record<string, unknown> = {};
   for (const key of GENERAL_KEYS) if (g[key] !== undefined) clean[key] = g[key];
@@ -121,7 +135,7 @@ export function planInstall(read: PackRead, ctx: InstallContext): InstallPlan {
   }
 
   const existing = new Map<string, string>();
-  for (const g of ctx.existingAuthored) existing.set(g.id, stableText(sanitizeRecord(g)));
+  for (const g of ctx.existingAuthored) existing.set(g.id, stableText(sanitizeGeneralRecord(g)));
 
   const lines: InstallLine[] = [];
   const install: General[] = [];
@@ -136,7 +150,7 @@ export function planInstall(read: PackRead, ctx: InstallContext): InstallPlan {
       lines.push({ index, id, name, verdict: 'refuse', why: bad });
       continue;
     }
-    const clean = sanitizeRecord(raw);
+    const clean = sanitizeGeneralRecord(raw);
     const text = stableText(clean);
     const inPack = seenInPack.get(clean.id);
     if (inPack !== undefined) {

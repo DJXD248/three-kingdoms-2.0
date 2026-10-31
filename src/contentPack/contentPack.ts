@@ -90,10 +90,16 @@ function djb2(text: string): string {
 /**
  * 两枚 32 位摘要拼起来。只用来抓"下载不全""被人改过一个字"这类意外，
  * 不扛有心人伪造（这一版不防作弊，与联机口径一致）。
+ *
+ * 乙 线第二片（名册交料）也读这一支：那张"按效力取的指纹"要的就是同一个算法，
+ * 各写一份迟早会分叉——内容包算得相等、名册交料算得不等，玩家看到的是同一条路的两张脸。
  */
-export function packFingerprint(generals: General[]): string {
-  const text = stableText(generals);
+export function digestText(text: string): string {
   return `${fnv1a32(text)}-${djb2(text)}`;
+}
+
+export function packFingerprint(generals: General[]): string {
+  return digestText(stableText(generals));
 }
 
 /** 这张卡属不属于"可以进包"的那批＝玩家自制、编号在 D- 名下、不是仓库官方名册里的卡。 */

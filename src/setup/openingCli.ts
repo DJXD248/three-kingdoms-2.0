@@ -11,10 +11,13 @@
  *   npm run opening-compute -- --seed 1 --players 4 --ai-seats 2,3,4
  *   npm run opening-compute -- --seed 1 --players 3 --roster-file roster.json
  *
- * ⚠️ 名册**怎么**交上来还没做（那是第二片＝交料，含"要么整份收下、要么明说没收下"那道原子闸）。
- * 这里 `--roster-file` 只是把"料从外面进来"这件事摆成命令行上看得见的一个口子：
- * 文件形态＝`{ "pool": General[], "disabledIds": string[] }`（也可以是 `[{...General}]` 整份名单）；
- * 不给这个参数时退回**仓库账本**当名册，那只是一块占位板，不代表已经交过料。
+ * 名册交料（乙 线第二片）走 `--roster-file`：文件形态只认一种＝
+ * `{ "format": 1, "pool": [ ...将的效力面... ], "disabledIds": [ ...被关掉的编号... ] }`，
+ * 由 `rosterHandover.acceptRosterSubmissionText` 那道**原子闸**收——要么整份收下、
+ * 要么明说没收下并逐条点名；没收下时**不开局**（绝不留半份名册继续算牌）。
+ * ⚠️ 今天唯一真走得通的交料路＝这个文件口子；**跨机器那一路还没接**（握手第四格
+ * `content` 要等第三片"引擎转移搬进进程"）。不给 `--roster-file` 时退回**仓库账本**，
+ * 那是一块占位板，不代表已经交过料。
  */
 import { allGenerals, type General } from '../data/generals';
 import { readFileSync } from 'node:fs';
@@ -31,6 +34,12 @@ import {
   type OpeningRoster,
   type OpeningState,
 } from './openingCompute';
+import {
+  ROSTER_SUBMISSION_FORMAT,
+  acceptRosterSubmissionText,
+  rosterContentFingerprint,
+  type RosterReceipt,
+} from './rosterHandover';
 import type { AiSeatMode, AiSeatTier } from './runtimeSetup';
 
 declare const process: { argv: string[]; exitCode: number };
@@ -71,16 +80,22 @@ function parseArgs(argv: readonly string[]): CliArgs {
   return args;
 }
 
-/** 交料的最小形态：读一份外部文件，读不懂就整份退回、绝不半收。 */
-function rosterFrom(file: string): OpeningRoster {
-  const raw = JSON.parse(readFileSync(file, 'utf8')) as unknown;
-  const list = Array.isArray(raw) ? raw : (raw as { pool?: unknown }).pool;
-  if (!Array.isArray(list)) throw new Error('名册文件读不懂：要的是 [{...将}] 或 {"pool":[{...将}],"disabledIds":[...]}');
-  const pool = list as General[];
-  const disabledIds = Array.isArray(raw)
-    ? []
-    : ((raw as { disabledIds?: unknown }).disabledIds ?? []) as string[];
-  return { pool, disabledIds: new Set(disabledIds) };
+/** 交料的最小路：把文件原文交给那道原子闸，回执说了才算数。 */
+function handOver(file: string): RosterReceipt {
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      accepted: false,
+      reason: `读不到这份名册文件（${detail}），一张也没收。`,
+      problems: [],
+      content: null,
+      roster: null,
+    };
+  }
+  return acceptRosterSubmissionText(text);
 }
 
 function seatModes(args: CliArgs): AiSeatMode[] {
@@ -99,6 +114,7 @@ function main(): void {
   if (args.seed === null || !Number.isFinite(args.seed)) {
     console.log('用法：npm run opening-compute -- --seed <整数> [--players 4] [--ai-seats 2,3,4] [--tier balanced] [--roster-file 名册.json]');
     console.log('（种子必须显式给：浏览器那侧今天的开局游标来自页面加载时的随机数，不随代码走、也不可复现）');
+    console.log(`（名册文件要的是 {"format":${String(ROSTER_SUBMISSION_FORMAT)},"pool":[...],"disabledIds":[...]}＝交上来的那份"效力名册"；不给就用仓库账本那块占位板）`);
     process.exitCode = 1;
     return;
   }
@@ -107,10 +123,30 @@ function main(): void {
     process.exitCode = 1;
     return;
   }
-  const roster: OpeningRoster = args.rosterFile
-    ? rosterFrom(args.rosterFile)
-    : { pool: allGenerals, disabledIds: new Set<string>() };
+  const useLedger = args.rosterFile === null;
+  const ledgerPool = allGenerals as General[];
+  const receipt: RosterReceipt = useLedger
+    ? {
+        accepted: true,
+        roster: { pool: ledgerPool, disabledIds: new Set<string>() },
+        // 占位板也算一枚真指纹：这样"交上来的那份"与"这台机器自带的账本"能不能对上，
+        // 命令行上当场可读（对不上＝两边账本不是同一份，正是握手那一格要说的那句话）。
+        content: rosterContentFingerprint(ledgerPool, []),
+        poolCount: ledgerPool.length,
+        disabledCount: 0,
+        notes: ['这一趟用的是程序自带的账本当名册＝占位板，不代表谁交过料（真交料走 --roster-file）。'],
+      }
+    : handOver(args.rosterFile as string);
 
+  if (!receipt.accepted) {
+    console.log(receipt.reason);
+    receipt.problems.forEach(problem => console.log(`   · ${problem}`));
+    console.log('既然没收下名册，这一局就不开——不留半份名册继续算牌（乙 线第 12 条那句原子闸）。');
+    process.exitCode = 1;
+    return;
+  }
+
+  const roster: OpeningRoster = receipt.roster;
   const request: OpeningRequest = {
     seed: args.seed,
     playerCount: args.players,
@@ -118,7 +154,8 @@ function main(): void {
     roomName: args.roomName,
   };
 
-  console.log(`名册来源：${args.rosterFile ?? '仓库账本（占位板＝这一片还没做交料）'}｜将 ${String(roster.pool.length)} 张｜禁用 ${String(roster.disabledIds.size)} 张`);
+  console.log(`名册来源：${useLedger ? '仓库账本（占位板＝没交料）' : `交上来的那一份（${args.rosterFile}）`}｜将 ${String(receipt.poolCount)} 张｜关掉 ${String(receipt.disabledCount)} 张｜按效力的指纹 ${receipt.content}`);
+  receipt.notes.forEach(note => console.log(`   说明：${note}`));
   const lobby = openRoom(request);
   console.log(`① 开房（发头像＋洗牌堆）→ ${ledgerLine(lobby)}`);
   const rolled = rollOpeningDice(lobby);
