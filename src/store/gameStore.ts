@@ -2,11 +2,32 @@ import { create } from 'zustand';
 import { General, allGenerals } from '../data/generals';
 import { GameCard, createCardDeck } from '../data/cards';
 import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle, defaultSeatModes, pickAiDraftPicks } from '../setup/runtimeSetup';
-import { dispatchStoreAction, openReactionWindowStore, passReactionStore, resetReactionWindowStore } from './engineExecutionBridge';
+import { openReactionWindowStore, passReactionStore, resetReactionWindowStore } from './engineExecutionBridge';
+// 乙 线第三片㈂：那 14 个入口里"改引擎的那半"（建动作／过唯一闸口／认那一身必须出现的事件）
+// 搬进 engineSteps，与算牌进程共用同一份判据。这里只留投影与告警原文，一条判据都不再重抄。
+import {
+  armGeneralStep,
+  activateSkillStep,
+  answerReaction,
+  attackStep,
+  autoFireForcedTurnEnd,
+  beginInitialDraw,
+  chooseOptionStep,
+  confirmDrawStep,
+  deployGeneralStep,
+  endTurnStep,
+  executeCanonicalDraw,
+  moveGeneralStep,
+  resolveDrawBaseLoss,
+  survivingSeats,
+  supplyStep,
+  surrenderStep,
+  visibleTurnEndAskItems,
+  type CanonicalDrawOutcome,
+} from './engineSteps';
 import { buildDrawContext, describeDrawSubtitle, engineStateToStoreProjection, storeStateToEngineState } from './gameStateAdapter';
 import type { EngineState } from '../core/GameState';
 import { cloneRngState, rngNext, type RngState } from '../core/rng';
-import { createAction } from '../action/ActionTypes';
 import type { SkillActivation } from '../skills/dataTypes';
 import {
   loadPersistedSkillEdits,
@@ -24,12 +45,11 @@ import { createEngineAwareSetter } from './engineAwareSetter';
 import { clearLocalGameSnapshot, saveLocalGameSnapshot } from './localGameSnapshot';
 import { resetLiveReplay } from '../replay/liveReplayRecorder';
 import { loadReplaySettings, persistReplaySettings } from '../replay/replayStorage';
-import type { GamePhase, DrawContext, Player, GameState, TurnEndAsk, TurnEndAskCandidate, SkillPromptMode } from './gameStoreTypes';
-import { listTurnEndAskItems, listForcedTurnEndActivations, type TurnEndAskItem } from '../skills/turnEndSkills';
-import { getReactionAsk } from '../skills/reactionChain';
+import type { GamePhase, DrawContext, Player, GameState, TurnEndAsk, TurnEndAskCandidate } from './gameStoreTypes';
+import type { TurnEndAskItem } from '../skills/turnEndSkills';
 import { setSkillBookRosterSource } from '../skills/skillNameIndex';
 import { activationNoticesFrom } from './activationNotices';
-import type { GameEvent, ReactionAnsweredData } from '../core/Event';
+import type { GameEvent } from '../core/Event';
 
 // Store-level types live in gameStoreTypes.ts (stage B split); re-exported
 // here so existing consumers keep importing them from this module.
@@ -65,6 +85,41 @@ const deriveResultState = (state: GameState, engineState: EngineState, fallbackP
   };
 };
 
+/**
+ * ㈂：抽牌那一步被拒时，本机原来那六句告警的**原文**照搬在这里——判据搬走了，话还是那句话。
+ * `activeSeatUnavailable` 那一条原来就是一声不响地返回 false，这里也一声不响（不许顺手加戏）。
+ */
+function reportDrawRejection(
+  outcome: Extract<CanonicalDrawOutcome, { ok: false }>,
+  drawContext: DrawContext,
+): void {
+  switch (outcome.reason) {
+    case 'engineHasNoPendingDraw':
+      console.warn('[Phase 5.35.25.2] DRAW rejected: engine has no pending draw', {
+        uiPlayerId: drawContext.playerId,
+        uiReason: drawContext.reason,
+      });
+      return;
+    case 'baseLossMustBeResolvedFirst':
+      console.warn('[Phase 5.35.25.2] DRAW rejected: base loss must be resolved first', outcome.detail);
+      return;
+    case 'normalizedTotalMismatch':
+      console.warn('[Phase 5.35.25.2] DRAW rejected: normalized total mismatch', outcome.detail);
+      return;
+    case 'generalPoolShortage':
+      console.warn('[Phase 5.35.11.3] DRAW rejected: general pool shortage', outcome.detail);
+      return;
+    case 'cardPoolShortage':
+      console.warn('[Phase 5.35.11.3] DRAW rejected: card pool shortage', outcome.detail);
+      return;
+    case 'engineRefused':
+      console.error('[Phase 5.35.25.2] DRAW failed', { ...outcome.detail, events: outcome.events });
+      return;
+    case 'activeSeatUnavailable':
+      return;
+  }
+}
+
 export const useGameStore=create<GameState>((zustandSet,get)=>{
   const set = createEngineAwareSetter<GameState>(zustandSet as unknown as (
     updater: (current: GameState) => GameState,
@@ -97,17 +152,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     disabledReason: c.disabledReason,
   });
 
-  // 2.8.17 (#42) 技能提示两档的唯一分档处：智能＝只列可发动的（＝合法集合），
-  // 完整＝场上只要有回合结束技能就全列，不可发动的置灰写明原因。两档共用同一个
-  // 派生源，所以"看得见"永远不等于"能发动"——合法判定一处都没放宽。
-  const visibleTurnEndAskItems = (
-    engineState: EngineState,
-    playerId: number,
-    mode: SkillPromptMode,
-  ): TurnEndAskItem[] => {
-    const items = listTurnEndAskItems(engineState, playerId);
-    return mode === 'full' ? items : items.filter(item => item.activatable);
-  };
+  // 2.8.17 (#42) 技能提示两档的唯一分档处已搬进 engineSteps.visibleTurnEndAskItems：
+  // 智能＝只列可发动的（＝合法集合），完整＝场上只要有回合结束技能就全列，不可发动的
+  // 置灰写明原因。判据与算牌进程共用同一份，本机只按它列出来的东西开画面那扇窗。
 
   // 发动通知的唯一接线处（v2.9.17＝用户「一定要通知玩家有什么技能发动了」）。判据一句＝
   // 这一次 dispatch 的事件流里有没有那一身 `SKILL_ACTIVATED`；三条发动路都从
@@ -126,25 +173,11 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   // 强制发动·回合结束（v2.9.17＝用户「强制发动永远是强制发动，无论什么节点」）：
   // 轮到结束这一刻，勾了那一格的定义**不进那扇逢人就问的窗**，由系统替这一席发动。
+  // 那一段循环的判据搬进 engineSteps.autoFireForcedTurnEnd；本机传的读手就是 `get()`＝
+  // 每发完一枚都读一次新状态，与进程宿主读自己那份账是同一句"读新的"。
   // 走的是同一条规范动作 `ACTIVATE_SKILL`⇒与玩家亲手点逐字同形、进录像、扣同一本账，
   // 通知也照样从上面那一处飘出来。放在席位判断**之前**＝人席／AI 席／热座／沙盒一律
   // 先过这一步："不问"靠技能自己身上那一格，不靠坐在那一席的是谁。
-  const autoFireForcedTurnEndSkills = (playerId: number) => {
-    // 一枚发动会改状态（抽牌、甚至终局），所以每发完一枚都从新状态重推一次候选，
-    // 绝不一开始就抓一份快照清单。`declined` 只防一种如实的失败（引擎按"宁可不发，
-    // 绝不空耗"退回，如择一逐项门槛全不过），防的是同一枚被反复重试。
-    const declined = new Set<string>();
-    for (let step = 0; step < 64; step += 1) {
-      const current = get();
-      if (current.engineState.currentPlayerId !== playerId) return;
-      const next = listForcedTurnEndActivations(current.engineState, playerId)
-        .find(candidate => !declined.has(candidate.definition.id));
-      if (!next) return;
-      if (!get().activateTurnEndSkill(next.definition.id, next.generalId)) {
-        declined.add(next.definition.id);
-      }
-    }
-  };
 
   // The real END_TURN commit, shared verbatim by the ungated endTurn path and
   // skipTurnEndAsk — exactly one place ever dispatches END_TURN in the store.
@@ -156,12 +189,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
     // 这一次 dispatch 里会出「回合开始时」那一声（`TurnResolver` 发 `TURN_START`），
     // 所以下一席那些勾了「强制发动」的回合开始技能正是在这儿自己响的⇒通知必须接得上。
-    // 本回合结束那几枚勾了强制发动的定义则由上面 `autoFireForcedTurnEndSkills` 在这一次
+    // 本回合结束那几枚勾了强制发动的定义则由上面搬进 engineSteps 的那一段
     // 提交**之前**替这一席发动，不会跑到这里来。
-    const { engineState, events } = dispatchStoreAction(
-      get(),
-      createAction('END_TURN', activePlayer.id),
-    );
+    const { engineState, events } = endTurnStep(get(), activePlayer.id);
 
     if(isTestMode){
       // Keep the test arena mounted while still executing the real turn/draw
@@ -181,7 +211,8 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const nextIndex=engineState.players.findIndex(player=>player.id===nextPlayerId);
     const safeNextIndex=nextIndex>=0?nextIndex:currentPlayerIndex;
     const nextRound=engineState.round || currentRound;
-    const alive=engineState.players.filter(player=>player.isAlive !== false);
+    // 还剩几席活着＝进程与本机共用的这一句判据（engineSteps.survivingSeats）。
+    const alive=survivingSeats(engineState);
 
     if(alive.length<=1){
       set({
@@ -233,21 +264,11 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   // AI 司机挑动作都落在这里——基础游戏规则不分人和 AI（用户 2026-09-30 口径）。
   const commitReactionAnswer = (skillId: string | null, generalId: string | null): boolean => {
     const state = get();
-    const ask = getReactionAsk(state.engineState);
-    if (!ask) return false;
-    const option = skillId === null ? undefined
-      : ask.options.find(entry => entry.skillId === skillId && entry.generalId === generalId);
-    if (skillId !== null && !option) return false;
-
-    const action = skillId === null
-      ? createAction('SKIP_REACTION', ask.playerId, { nodeKey: ask.nodeKey })
-      : createAction('ACTIVATE_SKILL', ask.playerId, { skillId, generalId });
-    const { engineState, events } = dispatchStoreAction(state, action);
-    // 诚实拒绝：这一句表态没能记进事件流（门槛不过／问句已换人），投影就一动不动，
-    // 窗还开着，玩家看得见自己没点成。
-    const answered = events.find(event => event.type === 'REACTION_ANSWERED')
-      ?.data as ReactionAnsweredData | undefined;
-    if (!answered) return false;
+    // ㈂：该谁答、答哪一格、认哪一身事件（含"表态没进事件流就算没落地"那一句）整段搬进
+    // engineSteps.answerReaction，与算牌进程共用同一份判据；`getReactionAsk` 仍是唯一推导点。
+    const answer = answerReaction(state, skillId, generalId);
+    if (!answer.ok) return false;
+    const { engineState, events } = answer;
 
     if (state.isTestMode) {
       set({ ...buildTestArenaState(state, engineState), ...noticePatch(state, engineState, events) });
@@ -359,12 +380,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       const p0=u[0];
       if(!p0){set({players:u});return;}
       set({players:u});
-      const {engineState, events}=dispatchStoreAction(
-        get(),
-        createAction('BEGIN_DRAW',p0.id,{reason:'initial',playerId:p0.id,totalCards:5}),
-      );
-      const drawRequired = events.some(event => event.type === 'DRAW_REQUIRED');
-      if (!drawRequired || !engineState.drawState) {
+      const begin=beginInitialDraw(get(), p0.id);
+      const {engineState, events}=begin;
+      if (!begin.started) {
         console.error('[Phase 5.35.11] BEGIN_DRAW failed', events);
         set({players:u});
         return;
@@ -417,79 +435,24 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   // ── unified draw: execute ──
   executeDraw:(fromPool,_fromDeck)=>{
     const state=get();
-    const {drawContext,engineState:currentEngineState}=state;
+    const {drawContext}=state;
     if(!drawContext)return false;
 
     // The engine-owned drawState is authoritative. The Zustand drawContext is
     // presentation state and can briefly lag behind after TURN_END/
     // TURN_START, especially when eliminated seats are skipped. Normalize the
     // player/reason/total from the engine before validating the DRAW action.
-    const pendingDraw=currentEngineState.drawState;
-    if(!pendingDraw) {
-      console.warn('[Phase 5.35.25.2] DRAW rejected: engine has no pending draw', {
-        uiPlayerId: drawContext.playerId,
-        uiReason: drawContext.reason,
-      });
+    // ㈂（乙 线第三片）：抽牌那七道闸整段搬进 engineSteps.executeCanonicalDraw，与算牌进程
+    // 共用同一份判据；本机只留展示面那道闸（进程没有 `drawContext` 这一格）与告警原文。
+    const outcome=executeCanonicalDraw(state, fromPool);
+    if(!outcome.ok){
+      reportDrawRejection(outcome, drawContext);
       return false;
     }
-
-    const activeEnginePlayer=currentEngineState.players.find(p=>p.id===pendingDraw.playerId);
-    if(!activeEnginePlayer || activeEnginePlayer.isAlive===false)return false;
-
-    const requestedTotal=Math.max(0,Math.floor(pendingDraw.totalCards));
-    const maxFromPool=Math.min(requestedTotal,Array.isArray(activeEnginePlayer.generalPool)?activeEnginePlayer.generalPool.length:0);
-    const requestedGeneral=Math.min(Math.max(0,Math.floor(fromPool)),maxFromPool);
-    const requestedCards=Math.max(0,requestedTotal-requestedGeneral);
-    const generalAvailable=Array.isArray(activeEnginePlayer.generalPool)?activeEnginePlayer.generalPool.length:0;
-    const cardAvailable=(Array.isArray(currentEngineState.deck)?currentEngineState.deck.length:0)+(Array.isArray(currentEngineState.discardPile)?currentEngineState.discardPile.length:0);
-    if(pendingDraw.baseLossPending){
-      console.warn('[Phase 5.35.25.2] DRAW rejected: base loss must be resolved first', {
-        playerId: pendingDraw.playerId,
-        totalCards: requestedTotal,
-      });
-      return false;
-    }
-    if(requestedGeneral+requestedCards!==requestedTotal){
-      console.warn('[Phase 5.35.25.2] DRAW rejected: normalized total mismatch', {
-        requestedGeneral, requestedCards, requestedTotal,
-        generalAvailable, cardAvailable,
-      });
-      return false;
-    }
-    if(requestedGeneral>generalAvailable){
-      console.warn('[Phase 5.35.11.3] DRAW rejected: general pool shortage', {requestedGeneral,generalAvailable});
-      return false;
-    }
-    if(requestedCards>cardAvailable){
-      console.warn('[Phase 5.35.11.3] DRAW rejected: card pool shortage', {requestedCards,cardAvailable});
-      return false;
-    }
-
-    const beforeHand=Array.isArray(activeEnginePlayer.hand)?activeEnginePlayer.hand.length:0;
-    const {engineState,events}=dispatchStoreAction(
-      state,
-      createAction('DRAW', activeEnginePlayer.id, {fromGeneralPool:requestedGeneral,fromCardPool:requestedCards,reason:pendingDraw.reason}),
-    );
-
-    const rejected=events.find(event=>event.type==='ACTION_REJECTED');
-    const drawEvent=events.find(event=>event.type==='DRAW');
-    if(rejected || !drawEvent){
-      console.error('[Phase 5.35.25.2] DRAW failed', {
-        rejected: rejected?.data ?? rejected ?? null,
-        events,
-        pendingDraw,
-        requestedGeneral,
-        requestedCards,
-      });
-      return false;
-    }
-
-    const updatedPlayer=engineState.players.find(p=>p.id===activeEnginePlayer.id);
-    const afterHand=Array.isArray(updatedPlayer?.hand)?updatedPlayer.hand:[];
-    const revealed=afterHand.slice(beforeHand) as (General|GameCard)[];
-    const expectedCount=requestedTotal;
-    if(revealed.length!==expectedCount){
-      console.warn('[Phase 5.35.11.3] DRAW result count mismatch', {expectedCount, actual:revealed.length, events});
+    const engineState=outcome.engineState;
+    const events=outcome.events;
+    if(outcome.revealedCountMismatch){
+      console.warn('[Phase 5.35.11.3] DRAW result count mismatch', {expectedCount:outcome.requestedTotal, actual:outcome.revealed.length, events});
     }
 
     set({
@@ -497,7 +460,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       players:engineState.players as unknown as Player[],
       cardDeck:engineState.deck as GameCard[],
       discardPile:engineState.discardPile as GameCard[],
-      revealedDrawCards:revealed,
+      revealedDrawCards:outcome.revealed,
       ...noticePatch(state, engineState, events),
     });
     return true;
@@ -508,10 +471,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const state = get();
     const{drawContext}=state;
     if(!drawContext)return;
-    const{engineState,events}=dispatchStoreAction(
-      get(),
-      createAction('CONFIRM_DRAW',drawContext.playerId,{reason:drawContext.reason}),
-    );
+    // ㈂：建动作＋过闸搬进 engineSteps.confirmDrawStep，与进程共用同一份；"派给哪一席"
+    // 本机仍按展示面 `drawContext.playerId` 解析（进程没有那一格，它按引擎真值解析）。
+    const{engineState,events}=confirmDrawStep(get(), drawContext.playerId, drawContext.reason);
 
     const confirmed=events.find(e=>e.type==='DRAW_CONFIRMED')?.data as any;
     const phaseChanged=events.find(e=>e.type==='PHASE_CHANGED')?.data as any;
@@ -545,21 +507,11 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const state = get();
     const draw = state.drawContext;
     if (!draw?.baseLossPending) return;
-    const { engineState, events } = dispatchStoreAction(
-      state,
-      createAction('RESOLVE_BASE_LOSS', draw.playerId, { reason: draw.reason }),
-    );
-    let finalEngineState = engineState;
-    const allEvents = [...events];
-    const nextDraw = engineState.drawState;
-    if (nextDraw && nextDraw.reason === 'turnStart' && nextDraw.totalCards === 0 && !nextDraw.baseLossPending) {
-      const followUp = dispatchStoreAction(
-        { ...state, engineState },
-        createAction('CONFIRM_DRAW', nextDraw.playerId, { reason: nextDraw.reason }),
-      );
-      finalEngineState = followUp.engineState;
-      allEvents.push(...followUp.events);
-    }
+    // ㈂：这两步的建动作＋过闸都在 engineSteps 里（resolveDrawBaseLoss＝结欠损＋该关的空窗
+    // 当场关掉，一条判据，与算牌进程共用）；这里只留下面那一整块 set()。
+    const loss = resolveDrawBaseLoss(state, draw.playerId, draw.reason);
+    const finalEngineState = loss.engineState;
+    const allEvents = loss.events;
     const currentPlayerIndex = finalEngineState.players.findIndex(player => player.id === finalEngineState.currentPlayerId);
     set({
       engineState: finalEngineState,
@@ -585,16 +537,15 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   deployGeneral:(general,slot,consumeCards)=>{
     const state=get();
-    const result=dispatchStoreAction(
+    // ㈂：建动作＋"认 GENERAL_DEPLOYED 那一身"搬进 engineSteps.deployGeneralStep（`ok`＝原来那个 success）。
+    const result=deployGeneralStep(
       state,
-      createAction('DEPLOY_GENERAL', state.players[state.currentPlayerIndex]?.id ?? 0, {
-        general,
-        slot,
-        consumeCards,
-      }),
+      state.players[state.currentPlayerIndex]?.id ?? 0,
+      general,
+      slot,
+      consumeCards,
     );
-    const success=result.events.some(event=>event.type==='GENERAL_DEPLOYED');
-    if(!success)return false;
+    if(!result.ok)return false;
     const {engineState}=result;
     const currentPlayerIndex = engineState.players.findIndex(player => player.id === engineState.currentPlayerId);
     set({
@@ -611,15 +562,14 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   moveGeneral:(generalId,target,consumeCard,sandboxAllowArming)=>{
     const state=get();
-    const {engineState, events}=dispatchStoreAction(
+    const {engineState, events}=moveGeneralStep(
       state,
-      createAction('MOVE_GENERAL', state.players[state.currentPlayerIndex]?.id ?? 0, {
-        generalId,
-        target,
-        consumeCard,
-        // 演练场（沙盒）旁路：整备中的将允许移动。GameBoard／AI／回放都不传⇒正式玩法不受影响。
-        ...(sandboxAllowArming === true ? { sandboxAllowArming: true } : {}),
-      }),
+      state.players[state.currentPlayerIndex]?.id ?? 0,
+      generalId,
+      target,
+      consumeCard,
+      // 演练场（沙盒）旁路那一格的判据在 engineSteps.moveGeneralStep 里，与进程共用。
+      sandboxAllowArming,
     );
     const currentPlayerIndex = engineState.players.findIndex(player => player.id === engineState.currentPlayerId);
     set({
@@ -634,14 +584,13 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   attackTarget:(attackerId,targetId,isRanged,consumeCard)=>{
     const state=get();
-    const {engineState,events}=dispatchStoreAction(
+    const {engineState,events}=attackStep(
       state,
-      createAction('ATTACK', state.players[state.currentPlayerIndex]?.id ?? 0, {
-        attackerId,
-        targetId,
-        ranged:isRanged,
-        consumeCard:consumeCard ?? null,
-      }),
+      state.players[state.currentPlayerIndex]?.id ?? 0,
+      attackerId,
+      targetId,
+      isRanged,
+      consumeCard,
     );
 
     // A normal GENERAL DEATH must never be treated as player defeat.
@@ -682,11 +631,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const state=get();
     const player=state.players[state.currentPlayerIndex];
     if(!player)return;
-    const {engineState, events}=dispatchStoreAction(
-      state,
-      createAction('SUPPLY', player.id, { generalId, consumeCards: cards }),
-    );
-    if (!events.some(event => event.type === 'SUPPLY_RESOLVED')) return;
+    const step=supplyStep(state, player.id, generalId, cards);
+    if (!step.ok) return;
+    const {engineState, events}=step;
     set({
       ...engineStateToStoreProjection(engineState, state.currentPlayerIndex),
       ...noticePatch(state, engineState, events),
@@ -697,12 +644,9 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const state=get();
     const player=state.players[state.currentPlayerIndex];
     if(!player)return false;
-    const {engineState,events}=dispatchStoreAction(
-      state,
-      createAction('EQUIP_ARMOR', player.id, { generalId, armorCards }),
-    );
-    const success=events.some(event => event.type === 'ARMOR_EQUIPPED');
-    if(!success)return false;
+    const step=armGeneralStep(state, player.id, generalId, armorCards);
+    if(!step.ok)return false;
+    const {engineState, events}=step;
     set({
       ...engineStateToStoreProjection(engineState, state.currentPlayerIndex),
       ...noticePatch(state, engineState, events),
@@ -712,7 +656,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
   surrender:(id)=>{
     const state = get();
-    const { engineState, events } = dispatchStoreAction(state, createAction('SURRENDER', id));
+    const { engineState, events } = surrenderStep(state, id);
 
     // Test arena is an instrumentation sandbox: surrender should immediately
     // advance to the next live player without leaving the arena or opening the
@@ -784,7 +728,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
 
     // v2.9.17：先替这一席把勾了「强制发动」的回合结束定义发动掉（同一条规范动作），
     // 再决定要不要开窗问剩下的。窗子从此只问"需要人点头"的那些。
-    autoFireForcedTurnEndSkills(activePlayer.id);
+    autoFireForcedTurnEnd(get, activePlayer.id);
     // 那几发自己响的效果有可能把这一局直接打死：终局了就到此为止，绝不再提交一次
     // 结束回合（那只会往录像里多一笔被引擎退回的空动作）。
     const afterAutoFire=get();
@@ -839,12 +783,11 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       ?? state.players[state.currentPlayerIndex]?.id;
     if(typeof actorId!=='number') return false;
 
-    const { engineState, events } = dispatchStoreAction(
-      state,
-      createAction('ACTIVATE_SKILL', actorId, { skillId, generalId }),
-    );
-    const activated=events.find(event=>event.type==='SKILL_ACTIVATED');
-    if(!activated) return false;
+    // ㈂：建动作＋认 `SKILL_ACTIVATED` 那一身搬进 engineSteps.activateSkillStep；
+    // "该哪一席动手"仍由本机解析（问窗那一格优先，其次引擎行棋席，最后展示面）。
+    const step = activateSkillStep(state, actorId, skillId, generalId);
+    const { engineState, events } = step;
+    if(!step.ok) return false;
 
     if(state.isTestMode){
       set({ ...buildTestArenaState(state, engineState), turnEndAsk:null, ...noticePatch(state, engineState, events) });
@@ -905,11 +848,10 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
     const pending=state.engineState.pendingChoice;
     if(!pending) return false;
 
-    const { engineState, events } = dispatchStoreAction(
-      state,
-      createAction('CHOOSE_OPTION', pending.playerId, { choiceKey: pending.key, optionIndex }),
-    );
-    if(!events.some(event=>event.type==='CHOICE_RESOLVED')) return false;
+    // ㈂：建动作＋认 `CHOICE_RESOLVED` 那一身搬进 engineSteps.chooseOptionStep。
+    const step = chooseOptionStep(state, pending.playerId, pending.key, optionIndex);
+    const { engineState, events } = step;
+    if(!step.ok) return false;
 
     if(state.isTestMode){
       set({ ...buildTestArenaState(state, engineState), ...noticePatch(state, engineState, events) });

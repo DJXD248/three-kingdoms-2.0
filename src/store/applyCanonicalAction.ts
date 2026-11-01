@@ -1,35 +1,64 @@
 /**
- * J4 执行路复用（v2.9.11）。
+ * J4 执行路复用（v2.9.11）＋ 乙 线第三片㈂（2026-11-01）。
  *
  * 「一枚合法动作怎么变成牌桌上的一步」这条翻译过去只有一份，住在 AI 司机里
  * （2.2.9 起）：AI 与人类走同一条路，靠的就是这个唯一出口。联机客人动手（J4）
  * 再要一份翻译＝两份会漂移的口径，所以把它原样搬到 store 层，司机和房主的
  * 远端执行器一起用。**行为零改动**：逐条 case、兜底、返回 false 的形状都照旧。
  *
- * 每个出口都落到生产 store 方法（executeDraw/deployGeneral/… → dispatchStoreAction），
- * 于是远端那一席与本机热座读同一份规则真值、进同一份录像、走同一份回写。
+ * 每个出口都落到"牌桌那 14 个入口"（executeDraw/deployGeneral/… → engineSteps → 唯一闸口），
+ * 于是远端那一席、本机热座、以及算牌进程里那一局读同一份规则真值。
+ *
+ * ㈂ 改的只有**参数形状**：原来写死 `GameState`＝整个浏览器 store 快照，进程那份没有那些
+ * 展示字段（`drawContext`／`turnEndAsk`／`players`…），于是把它降成一个**只要求这 14 个入口
+ * ＋一份引擎读数**的结构化口子 `CanonicalActionHost`。生产 store 的 `GameState` 本来就满足它
+ * （一个方法都没改签名），算牌进程那份由 `setup/tableCompute.ts` 现造。switch 体逐字未动。
  */
 import type { GameAction } from '../action/ActionTypes';
 import type { EngineState } from '../core/GameState';
+import type { General } from '../data/generals';
+import type { GameCard } from '../data/cards';
 import { getReactionAsk, type ReactionAsk } from '../skills/reactionChain';
-import type { GameState } from './gameStore';
+import type { Position } from './gameStoreTypes';
 
 interface DrawPayload { fromGeneralPool?: number; fromCardPool?: number }
+
+/**
+ * ㈂：这一份是"牌桌那 14 个入口"的**最小形状**——浏览器侧由 `GameState` 天然满足，
+ * 进程侧由 `createTableHost()` 现造。判据本身不在这里（在 engineSteps），这里只做翻译。
+ */
+export interface CanonicalActionHost {
+  engineState: EngineState;
+  executeDraw: (fromPool: number, fromDeck: number) => boolean;
+  confirmDraw: () => void;
+  resolvePendingDrawLoss: () => void;
+  deployGeneral: (general: General, slot: number, consume: (General | GameCard)[]) => boolean;
+  moveGeneral: (id: string, target: Position, consume?: General | GameCard, sandboxAllowArming?: boolean) => void;
+  attackTarget: (atkId: string, tgtId: string, ranged: boolean, consume?: General | GameCard) => void;
+  supplyGeneral: (id: string, cards: (General | GameCard)[]) => void;
+  armGeneral: (id: string, armorCards: GameCard[]) => boolean;
+  activateTurnEndSkill: (skillId: string, generalId: string) => boolean;
+  activateReactionSkill: (skillId: string, generalId: string) => boolean;
+  skipReaction: () => boolean;
+  chooseOption: (optionIndex: number) => boolean;
+  endTurn: () => void;
+  surrender: (id: number) => void;
+}
 
 /**
  * v2.8.22 响应链执法刀 (#71)：此刻状态里有没有待答的响应问句。
  * 先做便宜的槽位闸再算问句——司机每一拍都走这里，不能每次都把候选枚举一遍；
  * 而"队列非空"与"有问句"等价（结算后扫描会把问完的格一律收掉）。
  */
-export function liveReactionAsk(state: GameState): ReactionAsk | null {
+export function liveReactionAsk(state: { engineState: EngineState }): ReactionAsk | null {
   const engineState = state.engineState as EngineState;
   const queue = engineState?.pendingReaction;
   if (!queue || queue.nodes.length === 0) return null;
   return getReactionAsk(engineState);
 }
 
-/** Translate one canonical engine GameAction into a store call. Returns false when the store refused it. */
-export function applyCanonicalAction(state: GameState, playerId: number, action: GameAction): boolean {
+/** Translate one canonical engine GameAction into a table step. Returns false when the table refused it. */
+export function applyCanonicalAction(state: CanonicalActionHost, playerId: number, action: GameAction): boolean {
   const p = action.payload as Record<string, any> | undefined;
   switch (action.type) {
     case 'DRAW': {

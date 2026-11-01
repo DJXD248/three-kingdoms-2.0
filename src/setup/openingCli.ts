@@ -10,14 +10,20 @@
  *   npm run opening-compute -- --seed 12345 --players 4
  *   npm run opening-compute -- --seed 1 --players 4 --ai-seats 2,3,4
  *   npm run opening-compute -- --seed 1 --players 3 --roster-file roster.json
+ *   npm run opening-compute -- --seed 7 --players 2 --ai-seats 1,2 --play
  *
  * 名册交料（乙 线第二片）走 `--roster-file`：文件形态只认一种＝
  * `{ "format": 1, "pool": [ ...将的效力面... ], "disabledIds": [ ...被关掉的编号... ] }`，
  * 由 `rosterHandover.acceptRosterSubmissionText` 那道**原子闸**收——要么整份收下、
  * 要么明说没收下并逐条点名；没收下时**不开局**（绝不留半份名册继续算牌）。
- * ⚠️ 今天唯一真走得通的交料路＝这个文件口子；**跨机器那一路还没接**（握手第四格
- * `content` 要等第三片"引擎转移搬进进程"）。不给 `--roster-file` 时退回**仓库账本**，
- * 那是一块占位板，不代表已经交过料。
+ * ⚠️ 今天唯一真走得通的交料路＝这个文件口子；**跨机器那一路还没接**——握手第四格
+ * `content`（两边那份效力名单不一样就别开这一局）已由第三片㈁ 落进生产，剩下没接的是
+ * "客人那一份怎么送到房主手里"那根线，加上逐席私有视图由进程发＝第四片那一格。
+ * 不给 `--roster-file` 时退回**仓库账本**，那是一块占位板，不代表已经交过料。
+ *
+ * `--play`＝第三片㈂：开局那五步之后，这一局继续在**浏览器外面**打下去。它不是一套新规则——
+ * 每一步都过 `store/engineSteps.ts` 那批函数（玩家浏览器里 `gameStore` 那 14 个入口调的就是它们），
+ * 差别只在该哪一席动手怎么解（进程按引擎真值，见 `setup/tableCompute.ts` 文件头）。
  */
 import { allGenerals, type General } from '../data/generals';
 import { readFileSync } from 'node:fs';
@@ -40,6 +46,17 @@ import {
   rosterContentFingerprint,
   type RosterReceipt,
 } from './rosterHandover';
+import {
+  createTableHost,
+  openingToEngineState,
+  playTable,
+  type TableHost,
+} from './tableCompute';
+import { beginInitialDraw } from '../store/engineSteps';
+import { GameEngine } from '../core/GameEngine';
+import { syncPlayerSkills } from '../skills/skillCompiler';
+import { createStrategyPolicy, parseTier } from '../ai/policies/strategyPolicy';
+import type { GameAction } from '../action/ActionTypes';
 import type { AiSeatMode, AiSeatTier } from './runtimeSetup';
 
 declare const process: { argv: string[]; exitCode: number };
@@ -52,6 +69,9 @@ interface CliArgs {
   tier: AiSeatTier;
   roomName: string;
   rosterFile: string | null;
+  /** ㈂：开局账收口之后，这一局在进程里继续打下去（`--play`）。 */
+  play: boolean;
+  maxSteps: number;
 }
 
 function parseArgs(argv: readonly string[]): CliArgs {
@@ -62,10 +82,14 @@ function parseArgs(argv: readonly string[]): CliArgs {
     tier: 'balanced',
     roomName: '进程开局',
     rosterFile: null,
+    play: false,
+    maxSteps: 3000,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
+    if (flag === '--play') { args.play = true; continue; }
+    if (flag === '--max-steps' && value !== undefined) { args.maxSteps = Math.max(1, Number(value) || 1); i += 1; continue; }
     if (flag === '--seed' && value !== undefined) { args.seed = Number(value); i += 1; continue; }
     if (flag === '--players' && value !== undefined) { args.players = Number(value); i += 1; continue; }
     if (flag === '--ai-seats' && value !== undefined) {
@@ -182,6 +206,37 @@ function main(): void {
     state = verdict.state;
   }
   console.log(`⑤ 开局账收口 → ${ledgerLine(state)}`);
+
+  // ㈂（乙 线第三片）＝开局之后那一整段"改引擎的账"也搬到进程里跑。
+  // 判据不是第二套：这一句之后每一步都过 `engineSteps` 那批函数（与玩家浏览器里
+  // `gameStore` 那 14 个入口调的是同一批），只是"该哪一席动手"按引擎真值解。
+  if (!args.play) {
+    console.log('（没给 --play＝只算开局那几步。加 --play 让这一局在进程里继续打到收口。）');
+    return;
+  }
+  const played = openingToEngineState(state);
+  const host = createTableHost(played);
+  const firstSeat = played.players[0];
+  if (!firstSeat) {
+    console.log('⑥ 一席也没有——这一局不打。');
+    process.exitCode = 1;
+    return;
+  }
+  const begin = beginInitialDraw(host, firstSeat.id);
+  console.log(`⑥ 进程里挂上开局抽牌 → ${begin.ok ? '挂上了' : '没挂上'}｜待发 ${String(host.engineState.drawState?.totalCards ?? 0)} 张｜游标 ${String(host.engineState.rngState?.s)}`);
+  const policy = createStrategyPolicy(parseTier(args.tier) ?? 'balanced');
+  const pick = (arm: TableHost, playerId: number): GameAction | null => {
+    // 只读探针：拿"这一席能走哪些步"给策略挑，绝不在探针引擎上推进对局。
+    const probe = new GameEngine(arm.engineState, { recordHistory: false });
+    syncPlayerSkills(probe, arm.engineState);
+    return policy(probe, playerId);
+  };
+  const result = playTable(host, { maxSteps: args.maxSteps, pick });
+  console.log(`⑦ 进程里这一局跑到 → 阶段 ${result.phase}｜步数 ${String(result.steps)}｜回合 ${String(host.engineState.round)}｜胜者 ${result.winnerId === null ? '（没打出唯一活口）' : String(result.winnerId)}`);
+  host.engineState.players.forEach(player => {
+    console.log(`   ${String(player.id)}·${player.name}｜势力 ${player.faction ?? '-'}｜营地 ${String(player.baseHp ?? 0)}/${String(player.baseMaxHp ?? 0)}｜手牌 ${String((player.hand ?? []).length)} 张｜场上 ${String((player.fieldGenerals ?? []).length)} 颗｜池 ${String((player.generalPool ?? []).length)} 张｜${player.isAlive === false ? '已淘汰' : '在场'}`);
+  });
+  console.log(`   牌堆剩 ${String(host.engineState.deck.length)} 张｜弃堆 ${String(host.engineState.discardPile.length)} 张｜${host.engineState.phase === 'gameOver' ? '这一局在浏览器外面跑到了收口' : `跑满 ${String(args.maxSteps)} 步上限，还没收口`}`);
 }
 
 main();

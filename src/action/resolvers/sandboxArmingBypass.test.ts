@@ -181,8 +181,16 @@ describe('演练场整备旁路（sandboxAllowArming）', () => {
     const self = path.basename(fileURLToPath(import.meta.url));
     const allowed = [
       'MoveGeneralResolver.ts',
+      // store 接线：声明这一位的类型、造这一位的动作、把它转成牌桌一步——三处同一条闸口的搬运工。
+      // `engineSteps.ts`＝乙 第三片㈂ 从 `gameStore.ts` 抽出来的那半（判据一字未改，只换了住处）；
+      // `applyCanonicalAction.ts`＝"一枚合法动作⇒牌桌一步"那份共用翻译的宿主接口；
+      // `tableCompute.ts`＝算牌进程那一侧的宿主，签名跟着接口走、把调用方给的值原样转传，
+      //   自己不写 `true`（进程臂的放行与浏览器臂逐字同闸，两臂对账那枚证人钉的正是这件事）。
       'gameStore.ts',
       'gameStoreTypes.ts',
+      'engineSteps.ts',
+      'applyCanonicalAction.ts',
+      'tableCompute.ts',
       'TestArena.tsx',
     ].sort();
     const files = walk(srcRoot).filter(file => path.basename(file) !== self);
