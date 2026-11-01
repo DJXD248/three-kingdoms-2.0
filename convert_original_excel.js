@@ -18,7 +18,15 @@ import ExcelJS from 'exceljs';
 import fs from 'fs';
 
 const inputPath = 'G:\\THREE_KINGDOMS\\三国卡牌.xlsx';
-const outputPath = 'G:\\THREE_KINGDOMS\\Qoder\\2.0\\转换后_三国卡牌.xlsx';
+/**
+ * 出货口：默认＝仓库根那一份（scripts/make-converted-generals.mjs 认的单一事实源就是它）。
+ * 带第一个命令行参数（绝对路径）就改道写到那儿：本支线要在**不覆盖在库那一份**的前提下先出对照件——
+ * 在库那份是 2026-10-29~30 三刀的派生件（除本脚本这 26 列外还带「引擎读入档位／今天会不会响／
+ * 触发时机／每回合限几次／本行结构出处」等列，用户 2026-10-30 裁「转换表进仓库，做」时换进去的），
+ * 本脚本只出 26 列，直接盖上去＝把那些列连同 15 格「在场即生效」一起抹掉。
+ * 用法：node convert_original_excel.js "D:\\绝对路径\\对照件.xlsx"
+ */
+const outputPath = process.argv[2] || 'G:\\THREE_KINGDOMS\\Qoder\\2.0\\转换后_三国卡牌.xlsx';
 
 /** 徽章词表（与 domain/skillTags.ts 的 allSkillTags 一致） */
 const TAGS = ['锁定技', '限定技', '登场技', '遗计技', '觉醒技'];
@@ -372,8 +380,21 @@ async function main() {
     rosterHp.set(`${m[3]}|${m[2]}`, Number(m[4]));
   }
 
-  /** 权威参考表（H6：唯一准）里写了体力的将领，优先于名册与我的记忆 */
+  /**
+   * 权威参考表（H6：唯一准）——里面记了两本账。
+   * ① 体力（2026-10-25 起就在用）：写了体力的将领优先于名册与我的记忆。
+   * ② 卡面话（本次新增）：用户 2026-11-01 当面裁「甲」——
+   *    「参考表里面的技能是我重新编制改写后的效果，将领表『三国卡牌』里面有和参考表重复的将领和技能，
+   *    对于这部分的重复将领技能，需要以参考表为准。」
+   *    ⇒ 参考表这一枚写了话就以它为准；参考表没这枚、或那格空着，才退回将领表原文。
+   * 读法与「体力」那一本同一件事：「将领名称」「势力」只写在这张卡的第一行⇒向下填充；
+   * 键一律带势力——关羽·武圣在蜀/魏各有一枚，不带势力会配到别势力那张上去（本会话实测踩过）。
+   */
   const referenceHp = new Map();
+  /** key = 势力|将名|技能名 → { desc, row }（row＝参考表里的行号，只用于回报点名） */
+  const referenceSkillText = new Map();
+  /** 参考表里有这枚技能、但「技能描述」那格空着：按裁「甲」的原话是「参考表没话才退回将领表」，这些退回 */
+  const referenceSkillBlank = [];
   const referencePath = 'G:\\THREE_KINGDOMS\\将领数据_参考.xlsx';
   if (fs.existsSync(referencePath)) {
     const refWb = XLSX.read(fs.readFileSync(referencePath), { type: 'buffer' });
@@ -382,6 +403,29 @@ async function main() {
       const [refName, refFaction, refHp] = r || [];
       if (!refName || typeof refFaction !== 'string' || !Number.isFinite(Number(refHp))) continue;
       referenceHp.set(`${String(refFaction).trim()}|${String(refName).trim()}`, Number(refHp));
+    }
+    let carryName = '';
+    let carryFaction = '';
+    for (let i = 1; i < refRows.length; i++) {
+      const r = refRows[i] || [];
+      const n = String(r[0] ?? '').trim();
+      const f = String(r[1] ?? '').trim();
+      if (n) carryName = n;
+      if (f) carryFaction = f;
+      const skillName = String(r[5] ?? '').trim();
+      const desc = String(r[7] ?? '').trim();
+      if (!skillName || !carryName || !carryFaction) continue;
+      if (!desc) {
+        referenceSkillBlank.push(`${carryFaction}|${carryName}|${skillName}`);
+        continue;
+      }
+      referenceSkillText.set(`${carryFaction}|${carryName}|${skillName}`, {
+        desc,
+        // 徽章这一格本刀**只登记不搬**（搬它＝改引擎行为：一枚「锁定技」会牵动
+        // 「在场即生效」那一路的结算，见 scripts/make-converted-generals.mjs 口径③）。
+        tags: String(r[6] ?? '').trim(),
+        row: i + 1,
+      });
     }
   }
 
@@ -393,6 +437,13 @@ async function main() {
   let noDescCount = 0;
   let sectionRows = 0;
   let emptyGeneralRows = 0;
+  /** 卡面话取数台账（2026-11-01 裁「甲」）：赢了的逐枚点名，其余只数总数 */
+  const textWin = [];
+  let textWinSame = 0;
+  /** 只登记没搬的那一处：参考表的徽章格与将领表读出来的徽章不一致的枚 */
+  const tagDrift = [];
+  /** 参考表里有哪些枚真被对上了（剩下的＝将领表压根没这枚，本刀不管） */
+  const refHit = new Set();
 
   for (const sheetName of wbXlsx.SheetNames) {
     const faction = FACTION_MAP[sheetName];
@@ -441,12 +492,28 @@ async function main() {
           continue;
         }
 
-        block.skills.push(parsed);
+        /**
+         * 卡面话取数（2026-11-01 裁「甲」）：这一枚（势力+将名+技能名）在参考表里写了话，就以它为准；
+         * 参考表没这枚、或有这枚但描述格空着 ⇒ 退回将领表这一格的原文。将领表原文一个字不丢：
+         * 换了话的那些枚在下面 textWin 里逐枚点名，原表那一格长什么样也一并带出去。
+         */
+        const ref = referenceSkillText.get(`${block.faction}|${name}|${parsed.name}`);
+        const sk = ref ? { ...parsed, desc: ref.desc } : parsed;
+        if (ref) {
+          refHit.add(`${block.faction}|${name}|${parsed.name}`);
+          if (ref.desc === parsed.desc) textWinSame++;
+          else textWin.push(`${block.faction}|${name}·${parsed.name}（参考表第 ${ref.row} 行）｜换前＝${parsed.desc || '(将领表这格没写话)'}`);
+          const refTags = ref.tags === '无' ? '' : ref.tags;
+          if (refTags !== parsed.tags.join('、')) {
+            tagDrift.push(`${block.faction}|${name}·${parsed.name}｜参考表「${refTags || '无'}」≠ 将领表「${parsed.tags.join('、') || '无'}」`);
+          }
+        }
+        block.skills.push(sk);
         skillTotal++;
-        if (!parsed.desc) {
+        if (!sk.desc) {
           noDescCount++;
           blocked.push(['已导入·缺内容', `${sheetName} 第${rowNo}行 ${name}`, cell,
-            `技能「${parsed.name}」只有名字，原表没写描述；导入后要你在编辑器里补`]);
+            `技能「${sk.name}」只有名字，原表没写描述；导入后要你在编辑器里补`]);
         }
       }
     }
@@ -577,6 +644,15 @@ async function main() {
   console.log(`   实测：技能格 ${cellTotal} 个 → 收进 ${skillTotal} 条技能`);
   console.log(`   跳过章节标题行 ${sectionRows} 行；只有名字没有技能的行 ${emptyGeneralRows} 行`);
   console.log(`   只有技能名、没有描述 ${noDescCount} 条`);
+  console.log(`   卡面话取数（用户 2026-11-01 裁「甲」：将领表与参考表重复的将+技以参考表为准，参考表没话才退回将领表）：`);
+  console.log(`     参考表里有话的技能 ${referenceSkillText.size} 枚｜将领表收进来的 ${skillTotal} 枚里对上 ${refHit.size} 枚` +
+    `（真换话 ${textWin.length} 枚＋本来就逐字相同 ${textWinSame} 枚）｜参考表里有名没话 ${referenceSkillBlank.length} 枚⇒退回将领表`);
+  for (const w of textWin) console.log(`       · 换：${w}`);
+  if (tagDrift.length) {
+    console.log(`     ⚠ 只登记、本刀没搬：参考表的「技能标签」与将领表读出来的不同的 ${tagDrift.length} 枚`);
+    console.log(`       （搬它＝改引擎行为：一枚「锁定技」会牵动「在场即生效」那一档的结算，见 scripts/make-converted-generals.mjs 口径③；等裁）`);
+    for (const d of tagDrift) console.log(`       · ${d}`);
+  }
   console.log(`   体力取数：原表 ${hpCounts['原表写的数字']} / 参考表 ${hpCounts['权威参考表（将领数据_参考.xlsx）']} / ` +
     `本作名册 ${hpCounts['本作名册（同名同势力）']} / ` +
     `三国杀有把握 ${hpCounts['三国杀常规体力']} / 三国杀推测 ${hpCounts['三国杀常规体力（推测）']} / 其他 ${hpCounts['其他']}`);
