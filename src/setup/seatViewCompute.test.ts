@@ -254,7 +254,7 @@ describe('乙 第四片 ㈢ 发出去的那一份读的是进程那本账', () =
     const storeAtStart = wireOf(buildBroadcastView(storeArm(), 1));
 
     // 发布者**先挂上**再推进牌桌：反过来（先推进再挂）会让"读数在挂上那一刻被扣住"这种
-    // 接错线的写法照样绿（2026-11-02 改坏取证第三枚实测：那一版四枚证人全绿＝证人有个洞）。
+    // 接错线的写法照样绿（2026-11-02 改坏取证第三枚实测：那一版 19 枚证人全绿＝证人有个洞）。
     const box: { to: string; view: EngineState }[] = [];
     const views = startProcessSeatViews({
       host,
