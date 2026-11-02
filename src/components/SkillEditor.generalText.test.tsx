@@ -7,6 +7,8 @@
  *  ② 技能**只记名**：卡上那枚技能有名字、没有一个效果载荷（绝不硬编效果）；
  *  ③ 缺了必要那一格（势力）时那颗「采用」**必须点不动**，
  *     一张半卡都不许冒出来——与刀1 那条"占位必须点不动"同一条判据，只是这次钉的是**没读完的那句话**。
+ *  ④ 刀2a-v3 第⑥件：这句话里没落进这张卡的段落，**建完也要报**（与第①步那条腿共用同一份拼装），
+ *     而且只能说"没落进去"——卡照样建，不许报成"退回／没建成"。
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/react';
@@ -91,6 +93,34 @@ describe('新建那一排的一句话入口：读到的字段真的进了卡', (
     const g = useGameStore.getState().authoredGenerals[0];
     // 这句没点到近战／远程 ⇒ 由体力推（不是"读不出就填 3"）
     expect([g.meleeAtk, g.rangedAtk]).toEqual([2, 1]);
+  });
+
+  // ── 刀2a-v3 第⑥件：新建那条腿也要把"没落进这张卡"的段落说出来。
+  //    两条证人**各钉各的**（一条红了另一条仍会跑，改坏取证才分得清是哪一半坏）：
+  //    正向＝报告里出现那几段原文；反向＝**卡照样建**，所以措辞只能是"没落进这张卡"，
+  //    不许写成「已退回」「没建成」「需要重做」——谁把"报告"做成"拦下来不建"，反向这条立刻红。
+  it('〔正向〕建完那张卡，报告里要出现这句话没落进去的段落原文', () => {
+    openCreateRow();
+    // 「攻击力3」两个数不替玩家挑，「体力4」是字段不是技能名：两段都不该落进这张卡
+    expect(speakAndAdopt('名：郭淮，蜀，攻击力3，技能：体力4')).toBe(true);
+    const report = screen.getByText(/已新建/).textContent ?? '';
+    expect(report).toContain('没落进去的：「攻击力3」 「体力4」');
+  });
+
+  it('〔反向〕报了这些段落，卡仍照建——那句只报事实，不是把采用拦下来', () => {
+    openCreateRow();
+    expect(speakAndAdopt('名：郭淮，蜀，攻击力3，技能：体力4')).toBe(true);
+    const created = useGameStore.getState().authoredGenerals;
+    expect(created).toHaveLength(1);
+    expect(created[0].name).toBe('郭淮');
+    expect(created[0].faction).toBe('蜀');
+    // 那句「体力4」没落进卡⇒体力走的仍是缺省那一格判据
+    expect(created[0].hp).toBe(DEFAULT_HP_WHEN_MISSING);
+    expect(created[0].skills).toHaveLength(0);
+    const report = screen.getByText(/已新建/).textContent ?? '';
+    for (const lie of ['已退回', '没建成', '需要重做']) {
+      expect(report, `报告里不许出现「${lie}」：卡明明建出来了`).not.toContain(lie);
+    }
   });
 
   it('身份那一格一句话说了也不收：卡上挂的身份仍是上面那一排的选项（默认＝本名）', () => {

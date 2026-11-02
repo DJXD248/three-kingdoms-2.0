@@ -61,7 +61,7 @@ import {
 import { SkillTextPanel } from './skillEditor/SkillTextPanel';
 import { GeneralTextPanel } from './skillEditor/GeneralTextPanel';
 import type { GeneralTextDraft } from './skillEditor/generalTextParse';
-import { canAdoptGeneral, hpWasDefaulted } from './skillEditor/generalTextParse';
+import { canAdoptGeneral, hpWasDefaulted, unsettledSegments } from './skillEditor/generalTextParse';
 import type { SkillTextDraft } from '../skills/skillTextParse';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -950,6 +950,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     if (hpWasDefaulted(draft)) notes.push(`体力这句没点、按 ${DEFAULT_HP_WHEN_MISSING} 建`);
     if (draft.meleeAtk === undefined && draft.rangedAtk === undefined) notes.push('近战／远程按体力推');
     if (draft.skillNames.length > 0) notes.push(`技能只记名（${draft.skillNames.join('、')}），效果请去第②步拼`);
+    // 这句话里没落进这张卡的段落，建完也要说出来——卡照样建得出（那句只报事实，不写成"已退回"）。
+    // 与第①步那条腿共用 `unsettledSegments`，两腿下次不会漂开。
+    notes.push(...unsettledSegments(draft));
     createAndReport({
       name: draft.name,
       faction: draft.faction,
@@ -978,12 +981,12 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     const toAdd = draft.skillNames.filter(n => !already.has(n));
     const dup = draft.skillNames.filter(n => already.has(n));
     if (toAdd.length > 0) setEditingSkills(prev => [...prev, ...toAdd.map(name => ({ name, description: '' }))]);
-    const skipped = draft.issues.map(i => `「${i.raw}」`);
     setIdentityGenNote(
       `✏️ 已填进：${landed.length > 0 ? landed.join('／') : '这一句没点到那几格'}；`
       + `技能加名 ${toAdd.length > 0 ? toAdd.join('、') : '无'}`
       + `${dup.length > 0 ? `（${dup.join('、')} 卡上已有同名技能，没加第二遍）` : ''}`
-      + `${skipped.length > 0 ? `；没落进去的：${skipped.join(' ')}` : ''}`
+      // 两族话的措辞只有一份＝`unsettledSegments`；建卡那条腿用的是同一份，不许各写一遍。
+      + unsettledSegments(draft).map(seg => `；${seg}`).join('')
       + '。还没保存——第②步点「💾 保存修改」才落档。',
     );
   };

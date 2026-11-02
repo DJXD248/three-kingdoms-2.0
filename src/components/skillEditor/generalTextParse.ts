@@ -6,13 +6,24 @@
  * 本文件不写库、不建卡、不碰编译链路；采用之后仍走 `createAuthoredGeneral` 那唯一一条建卡路。
  */
 import { parseCountNumber } from '../../skills/skillGateText';
-import type { Faction } from '../../data/generals';
+import { type Faction, allSkillTags } from '../../data/generals';
 import { hpOrDefault } from '../../domain/generalProvenance';
 import { IMPORT_FACTIONS } from './skillExcelParsers';
 
 export interface GeneralTextIssue {
   raw: string;
   reason: string;
+  /**
+   * 这一段**其实落进格子了**，只是里面还粘着今天没被任何一条规则认过的东西——
+   * 与"整段没落进去"是两回事，回显那一句必须分开说，不然就成了假话。
+   */
+  glued?: boolean;
+  /**
+   * 这一枚点名出自「技能」那一格的清单里（字段词、徽章词被拦下那两族），不是顶层某一段没落格。
+   * 回显那句要用它分辨两种"这一格是空的"：写了、但每一枚都被拦下 ≠ 一个字都没写。
+   * 按**出处**记，不按措辞猜：将来那句话再改，这条判据不会被一起改掉。
+   */
+  fromSkillList?: boolean;
 }
 
 /** 一句话读出来的名册字段（与「新建将领」那一排、以及 `AuthoredGeneralInput` 一一对应）。 */
@@ -87,6 +98,132 @@ function positiveCount(text: string): number | undefined {
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.trunc(n) : undefined;
 }
 
+/**
+ * 今天既不分格、也不切名的标点：整截照收，但必须说出来。
+ * ⚠️ 「,」「。」各自到底认不认＝**还没裁**（那两格还在待裁清单上）。今天先取
+ * "整截收下＋逐段点名"这一半，为的是**不许静默**；证人也就只锁这一条，
+ * 没钉"它必须被点名退回"——将来裁成"认"，改的是这一枚名单，不是那条证人。
+ */
+const UNREAD_PUNCTUATION = [',', '。'];
+/** 与 `splitFragments` 同一批壳子，配对判据只这一处。 */
+const OPEN_BRACKETS = ['（', '(', '「', '『', '【'];
+const CLOSE_BRACKETS = ['）', ')', '」', '』', '】'];
+
+/**
+ * 这一段被整截收下的**真因**（说不出来就返回 undefined）。只讲今天逐字成立的事：
+ * 这个标点不在分格与切名的集合里、那对壳子开了没关，于是后面那段话粘了进来。
+ * 既不替玩家猜他想分几格，也不替他决定该怎么改——那是还没裁的那几格。
+ */
+function gluedMaterial(text: string): string | undefined {
+  const punct = UNREAD_PUNCTUATION.find(ch => text.includes(ch));
+  if (punct !== undefined) {
+    return `那一个「${punct}」不在分格与切名的符号里（分格只认全角逗号、顿号、分号），所以这一段挤成了一格`;
+  }
+  let depth = 0;
+  for (const ch of text) {
+    if (OPEN_BRACKETS.includes(ch)) depth++;
+    else if (CLOSE_BRACKETS.includes(ch)) depth--;
+  }
+  if (depth > 0) return '那一头括号／书名号开了没关上，后面那段话被一起粘进这一格';
+  if (depth < 0) return '多了一个关口的壳，这一段没读全';
+  return undefined;
+}
+
+/**
+ * 数读不出来的第二种真因：括号里还另有一格，而分格只在这对壳**外面**下刀，
+ * 于是里面那截跟着整段一起被送去读了这一个字段。
+ * 这一条只用于"没落进格子"那句解释——将名里带一对括号是玩家要的名字本身，不该当粘件点名。
+ */
+function bracketedFieldInside(fragment: string, field: string): string | undefined {
+  const at = fragment.search(/[（(]/);
+  if (at < 0) return undefined;
+  const inside = fragment.slice(at + 1).replace(/[（(）)]/g, '').trim();
+  if (inside === '') return undefined;
+  return `括号里的「${inside}」没跟「${field}」这一格分家，整段被当成一句话说`;
+}
+
+/** 数读不出来时，真因常常不在数上，而是这一段粘着别的段落——那句要跟着说。 */
+function unreadNumberReason(field: string, fragment: string): string {
+  const base = `${field}那一串读不出数（只认数字或汉字数目字，且要大于 0）`;
+  const why = gluedMaterial(fragment) ?? bracketedFieldInside(fragment, field);
+  return why === undefined ? base : `${base}；真因不在数上——${why}`;
+}
+
+/**
+ * 已经落进格子那几段（将名与技能名）也过一遍：里面若还粘着没认的标点、没关上的壳或空格，
+ * **给一句说出来**，不许静默收下。这一趟不改任何字段的落法，也不碰「能不能采用」那道判据。
+ * 空格那句只在这里出现——它说的是**名字**里的那一枚空格（分不分开＝还没裁那一格，这里不改切法），
+ * 借 `gluedMaterial` 那三条时它管的是"这一段为什么挤住"，措辞换到"这个名字"会说不通。
+ */
+function nameGlueReason(text: string): string | undefined {
+  const why = gluedMaterial(text);
+  if (why !== undefined) return why;
+  if (/\s/.test(text)) return '这个名字里有空格，我没把它当分隔';
+  return undefined;
+}
+
+function flagGluedMaterial(draft: GeneralTextDraft): void {
+  const landed = [...(draft.name === undefined ? [] : [draft.name]), ...draft.skillNames];
+  for (const text of landed) {
+    const why = nameGlueReason(text);
+    if (why === undefined) continue;
+    if (draft.issues.some(i => i.raw === text && i.reason === why)) continue;
+    draft.issues.push({ raw: text, reason: why, glued: true });
+  }
+}
+
+/**
+ * 徽章（技能标签）那五枚的名字**不在这儿另抄一份**：用的就是 `src/domain/skillTags.ts`
+ * 认徽章时读的那一枚 `allSkillTags`（`skillTags.test.ts` 还钉着它与说明表逐字同集）。
+ */
+const BADGE_WORDS = allSkillTags as readonly string[];
+const isBadgeWord = (text: string): boolean => BADGE_WORDS.includes(text.trim());
+
+/**
+ * 将名里那一头**没关上的壳**：从第一枚找不到配平关口的左壳起，整截都不该留在名字里。
+ * 判据（监督台 2026-11-03 裁）＝**同一个解析器对同一族必须同一行为**：闭合的壳今天已经是
+ * 「取壳前的名字＋点名壳内那段」，没闭合的壳却把怪尾巴留在将名里，没有任何一种将来的裁法需要它
+ * ——将名要进名册、要被另一台机器读。
+ * ⚠️ 这里只**清名字**，绝不替玩家猜后面那截是势力还是体力：整截只点名，一格都不落。
+ */
+function splitAtUnclosedBracket(text: string): { head: string; tail: string } | undefined {
+  const openAt: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (OPEN_BRACKETS.includes(ch)) openAt.push(i);
+    else if (CLOSE_BRACKETS.includes(ch)) openAt.pop();
+  }
+  if (openAt.length === 0) return undefined;
+  const at = openAt[0];
+  return { head: text.slice(0, at), tail: text.slice(at).trim() };
+}
+
+/**
+ * 技能清单里只写了「攻击力＋数」这一枚。
+ * ⚠️ **不接**顶层那句 `AMBIGUOUS_ATK_RE`（`:56`）：它管的是「攻击力3 独立成段」那一形，
+ * 那里没有"技能清单"这一层语境，两形各自有各自的落点；把它接进来等于改顶层行为。
+ * 认"是不是数"用的还是 `positiveCount` 那一把尺——读不出数的（如技能名里真有「攻击力」二字打头
+ * 又不带数）仍当技能名收，不许把猜出来的数当成玩家写的数。
+ */
+const ATK_IN_LIST_RE = /^攻击力[:：]?(.+)$/;
+
+/**
+ * 技能清单里冒出来的一枚**字段**（「体力4」这种字段词后面跟着数）。
+ * 认的法子不另起一套：把这一枚送去问那四条现成的字段正则，问得出一个**大于 0 的数**才算。
+ * 「近战距离二」那类问不出数的仍是技能名——不许把猜出来的数当成玩家写的数。
+ */
+function fieldWordInSkillList(name: string): string | undefined {
+  const hp = name.match(HP_KEY_RE);
+  if (hp !== null && positiveCount(hp[1]) !== undefined) return '体力';
+  const melee = name.match(MELEE_RE);
+  if (melee !== null && positiveCount(melee[1]) !== undefined) return '近战';
+  const ranged = name.match(RANGED_RE);
+  if (ranged !== null && positiveCount(ranged[1]) !== undefined) return '远程';
+  const atk = name.match(ATK_IN_LIST_RE);
+  if (atk !== null && positiveCount(atk[1]) !== undefined) return '攻击力';
+  return undefined;
+}
+
 /** 只在括号／书名号外面切段（「怒斩」里的顿号属于名字内部，切开就碎掉一个词）。 */
 function splitFragments(text: string): string[] {
   const out: string[] = [];
@@ -106,12 +243,46 @@ function splitFragments(text: string): string[] {
   return out.map(s => s.trim()).filter(Boolean);
 }
 
+/** 能当一个技能名首字的三个连接字——过去只在右边卡了一道，左边空着也照削。 */
+const NAME_WORD_SEPARATORS = ['和', '与', '及'];
+
+/**
+ * 脱掉书名号／方括号那一层壳——**只有这一份**（切清单与顶层点名共用，别处不许再写一遍）。
+ * 圆括号不在这里脱：那一族的壳里挂的是效果话，由 `skillNameAndTail` 另判。
+ */
+function stripQuoteShells(text: string): string {
+  return text.replace(/[「」『』【】]/g, '');
+}
+
+/**
+ * 技能清单切开。两类分隔词卡的是两道不同的边，这一格今天逐字成立：
+ *  · 标点（顿号、两种逗号、斜杠）＝左右都空也照切（空段最后一起滤掉）；
+ *  · 和／与／及＝**左右两侧都得有字**才下刀。这三个字本身能当一个技能名的头一个字
+ *    （「和亲」「与民同乐」「及泉之勇」），只卡右边就等于把名字的首字削掉，
+ *    而削短那一枚照样落进格子、零点名。
+ * 名字**中间**那枚「和」到底算不算分隔词还没裁（界面那句示例用的就是这种写法），
+ * 这里不往任何一边写死——左半边这一刀与三条待裁方案都不矛盾，所以先落。
+ * 「」那对壳仍然先脱掉：顶层切段（`splitFragments`）特意不在括号内下刀，
+ * 所以能走到这里的顿号只会出现在被壳保护的名字清单里。
+ */
 function splitSkillNames(text: string): string[] {
-  // 「」那对壳先脱掉：顶层切段（`splitFragments`）特意不在括号内下刀，所以能走到这里的
-  // 顿号**只会**出现在被壳保护的名字清单里——脱壳后再按顿号分，才不至于一格技能名被切开。
-  return text.replace(/[「」『』【】]/g, '')
-    .split(/[、，,/]|(?:和)(?=\S)|(?:与)(?=\S)|(?:及)(?=\S)/)
-    .map(s => s.trim()).filter(Boolean);
+  const bare = stripQuoteShells(text);
+  const out: string[] = [];
+  let buf = '';
+  for (let i = 0; i < bare.length; i++) {
+    const ch = bare[i];
+    const wordCut = NAME_WORD_SEPARATORS.includes(ch)
+      && buf.trim() !== ''
+      && /\S/.test(bare.charAt(i + 1));
+    if (wordCut || /[、，,/]/.test(ch)) {
+      out.push(buf);
+      buf = '';
+      continue;
+    }
+    buf += ch;
+  }
+  out.push(buf);
+  return out.map(s => s.trim()).filter(Boolean);
 }
 
 /** 名字后面挂着的那截（冒号后的效果话／括号里的说明）＝这一刀不收，但必须点名。 */
@@ -154,9 +325,36 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
             draft.issues.push({ raw: piece, reason: '这一格没点到技能名' });
             continue;
           }
+          if (isBadgeWord(name)) {
+            draft.issues.push({
+              raw: piece,
+              reason: `「${name.trim()}」是徽章，不是技能名；徽章那一格在第②步那张卡上勾`,
+              fromSkillList: true,
+            });
+            continue;
+          }
+          const field = fieldWordInSkillList(name);
+          if (field !== undefined) {
+            // 「攻击力」那一格不是"写在别处"就行——它本来就是两个数，得说清分开写。
+            draft.issues.push({
+              raw: piece,
+              reason: field === '攻击力'
+                ? `「${name}」是字段，不是技能名；攻击力有近战与远程两个数，请分开写（如「近战3」「远程2」）`
+                : `「${name}」是字段，不是技能名；要写${field}请写在技能以外的那一格`,
+              fromSkillList: true,
+            });
+            continue;
+          }
           draft.skillNames.push(name);
           if (tail !== '') {
-            draft.issues.push({ raw: piece, reason: `这一刀只取技能名，您那句效果（「${tail}」）请去第②步拼——名册这一格不收效果` });
+            // 壳里那句到底是徽章还是效果，决定这句话怎么说——把「锁定技」叫"效果"就是假话（§9）。
+            const badgeTail = stripQuoteShells(tail).trim();
+            draft.issues.push({
+              raw: piece,
+              reason: isBadgeWord(badgeTail)
+                ? `您那句徽章（「${badgeTail}」）名册这一格不收，请去第②步那张卡上勾`
+                : `这一刀只取技能名，您那句效果（「${tail}」）请去第②步拼——名册这一格不收效果`,
+            });
           }
         }
       }
@@ -168,7 +366,7 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
       if (draft.meleeAtk !== undefined) draft.issues.push({ raw: fragment, reason: '近战写了两回，后一句没落进去' });
       else {
         const n = positiveCount(m[1]);
-        if (n === undefined) draft.issues.push({ raw: fragment, reason: '近战那一串读不出数（只认数字或汉字数目字，且要大于 0）' });
+        if (n === undefined) draft.issues.push({ raw: fragment, reason: unreadNumberReason('近战', fragment) });
         else draft.meleeAtk = n;
       }
       continue;
@@ -179,7 +377,7 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
       if (draft.rangedAtk !== undefined) draft.issues.push({ raw: fragment, reason: '远程写了两回，后一句没落进去' });
       else {
         const n = positiveCount(m[1]);
-        if (n === undefined) draft.issues.push({ raw: fragment, reason: '远程那一串读不出数（只认数字或汉字数目字，且要大于 0）' });
+        if (n === undefined) draft.issues.push({ raw: fragment, reason: unreadNumberReason('远程', fragment) });
         else draft.rangedAtk = n;
       }
       continue;
@@ -195,7 +393,7 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
       if (draft.hp !== undefined) draft.issues.push({ raw: fragment, reason: '体力写了两回，后一句没落进去' });
       else {
         const n = positiveCount(m[1]);
-        if (n === undefined) draft.issues.push({ raw: fragment, reason: '体力那一串读不出数（只认数字或汉字数目字，且要大于 0）' });
+        if (n === undefined) draft.issues.push({ raw: fragment, reason: unreadNumberReason('体力', fragment) });
         else draft.hp = n;
       }
       continue;
@@ -217,6 +415,14 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
       continue;
     }
 
+    // 先脱壳再判徽章：`「锁定技」`／`【限定技】` 与裸写的 `锁定技` 是同一个东西，
+    // 不许一个说真话（是徽章）、一个说「这一句我不知道是哪一格」。落格结果不变（徽章从不进清单）。
+    const badge = stripQuoteShells(fragment).trim();
+    if (isBadgeWord(badge)) {
+      draft.issues.push({ raw: fragment, reason: `「${badge}」是徽章，不是技能名；徽章那一格在第②步那张卡上勾` });
+      continue;
+    }
+
     if (HUMAN_ONLY_KEYS.some(key => fragment.startsWith(key))) {
       draft.issues.push({ raw: fragment, reason: '这一格要你自己在那一排里选（身份与归属不由一句话定）' });
       continue;
@@ -232,7 +438,18 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
       } else {
         const val = stripLeadingConnective(m[1]);
         for (const word of val.dropped) draft.ignored.push(word);
-        draft.name = val.rest;
+        const cut = splitAtUnclosedBracket(val.rest);
+        if (cut === undefined) {
+          draft.name = val.rest;
+        } else {
+          const head = cut.head.trim();
+          if (head !== '') draft.name = head;
+          draft.issues.push({
+            raw: cut.tail,
+            reason: '那一头括号／书名号开了没关上，所以从这枚壳起的整截只点名、一格都不落'
+              + '（里面的势力／体力／技能我不替您猜，请一句一格重写）',
+          });
+        }
       }
       continue;
     }
@@ -243,8 +460,15 @@ export function parseGeneralText(text: unknown): GeneralTextDraft {
       continue;
     }
 
-    draft.issues.push({ raw: fragment, reason: '这一句我不知道是哪一格（能写的说法：名／势力／体力／近战／远程／技能）' });
+    const glued = gluedMaterial(fragment);
+    draft.issues.push({
+      raw: fragment,
+      reason: glued === undefined
+        ? '这一句我不知道是哪一格（能写的说法：名／势力／体力／近战／远程／技能）'
+        : `这一段挤成了一格，所以哪一格都不像（${glued}）——能写的说法：名／势力／体力／近战／远程／技能，一句一格`,
+    });
   }
+  flagGluedMaterial(draft);
   return draft;
 }
 
@@ -289,15 +513,44 @@ export function describeGeneralDraft(draft: GeneralTextDraft, mode: 'create' | '
   } else {
     lines.push(`近战／远程：${draft.meleeAtk ?? '没点'}／${draft.rangedAtk ?? '没点'}`);
   }
+  // 「这一格是空的」有两种，说的话不一样：玩家写了、可每一枚都被本刀那两道闸拦下场，
+  // 再说"这句话没点"就是假话（监督台 2026-11-03 第 16 件）。判据取自点名的**出处**，
+  // 不取自措辞，也不取自"清单里有没有字"——后者会把真没写那一形一起翻成假话。
+  const allSkillPiecesRejected = draft.skillNames.length === 0
+    && draft.issues.some(issue => issue.fromSkillList === true);
   lines.push(draft.skillNames.length > 0
     ? `技能：${draft.skillNames.join('、')}（只记名，效果留空，请去第②步逐格拼）`
-    : '技能：这句话没点，进去第②步再加');
+    : allSkillPiecesRejected
+      ? '技能：那一格写的我没认成技能名，一个都没落（逐条点名见下面）'
+      : '技能：这句话没点，进去第②步再加');
   if (draft.ignored.length > 0) lines.push(`我当成连接词忽略掉的：${draft.ignored.join('、')}`);
-  for (const issue of draft.issues) lines.push(`✕ 没落进去的那一段：「${issue.raw}」——${issue.reason}`);
+  for (const issue of draft.issues) {
+    lines.push(issue.glued
+      ? `✕ 这一格收下了，但里面还粘着没认的东西：「${issue.raw}」——${issue.reason}`
+      : `✕ 没落进去的那一段：「${issue.raw}」——${issue.reason}`);
+  }
   return lines;
 }
 
 /** 采用时要不要提一句"体力按缺省建"＝缺省那半句的出处也只有一份。 */
 export function hpWasDefaulted(draft: GeneralTextDraft): boolean {
   return draft.hp === undefined;
+}
+
+/**
+ * 「哪几段没落进这张卡」与「哪几格收下了、里面还粘着没认的东西」＝**两条采用腿共用这一份拼装**：
+ * 第①步填格子那条腿（采用＝只动那几格）与直接建卡那条腿（采用＝卡真长出来）说的是同一件事，
+ * 句子写两遍，下一次改动其中一遍就会漂——上一轮正是这个形状（建卡那条腿只字不提）。
+ * 措辞逐字对得上真行为：卡**照样建得出**，所以只说"没落进去"，不说"已退回""没建成""要重做"
+ * （"有丢件要不要按住采用钮"＝还没裁那一格，这一刀不碰）。
+ * 两族不是一回事：`glued` 那一段其实已经填进格子了，说它"没落进去"就是假话。
+ */
+export function unsettledSegments(draft: GeneralTextDraft): string[] {
+  const quote = (list: string[]) => list.map(raw => `「${raw}」`).join(' ');
+  const out: string[] = [];
+  const skipped = quote(draft.issues.filter(i => !i.glued).map(i => i.raw));
+  const glued = quote(draft.issues.filter(i => i.glued).map(i => i.raw));
+  if (skipped !== '') out.push(`没落进去的：${skipped}`);
+  if (glued !== '') out.push(`这几格收下了、里面还粘着没认的东西：${glued}`);
+  return out;
 }

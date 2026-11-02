@@ -1,13 +1,14 @@
 /**
  * v2.9.21 两段式流程（§12-140①「将领→确认→技能→确认完整将领」）的界面接线证人。
  *
- * 钉五件事，全在真组件上：
+ * 钉六件事，全在真组件上：
  *  ① 选中将领后落在第 1 步，那一步只谈将领本人；技能那一屏不在这一步露出来；
  *  ② 那颗「确认将领」=流程的分界，**不写库**（写库仍然只有「💾 保存修改」那一条路）；
  *  ③ 第 2 步能回到第 1 步，两边改的是同一份内存态（不是两套字段）；
  *  ④ v2.9.24 刀2 起，「🪄 一句话生成将领」是真入口：采用＝只往第①步那几格里填字，
  *     **一样不写库**（刀1 那趟它还是灰占位，那时的证人是"点下去不产生任何东西"）；
- *  ⑤ 一句话里读不懂的那一段当场点名，且一个字段都不落（不半采纳、不猜）。
+ *  ⑤ 一句话里读不懂的那一段当场点名，且一个字段都不落（不半采纳、不猜）；
+ *  ⑥ 落进格子了、但里面还粘着没认的东西＝**另一族话**（刀2a 起）：既不许静默收下，也不许谎称"没落进去"。
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/react';
@@ -35,6 +36,14 @@ function fieldValueByLabel(labelText: string): string {
     .find(l => l.textContent?.trim() === labelText);
   if (!label) throw new Error(`「${labelText}」那格不在这一屏`);
   return (label.parentElement!.querySelector('input') as HTMLInputElement).value;
+}
+
+/** 同一套定位，取那一格里的 `select`（势力那一格是下拉）。 */
+function selectValueByLabel(labelText: string): string {
+  const label = Array.from(document.querySelectorAll('label'))
+    .find(l => l.textContent?.trim() === labelText);
+  if (!label) throw new Error(`「${labelText}」那格不在这一屏`);
+  return (label.parentElement!.querySelector('select') as HTMLSelectElement).value;
 }
 
 function openZhangliao() {
@@ -129,6 +138,58 @@ describe('两段式流程：① 将领身份 → 确认 → ② 技能编辑', (
     expect(nameInputValue()).toBe('张辽');
     expect(fieldValueByLabel('近战 ⚔️')).toBe(String(zhangliao.meleeAtk));
     expect(fieldValueByLabel('远程 🏹')).toBe(String(zhangliao.rangedAtk));
+  });
+
+  // ── 第⑥件：落进格子了、但里面还粘着没认的东西＝另一族话。
+  //    样本用「多了一个关口的壳」那一族：它与还没裁的那几格（半角逗号／句号／空格／壳内切不切）无关，
+  //    所以这句证人不会跟着他日的裁法翻。
+  it('落进格子那一段里还粘着没认的东西＝另起一句说，不许写成「没落进去」', () => {
+    openZhangliao();
+    fireEvent.click(btnByText('🪄 一句话生成将领')!);
+    const box = screen.getByLabelText('一句话生成将领') as HTMLTextAreaElement;
+    // 「郭淮）」整串真的落进了「名称」那一格，同时里面粘着没认的东西：
+    // 这两件事必须分开说——说它"没落进去"是假话（格子明明被填了），
+    // 只说"落进去了"又把玩家该改的地方藏起来；而那枚真没落进去的「攻击力3」得另算一句。
+    fireEvent.change(box, { target: { value: '势力魏，攻击力3，名：郭淮）' } });
+    fireEvent.click(btnByText('按这句生成')!);
+    expect(screen.getByText(/这一格收下了，但里面还粘着没认的东西/).textContent)
+      .toContain('多了一个关口的壳');
+    fireEvent.click(btnByText('✔ 采用，把读到的填进上面那几格')!);
+    expect(nameInputValue()).toBe('郭淮）');
+    // 势力那一格是下拉，值要从 `select` 上取（`fieldValueByLabel` 只认 input）
+    expect(selectValueByLabel('势力')).toBe('魏');
+    // 这句没点体力／近战／远程＝一格都不动
+    expect(fieldValueByLabel('体力 ❤️')).toBe(String(zhangliao.hp));
+    const note = screen.getByText(/已填进：/);
+    expect(note.textContent).toContain('已填进：名称／势力');
+    expect(note.textContent).toContain('这几格收下了、里面还粘着没认的东西：「郭淮）」');
+    expect(note.textContent).toContain('没落进去的：「攻击力3」');
+    // 假话的形状：把收下了那一格也说成"没落进去"
+    expect(note.textContent).not.toContain('没落进去的：「郭淮）」');
+    // 与上面那条同一条硬边界：采用不等于保存
+    expect(useGameStore.getState().generalEdits[zhangliao.id]).toBeUndefined();
+  });
+
+  // ── 第①件（监督台 SUP-C-Knife2a-v3 裁「清干净＋另点」）在界面上的形状：
+  //    括号开了没关上 ⇒ 名称那一格只收壳前的名字，从壳起的整截**一格都不落**、只点名。
+  it('括号开了没关上＝名称那一格只收壳前那半，壳起的整截没落进任何一格、但被点名', () => {
+    openZhangliao();
+    fireEvent.click(btnByText('🪄 一句话生成将领')!);
+    const box = screen.getByLabelText('一句话生成将领') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: '势力魏，攻击力3，名：郭淮（字长文' } });
+    fireEvent.click(btnByText('按这句生成')!);
+    // 那句要点清真因在壳上，不许再说「我不知道是哪一格」
+    expect(screen.getByText(/没落进去的那一段：「（字长文」/).textContent)
+      .toContain('开了没关上');
+    fireEvent.click(btnByText('✔ 采用，把读到的填进上面那几格')!);
+    // 落进「名称」那格的是干净的那半——怪尾巴不许进这一格，更不许进名册
+    expect(nameInputValue()).toBe('郭淮');
+    expect(selectValueByLabel('势力')).toBe('魏');
+    const note = screen.getByText(/已填进：/);
+    expect(note.textContent).toContain('没落进去的：「攻击力3」 「（字长文」');
+    // 假话的形状：既然整截没落进格子，就不许说它"收下了、里面还粘着东西"
+    expect(note.textContent).not.toContain('这几格收下了');
+    expect(useGameStore.getState().generalEdits[zhangliao.id]).toBeUndefined();
   });
 
   it('再选一张卡会回到第 1 步（不会带着上一次的屏往下走）', () => {
