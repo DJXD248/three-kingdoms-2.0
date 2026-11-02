@@ -70,6 +70,14 @@ import { saveAs } from 'file-saver';
 /** All trigger dropdown options (computed once; pure, module-level). */
 const allTriggerOptionStrings = buildTriggerOptionStrings();
 
+/**
+ * 「第①步 → 第②步」那颗确认钮的措辞只有一份（新建将领两步刀）：
+ * 编辑那条先立的（`editStep==='identity'` 底栏），新建这条跟着用同一串词，
+ * 只在后面补一句"这一步就创建"——因为新建那一腿点下去真的会落卡，
+ * 措辞必须逐字对得上按下之后发生的事。证人：`SkillEditor.createTwoStep.test.tsx`。
+ */
+const CONFIRM_TO_SKILLS_LABEL = '✔ 确认将领，进入技能编辑';
+
 /** 导入条目 → 卡上存的那份技能记录（新建卡与待处理「新建」共用一份映射）。 */
 const toSkillRecord = (s: SkillEditEntry): Skill => ({
   name: s.name,
@@ -144,6 +152,13 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const [createIdentity, setCreateIdentity] = useState('__default__');
   const [createSource, setCreateSource] = useState<GeneralSource>('DIY');
   const [createResult, setCreateResult] = useState('');
+  /**
+   * 新建将领两步刀：新建那一排也摆近战／远程两格（此前只有「一句话生成将领」和编辑第①步能定这两个数）。
+   * 空着＝没点，值交回 `createAuthoredGeneral` 按体力推（体力≥4 武将 2／1，否则文将 1／2）——
+   * 这里不重推一遍，也不把"没填"偷偷当成"填了 0"。
+   */
+  const [createMeleeAtk, setCreateMeleeAtk] = useState<number | undefined>(undefined);
+  const [createRangedAtk, setCreateRangedAtk] = useState<number | undefined>(undefined);
   const [newIdentityName, setNewIdentityName] = useState('');
   const [identityNotice, setIdentityNotice] = useState('');
   const [showImport, setShowImport] = useState(false);
@@ -235,15 +250,13 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     [filtered, skillEdits, generalEdits]
   );
 
-  const handleSelectGeneral = (g: General) => {
-    if (multiSelectMode) {
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        if (next.has(g.id)) next.delete(g.id); else next.add(g.id);
-        return next;
-      });
-      return;
-    }
+  /**
+   * 把一张卡摆进那套两屏格子里（新建将领两步刀从「点左列那张卡」那一腿**纯提取**，行为一字未改）：
+   * 列表点击与新建的「确认将领」都调这一颗——字段装载、身份那格的回填、`saved` 复位只有一份，
+   * 新建那条不许另写一套装载（写第二套＝两边迟早漂）。
+   * `step` 只有新建确认那一腿传 `'skills'`（建完自动落到第②步），点列表照旧落第①步。
+   */
+  const openGeneralInEditor = (g: General, step: 'identity' | 'skills' = 'identity') => {
     setSelectedGeneral(g);
     const edited = getEditedGeneral(g);
     setEditingSkills(edited.skills.map(s => ({ name: s.name, description: s.description, tags: tagsOf(s), trigger: s.trigger, effects: s.effects, effectMode: s.effectMode, conditions: s.conditions, forced: s.forced, turnLimit: s.turnLimit })));
@@ -254,9 +267,21 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     setEditRangedAtk(edited.rangedAtk);
     const idEdit = generalEdits[g.id]?.identity;
     setEditIdentity(idEdit === undefined ? '__default__' : idEdit === '' ? '__none__' : idEdit);
-    setEditStep('identity');
+    setEditStep(step);
     setIdentityGenNote('');
     setSaved(false);
+  };
+
+  const handleSelectGeneral = (g: General) => {
+    if (multiSelectMode) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (next.has(g.id)) next.delete(g.id); else next.add(g.id);
+        return next;
+      });
+      return;
+    }
+    openGeneralInEditor(g);
   };
 
   const handleSave = () => {
@@ -887,23 +912,27 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
    * 建卡那唯一一条路（§H1：`createAuthoredGeneral` 钉死 `id` 与 `source`）的共用回显。
    * 手填那一排与「一句话生成将领」采用那一腿**说同一句话**，措辞不许有两份。
    */
-  const createAndReport = (input: AuthoredGeneralInput, source: GeneralSource, extraNote = '') => {
+  const createAndReport = (input: AuthoredGeneralInput, source: GeneralSource, extraNote = ''): General | null => {
     const result = addAuthoredGeneral(input, source);
     if (!result.ok) {
       setCreateResult(`❌ 未创建：${AUTHORING_REFUSAL_TEXT[result.reason] ?? result.reason}`);
-      return;
+      return null;
     }
     const g = result.general;
     const layer = isRepositoryOfficial(g) ? '仓库官方' : sourceOf(g) === 'official' ? '官方本地草稿' : '玩家自制';
     setCreateResult(`✅ 已新建「${g.name}·${g.faction}」（${layer}，编号 ${g.id}，身份 ${g.identity ?? '未填'}${extraNote ? `｜${extraNote}` : ''}）`);
     setCreateName('');
+    // 新建将领两步刀：卡真长出来了，人就当场被带进第②步（技能编辑），
+    // 不再把人留在原地要他自己去左列点这张卡。装载走 `openGeneralInEditor` 那唯一一份。
+    openGeneralInEditor(g, 'skills');
+    return g;
   };
 
   const handleCreateGeneral = () => {
     const identity = createIdentity === '__default__'
       ? undefined
       : createIdentity === '__none__' ? '' : createIdentity;
-    createAndReport({ name: createName, faction: createFaction, hp: createHp, identity }, createSource);
+    createAndReport({ name: createName, faction: createFaction, hp: createHp, meleeAtk: createMeleeAtk, rangedAtk: createRangedAtk, identity }, createSource);
   };
 
   /**
@@ -1029,6 +1058,11 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
         {/* Authoring panel (v2.8.5 新建将领, §H1/§H2) */}
         {showCreate && (
           <div className="px-6 py-3 border-b border-emerald-800/30 bg-emerald-900/10 space-y-2 flex-shrink-0">
+            {/* 新建将领两步刀的第①步标记（与第①步那一屏的提示同一口径）：
+                点下面那颗确认钮＝这一步真的建这张将，建完人自动落到第②步。 */}
+            <p className="text-[10px] text-emerald-300/70">
+              第①步·定本人（名称／势力／体力／近战／远程／身份／归属）——确认后这张将就建出来了，随后自动进第②步拼技能。
+            </p>
             <div className="flex flex-wrap items-center gap-2">
               <input type="text" value={createName} onChange={e => setCreateName(e.target.value)}
                 placeholder="名字（允许与已有将领同名）"
@@ -1050,9 +1084,19 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                 <option value="DIY">{sourceLabels.DIY}</option>
                 {developerMode && <option value="official">{sourceLabels.official}（本地草稿）</option>}
               </select>
+              <input type="number" min={0} max={10} value={createMeleeAtk ?? ''}
+                onChange={e => setCreateMeleeAtk(e.target.value === '' ? undefined : Number(e.target.value))}
+                aria-label="近战（新建）" placeholder="近战"
+                title="空着＝这句话没点：按体力推（体力≥4 武将 2／1，否则文将 1／2）"
+                className="w-16 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm" />
+              <input type="number" min={0} max={10} value={createRangedAtk ?? ''}
+                onChange={e => setCreateRangedAtk(e.target.value === '' ? undefined : Number(e.target.value))}
+                aria-label="远程（新建）" placeholder="远程"
+                title="空着＝这句话没点：按体力推（体力≥4 武将 2／1，否则文将 1／2）"
+                className="w-16 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-sm" />
               <button onClick={handleCreateGeneral}
                 className="px-3 py-1 rounded bg-emerald-700 text-white text-sm font-bold hover:bg-emerald-600">
-                创建
+                {CONFIRM_TO_SKILLS_LABEL}（这一步就创建这张将）
               </button>
             </div>
             {/* v2.9.24 刀2：同一排的另一条入口——说一句话，读到的字段照样只走上面那颗「创建」
@@ -1802,7 +1846,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                   {editStep === 'identity' && (
                     <button onClick={() => setEditStep('skills')}
                       className="flex-1 py-2.5 rounded-xl bg-purple-700 text-white font-bold text-sm hover:bg-purple-600 transition-all active:scale-95">
-                      ✔ 确认将领，进入技能编辑
+                      {CONFIRM_TO_SKILLS_LABEL}
                     </button>
                   )}
                   {editStep === 'skills' && (
