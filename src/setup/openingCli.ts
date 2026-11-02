@@ -11,6 +11,7 @@
  *   npm run opening-compute -- --seed 1 --players 4 --ai-seats 2,3,4
  *   npm run opening-compute -- --seed 1 --players 3 --roster-file roster.json
  *   npm run opening-compute -- --seed 7 --players 2 --ai-seats 1,2 --play
+ *   npm run opening-compute -- --seed 7 --players 4 --ai-seats 2,3,4 --play --views
  *
  * 名册交料（乙 线第二片）走 `--roster-file`：文件形态只认一种＝
  * `{ "format": 1, "pool": [ ...将的效力面... ], "disabledIds": [ ...被关掉的编号... ] }`，
@@ -18,12 +19,16 @@
  * 要么明说没收下并逐条点名；没收下时**不开局**（绝不留半份名册继续算牌）。
  * ⚠️ 今天唯一真走得通的交料路＝这个文件口子；**跨机器那一路还没接**——握手第四格
  * `content`（两边那份效力名单不一样就别开这一局）已由第三片㈁ 落进生产，剩下没接的是
- * "客人那一份怎么送到房主手里"那根线，加上逐席私有视图由进程发＝第四片那一格。
+ * "客人那一份怎么送到房主手里"那根线（逐席私有视图由进程算＝第四片已落地，见下面 `--views`）。
  * 不给 `--roster-file` 时退回**仓库账本**，那是一块占位板，不代表已经交过料。
  *
  * `--play`＝第三片㈂：开局那五步之后，这一局继续在**浏览器外面**打下去。它不是一套新规则——
  * 每一步都过 `store/engineSteps.ts` 那批函数（玩家浏览器里 `gameStore` 那 14 个入口调的就是它们），
  * 差别只在该哪一席动手怎么解（进程按引擎真值，见 `setup/tableCompute.ts` 文件头）。
+ *
+ * `--views`＝第四片㈃：`--play` 跑完之后，进程**按每一席各算一份**要发给他的局面。遮蔽那把尺
+ * 不在这里重抄——就叫 `network/snapshotView.buildBroadcastView`（房主浏览器里发快照时调的同一个函数），
+ * 这一句只把算出来的字节数、以及"自己那两格亮出几张／别人的位置剩几个"报回命令行。
  */
 import { allGenerals, type General } from '../data/generals';
 import { readFileSync } from 'node:fs';
@@ -52,6 +57,8 @@ import {
   playTable,
   type TableHost,
 } from './tableCompute';
+import { processSeatView } from './seatViewCompute';
+import { isHiddenEntry } from '../network/snapshotView';
 import { beginInitialDraw } from '../store/engineSteps';
 import { GameEngine } from '../core/GameEngine';
 import { syncPlayerSkills } from '../skills/skillCompiler';
@@ -71,6 +78,8 @@ interface CliArgs {
   rosterFile: string | null;
   /** ㈂：开局账收口之后，这一局在进程里继续打下去（`--play`）。 */
   play: boolean;
+  /** ㈃（第四片）：这一局跑完之后，由进程把逐席私有视图各算一份、报出字节数（`--views`）。 */
+  views: boolean;
   maxSteps: number;
 }
 
@@ -83,12 +92,14 @@ function parseArgs(argv: readonly string[]): CliArgs {
     roomName: '进程开局',
     rosterFile: null,
     play: false,
+    views: false,
     maxSteps: 3000,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
     if (flag === '--play') { args.play = true; continue; }
+    if (flag === '--views') { args.views = true; continue; }
     if (flag === '--max-steps' && value !== undefined) { args.maxSteps = Math.max(1, Number(value) || 1); i += 1; continue; }
     if (flag === '--seed' && value !== undefined) { args.seed = Number(value); i += 1; continue; }
     if (flag === '--players' && value !== undefined) { args.players = Number(value); i += 1; continue; }
@@ -136,7 +147,7 @@ function ledgerLine(state: OpeningState): string {
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
   if (args.seed === null || !Number.isFinite(args.seed)) {
-    console.log('用法：npm run opening-compute -- --seed <整数> [--players 4] [--ai-seats 2,3,4] [--tier balanced] [--roster-file 名册.json]');
+    console.log('用法：npm run opening-compute -- --seed <整数> [--players 4] [--ai-seats 2,3,4] [--tier balanced] [--roster-file 名册.json] [--play] [--views]');
     console.log('（种子必须显式给：浏览器那侧今天的开局游标来自页面加载时的随机数，不随代码走、也不可复现）');
     console.log(`（名册文件要的是 {"format":${String(ROSTER_SUBMISSION_FORMAT)},"pool":[...],"disabledIds":[...]}＝交上来的那份"效力名册"；不给就用仓库账本那块占位板）`);
     process.exitCode = 1;
@@ -211,7 +222,7 @@ function main(): void {
   // 判据不是第二套：这一句之后每一步都过 `engineSteps` 那批函数（与玩家浏览器里
   // `gameStore` 那 14 个入口调的是同一批），只是"该哪一席动手"按引擎真值解。
   if (!args.play) {
-    console.log('（没给 --play＝只算开局那几步。加 --play 让这一局在进程里继续打到收口。）');
+    console.log('（没给 --play＝只算开局那几步。加 --play 让这一局在进程里继续打到收口。`--views` 跟在 --play 后面，视图是在跑起来的那份账上算的。）');
     return;
   }
   const played = openingToEngineState(state);
@@ -237,6 +248,32 @@ function main(): void {
     console.log(`   ${String(player.id)}·${player.name}｜势力 ${player.faction ?? '-'}｜营地 ${String(player.baseHp ?? 0)}/${String(player.baseMaxHp ?? 0)}｜手牌 ${String((player.hand ?? []).length)} 张｜场上 ${String((player.fieldGenerals ?? []).length)} 颗｜池 ${String((player.generalPool ?? []).length)} 张｜${player.isAlive === false ? '已淘汰' : '在场'}`);
   });
   console.log(`   牌堆剩 ${String(host.engineState.deck.length)} 张｜弃堆 ${String(host.engineState.discardPile.length)} 张｜${host.engineState.phase === 'gameOver' ? '这一局在浏览器外面跑到了收口' : `跑满 ${String(args.maxSteps)} 步上限，还没收口`}`);
+
+  // ㈃（乙 线第四片）＝**发出去的那一份**也由进程算。每一席各拿他自己那一份：
+  // 自己手里与征召池里的牌照发内容，别人那两格只剩张数（遮蔽那把尺住在 `network/snapshotView`，
+  // 这一句只是把它算出来的字节报回命令行，不在这里重抄判据）。
+  if (!args.views) {
+    console.log('（没给 --views＝不发视图。加 --views 让进程把逐席私有视图各算一份并报出字节数。）');
+    return;
+  }
+  console.log('⑧ 进程逐席发私有视图（遮蔽那把尺＝与房主浏览器里发快照时调的同一个函数）');
+  for (const player of host.engineState.players) {
+    const bytes = JSON.stringify(processSeatView(host, player.id));
+    const view = JSON.parse(bytes) as { players: { id: number; hand?: unknown[]; generalPool?: unknown[] }[] };
+    const list = (value: unknown[] | undefined) => (Array.isArray(value) ? value : []);
+    const revealed = (value: unknown[] | undefined) => list(value).filter(item => !isHiddenEntry(item)).length;
+    const masked = (value: unknown[] | undefined) => list(value).filter(item => isHiddenEntry(item)).length;
+    const mine = view.players.find(row => row.id === player.id);
+    const maskedElsewhere = view.players
+      .filter(row => row.id !== player.id)
+      .reduce((sum, row) => sum + masked(row.hand) + masked(row.generalPool), 0);
+    console.log(`   第 ${String(player.id)} 席 ${player.name}｜这一份 ${String(bytes.length)} 字节｜自己那两格按牌面发＝手牌 ${String(revealed(mine?.hand))} 张、征召池 ${String(revealed(mine?.generalPool))} 员｜别人那两格按位置计数发＝${String(maskedElsewhere)} 个位置`);
+  }
+  const spectator = JSON.stringify(processSeatView(host, null));
+  const spectatorView = JSON.parse(spectator) as { players: { hand?: unknown[]; generalPool?: unknown[] }[] };
+  const maskedAll = spectatorView.players
+    .reduce((sum, row) => sum + (Array.isArray(row.hand) ? row.hand.length : 0) + (Array.isArray(row.generalPool) ? row.generalPool.length : 0), 0);
+  console.log(`   观战面（没绑席位那一格）｜${String(spectator.length)} 字节｜谁的这两格都按位置计数发＝${String(maskedAll)} 个位置`);
 }
 
 main();
