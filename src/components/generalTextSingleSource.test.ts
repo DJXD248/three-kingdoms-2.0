@@ -5,7 +5,7 @@
  * 「体力」那个缺省数、五个字段的名目、势力那五档、以及"采用之后到底走哪条建卡路"。
  * 只要有一处开始手抄，下一位改的人只会改一处，于是**界面说的**与**真发生的**分叉。
  *
- * 六条（每条右边的名单＝本轮 `node` 现场量的，不是设想出来的）：
+ * 七条（每条右边的名单＝本轮 `node` 现场量的，不是设想出来的）：
  *  ① 缺省体力那一枚数只有一处声明，其余全是 `import`；
  *  ② 兜底这一**步动作**只有 `hpOrDefault` 一个函数，源码里一张就地重算的 `hp ?? 4` 都不许留
  *     （刀2 开工前的原状正是三处内联＝§12-140⑨㈡ 点名的那件事）；
@@ -18,6 +18,10 @@
  *  ⑥ 「没落进这张卡／收下了但还粘着」那两族话只有一份拼装（`unsettledSegments`），
  *     采用那**两条腿**都调它——句式在别处再抄一遍＝下次改一处、漏一处，两腿又会漂开
  *     （刀2a-v3 第⑥件裁的就是这条）。
+ *  ⑦ 换行符不是判据：本地工作副本是 LF、CI 的 windows runner 检出是 CRLF（runner 默认
+ *     `core.autocrlf=true`），同一条源码扫描在两台机器上读到的字节不同。v2.9.30 的 CI #362
+ *     就栽在这——"配平后紧跟 `\n` 才算函数体"读到 `'\r'` ⇒ 两条证人误红、CI 整趟红。
+ *     这一条钉两层：读文件出口归一成 LF ＋ 判据本身 `\n`/`\r\n` 都认，证人直接把 CRLF 渲染喂进判据。
  *
  * 扫描口径与 `src/skills/turnLimitSingleSource.test.ts` 同一套：**注释里的提及不算第二处出处**，
  * 先剥注释再点名；证人文件（`*.test.tsx?`）不参与扫描。
@@ -38,9 +42,19 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * 读进来先把换行符归一成 LF。
+ * CI 的 runner 是 windows-latest，它的 git 默认 `core.autocrlf=true` ⇒ 检出时把 LF 换成 CRLF；
+ * 我本地这份文件的工作副本却是 LF ⇒ 同一条判据在两台机器上读到不同的字节。
+ * v2.9.28 的 CI #335（`generalsConverted.ts` 逐字对账）与本轮 #362（下面 `bodyFromCode`
+ * 那句"紧跟换行才算函数体"）都栽在这一条上，判据两回都当场误红。
+ * 这一族的判据只管**代码内容**，换行符不在它管的范围里，所以在唯一的读文件出口归一。
+ */
+const toLf = (s: string) => s.replace(/\r\n/g, '\n');
+
 /** 剥掉块注释与行注释，只留"代码里真的写着这一串"的那一面。 */
 function codeOf(file: string): string {
-  return readFileSync(file, 'utf8')
+  return toLf(readFileSync(file, 'utf8'))
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
     .filter(line => !/^\s*\/\//.test(line))
@@ -57,11 +71,12 @@ const countIn = (file: string, needle: string) => codeOf(path.join(srcRoot, file
  * 正向逐字钉实现体是另一种东西，这里不钉）。
  * 难点是 TS 的类型谓词签名：`: draft is X & { a: string } {` 里那个 `{` 是**签名的一部分**，
  * 不是函数体。判据＝配平后紧跟**换行**的那一枚才算函数体（类型壳后面紧跟的是空格＋`{`）。
+ * 「紧跟换行」这一步**绝不认死 `\n` 一个字节**：本轮 CI #362 的红就是本地 LF、CI 检出 CRLF，
+ * 于是读到 `'\r'` ⇒ 判据找不到体 ⇒ 两条证人误红。`bodyFromCode` 直接收文本，供第 ⑦ 条拿 CRLF 渲染咬。
  */
-function bodyOf(file: string, fnName: string): string {
-  const code = codeOf(path.join(srcRoot, file));
+function bodyFromCode(code: string, fnName: string, label: string): string {
   const at = code.search(new RegExp(`function ${fnName}\\s*\\(`));
-  if (at < 0) throw new Error(`${file} 里没有 function ${fnName}`);
+  if (at < 0) throw new Error(`${label} 里没有 function ${fnName}`);
   // 先按小括号配平找到参数表收尾，函数体一定在它之后
   let paren = code.indexOf('(', at);
   let pdepth = 0;
@@ -80,10 +95,17 @@ function bodyOf(file: string, fnName: string): string {
         if (depth === 0) { close = j; break; }
       }
     }
-    if (close < 0) throw new Error(`${file} 的 ${fnName} 花括号没配平`);
-    if (code[close + 1] === '\n') return code.slice(i + 1, close);
+    if (close < 0) throw new Error(`${label} 的 ${fnName} 花括号没配平`);
+    const next = code.charAt(close + 1);
+    const afterNext = code.charAt(close + 2);
+    if (next === '\n' || (next === '\r' && afterNext === '\n')) return code.slice(i + 1, close);
   }
-  throw new Error(`${file} 的 ${fnName} 找不到函数体`);
+  throw new Error(`${label} 的 ${fnName} 找不到函数体`);
+}
+
+/** 从磁盘上取（走 `codeOf`＝已归一换行符），再交给 `bodyFromCode`。 */
+function bodyOf(file: string, fnName: string): string {
+  return bodyFromCode(codeOf(path.join(srcRoot, file)), fnName, file);
 }
 
 describe('一句话生成将领这一刀的单一出处', () => {
@@ -209,5 +231,30 @@ describe('一句话生成将领这一刀的单一出处', () => {
     expect(body).not.toContain('issues.length');
     // 正面：切到的确实是那枚函数的体（空跑的负向断言不配当证人）
     expect(body).toContain('draft.issues');
+  });
+
+  it('⑦ 换行符不是判据：同一份源码的 CRLF 渲染照样切得出函数体，且切到的内容与 LF 逐字同一', () => {
+    // 本轮 CI #362 的红＝本地工作副本 LF、windows runner 检出 CRLF ⇒ "紧跟换行才算体首"读到 `'\r'`
+    // ⇒ `unsettledSegments`／`canAdoptGeneral` 两条误红。这条证人把 CI 那一面直接喂进判据：
+    // 修之前它必红（拿不到体＝抛错），修之后它与 LF 那条路对得上。
+    const parseFile = 'components/skillEditor/generalTextParse.ts';
+    const lf = codeOf(path.join(srcRoot, parseFile));
+    const crlf = lf.replace(/\n/g, '\r\n');
+    // 空跑守卫：这份渲染里若真没有 CRLF，下面等于把 LF 又跑一遍
+    expect(crlf.includes('\r\n')).toBe(true);
+    // 层一＝读文件那唯一的出口把 CR 抹平了（撤掉 `toLf` 这条立刻红；它管的是全族 needles 与计数）
+    expect(lf.includes('\r'), 'codeOf 读进来还带着 CR').toBe(false);
+    const markers: Record<string, string> = {
+      canAdoptGeneral: 'missingRequiredFields(draft)',
+      missingRequiredFields: 'draft.name',
+      unsettledSegments: 'draft.issues',
+    };
+    for (const [fn, marker] of Object.entries(markers)) {
+      // 层二＝"紧跟换行才算体首"这一步自己也不认死一个字节（撤掉那半句，下面必抛）
+      const fromCrlf = bodyFromCode(crlf, fn, `${parseFile}（CRLF 渲染）`);
+      expect(fromCrlf, `${fn} 在 CRLF 渲染下没切到体`).toContain(marker);
+      // 唯一该变的是换行符本身；内容一字不差
+      expect(toLf(fromCrlf), `${fn} 两条路切出的体不同`).toBe(bodyOf(parseFile, fn));
+    }
   });
 });
