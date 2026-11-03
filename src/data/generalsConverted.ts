@@ -26,8 +26,8 @@ export const SHEET_GENERALS: General[] = [
     { name: '往烈', description: '你无法撤退或被还原', tags: ['锁定技'] },
   ]),
   createGeneral('sheet_shu_005', '诸葛瞻', '蜀', 4, [
-    { name: '罪论', description: '回合结束时，若己方玩家手牌数为1，你可以回复1点体力；为2，则使1名其他角色回复1点体力；为3，则对1名角色造成1点伤害' },
-    { name: '父荫', description: '若被攻击时候，己方玩家有手牌则受到的伤害-1，反之受到伤害+1', tags: ['锁定技'] },
+    { name: '罪论', description: '回合结束时，若己方玩家手牌数量为1，你可以回复1点体力；为2，可以使1名其他角色回复1点体力；为3，可以对1名角色造成1点伤害' },
+    { name: '父荫', description: '你成为攻击目标时，若己方玩家有手牌则你受到的伤害-1，否则你受到的伤害+1', tags: ['锁定技'] },
   ]),
   createGeneral('sheet_shu_006', '孙尚香', '蜀', 3, [
     { name: '良助', description: '回合限1次，你可以令一名其他角色获得你1层护甲' },
@@ -169,7 +169,7 @@ export const SHEET_GENERALS: General[] = [
     { name: '征南', description: '当你击杀角色后，你可以选择「当先」、「制蛮」之一获得，你已拥有「当先」「制蛮」后击杀角色，获得「武圣」' },
     { name: '撷芳', description: '你对男性角色造成的伤害-1，你攻击女性角色时无视对方护甲', tags: ['锁定技'] },
     { name: '当先', description: '你每回合可以多攻击1次，回合第二次攻击伤害减半（向下取整）', tags: ['锁定技'] },
-    { name: '武圣', description: '远程伤害+1' },
+    { name: '武圣', description: '远程伤害+1', tags: ['锁定技'] },
     { name: '制蛮', description: '弃置1张手牌使一名角色直到下个己方回合无法撤退' },
   ]),
   createGeneral('sheet_shu_042', '鲍三娘', '蜀', 3, [
