@@ -950,8 +950,9 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     if (hpWasDefaulted(draft)) notes.push(`体力这句没点、按 ${DEFAULT_HP_WHEN_MISSING} 建`);
     if (draft.meleeAtk === undefined && draft.rangedAtk === undefined) notes.push('近战／远程按体力推');
     if (draft.skillNames.length > 0) notes.push(`技能只记名（${draft.skillNames.join('、')}），效果请去第②步拼`);
-    // 这句话里没落进这张卡的段落，建完也要说出来——卡照样建得出（那句只报事实，不写成"已退回"）。
-    // 与第①步那条腿共用 `unsettledSegments`，两腿下次不会漂开。
+    // 走到这一步＝那句已经落齐了（上面那道闸在 2026-11-04 用户裁的第 12 条之后会把"有段落没落进这张卡"
+    // 整句退回，建卡与填格子两条腿都到不了这里）；这一行因此只剩「收下了但还粘着」那一族会说，
+    // 措辞与第①步那条腿共用 `unsettledSegments`，两腿下次不会漂开。
     notes.push(...unsettledSegments(draft));
     createAndReport({
       name: draft.name,

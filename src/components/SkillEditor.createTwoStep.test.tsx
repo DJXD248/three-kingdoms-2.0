@@ -198,7 +198,10 @@ describe('新建将领两段式：确认＝建卡＋自动落到第②步', () =
     openCreateRow();
     fireEvent.click(btnByText('🪄 一句话生成将领')!);
     fireEvent.change(screen.getByLabelText('一句话生成将领'), {
-      target: { value: '名：关兴，蜀，体力4，近战2，远程1，技能：武圣和兴师' },
+      // 三枚技能名用顿号点开（2026-11-04 §12-162 第 1 条裁「甲：切出来的名字去名册里查，查得到才切」
+      // 之后，「武圣和兴师」那一路因为兴师不在名册里＝整枚退回、那颗采用按住；本条钉的是**导航那条腿**，
+      // 换分隔符不改变它要证的事）
+      target: { value: '名：关兴，蜀，体力4，近战2，远程1，技能：武圣、兴师' },
     });
     fireEvent.click(btnByText('按这句生成')!);
     fireEvent.click(btnByText('✔ 采用并按这句建这张将')!);

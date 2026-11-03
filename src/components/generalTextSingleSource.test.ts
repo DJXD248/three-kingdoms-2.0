@@ -12,9 +12,12 @@
  *  ③ 建卡仍然只有那一条路：`createAuthoredGeneral` 只被 store 调，界面一律经 `addAuthoredGeneral`；
  *  ④ 这一刀是**读入侧**：反解那份文件不 import 结算／建卡／store，势力五档也只 `import` 不重述
  *     ——这条是"两锚逐字节不动"的结构性前提，钉在代码上才算数；
- *  ⑤ 「能不能采用」这一道门槛只认将名与势力两格，**没有掺进解析器自己造的额外判据**
- *     （钉的是文件集＋"body 里不许出现 `issues`／别的字段"，不钉实现体逐字＝他日后改门槛的实现
- *      不会被这条绊住，只有"悄悄多一条判据"才红）。
+ *  ⑤ 「能不能采用」这一道门槛认三样：将名、势力、以及**没落进这张卡**的那一段。
+ *     最后一样是用户 2026-11-04 §12-162 第 12 条当面裁的（「退回＋那颗钮按住＋说明错误在哪里」），
+ *     本条上一版写的"只有悄悄多一条判据（比如把 ✕ 那几段变成不通过）才红"**已被那句裁翻面**，
+ *     故此处改的是尺不是码。**「收下了、但里面还粘着没认的东西」那一族不算**（第 12 条只说
+ *     "有东西没落进去"，那一族真落进了格子）——这条边界靠 `glued` 只许长在一处来钉。
+ *     钉的是文件集＋"门槛只许读这两枚判据"，不钉实现体逐字＝他日后改门槛的写法不会被这条绊住。
  *  ⑥ 「没落进这张卡／收下了但还粘着」那两族话只有一份拼装（`unsettledSegments`），
  *     采用那**两条腿**都调它——句式在别处再抄一遍＝下次改一处、漏一处，两腿又会漂开
  *     （刀2a-v3 第⑥件裁的就是这条）。
@@ -168,10 +171,10 @@ describe('一句话生成将领这一刀的单一出处', () => {
     expect(code.includes("'魏'")).toBe(false);
   });
 
-  it('⑤ 采用门槛只认将名与势力：没有一处把解析器自己造的额外判据（`issues`／别的字段）掺进来', () => {
+  it('⑤ 采用门槛只读两枚判据（缺格＋没落进去）：既不许长出第三枚，也不许把"还粘着"那一族算进退回', () => {
     // 钉文件集＝新增一个文件想自己判"能不能采用"，这条立刻红
-    // 两枚判据的持有者**名单不同**（本轮现场量的）：`SkillEditor.tsx` 只调门槛那枚，
-    // 「缺了哪几格」那枚只给面板显示用——照实钉两张名单，不并成一张假装对称。
+    // 判据的持有者**名单不同**（本轮现场量的）：`SkillEditor.tsx` 只调门槛那枚，
+    // 「缺了哪几格」与「有没有没落进去的」那两枚只给面板显示用——照实钉名单，不并成一张假装对称。
     expect(holdersOf('canAdoptGeneral')).toEqual([
       'components/SkillEditor.tsx',
       'components/skillEditor/GeneralTextPanel.tsx',
@@ -181,16 +184,23 @@ describe('一句话生成将领这一刀的单一出处', () => {
       'components/skillEditor/GeneralTextPanel.tsx',
       'components/skillEditor/generalTextParse.ts',
     ]);
-    // 门槛只此两枚，不许长出第二枚同名判据
+    // 第 12 条那半句「有东西没落进去＝退回」的判据只有一枚，持有者＝门槛本体＋面板那句措辞。
+    // 面板调它是为了**说出错在哪里**（§12-112：界面那句必须与真行为逐字对得上），不是为了自己判闸。
+    expect(holdersOf('hasUnlandedSegment')).toEqual([
+      'components/skillEditor/GeneralTextPanel.tsx',
+      'components/skillEditor/generalTextParse.ts',
+    ]);
+    // 门槛只此三枚，不许长出第二枚同名判据
     const parseFile = 'components/skillEditor/generalTextParse.ts';
     expect(countIn(parseFile, 'export function canAdoptGeneral')).toBe(1);
     expect(countIn(parseFile, 'export function missingRequiredFields')).toBe(1);
-    // 负向断言：body 里不许出现"点名的材料"或别的手填字段。
+    expect(countIn(parseFile, 'export function hasUnlandedSegment')).toBe(1);
+    // 负向断言：body 里不许出现"点名的材料"（直接判 issues）或别的手填字段。
     // 这**不是**逐字钉实现体——他日后改门槛的写法（换判据顺序、加注释）不会绊红，
-    // 只有"悄悄多一条玩家没写过的判据"（比如把 ✕ 那几段变成不通过）才红。
+    // 只有"悄悄多一条玩家没写过的判据"（比如把体力也变成不通过）才红。
     for (const fn of ['canAdoptGeneral', 'missingRequiredFields']) {
       const body = bodyOf(parseFile, fn);
-      expect(body, `${fn} 的函数体里不许掺 issues`).not.toContain('issues');
+      expect(body, `${fn} 的函数体里不许直接判 issues`).not.toContain('issues');
       for (const otherField of ['hp', 'meleeAtk', 'rangedAtk', 'skillNames', 'ignored', 'identity', 'provenance']) {
         expect(body, `${fn} 的函数体里不许判 ${otherField}`).not.toContain(`draft.${otherField}`);
       }
@@ -202,11 +212,17 @@ describe('一句话生成将领这一刀的单一出处', () => {
     // 切错了 body 里既没有 `issues` 也没有别的字段＝负向断言全绿却是空跑。这两条堵死它。
     const gateBody = bodyOf(parseFile, 'canAdoptGeneral');
     expect(gateBody).toContain('missingRequiredFields(draft)');
+    expect(gateBody).toContain('hasUnlandedSegment(draft)');
     expect(gateBody).not.toContain('name: string');
-    // 全仓（非证人）没有任何一处把"点名的段数"当成条件——掺判据最常见的写法就是这个形状
+    // 全仓（非证人）没有任何一处把"点名的段数"当成条件——绕过判据、就地数材料是最常见的写法
     expect(holdersOf('issues.length')).toEqual([]);
-    // 界面上那枚钮只认门槛这一枚，没在原地补一条自己的判据
-    expect(countIn('components/skillEditor/GeneralTextPanel.tsx', 'canAdoptGeneral(draft)')).toBe(1);
+    // 两族的分界只许长在这一枚判据里：谁在别处再写一遍 `glued !== true`（或直接判 `glued`），
+    // 下次改"哪一族算退回"就会改一处、漏一处。
+    expect(holdersOf('glued !== true')).toEqual([parseFile]);
+    // 面板那句"错在哪里"与门槛读同一枚判据，且**只调一次**；钮只认门槛那枚，原地没补第三条判据
+    const panelFile = 'components/skillEditor/GeneralTextPanel.tsx';
+    expect(countIn(panelFile, 'canAdoptGeneral(draft)')).toBe(1);
+    expect(countIn(panelFile, 'hasUnlandedSegment(draft)')).toBe(1);
   });
 
   it('⑥ 那两族话只有一份拼装，两条采用腿都调它（刀2a-v3 第⑥件：两腿下次不许再漂开）', () => {
@@ -225,7 +241,9 @@ describe('一句话生成将领这一刀的单一出处', () => {
     // needle **逐字取整句**：只写"没认成技能名"这种短句，日后改措辞会误红。
     expect(holdersOf('那一格写的我没认成技能名，一个都没落（逐条点名见下面）')).toEqual([parseFile]);
     expect(holdersOf('fromSkillList')).toEqual([parseFile]);
-    // 拼装只报事实，不许顺手判"能不能采用"（硬闸那一格还没裁，这条钉住它别偷偷长进去）
+    // 拼装只报事实，不判"能不能采用"；判闸那一步住在门槛（上面第 ⑤ 条），两边不许互相长进对方。
+    // （上一版这句写的"硬闸那一格还没裁"已过期：2026-11-04 §12-162 第 12 条裁完了，裁的是**门槛读它**，
+    //  不是**它自己判闸**——所以这条负向断言内容一字未动。）
     const body = bodyOf(parseFile, 'unsettledSegments');
     expect(body).not.toContain('canAdoptGeneral');
     expect(body).not.toContain('issues.length');

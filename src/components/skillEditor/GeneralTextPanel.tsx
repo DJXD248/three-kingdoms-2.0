@@ -5,11 +5,14 @@
 // 点采用才落格子。它**不建卡、不写库**：
 //  · mode＝'create' 采用＝调用方走 `createAuthoredGeneral` 那唯一一条建卡路（本组件不碰 store）；
 //  · mode＝'edit'   采用＝只把读到的字段填进上面那几格，落档仍然只有「💾 保存修改」那一条路。
-// 认不出的一段一律回原文＋一句改得动的理由（与 v2.9.9「自己写效果」同一套纪律），绝不替玩家猜名字
-// 之外的任何一格；五格里只有体力能兜底，而那个数由调用方用 `hpOrDefault` 取，不在这里写第二份。
+// 认不出的一段一律回原文＋一句改得动的理由（与 v2.9.9「自己写效果」同一套纪律），名字也不猜——
+// 2026-11-04 用户本人裁完的那 12 条（§12-162）把"没写「名：」就按位置猜"取消了，缺的那格由
+// 「缺了」那一行点名；有段落没落进这张卡＝这颗「采用」按住（同一条判据住在 `hasUnlandedSegment`，
+// 与门槛 `canAdoptGeneral` 共用一份，界面说的与真发生的才不会对不上）。
+// 五格里只有体力能兜底，而那个数由调用方用 `hpOrDefault` 取，不在这里写第二份。
 import { useState } from 'react';
 import type { GeneralTextDraft } from './generalTextParse';
-import { canAdoptGeneral, describeGeneralDraft, missingRequiredFields, parseGeneralText } from './generalTextParse';
+import { canAdoptGeneral, describeGeneralDraft, hasUnlandedSegment, missingRequiredFields, parseGeneralText } from './generalTextParse';
 
 const hintCls = 'text-[9px] leading-tight';
 
@@ -33,6 +36,7 @@ export function GeneralTextPanel({ mode, onAdopt }: {
   }
 
   const missing = draft ? missingRequiredFields(draft) : [];
+  const unlanded = draft !== null && hasUnlandedSegment(draft);
   const adoptable = draft !== null && canAdoptGeneral(draft);
 
   return (
@@ -43,7 +47,7 @@ export function GeneralTextPanel({ mode, onAdopt }: {
       </div>
       <textarea value={text} onChange={e => setText(e.target.value)}
         aria-label="一句话生成将领"
-        placeholder={'逗号（或顿号）分开一句一格。例：\n张辽，势力魏，体力4，技能：突袭和骁果\n名：赵云，蜀，4点体力，远程2\n读不懂的那一段会单独点名，不会替您猜。'}
+        placeholder={'一句一格；将名请写上「名：」（没写＝不替您按位置猜）。例：\n名：张辽，势力魏，体力4，技能：突袭、骁果\n名：赵云，蜀，4点体力，远程2\n读不懂的那一段会单独点名，没落进这张卡的段落一句都不放过去。'}
         className="w-full px-2 py-1.5 rounded bg-black/50 border border-violet-800/30 text-violet-100 text-[11px] h-16 resize-none focus:outline-none focus:border-violet-500" />
       <div className="flex items-center gap-2">
         <button type="button" onClick={() => setDraft(parseGeneralText(text))}
@@ -64,7 +68,12 @@ export function GeneralTextPanel({ mode, onAdopt }: {
           </ul>
           {missing.length > 0 && (
             <p className={`${hintCls} text-rose-300/90`}>
-              缺了：{missing.join('／')}——这两格我不替您猜，补进这句话或直接用手填。
+              缺了：{missing.join('／')}——这两格我不替您猜，补进这句话或直接用手填；缺着的时候这颗「采用」按着。
+            </p>
+          )}
+          {unlanded && (
+            <p className={`${hintCls} text-rose-300/90`}>
+              这句里有东西没落进这张卡——上面带 ✕ 的每一行都点了名、说了为什么。这颗「采用」我按住了，改完这句话再点。
             </p>
           )}
           <button type="button" onClick={() => { onAdopt(draft); close(); }} disabled={!adoptable}
