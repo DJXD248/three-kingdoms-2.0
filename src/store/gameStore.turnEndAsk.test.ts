@@ -19,6 +19,10 @@ import type { General } from '../data/generals';
 import { __resetResidentEngineContainer } from './engineExecutionBridge';
 import { storeStateToEngineState } from './gameStateAdapter';
 import { resetLiveReplay, getLiveReplayEntryCount } from '../replay/liveReplayRecorder';
+// 末片第一刀那条静态链的证人要用：客人交回的席位号由这张表绑出，动手走的是生产那个翻译出口。
+import type { GameAction } from '../action/ActionTypes';
+import { applyCanonicalAction } from './applyCanonicalAction';
+import { buildSeatMap, seatOfPeer } from '../network/netSeat';
 
 function watchGeneral(id: string, skillName: string): General {
   return {
@@ -94,15 +98,16 @@ function makeEngineState(fieldGenerals: General[]): EngineState {
   } as EngineState;
 }
 
-function installStoreState(engineState: EngineState, firstSeatIsAi = false) {
+function installStoreState(engineState: EngineState, firstSeatIsAi = false, currentPlayerIndex = 0) {
   if (firstSeatIsAi) (engineState.players[0] as any).isAi = true;
   // Production invariant (mirrored on purpose): the display player array IS
   // the engine player array — the engine-aware setter rebuilds engineState
   // from the display fields on every set() that omits it (ask-open does),
   // so a handcrafted display array without fieldGenerals would be wiped.
+  // 末片第一刀多出来的第三个参数＝"现在轮到展示面第几位"，默认 0＝既有各枚证人一位未动。
   useGameStore.setState({
     players: engineState.players as unknown as Player[],
-    currentPlayerIndex: 0,
+    currentPlayerIndex,
     currentRound: 3,
     phase: 'playing',
     turnPhase: 'main',
@@ -712,5 +717,58 @@ describe('gameStateAdapter · turn/consumedSkills 保留 (2.3.1)', () => {
     });
     expect(rebuilt.turn).toBe(4);
     expect(rebuilt.consumedSkills).toBeUndefined();
+  });
+});
+
+/**
+ * 乙 线末片第一刀（2026-11-05）：把「客人按结束回合 ⇒ **房主这屏**替那一席开窗、且没提交」
+ * 这条一路上只写在注释里的推理链变成实测。链路逐字是生产那一条：
+ * `components/NetRoomBridge.tsx:116` 的 `execute` ＝ `applyCanonicalAction(useGameStore.getState(), seat, action)`
+ * → `store/applyCanonicalAction.ts:93` 的 `case 'END_TURN'` → `gameStore.endTurn`（`:719`）
+ * → 人类席闸门（`:751-752`）。席位号由 `network/netSeat.ts` 的 `buildSeatMap` 绑出（只列非 AI 席），
+ * 客人那一席在闸门看来就是人。这里**没有**动 `src/network/` 任何实现，只是把现成的两块接起来验一次。
+ */
+describe('乙 末片第一刀 · 客人交回席位号 ⇒ 房主浏览器开窗且不提交（那条静态链落地）', () => {
+  beforeEach(() => {
+    __resetResidentEngineContainer();
+    resetLiveReplay();
+  });
+
+  it('席位表把非 AI 那一席绑给客人；房主侧收到该席的 END_TURN 只开窗，回合号与账本一位未动', () => {
+    const rows = buildSeatMap({
+      seats: [{ seat: 1, isAi: false, label: '房主席' }, { seat: 2, isAi: false, label: '客人席' }],
+      host: { id: 'peer_host', name: '房主' },
+      guests: [{ id: 'peer_guest', name: '客人' }],
+    });
+    expect(seatOfPeer(rows, 'peer_guest'), '客人那一席＝席位号 2').toBe(2);
+
+    // 房主本机那份账：轮到客人那一席（第 2 位），它场上挂着一枚要人点头的回合结束技能。
+    const engineState = makeEngineState([]);
+    engineState.currentPlayerId = 2;
+    engineState.players[1]!.fieldGenerals = [watchGeneral('g_guest_watch', '守夜')].map((g, i) => fieldGeneral(g, 2, i));
+    installStoreState(engineState, false, 1);
+
+    expect(get().engineState.currentPlayerId, '闸门读引擎真值：现在轮到客人那一席').toBe(2);
+    expect((engineState.players[1] as { isAi?: boolean }).isAi, '客人那一席不是 AI——在闸门看来就是人').not.toBe(true);
+    const turnBefore = get().engineState.turn;
+
+    // 生产那一句执行口，逐字照抄 `NetRoomBridge.tsx:116`（席位号由客人交回，账本住房主这边）。
+    const accepted = applyCanonicalAction(get(), 2, { type: 'END_TURN', playerId: 2 } as unknown as GameAction);
+
+    expect(accepted, '这一枚动作该被牌桌收下（收下＝开了窗）').toBe(true);
+    const state = get();
+    expect(state.turnEndAsk, '客人按下结束回合⇒房主这屏该替那一席开窗问').toMatchObject({
+      playerId: 2,
+      candidates: [{ skillId: 'g_guest_watch:守夜:e1', generalId: 'g_guest_watch', generalName: '将g_guest_watch', skillName: '守夜' }],
+    });
+    // "没提交"的凭据：回合号没走、这一席一枚都没记进账本。（录像那格在这里当不了凭据：
+    // `liveReplayRecorder` 复位后的**第一笔** dispatch 只开档、不计数，所以计数为 0 既可能真是没提交、
+    // 也可能只是刚开档——一句两头都真的话不配当证人。）
+    expect(state.engineState.turn).toBe(turnBefore);
+    expect(state.engineState.consumedSkills ?? []).toHaveLength(0);
+
+    // 反向钉住上面两句不是空话：同一格答完（跳过＝提交）回合号才走。
+    get().skipTurnEndAsk();
+    expect(get().engineState.turn).toBe(turnBefore + 1);
   });
 });

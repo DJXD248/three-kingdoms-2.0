@@ -24,7 +24,12 @@
  * `turnEndAsk` 住在容器层、是展示字段，既不进 EngineState 也不进录像，进程这一侧没有 `set()`
  * 也就没有那扇窗；`endTurn` 因此＝先把勾了「强制发动」的那几枚替这一席自己响掉（`autoFireForcedTurnEnd`
  * ＝与浏览器同一份判据），然后**直接提交** `END_TURN`。这与浏览器里 AI 席那条路逐字同形，
- * 与人类席那条路差一步"问人"。"问完了等谁答、答完了怎么回执"是第四片"逐席私有视图由进程发"那一格。
+ * 与人类席那条路差一步"问人"。
+ * 末片第一刀（2026-11-05）把这一拍**拆成两拍**：新出口 `holdTurnEndForAnswer` 只响强制发动、
+ * 把"该问哪几格"原样回话，清单非空就**不提交**——进程头一次能停在"该问人"这一拍上（证人钉在
+ * `tableCompute.test.ts` 末片那一段）。停下来之后还差后半句：**这一格送到谁的屏上、玩家勾完怎么回执**，
+ * 归界面与措辞那一格（末片第二刀，等业主裁）。今天生产画面里那扇窗照旧住在开房间那位的浏览器
+ * （`store/gameStore.ts` 的 `endTurn`），这一刀对它一个字都没动，也不许提前写成"另一台机器在算牌"。
  */
 import type { GameAction } from '../action/ActionTypes';
 import type { EngineState } from '../core/GameState';
@@ -35,6 +40,7 @@ import { applyCanonicalAction, type CanonicalActionHost } from '../store/applyCa
 import { storeStateToEngineState } from '../store/gameStateAdapter';
 import { probeSeatActions } from '../store/engineExecutionBridge';
 import type { SkillPromptMode } from '../store/gameStoreTypes';
+import type { TurnEndAskItem } from '../skills/turnEndSkills';
 import {
   activateSkillStep,
   answerReaction,
@@ -170,11 +176,47 @@ export function createTableHost(initial: EngineState): TableHost {
 
 /**
  * 这一席此刻"逢人就问"该问哪几格——进程把判据原样递出去（`visibleTurnEndAskItems`＝与浏览器同一份），
- * 但**不在这儿等回答**：等谁答、怎么回执是第四片那一格。留这一个出口，是为了让第四片接上时
- * 不必再抄第二份分档判据。
+ * 但**不在这儿等回答**：等谁答、怎么回执归界面与措辞那一格（末片第二刀）。留这一个出口，是为了让
+ * 那一格接上时不必再抄第二份分档判据。
  */
 export function turnEndAskItemsFor(host: TableHost, playerId: number, mode: SkillPromptMode) {
   return visibleTurnEndAskItems(host.engineState, playerId, mode);
+}
+
+/** `holdTurnEndForAnswer` 的回话：`items`＝该问哪几格（同一份分档判据算出来的），`committed`＝这一拍迈没迈出去。 */
+export interface TurnEndHold {
+  items: TurnEndAskItem[];
+  committed: boolean;
+}
+
+/**
+ * 末片第一刀（2026-11-05）＝把进程那臂的「结束回合」**拆成两拍**里的头一拍：
+ * 先替这一席响掉勾了「强制发动」的那几枚，然后把"该问哪几格"原样回话；
+ * **清单非空⇒不提交**（`turn`／`currentPlayerId`／`phase` 一格都不动），**清单空⇒与 `endTurn()` 同形**、
+ * 当场提交。第二拍就是既有那个"响完就提交"的 `endTurn()`——它一个字没改，开工前既有的 **6** 个调用点
+ * （本文件驱动 1＋`seatViewCompute.test.ts` 3＋`seatViewComputeProcess.node.test.ts` 1＋本测试的代理壳 1）
+ * 也一行没动；本刀只在测试里另加 2 处直接调用用来与旧臂对形⇒全库 `.endTurn()` 行数实测 47→49，差额正好这 2 处。
+ * ⚠️ 派单件 `knife-Y2-mopian-order-v2.md:51` 那句「现有 5 个调用点」是**监督台自己数错了**（同一行括号里列了 6 处）；
+ * 施工方按那 6 处保护、没受影响，错的只是那个数。
+ *
+ * 这一格是给**下一刀**（界面与措辞）接的出口：那一刀要把 `items` 送到该答的那一席屏上、等玩家勾完
+ * 再走第二拍。它自己不开窗、不投影、不问人——进程这一侧仍然没有 `set()`，只是从"没有那扇窗"变成
+ * "能停在窗该开的那一拍上，并且说得出该问哪几格"。
+ *
+ * 判据一份都没另写：分档＝`engineSteps.ts:291 visibleTurnEndAskItems`，强制发动＝`:310 autoFireForcedTurnEnd`，
+ * 提交＝`endTurnStep`——三样都与浏览器里 `gameStore.endTurn` 调的是同一批函数。解行棋席与 `endTurn()`
+ * 用同一句引擎真值（`currentSeatId`），所以"清单空"那一支与今天逐字节同形。
+ */
+export function holdTurnEndForAnswer(host: TableHost, mode: SkillPromptMode): TurnEndHold {
+  const seat = currentSeatId(host.engineState);
+  if (typeof seat !== 'number') return { items: [], committed: false };
+  autoFireForcedTurnEnd(() => host as TurnEndFireHost, seat);
+  // 那几发自己响的有可能把这一局当场打死：终局就到此为止，绝不提交（与 `endTurn()` 同一条兜底）。
+  if (host.engineState.phase === 'gameOver') return { items: [], committed: false };
+  const items = visibleTurnEndAskItems(host.engineState, seat, mode);
+  if (items.length > 0) return { items, committed: false };
+  host.engineState = endTurnStep(host, seat).engineState;
+  return { items, committed: true };
 }
 
 /** 只读探针：这一席现在能走哪几条规范动作（不推进对局、不动游标、不进录像）。 */

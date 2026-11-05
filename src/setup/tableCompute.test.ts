@@ -48,6 +48,7 @@ import { OPENING_DRAFT_TOTAL, runOpeningToDraft, type OpeningRequest, type Openi
 import {
   applyTableAction,
   createTableHost,
+  holdTurnEndForAnswer,
   legalTableActions,
   openingToEngineState,
   playTable,
@@ -414,11 +415,130 @@ describe('乙 第三片㈂ ㈢ 没搬的那一格照实说：人类席那扇"逢
     expect(factsOf(useGameStore.getState().engineState)).toBe(factsOf(processHost.engineState));
   });
 
-  it('进程把"该问哪几格"原样递出去；等谁答、怎么回执留给第四片', () => {
+  it('进程把"该问哪几格"原样递出去；等谁答、怎么回执归界面与措辞那一格（末片第二刀）', () => {
     const processHost = createTableHost(cloneEngineState(humanAskState()));
     const items = turnEndAskItemsFor(processHost, 1, 'smart');
     expect(items.length, '守夜这一枚该被列进问窗（与浏览器同一份分档判据）').toBeGreaterThan(0);
     expect(items[0]).toMatchObject({ playerId: 1, generalId: 'g_watch', generalName: '将g_watch', activatable: true });
     expect(items[0]!.definition.name).toBe('守夜');
+  });
+
+  /**
+   * 末片第一刀（2026-11-05）＝上面那格"进程没有窗、响完直接提交"被**拆成两拍**：
+   * `holdTurnEndForAnswer` 只响强制发动并把"该问哪几格"原样回话，清单非空就**不提交**；
+   * 提交仍走既有那条 `endTurn()`（语义未变；开工前既有的 6 个调用点一字未改，本刀另加 2 处直接调用＝全库 47→49）。
+   * 判据一份都没新写：分档＝`engineSteps.ts:291 visibleTurnEndAskItems`，强制发动＝`:310 autoFireForcedTurnEnd`。
+   *
+   * 四枚证人**按形状拆开**（同一枚 `it` 里循环多形＝第一枚红就抛、其余不跑，那是常设判据）。
+   */
+  describe('末片第一刀 进程把「结束回合」拆成两拍：头一拍只回话、不提交', () => {
+    /** 再挂一枚**勾了「强制发动」**的回合结束将：系统该替这一席响掉它，且不许把它再问一遍。 */
+    function forcedAskState(): EngineState {
+      const state = cloneEngineState(humanAskState());
+      const general = {
+        id: 'g_ward',
+        instanceId: 'g_ward',
+        name: '将g_ward',
+        faction: '魏',
+        hp: 2,
+        type: '武将',
+        meleeAtk: 1,
+        rangedAtk: 1,
+        armor: 0,
+        skills: [{
+          name: '夜巡',
+          description: '回合结束时强制发动',
+          forced: true,
+          effects: [{
+            id: 'e1',
+            trigger: { type: 'onTurnEnd', turnSubType: 'selfTurn' },
+            runtime: { type: 'DRAW_CARD', value: 1, target: 'SELF' },
+          }],
+        }],
+      } as unknown as General;
+      (state.players[0]!.fieldGenerals as unknown[]).push({
+        general, currentHp: 2, maxHp: 2, meleeAtk: 1, rangedAtk: 1, armor: 0,
+        currentArmor: 0, armorCards: [], isArming: false, hasMoved: false,
+        hasAttacked: false, hasSupplied: false, justDeployed: false, ownerId: 1,
+        position: { zone: 'front', slot: 1, areaOwnerId: 1 },
+      });
+      return state;
+    }
+
+    /** 形状①：清单非空 ⇒ 回话非空 **且牌桌一格都不动**（这一拍停住了）。 */
+    it('有可发动的候选：新出口只回话，`turn`／`currentPlayerId`／`phase` 一格都不动', () => {
+      const host = createTableHost(cloneEngineState(humanAskState()));
+      const before = readingOf(host.engineState);
+
+      const held = holdTurnEndForAnswer(host, 'smart');
+
+      expect(held.items.map(item => item.definition.name), '该问的就是守夜那一枚').toEqual(['守夜']);
+      expect(held.committed, '清单非空⇒这一拍不许迈出去').toBe(false);
+      expect(readingOf(host.engineState), '清单非空＝整份读数一位未动').toBe(before);
+      expect(host.engineState.turn).toBe(5);
+      expect(host.engineState.currentPlayerId).toBe(1);
+      expect(host.engineState.phase).toBe('playing');
+    });
+
+    /** 形状②：清单为空 ⇒ 与今天同形，当场提交（对着既有 `endTurn()` 那一份读数比，不新造尺）。 */
+    it('没有候选：新出口与既有 endTurn() 逐字同形——该提交就提交', () => {
+      const bare = cloneEngineState(humanAskState());
+      bare.players[0]!.fieldGenerals = []; // 场上没有回合结束技能⇒分档判据算出来就是空清单
+
+      const heldHost = createTableHost(cloneEngineState(bare));
+      const legacyHost = createTableHost(cloneEngineState(bare));
+
+      const held = holdTurnEndForAnswer(heldHost, 'smart');
+      legacyHost.endTurn();
+
+      expect(held.items).toHaveLength(0);
+      expect(held.committed, '没有要问的⇒这一拍就该迈出去').toBe(true);
+      expect(readingOf(heldHost.engineState)).toBe(readingOf(legacyHost.engineState));
+      expect(heldHost.engineState.turn).toBe(6);
+      expect(heldHost.engineState.currentPlayerId).toBe(2);
+    });
+
+    /** 形状③：停下这一拍**没把强制发动扣下**——那一枚照样替这一席响掉、且不再被问一遍。 */
+    it('勾了「强制发动」的那一枚照旧响掉：停这一拍≠少发一次', () => {
+      const host = createTableHost(cloneEngineState(forcedAskState()));
+      const before = readingOf(host.engineState);
+
+      const held = holdTurnEndForAnswer(host, 'smart');
+
+      const ledger = (host.engineState.consumedSkills ?? []).map(entry => `${entry.playerId}:${entry.skillId}`);
+      expect(ledger.filter(entry => entry.includes('夜巡')).length, `强制发动那一枚该入账，账本＝${JSON.stringify(ledger)}`).toBe(1);
+      expect(host.engineState.players[0]!.hand, '那一枚的效果（摸一张）也该落进手牌').toHaveLength(1);
+      expect(held.items.map(item => item.definition.name), '窗里只该剩下要人点头的那一枚').toEqual(['守夜']);
+      expect(held.committed).toBe(false);
+      expect(host.engineState.turn, '响完强制发动不等于提交这一拍').toBe(5);
+      expect(readingOf(host.engineState), '动了的只有那一枚的效果，回合号没动').not.toBe(before);
+    });
+
+    /** 形状④：两拍走完＝浏览器那臂一拍开窗＋人答完提交，两臂回同一条读数（对着 ㈢ 那把 `factsOf` 尺）。 */
+    it('头一拍回话＋第二拍提交＝与浏览器臂（开窗→人答完→提交）逐字同读数', () => {
+      const start = forcedAskState();
+      installBrowserArm(start);
+      const processHost = createTableHost(cloneEngineState(start));
+      const action = { type: 'END_TURN', playerId: 1 } as unknown as GameAction;
+
+      // 浏览器臂：一枚 END_TURN 只开窗（强制发动自己响掉，窗里只剩要人点头的那一枚）。
+      applyCanonicalAction(useGameStore.getState() as never, 1, action);
+      const ask = useGameStore.getState().turnEndAsk;
+      expect(ask, '人类席该被问').not.toBeNull();
+      expect(ask!.candidates.map(candidate => candidate.skillName)).toEqual(['守夜']);
+
+      // 进程臂：头一拍停在同一格上，回话与窗里那一份同名。
+      const held = holdTurnEndForAnswer(processHost, 'smart');
+      expect(held.committed).toBe(false);
+      expect(held.items.map(item => item.definition.name)).toEqual(['守夜']);
+
+      // 第二拍＝既有那条"响完就提交"的 `endTurn()`（它一个字没改）；浏览器那侧人答完＝跳过＝同一次提交。
+      useGameStore.getState().skipTurnEndAsk();
+      processHost.endTurn();
+
+      expect(useGameStore.getState().turnEndAsk).toBeNull();
+      expect(factsOf(processHost.engineState), '两拍合起来应当与浏览器那一拍开窗＋答完提交是同一份对局事实')
+        .toBe(factsOf(useGameStore.getState().engineState));
+    });
   });
 });
