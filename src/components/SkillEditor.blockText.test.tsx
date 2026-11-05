@@ -30,7 +30,16 @@ describe('拼积木→生成文字→文字还能改', () => {
   });
 
   const openFirstPlainSkill = () => {
-    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0)!;
+    // 夹具按号钉死（v2.9.33 就地更正）：原先取"名册里第一枚没有 effects 的技能"，
+    // 那隐含两条前提——它同时也没有卡面话、而且那位玩家身上只有一枚技能。
+    // 甲三那把 90 格补卡面话正好打在原先挑中的张辽「突袭」上，第一条前提被那一刀推翻⇒
+    // 改按 id 钉一枚三样都满足的（单技能·无积木·无卡面话），并在这里当场自证，前提再漂就红得明白。
+    const target = allGenerals.find(g => g.id === 'shu_016')!;
+    const plain = target.skills[0] as { name?: string; effects?: unknown[]; description?: string };
+    expect(
+      target.skills.length === 1 && (plain.effects?.length ?? 0) === 0 && String(plain.description ?? '').trim() === '',
+      `夹具前提漂了（需单技能·无积木·无卡面话）：${target.id}＝${JSON.stringify(target.skills)}`,
+    ).toBe(true);
     render(<SkillEditor onClose={() => {}} />);
     const listBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.textContent?.includes(target.name));

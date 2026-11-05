@@ -25,9 +25,12 @@ const HEADER = ['将领名称', '势力', '体力', '近战', '远程', '技能�
   '效果1标注', '效果1触发', '效果1效果类型', '效果1数值', '效果1目标', '效果1描述', '效果1门槛',
   '设定备注'];
 
+/** 「技能描述」那一格交的是卡上此刻真正写着的那句（v2.9.33 起「突袭」已不是"只有名字"的旧形态）。 */
+const descCell = (skillName: string) => String(zhangliao.skills.find(s => s.name === skillName)?.description ?? '无');
+
 const rowFor = (hp: number, name: string = zhangliao.name, faction: string = zhangliao.faction, skill: string = '突袭') => [
   name, faction, hp, zhangliao.meleeAtk, zhangliao.rangedAtk,
-  skill, '无', '无', '无', '无', '无', '无',
+  skill, '无', '无', '无', '无', descCell(skill), '无',
   '', '', '', '', '', '', '', '✓ 已完成',
 ];
 
