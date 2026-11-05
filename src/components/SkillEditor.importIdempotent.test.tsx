@@ -88,11 +88,20 @@ function fireImport(file: File) {
  * 上限抬到 20 秒是 v2.9.28 读法㈁ 之后的实测：全表导出再导回这一趟，进料从 96 张变成 335 张。
  * 单独跑这一条 2,200 ms，而覆盖率插桩＋并发跑时那条回执在默认 1 秒内还没换过来（红在
  * 「expected '✅ 已导出Excel文件' to contain '名等你在下方决定'」）。等的是真东西，不是放宽挂死判据。
+ *
+ * #144（2026-11-05 修）：回执会自动换下一条，而原来 `return toastText()` 交的是**等完之后重读界面**
+ * 的那一串——waitFor 校验的是"某一句出现过"，断言读的却是另一拍的值，于是调用方那句
+ * 「新建 0 名将领」压根没被校验过。现在把 waitFor 通过那一拍的原文接住、原样交出：
+ * 调用方断言的正是那份被校验过的值（把交出值换成别的，调用方当场红）。
  */
 async function importFile(file: File, expectText: string) {
+  let landed = '';
   fireImport(file);
-  await waitFor(() => expect(toastText()).toContain(expectText), { timeout: 20_000 });
-  return toastText();
+  await waitFor(() => {
+    landed = toastText();
+    expect(landed).toContain(expectText);
+  }, { timeout: 20_000 });
+  return landed;
 }
 
 const snapshot = () => ({

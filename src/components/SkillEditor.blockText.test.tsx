@@ -4,7 +4,7 @@
  * 手改态下那颗「↺ 用积木重写这句」一点就把生成句放回去。
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, fireEvent, screen, cleanup } from '@testing-library/react';
+import { render, fireEvent, screen, cleanup, waitFor } from '@testing-library/react';
 import SkillEditor from './SkillEditor';
 import { allGenerals } from '../data/generals';
 import { useGameStore } from '../store/gameStore';
@@ -22,6 +22,19 @@ function effectBox(): HTMLTextAreaElement {
   expect(el).toBeTruthy();
   return el;
 }
+
+/**
+ * #157（2026-11-05 修）用的那把等待尺。每一次 `fireEvent` 之后，这条测试等的都是**自己那一指造成的
+ * 那一次重算**，而不是"界面上此刻恰好有的那句字"。
+ *
+ * 为什么是 6 秒：这一步的重算本来是同步的（`patchEffect` 在 onChange 里就把那句写进 state，
+ * `act()` 在 fireEvent 返回前已经把它刷进 DOM），所以绿色路径下等待在第一拍就通过，这个上限
+ * 平时根本吃不到；它只在"那一指真的没造成那次变化"（＝真回归）时才生效。故意留在 6 秒而不是
+ * 抄同族那份 `{ timeout: 20_000 }`，是为了让失败以断言原文出现（"expected 摸 4 张牌 to be …"），
+ * 不被全局 20 秒先判成超时——本机 99% 负载下这条本来就要跑 ~9 秒，再等满 20 秒就撞上限了。
+ * 不动 `vitest.config.ts` 的全局 testTimeout、不降并发。
+ */
+const SETTLED = { timeout: 6_000 };
 
 describe('拼积木→生成文字→文字还能改', () => {
   beforeEach(() => {
@@ -62,19 +75,28 @@ describe('拼积木→生成文字→文字还能改', () => {
     expect(screen.queryByText('↺ 用积木重写这句')).toBeNull();
   });
 
-  it('手打过一次就不再覆盖，并且给一条回到自动生成回去的路', () => {
+  it('手打过一次就不再覆盖，并且给一条回到自动生成回去的路', async () => {
     openFirstPlainSkill();
     fireEvent.change(findRuntimeSelect(), { target: { value: 'DRAW_CARD' } });
+    // 第一步等的就是"挑了 DRAW_CARD 这块积木"造成的那次重算：格子里出现那句生成话。
+    await waitFor(() => expect(effectBox().value).toBe('摸 1 张牌。'), SETTLED);
+
     const box = effectBox();
     fireEvent.change(box, { target: { value: '摸牌，然后本回合不能再移动。' } });
+    // 手打这一句落定的样子＝格子里是这句，且界面同时给出那条回到自动生成的路。
+    await waitFor(() => {
+      expect(effectBox().value).toBe('摸牌，然后本回合不能再移动。');
+      expect(screen.queryByText('↺ 用积木重写这句')).toBeTruthy();
+    }, SETTLED);
 
     const nums = Array.from(document.querySelectorAll('input[type="number"]'));
     fireEvent.change(nums[nums.length - 1], { target: { value: '4' } });
-    expect(effectBox().value).toBe('摸牌，然后本回合不能再移动。');
+    // 积木改到 4 造成的变化＝生成句变成「摸 4 张牌。」而手改那句一个字不许动——这才叫"不再覆盖"。
+    await waitFor(() => expect(effectBox().value).toBe('摸牌，然后本回合不能再移动。'), SETTLED);
 
-    const restore = screen.getByText('↺ 用积木重写这句');
-    fireEvent.click(restore);
-    expect(effectBox().value).toBe('摸 4 张牌。');
+    fireEvent.click(screen.getByText('↺ 用积木重写这句'));
+    // 这一点之后要的是那一次重算的结果：必须是按刚打进去的 4 生成的那一句，旧渲染给不出这个 4。
+    await waitFor(() => expect(effectBox().value).toBe('摸 4 张牌。'), SETTLED);
   });
 
   it('保存下去的还是那三个格子（积木＋一句人话），没有偷偷新增第四样东西', () => {
