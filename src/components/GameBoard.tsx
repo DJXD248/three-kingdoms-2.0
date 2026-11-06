@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useGameStore, FieldGeneral, Position, Player } from '../store/gameStore';
+import { useGameStore, FieldGeneral, Position, Player, type TurnEndAskCandidate } from '../store/gameStore';
 import {
   getValidTargets, getMoveTargets, canFieldGeneralMove,
   hasFreeCampSlot, isInEnemyTerritory,
@@ -18,6 +18,9 @@ import Rules from './Rules';
 import Settings from './Settings';
 import { SC, StatPill, Bar, Btn, Modal } from './gameBoard/uiPrimitives';
 import { placeSeats, resolveViewIndex } from './gameBoard/seatLayout';
+// 刀 1 拍 3 ㈁：HUD 那一行的两个数都只过 askClock 这一道；"现在"由那一枚秒表交出来。
+import { remainingAskSec, waitingSeatsOf } from '../setup/askClock';
+import { askClockNowMs } from './AskClockDirector';
 
 type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'selectMoveCard'|'selectSupplyCards'|'selectArmorCards';
 
@@ -52,6 +55,21 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
   const reactionWindow=useGameStore(s=>s.reactionWindow);
   const passReaction=useGameStore(s=>s.passReaction);
   const turnEndAsk=useGameStore(s=>s.turnEndAsk);
+  // 刀 1 拍 3 ㈁（2026-11-06）：问窗那把表的锚——容器层唯一的一格时钟读数，由
+  // `AskClockDirector` 那一枚秒表写。画面这里只做两件事：把剩余秒数交给 `remainingAskSec`
+  // 算（不自己减、也不读 `Date.now()`），以及把"还差谁没答"交给 `waitingSeatsOf` 算。
+  // 读不到锚（热座／测试台／没开窗）⇒整块不渲染，不显示 0 秒也不显示"∞"。
+  const askDeadline=useGameStore(s=>s.askDeadline);
+  /** 还剩几秒＝`askClock.remainingAskSec` 现算的那一个数；两个进料都不是界面自己的：
+   *  `nowMs` 读导演那一枚秒表**采样到的那**一刻（界面一处都不碰 `Date.now()`），
+   *  到点那一格读根上那唯一的锚。锚为 `null` ⇒ `null` ⇒ 下面两扇 HUD 整块秒数不渲染。 */
+  const askSecsLeft=askDeadline===null?null:remainingAskSec(askClockNowMs(),askDeadline.deadlineAtMs);
+  /** 「还差谁没答」＝`askClock.waitingSeatsOf` 算的（参加者减去已答，跟着参加者原序）。
+   *  这两串在容器窗里存的是**席位号＝`Player.id`**（不是数组下标），所以名字从既有 `players` 里按 id 认。 */
+  const askWaitingNames=reactionWindow===null
+    ? []
+    : waitingSeatsOf(reactionWindow.participants,reactionWindow.passed)
+        .map(seat=>players.find(player=>player.id===seat)?.name??`玩家${seat}`);
   const activateTurnEndSkill=useGameStore(s=>s.activateTurnEndSkill);
   const skipTurnEndAsk=useGameStore(s=>s.skipTurnEndAsk);
   const pendingChoice=useGameStore(s=>s.engineState.pendingChoice);
@@ -62,6 +80,20 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
   // v2.8.22 响应链执法刀：HUD 与校验器/合法动作表/store/AI 共用同一个派生点。
   // engineState 只在落新事实时换引用 ⇒ 每个动作重算一次，而非每帧。
   const reactionAsk=useMemo(()=>getReactionAsk(engineState),[engineState]);
+  // 乙 线末片第二刀·拍 3 ㈂（2026-11-06）＝场地那三态高亮**只读容器层现成的那份候选账**：
+  // `turnEndAsk.candidates` 是 `gameStore.endTurn`（:757）拿 `engineSteps.ts:291 visibleTurnEndAskItems`
+  // 的分档结果算好、逐格带着 `activatable`／`disabledReason` 交下来的。界面这里一个判据都没写：
+  // 不扫 `fieldGenerals`、不重算时机、不自造原因句子。
+  // 黄框只在"完整"档出，靠的是**智能档那份清单里根本没有不可发动的条目**（同一个分档处滤掉的），
+  // 不是界面自己又看了一次档位——所以 `settings.skillPromptMode` 在这一段里一个字都没出现。
+  const askCandidates=turnEndAsk?.candidates ?? [];
+  /** 这一枚场上将领在候选账里的那一格（没有＝不相关）；按运行时卡号认，与 `listTurnEndAskItems` 同一个键。 */
+  const askItemOf=(general:General)=>askCandidates.find(candidate=>candidate.generalId===(getRuntimeCardId(general)??''))??null;
+  /** 三态点法：蓝与黄都进详情（面板里那几格的内容由同一份候选账决定）；问窗开着时的"不相关"不进详情。
+   *  窗没开＝今日原样，点谁都走既有的 `clickFg`（它自带索敌中先打的那一支）。 */
+  const askSlotClick=(fg:FieldGeneral,ask:TurnEndAskCandidate|null)=>{
+    if(ask||askCandidates.length===0) clickFg(fg);
+  };
   // v2.8 刀4（#25）：账本可能改过体力上限与攻击力，界面这几个数字一律**现算**，绝不
   // 直接读卡面打印值——"结算已按新数字、界面仍显示旧数字"就是用户裁决第 1 条要防的
   // 那种分叉。用的还是结算侧那同一个函数（core/statModifiers / core/attackValue），
@@ -389,6 +421,11 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
     const atkBase=!!(atkCard&&isBase&&validTgts.some(t=>t.id===`base_${areaOwner.id}`));
     const moveTarget=!!moveOptions.find(t=>t.zone===zone&&t.areaOwnerId===areaOwner.id&&t.slot===slot);
     const canDep=vm==='deployTarget'&&areaOwner.id===cp.id&&zone==='camp'&&slot!==1&&!fg;
+    // 问窗那三态：蓝＝清单里且可发动（复用既有的青框那一串、闪），黄＝清单里但不可发动
+    // （琥珀框、**不闪**），不相关＝既不进蓝也不进黄。原因文字一律读 `disabledReason` 原文。
+    const ask=fg?askItemOf(fg.general):null;
+    const askBlue=!!ask?.activatable;
+    const askYellow=!!ask&&!ask.activatable;
 
     if(isBase){
       const fl=Math.min(5,areaOwner.baseHp);
@@ -412,10 +449,10 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
       generalHit || generalHeal ? 'rgba(0,0,0,0.46)' : 'rgba(0,0,0,0.40)'
     ) : null;
     return(<button type="button"
-      onClick={()=>{if(fg)clickFg(fg);else if(canDep)doDeploy(slot===0?0:2);else if(moveTarget)chooseMoveTarget({zone,slot,areaOwnerId:areaOwner.id});}}
+      onClick={()=>{if(fg)askSlotClick(fg,ask);else if(canDep)doDeploy(slot===0?0:2);else if(moveTarget)chooseMoveTarget({zone,slot,areaOwnerId:areaOwner.id});}}
       onMouseEnter={()=>fg&&_onTargetHover(getRuntimeCardId(fg.general),fg)}
       onMouseLeave={_clearPreview}
-      className={`relative flex h-[88px] w-[72px] items-center justify-center rounded-lg border-2 transition-all ${(fg||canDep||moveTarget)?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkFg?'animate-pulse ring-2 ring-red-500':''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
+      className={`relative flex h-[88px] w-[72px] items-center justify-center rounded-lg border-2 transition-all ${(fg||canDep||moveTarget)?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkFg?'animate-pulse ring-2 ring-red-500':''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${askBlue?'animate-pulse ring-2 ring-cyan-400':''} ${askYellow?'ring-2 ring-amber-400':''} ${generalHit?'animate-base-hit':''}`}
       style={{
         ...(generalVisual ?? {}),
         borderColor: moveTarget ? '#22d3ee' : atkFg ? '#ef4444' : fg ? (generalVisual?.borderColor ?? fgColor) : canDep ? '#22c55e' : `${bc}55`,
@@ -431,14 +468,18 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
     const generalHit=!!(fg&&hitGeneralIds.includes(getRuntimeCardId(fg.general)));
     const generalHeal=!!(fg&&healGeneralIds.includes(getRuntimeCardId(fg.general)));
     const moveTarget=!!moveOptions.find(t=>t.zone==='battle'&&t.areaOwnerId===null&&t.slot===slot);
+    // 战场那一行也走同一份候选账：问窗开着时该亮的枚不因它挪到战场就不亮。
+    const ask=fg?askItemOf(fg.general):null;
+    const askBlue=!!ask?.activatable;
+    const askYellow=!!ask&&!ask.activatable;
     const o=fg?ownerOf(fg):null;const c=o?.faction?factionColors[o.faction]:'#444';
     const generalVisual = fg ? getGeneralCardVisual(
       fg.general,
       o?.faction,
       generalHit || generalHeal ? 'rgba(0,0,0,0.46)' : 'rgba(0,0,0,0.40)'
     ) : null;
-    return(<button type="button" onClick={()=>{if(fg)clickFg(fg);else if(moveTarget)chooseMoveTarget({zone:'battle',slot,areaOwnerId:null});}} onMouseEnter={()=>fg&&_onTargetHover(getRuntimeCardId(fg.general),fg)} onMouseLeave={_clearPreview}
-      className={`flex h-[88px] w-[72px] items-center justify-center rounded-lg border-2 transition-all ${fg||moveTarget?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkOk?'animate-pulse ring-2 ring-red-500':''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${generalHit?'animate-base-hit':''}`}
+    return(<button type="button" onClick={()=>{if(fg)askSlotClick(fg,ask);else if(moveTarget)chooseMoveTarget({zone:'battle',slot,areaOwnerId:null});}} onMouseEnter={()=>fg&&_onTargetHover(getRuntimeCardId(fg.general),fg)} onMouseLeave={_clearPreview}
+      className={`flex h-[88px] w-[72px] items-center justify-center rounded-lg border-2 transition-all ${fg||moveTarget?'cursor-pointer hover:brightness-125':'cursor-default'} ${atkOk?'animate-pulse ring-2 ring-red-500':''} ${moveTarget?'animate-pulse ring-2 ring-cyan-400':''} ${askBlue?'animate-pulse ring-2 ring-cyan-400':''} ${askYellow?'ring-2 ring-amber-400':''} ${generalHit?'animate-base-hit':''}`}
       style={{
         ...(generalVisual ?? {}),
         borderColor: moveTarget ? '#22d3ee' : atkOk ? '#ef4444' : fg ? (generalVisual?.borderColor ?? c) : '#333',
@@ -601,6 +642,7 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
           <div className="rounded-xl border-2 border-rose-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(244,63,94,0.35)'}}>
             <p className="text-sm font-black text-rose-300">🔔 响应询问 · {players.find(p=>p.id===reactionAsk.playerId)?.name ?? `玩家${reactionAsk.playerId}`}（{reactionAsk.generalName}），{triggerTypeLabels[reactionAsk.trigger]}是否发动技能？</p>
             <p className="mt-0.5 text-[10px] text-rose-200/60">{reactionAsk.nodeKey}</p>
+            {askSecsLeft!==null&&<p className="mt-1 text-xs font-black tabular-nums text-rose-200">⏳ {askSecsLeft} 秒</p>}
             <div className="mt-2 flex flex-col gap-1.5">
               {reactionAsk.options.map(o=>(
                 <button key={o.skillId} onClick={()=>activateReactionSkill(o.skillId,reactionAsk.generalId)} title={o.label} className="rounded-lg border border-rose-600/60 bg-rose-900/50 px-3 py-1.5 text-left text-xs font-bold text-rose-100 hover:bg-rose-800/60">⚡ {reactionAsk.generalName}【{o.skillName}】<span className="mt-0.5 block text-[10px] font-normal text-rose-200/60">{o.label}</span></button>
@@ -608,6 +650,7 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
             </div>
             <div className="mt-2"><Btn onClick={skipReactionAsk}>🚫 跳过</Btn></div>
             <p className="mt-1 text-[10px] text-rose-200/40">跳过＝这一格一个也不发动，继续问下一席</p>
+            {askWaitingNames.length>0&&<p className="mt-1 text-[10px] font-bold text-rose-200/70">还差谁没答：{askWaitingNames.join('、')}</p>}
           </div>
         </div>}
         {/* 2.3.1 turn-end ask HUD: real END_TURN is deferred until each candidate is
@@ -620,6 +663,8 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
           <div className="rounded-xl border-2 border-amber-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(245,158,11,0.35)'}}>
             <p className="text-sm font-black text-amber-300">🌙 回合结束询问 · 是否发动将领技能？</p>
             <p className="mt-0.5 text-[10px] text-amber-200/60">{turnEndAsk.windowId}</p>
+            {askSecsLeft!==null&&<p className="mt-1 text-xs font-black tabular-nums text-amber-200">⏳ {askSecsLeft} 秒</p>}
+            <p className="mt-1 text-[10px] font-bold text-amber-200/70">就等你一席：{players.find(player=>player.id===turnEndAsk.playerId)?.name??`玩家${turnEndAsk.playerId}`}</p>
             {!turnEndAsk.candidates.some(c=>c.activatable)&&<p className="mt-1 text-[10px] text-amber-200/60">本回合这些技能都不可发动</p>}
             <div className="mt-2 flex flex-col gap-1.5">
               {turnEndAsk.candidates.map(c=>c.activatable
@@ -749,6 +794,11 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
             // Deploy: check camp has free slot
             const campFree=hasFreeCampSlot(cp.id,players);
             const canDeploy=!fg&&ins.type==='general'&&campFree&&cp.hand.length>1;
+            // 拍 3 ㈂：详情面板里那一格读的仍是**同一份候选账**（按运行时卡号取该将领那几枚），
+            // 蓝＝给了发动的钮（走 store 既有的 `activateTurnEndSkill`＝canonical ACTIVATE_SKILL），
+            // 黄＝把 `disabledReason` 原文写在脸上。**不许**拿悬停 `title=` 当交付（在册判据 §12-112：
+            // 放行可以、不显示不行），也**不许**在这儿再写一份"为什么不能发动"的句子。
+            const askForThis=fg?askCandidates.filter(candidate=>candidate.generalId===getRuntimeCardId(g)):[];
             // Disabled-reason tooltips (display layer only, mirrors the predicates above)
             let movReason='';if(fg&&own&&!canMov){if(fg.isArming)movReason='整备中：本回合无法移动';else if(fg.hasMoved)movReason='本回合已移动过';else if(isSch&&fg.justDeployed&&fg.hasAttacked)movReason='文将登场回合只能移动或攻击其一，已攻击';else if(!moveOk)movReason='当前没有可移动的位置';else if(isSch&&cp.hand.length===0)movReason='前进消耗1张手牌：当前无手牌';}
             let atkReason='';if(fg&&own&&!canAtk){if(fg.isArming)atkReason='整备中：本回合无法攻击';else if(fg.hasAttacked)atkReason='本回合已攻击过';else if(isSch&&fg.justDeployed&&fg.hasMoved)atkReason='文将登场回合只能移动或攻击其一，已移动';else if(cp.hand.length===0)atkReason='攻击消耗1张手牌：当前无手牌';}
@@ -770,6 +820,12 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
               {fg&&own&&isSch&&fg.justDeployed&&!fg.isArming&&<p className="mb-2 text-center text-xs text-amber-500/60">📜文将登场回合只能移动或攻击其一</p>}
               {fg&&own&&inEnemy&&<p className="mb-2 text-center text-xs text-yellow-500/60">⚠️ 敌方区域：补给多烧 1 张手牌，这张只算代价、不算回复（交 3 张只回 2 点）</p>}
               <div className="mb-4"><h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-400/80">技能</h3><div className="flex flex-wrap gap-1.5">{getGeneralWithEdits(g).skills.map((s,i)=><div key={i} className="rounded-lg border border-amber-700/20 bg-amber-900/30 px-2.5 py-1 text-xs font-medium text-amber-200"><span className="font-bold">{s.name}</span>{tagsOf(s).map(t=><span key={t} className="ml-1 text-[9px] px-1 py-0.5 rounded-full font-bold border" style={{color:skillTagColors[t],borderColor:skillTagColors[t]+'50',backgroundColor:skillTagColors[t]+'15'}} title={skillTagMeanings[t]}>{t}</span>)}{s.description&&<span className="text-amber-300/50 text-[10px] ml-1">— {s.description}</span>}</div>)}</div></div>
+              {askForThis.length>0&&<div className="mb-4 rounded-lg border border-amber-700/40 bg-black/40 p-2">
+                <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wider text-amber-400/80">🌙 回合结束</h3>
+                <div className="flex flex-col gap-1.5">{askForThis.map(candidate=>candidate.activatable
+                  ? <button key={candidate.skillId} type="button" onClick={()=>{if(activateTurnEndSkill(candidate.skillId,candidate.generalId)){setIns(null);setVm('board');}}} className="rounded-lg border border-amber-600/60 bg-amber-900/50 px-3 py-1.5 text-left text-xs font-bold text-amber-100 hover:bg-amber-800/60">⚡ 发动【{candidate.skillName}】</button>
+                  : <div key={candidate.skillId} className="cursor-not-allowed rounded-lg border border-amber-800/40 bg-amber-950/40 px-3 py-1.5 text-left text-xs font-bold text-amber-100/30 grayscale">✕ 【{candidate.skillName}】<span className="ml-1 text-[10px] font-normal text-amber-300/70">{candidate.disabledReason}</span></div>)}</div>
+              </div>}
               {fg&&own&&<div className="flex flex-wrap gap-2 border-t border-amber-800/20 pt-3">
                 <button onClick={()=>canMov&&startMove(fg)} disabled={!canMov} title={movReason} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canMov?'bg-blue-700/80 text-white hover:bg-blue-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>🚶前进{isSch?' (-1牌)':''}</button>
                 <button onClick={()=>canAtk&&meleeN>0&&startAtk(fg,false)} disabled={!canAtk||meleeN===0} title={canAtk?meleeReason:(atkReason||meleeReason)} className={`flex-1 rounded-lg py-2 text-sm font-bold ${canAtk&&meleeN>0?'bg-red-700/80 text-white hover:bg-red-600':'cursor-not-allowed bg-slate-800 text-slate-500'}`}>⚔️近战(-1牌)</button>

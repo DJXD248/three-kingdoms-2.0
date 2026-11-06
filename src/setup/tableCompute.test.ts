@@ -52,6 +52,7 @@ import {
   legalTableActions,
   openingToEngineState,
   playTable,
+  settleTurnEndForSeat,
   stepTable,
   tableActorId,
   turnEndAskItemsFor,
@@ -539,6 +540,138 @@ describe('乙 第三片㈂ ㈢ 没搬的那一格照实说：人类席那扇"逢
       expect(useGameStore.getState().turnEndAsk).toBeNull();
       expect(factsOf(processHost.engineState), '两拍合起来应当与浏览器那一拍开窗＋答完提交是同一份对局事实')
         .toBe(factsOf(useGameStore.getState().engineState));
+    });
+  });
+
+  /**
+   * 末片第二刀·拍 2（2026-11-06）＝补掉「AI 席停死」那一处。上面那枚 `holdTurnEndForAnswer` 不看坐
+   * 在席上的是谁，清单非空一律停住——人类席该停（等真人勾），AI 席不该停（业主裁第 2 条：不等、立刻自答）。
+   * 新出口 `settleTurnEndForSeat` 只按开局那份 `SetupPlayerSeed.isAi`（`runtimeSetup.ts:43`）分流，
+   * 人席那一支**原样转交**既有那枚（它上面 ㈢ 的四枚证人一字没动）。
+   *
+   * 五枚证人**按形状拆开**（同一枚 `it` 里循环多形＝第一枚红就抛、其余不跑，那是常设判据）。
+   * ①与②是同一份料、只差夹具里 `isAi` 那一格：把那一格翻过来必须**两枚都红**，
+   * 否则等于证人根本没在读那一格。
+   */
+  describe('末片第二刀·拍 2 进程按 isAi 分流：AI 席不等、立刻自答，人席照旧停住', () => {
+    /** 同一份料，只把行棋席（席 1）那一格 `isAi` 按参数盖上；其余与 `humanAskState()` 逐字节相同。 */
+    function askStateSeat1(isAi: boolean): EngineState {
+      const state = cloneEngineState(humanAskState());
+      state.players[0]!.isAi = isAi;
+      return state;
+    }
+
+    /** 与开局命令行、AI 司机同一个解法（只读探针＋生产策略档）；本刀把它当**参数**递进来，宿主自己不挑。 */
+    function productionPicker() {
+      const policy = createStrategyPolicy('balanced');
+      return (arm: TableHost, playerId: number): GameAction | null => {
+        const probe = new GameEngine(arm.engineState, { recordHistory: false });
+        syncPlayerSkills(probe, arm.engineState);
+        return policy(probe, playerId);
+      };
+    }
+
+    /** 形状①（AI 席）：清单非空也**不许停**——这一拍策略档挑的不是发动（实测 `MOVE_GENERAL`），视为不发动⇒当场提交。 */
+    it('AI 席：清单非空也不停，挑的不是发动就当场提交（旧臂在这一格会停死）', () => {
+      const host = createTableHost(cloneEngineState(askStateSeat1(true)));
+      const settled = settleTurnEndForSeat(host, 'smart', productionPicker());
+
+      expect(settled.items.map(item => item.definition.name), '该问的仍是守夜那一枚（同一份分档判据）').toEqual(['守夜']);
+      expect(settled.fired, '这一拍策略档没挑发动⇒没有自答出去的动作').toBeNull();
+      expect(settled.committed, 'AI 席不等：清单非空也要把这一拍迈出去').toBe(true);
+      expect(host.engineState.turn).toBe(6);
+      expect(host.engineState.currentPlayerId).toBe(2);
+    });
+
+    /** 形状②（人席，同一份料只差 `isAi`）：照旧一格不动，而且**一次都不许代答**——`pick` 压根不该被叫。 */
+    it('人席：清单非空⇒停住且一格不动，转交的既有出口连 pick 都没叫过一次', () => {
+      const host = createTableHost(cloneEngineState(askStateSeat1(false)));
+      const before = readingOf(host.engineState);
+      let pickCalls = 0;
+      const neverPick = (): GameAction | null => {
+        pickCalls += 1;
+        return null;
+      };
+
+      const settled = settleTurnEndForSeat(host, 'smart', neverPick);
+
+      expect(settled.items.map(item => item.definition.name)).toEqual(['守夜']);
+      expect(settled.committed, '真人席该等，不等就是替人答').toBe(false);
+      expect(settled.fired, '人席这一拍没有自答出去的动作').toBeNull();
+      expect(pickCalls, '人席不许代答：挑动作那一枚一次都不该被叫').toBe(0);
+      expect(readingOf(host.engineState), '清单非空＝整份读数一位未动').toBe(before);
+      expect(host.engineState.turn).toBe(5);
+      expect(host.engineState.currentPlayerId).toBe(1);
+    });
+
+    /** 形状③（AI 席发动那一支）：`pick` 回一条规范 `ACTIVATE_SKILL`⇒过**同一个闸口**，这一拍不提交；
+     *  发动完要按新读数重推下一枚，所以是调用方再叫一次才轮到提交（与浏览器那臂同一条节奏）。 */
+    it('AI 席发动那一支：动作过同一个闸口、账本入账、效果落手牌；再叫一次才提交', () => {
+      const host = createTableHost(cloneEngineState(askStateSeat1(true)));
+      const settled = settleTurnEndForSeat(host, 'smart', (_arm, playerId) => (
+        { type: 'ACTIVATE_SKILL', playerId, payload: { skillId: 'g_watch:守夜:e1', generalId: 'g_watch' } } as unknown as GameAction
+      ));
+
+      expect(settled.fired?.type, '自答出去的就是那一条发动').toBe('ACTIVATE_SKILL');
+      expect(settled.committed, '发动这一拍不等于提交').toBe(false);
+      const ledger = (host.engineState.consumedSkills ?? []).map(entry => `${entry.playerId}:${entry.skillId}`);
+      expect(ledger, '闸口真的收了这条动作⇒入账').toEqual(['1:g_watch:守夜:e1']);
+      expect(host.engineState.players[0]!.hand, '那一枚的效果（摸一张）落进手牌').toHaveLength(1);
+      expect(host.engineState.turn, '回合号还没往前迈').toBe(5);
+
+      const second = settleTurnEndForSeat(host, 'smart', () => null);
+      expect(second.items, '按新读数重推：守夜已入账⇒清单空了').toHaveLength(0);
+      expect(second.committed, '清单空⇒当场提交，不再多问一轮').toBe(true);
+      expect(host.engineState.turn).toBe(6);
+      expect(host.engineState.currentPlayerId).toBe(2);
+    });
+
+    /** 形状④（对照）：清单为空那一支**不许被分流改坏**＝AI 与非 AI 只差那一格、结果同为当场提交，
+     *  且新出口与既有旧臂（`host.endTurn()` 响完直接提交）**各自**逐字同读数。
+     *  四臂＝`{AI, 非 AI} × {新出口, 旧臂}`：比的是同一格 `isAi` 下的两臂，`isAi` 本身不参与对账。 */
+    it('清单为空：AI 与非 AI 只差那一格、同为当场提交，且各与旧臂 endTurn() 逐字同读数', () => {
+      const bare = cloneEngineState(humanAskState());
+      bare.players[0]!.fieldGenerals = []; // 场上没有回合结束技能⇒分档判据算出来就是空清单
+
+      const mkArm = (isAi: boolean) => {
+        const host = createTableHost(cloneEngineState(bare));
+        host.engineState.players[0]!.isAi = isAi;
+        return host;
+      };
+      const aiNew = mkArm(true);
+      const aiLegacy = mkArm(true);
+      const humanNew = mkArm(false);
+      const humanLegacy = mkArm(false);
+
+      const ai = settleTurnEndForSeat(aiNew, 'smart', productionPicker());
+      const human = settleTurnEndForSeat(humanNew, 'smart', productionPicker());
+      aiLegacy.endTurn();
+      humanLegacy.endTurn();
+
+      expect([ai.items.length, human.items.length], '两支都不该有要问的').toEqual([0, 0]);
+      expect(ai.committed, 'AI 席：清单空⇒当场提交').toBe(true);
+      expect(human.committed, '非 AI 席：清单空⇒同样当场提交（分流不许动这一支）').toBe(true);
+      expect(readingOf(aiNew.engineState), 'AI 那一支与旧臂同形').toBe(readingOf(aiLegacy.engineState));
+      expect(readingOf(humanNew.engineState), '非 AI 那一支与旧臂同形').toBe(readingOf(humanLegacy.engineState));
+      // 前提自证：这一格真被读进来了——四臂里 AI 与非 AI 的读数只差那一格，全等反而是扫描坏了。
+      expect(readingOf(aiNew.engineState)).not.toBe(readingOf(humanNew.engineState));
+      expect(aiNew.engineState.turn).toBe(6);
+      expect(humanNew.engineState.turn).toBe(6);
+    });
+
+    /** 硬约束（本轮新钉）：AI 自答这一路**不许接倒计时那一族**——业主裁的就是"AI 不等"，
+     *  `askClock.ts` 那三枚留给画面那半的 tick。
+     *  ⚠️ 自证：`tableCompute.ts` 的**注释里**逐字写了那三个名字（说清楚为什么不用它们），
+     *  所以这枚证人只能靠"剥掉注释再数"过——剥注释那一手坏了它就红，不是空跑蒙绿。 */
+    it('进程这一臂没接倒计时那一族：剥注释后的源码零命中（注释里确有那三个名字，命中＝剥注释失效）', () => {
+      const code = codeOf('tableCompute.ts');
+      // 正向自证：这枚证人读到的确实是生产源码本体，不是空串。
+      expect(code, '自证：扫描真的读到了生产代码本体').toContain('settleTurnEndForSeat');
+      const raw = readFileSync(path.join(here, 'tableCompute.ts'), 'utf8').replace(/\r\n/g, '\n');
+      for (const clock of ['askDeadlineAtMs', 'isAskDeadlineReached', 'remainingAskSec']) {
+        expect(raw, `前提自证：注释里本来就有「${clock}」，否则这枚证人咬不住剥注释那一步`).toContain(clock);
+        expect(code, `AI 自答这一路不许接「${clock}」`).not.toContain(clock);
+      }
     });
   });
 });

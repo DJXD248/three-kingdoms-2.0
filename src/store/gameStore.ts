@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { General, allGenerals } from '../data/generals';
 import { GameCard, createCardDeck } from '../data/cards';
-import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle, defaultSeatModes, pickAiDraftPicks } from '../setup/runtimeSetup';
+import { createLobbyPlayers, buildDraftCandidates, generateRoomName, assignFactions, rollAndSortPlayers, shuffle, defaultSeatModes, defaultAskTimeoutSec, pickAiDraftPicks } from '../setup/runtimeSetup';
+import { clampAskTimeoutSec } from '../setup/askClock';
 import { openReactionWindowStore, passReactionStore, resetReactionWindowStore } from './engineExecutionBridge';
 // 乙 线第三片㈂：那 14 个入口里"改引擎的那半"（建动作／过唯一闸口／认那一身必须出现的事件）
 // 搬进 engineSteps，与算牌进程共用同一份判据。这里只留投影与告警原文，一条判据都不再重抄。
@@ -303,7 +304,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   };
 
   return ({
-  phase:'menu',playerCount:0,roomName:generateRoomName(),players:[],currentPlayerIndex:0,
+  phase:'menu',playerCount:0,roomName:generateRoomName(),askTimeoutSec:defaultAskTimeoutSec(),players:[],currentPlayerIndex:0,
   engineState:storeStateToEngineState({phase:'menu',players:[],currentPlayerIndex:0,currentRound:1,cardDeck:[],discardPile:[],turnPhase:'start',isFirstTurn:true}),
   currentRound:1,cardDeck:[],discardPile:[],battlefieldSlots:0,
   turnPhase:'start',winnerId:null,gameOverBanner:null,defeatEvent:null,pendingTurnTransition:null,isFirstTurn:true,
@@ -313,6 +314,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   seatModes:defaultSeatModes(),
   reactionWindow:null,
   turnEndAsk:null,
+  askDeadline:null,
   settings:{resolution:'1920x1080',windowMode:'全屏',animationSpeed:1,masterVolume:80,musicVolume:60,sfxVolume:70,autoSave:false,skillPromptMode:'smart',...loadReplaySettings()},
   developerMode:false,
   skillEdits:loadPersistedSkillEdits(),
@@ -325,15 +327,20 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
   testActionCounts:{},
 
   setPhase:p=>set({phase:p}),setPlayerCount:c=>set({playerCount:c}),setRoomName:n=>set({roomName:n}),
+  setAskTimeoutSec:sec=>set({askTimeoutSec:clampAskTimeoutSec(sec)}),
+  // 刀 1 拍 3 ㈁：锚的搬运工，一位判断都不做（判据全在 askClock，取值时刻全在 director）。
+  setAskDeadline:deadline=>set({askDeadline:deadline}),
 
   createRoom:()=>{
     resetLiveReplay();
     resetReactionWindowStore();
-    const{playerCount,roomName,seatModes}=get();
+    const{playerCount,roomName,seatModes,askTimeoutSec}=get();
     const rng=setupCursor();
     const random=()=>rngNext(rng);
     const ps=createLobbyPlayers(playerCount, seatModes, random) as Player[];
-    commitSetup({players:ps,roomName,phase:'lobby',battlefieldSlots:playerCount,cardDeck:createCardDeck(random),turnEndAsk:null},rng);
+    // 询问秒数在开局这一刻定影（钳制仍只有 `clampAskTimeoutSec` 那一道）：开局之后
+    // 这一局用的就是这一个数，客人那一份画面将来只读它，不再各定各的。
+    commitSetup({players:ps,roomName,phase:'lobby',battlefieldSlots:playerCount,cardDeck:createCardDeck(random),turnEndAsk:null,askTimeoutSec:clampAskTimeoutSec(askTimeoutSec)},rng);
   },
   startGame:()=>set({phase:'diceRoll'}),
   rollDice:()=>{
@@ -916,6 +923,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       phase:'menu' as GamePhase,
       playerCount:0,
       roomName:generateRoomName(),
+      askTimeoutSec:defaultAskTimeoutSec(),
       players:[] as Player[],
       currentPlayerIndex:0,
       currentRound:1,
@@ -940,6 +948,7 @@ export const useGameStore=create<GameState>((zustandSet,get)=>{
       isTestMode:false,
       reactionWindow:null as GameState['reactionWindow'],
       turnEndAsk:null as GameState['turnEndAsk'],
+      askDeadline:null as GameState['askDeadline'],
       testActionCounts:{} as GameState['testActionCounts'],
     };
     const engineState=storeStateToEngineState(baseState);

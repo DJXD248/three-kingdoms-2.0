@@ -30,6 +30,11 @@
  * `tableCompute.test.ts` 末片那一段）。停下来之后还差后半句：**这一格送到谁的屏上、玩家勾完怎么回执**，
  * 归界面与措辞那一格（末片第二刀，等业主裁）。今天生产画面里那扇窗照旧住在开房间那位的浏览器
  * （`store/gameStore.ts` 的 `endTurn`），这一刀对它一个字都没动，也不许提前写成"另一台机器在算牌"。
+ * 末片第二刀·拍 2（2026-11-06）补的是**另一处**洞：`holdTurnEndForAnswer` 不看坐在那一席的是谁，
+ * 清单非空一律停住——人类席该停，AI 席按业主裁第 2 条**不该停**（不等、立刻自答）。新出口
+ * `settleTurnEndForSeat` 只按 `SetupPlayerSeed.isAi`（`runtimeSetup.ts:43`）分流，人席那一支原样转交
+ * 上面那枚（一字未动），AI 那一支把清单交给进程既有的 `pick` 路；这一枚出口今天**同样没有任何生产
+ * 调用者**，"客人屏幕上问得出来"归界面那半与刀 2。
  */
 import type { GameAction } from '../action/ActionTypes';
 import type { EngineState } from '../core/GameState';
@@ -217,6 +222,63 @@ export function holdTurnEndForAnswer(host: TableHost, mode: SkillPromptMode): Tu
   if (items.length > 0) return { items, committed: false };
   host.engineState = endTurnStep(host, seat).engineState;
   return { items, committed: true };
+}
+
+/** `settleTurnEndForSeat` 的回话：在 `TurnEndHold` 之上多一格「这一拍自己答出去的那条动作」。 */
+export interface TurnEndSettled extends TurnEndHold {
+  /** AI 席自答出去的那一条规范动作（已经过同一个闸口）；人席或这一拍没发动＝null。 */
+  fired: GameAction | null;
+}
+
+/** 这一席是不是 AI 席——读的是开局那份 `SetupPlayerSeed.isAi`（`runtimeSetup.ts:43`）盖下来的那一格。 */
+function seatIsAi(state: EngineState, seat: number): boolean {
+  return state.players.find(player => player.id === seat)?.isAi === true;
+}
+
+/**
+ * 末片第二刀·拍 2（2026-11-06）＝补掉「AI 席停死」那一处：`holdTurnEndForAnswer` 不看坐在那一席的
+ * 是谁，清单非空就一律停住——人类席该停，AI 席不该停（业主裁第 2 条：不等，立刻自答）。
+ * 既有那一枚**一字未动**（它身上五处证人钉的就是"清单非空⇒一格都不动"），这里只新出一出口分流：
+ *
+ *  - 人席⇒原样转交 `holdTurnEndForAnswer`，回话多加一格 `fired:null`。
+ *  - AI 席⇒先替它响掉勾了「强制发动」的那几枚（同一份判据），清单空⇒与旧臂同形当场提交；
+ *    清单非空⇒把清单交给进程既有的 `pick` 路（与开局命令行、AI 司机同一形状：只读探针＋生产策略档），
+ *    拿到 `ACTIVATE_SKILL` 就过**同一个闸口**发出去，拿到 `null` 或别的动作⇒视为不发动⇒当场提交。
+ *
+ * AI 那一支不碰钟：`askClock.ts` 的 `askDeadlineAtMs`／`isAskDeadlineReached`／`remainingAskSec`
+ * 与这一拍毫无关系（业主裁的就是"AI 不等"），它们留给画面那半的 tick。
+ * 发动一枚之后**不在这儿循环**——与浏览器那臂一样，发动完要按新读数重推下一枚，所以调用方
+ * 拿到 `fired` 非空就再叫一次；一直叫到 `committed` 或清单空为止。
+ * ⚠️ 这一枚出口今天**没有任何生产调用者**：客人屏幕还问不出来，跨机器那半归刀 2。
+ */
+export function settleTurnEndForSeat(
+  host: TableHost,
+  mode: SkillPromptMode,
+  pick: (host: TableHost, playerId: number) => GameAction | null,
+): TurnEndSettled {
+  const seat = currentSeatId(host.engineState);
+  if (typeof seat !== 'number') return { items: [], committed: false, fired: null };
+  if (!seatIsAi(host.engineState, seat)) {
+    return { ...holdTurnEndForAnswer(host, mode), fired: null };
+  }
+
+  autoFireForcedTurnEnd(() => host as TurnEndFireHost, seat);
+  // 同一条兜底：那几发自己响的有可能当场打死这一局，终局就到此为止，绝不提交。
+  if (host.engineState.phase === 'gameOver') return { items: [], committed: false, fired: null };
+
+  const items = visibleTurnEndAskItems(host.engineState, seat, mode);
+  if (items.length === 0) {
+    host.engineState = endTurnStep(host, seat).engineState;
+    return { items, committed: true, fired: null };
+  }
+
+  const action = pick(host, seat);
+  if (action?.type === 'ACTIVATE_SKILL' && applyTableAction(host, seat, action)) {
+    return { items, committed: false, fired: action };
+  }
+  // 不发动＝这条窗本来就有的那个出口，与人类席手点「都不发动」同一条提交路。
+  host.engineState = endTurnStep(host, seat).engineState;
+  return { items, committed: true, fired: null };
 }
 
 /** 只读探针：这一席现在能走哪几条规范动作（不推进对局、不动游标、不进录像）。 */

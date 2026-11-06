@@ -1,5 +1,6 @@
 import { useGameStore } from '../store/gameStore';
 import { AI_TIER_KEYS, AI_TIER_LABELS, type AiSeatTier } from '../setup/runtimeSetup';
+import { ASK_TIMEOUT_CHOICES_SEC } from '../setup/askClock';
 
 const TIER_HINTS: Record<AiSeatTier, string> = {
   random: '闭眼乱抓牌，入门陪练',
@@ -12,8 +13,10 @@ export default function CreateRoom() {
   const setPhase = useGameStore(s => s.setPhase);
   const playerCount = useGameStore(s => s.playerCount);
   const roomName = useGameStore(s => s.roomName);
+  const askTimeoutSec = useGameStore(s => s.askTimeoutSec);
   const setPlayerCount = useGameStore(s => s.setPlayerCount);
   const setRoomName = useGameStore(s => s.setRoomName);
+  const setAskTimeoutSec = useGameStore(s => s.setAskTimeoutSec);
   const createRoom = useGameStore(s => s.createRoom);
   const seatModes = useGameStore(s => s.seatModes);
   const setSeatMode = useGameStore(s => s.setSeatMode);
@@ -127,6 +130,28 @@ export default function CreateRoom() {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* 询问等待时间＝房主开局前定一次的房间参数（乙 线末片第二刀 · 刀 1 拍 1）。
+            秒数范围、钳制与到点算法全在 `setup/askClock.ts`，这一格只挑数、不抄边界。 */}
+        <div className="mb-10">
+          <label className="block text-amber-400 mb-1 font-bold">询问等待时间</label>
+          <p className="text-xs text-amber-400/50 mb-3">开局前定一次，全场席位共用这一个数。牌桌上问到某一位真人时，超过这个秒数没答，系统就替他按下那条本来就合法的「都不发动」，游戏继续往下走。AI 席位不等这一趟；同屏轮流操作的热座局不套这一格。</p>
+          <div className="grid grid-cols-5 gap-3">
+            {ASK_TIMEOUT_CHOICES_SEC.map(sec => (
+              <button
+                key={sec}
+                onClick={() => setAskTimeoutSec(sec)}
+                className={`py-3 rounded-lg border-2 font-bold text-sm transition-all ${
+                  askTimeoutSec === sec
+                    ? 'border-amber-500 bg-amber-900/40 text-amber-200 shadow-lg shadow-amber-900/30 scale-105'
+                    : 'border-amber-800/30 bg-black/30 text-amber-500/50 hover:border-amber-700/60 hover:text-amber-300'
+                }`}
+              >
+                {sec}秒
+              </button>
+            ))}
           </div>
         </div>
 

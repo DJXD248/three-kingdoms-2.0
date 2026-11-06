@@ -16,6 +16,7 @@ import Rules from './components/Rules';
 import AiBattleWindow from './components/AiBattleWindow';
 import AiBattleDock from './components/AiBattleDock';
 import AiDirector from './components/AiDirector';
+import AskClockDirector from './components/AskClockDirector';
 import NetRoomBridge from './components/NetRoomBridge';
 import { getMyNetSeat, subscribeNetRoom } from './network/netRoom';
 import NetPingOverlay from './components/NetPingPanel';
@@ -85,6 +86,9 @@ export default function App() {
     <div className="app-shell">
       {content}
       <AiDirector />
+      {/* 乙 线末片第二刀 · 刀 1 拍 3 ㈁：问窗那把表全程序只此一枚，挂在这里（与 AI 司机同级、
+          与牌桌同屏）。它渲染 null，只负责"到点替那一席按那颗本来就合法的钮"与那一行的秒数。 */}
+      <AskClockDirector />
       {/* J2 发快照的接线住在屏幕上，不住在大厅弹窗里：房主关掉大厅去开局，连线也得继续发。 */}
       <NetRoomBridge />
       {/* J3 左上角那张公开连线表同理：房主关了大厅、客人只开着牌桌，也得看得见谁掉线。 */}

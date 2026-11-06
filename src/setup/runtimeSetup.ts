@@ -1,6 +1,7 @@
 import type { General, Faction } from '../data/generals';
 import { allGenerals } from '../data/generals';
 import { identitiesOf, isLockedForSeat, lockKeyOf, lockKeysOf, QUN_FACTION } from '../domain/identity';
+import { ASK_TIMEOUT_DEFAULT_SEC } from './askClock';
 
 // ── AI seat configuration (v2.2.9 human-vs-AI) ──────────────────────────────
 // The tier keys intentionally mirror src/ai/policies/strategyPolicy (parseTier
@@ -20,6 +21,13 @@ export const AI_TIER_LABELS: Record<AiSeatTier, string> = {
 /** Four seats by default (max playerCount); all-human keeps legacy behaviour. */
 export function defaultSeatModes(count = 4): AiSeatMode[] {
   return Array.from({ length: count }, () => ({ isAi: false, tier: 'balanced' as AiSeatTier }));
+}
+
+// 乙 线末片第二刀 · 刀 1 拍 1：询问倒计时与 `playerCount`/`roomName`/`seatModes`
+// 同族＝房主开局前定一次的房间参数，默认值落在这里。秒数本身、钳制与到点算法全在
+// `askClock.ts`，这一格只负责"没定过时取默认"那一件事。
+export function defaultAskTimeoutSec(): number {
+  return ASK_TIMEOUT_DEFAULT_SEC;
 }
 
 export interface SetupPlayerSeed {

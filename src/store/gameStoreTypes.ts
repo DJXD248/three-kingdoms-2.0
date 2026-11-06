@@ -86,8 +86,29 @@ export interface TurnEndAsk {
   candidates:TurnEndAskCandidate[];
 }
 
+/**
+ * 问窗那把表的锚（乙 线末片第二刀 · 刀 1 拍 3 ㈁）＝展示面**唯一**的一格时钟读数。
+ *
+ * `key`＝`窗身份|该答那一席`（算法只在 `askClock.askAnchorKey` 一处）；同一把窗换了人答
+ * 就是换了键＝当场重新起锚（业主裁第 4 条「各席各算各的」）。`deadlineAtMs` 只由
+ * `askClock.askDeadlineAtMs(nowMs, askTimeoutSec)` 算，那一个 `nowMs` 只在一处取（见 director）。
+ *
+ * 与 `askTimeoutSec` 同族＝**不落盘、不进存档那六格、不进录像、不进引擎读数**
+ * （`storeStateToEngineState` 根上是逐格白名单）。热座局／测试台／没开窗＝ `null`，
+ * 画面因此整块不显示秒数，而不是显示一个 0。
+ */
+export interface AskDeadline {
+  key:string;
+  deadlineAtMs:number;
+}
+
 export interface GameState {
   phase:GamePhase; playerCount:number; roomName:string; players:Player[];
+  // 乙 线末片第二刀 · 刀 1 拍 1：询问窗那把尺的房间参数（房主开局前定一次、全员
+  // 同一个数、客人只读）。与 playerCount/roomName/seatModes 同族＝**不落盘、不进
+  // 存档那六格、不进录像、不进引擎读数**：`storeStateToEngineState` 根上是逐格白名单，
+  // 这一格不在名单里。绝不能挂到 Player 上——那里是按席 `{...player}` 摊开的。
+  askTimeoutSec:number;
   /** Phase 5.35.6: canonical runtime state for migrated engine flows. */
   engineState:EngineState;
   currentPlayerIndex:number; currentRound:number;
@@ -119,6 +140,8 @@ export interface GameState {
   reactionWindow:ReactionWindowState|null;
   // 2.3.1: turn-end ask deferral (see TurnEndAsk above). Null = no pending ask.
   turnEndAsk:TurnEndAsk|null;
+  // 刀 1 拍 3 ㈁：问窗那把表的锚（容器层唯一的一格时钟；null＝这一刻没有该等的人）。
+  askDeadline:AskDeadline|null;
   settings:{
     resolution:string;windowMode:string;animationSpeed:number;masterVolume:number;musicVolume:number;sfxVolume:number;autoSave:boolean;
     // 2.8.17 (#42) 技能提示两档：'smart'＝只在真有可发动技能时弹窗且只列能发动的；
@@ -146,6 +169,13 @@ export interface GameState {
   lockedGeneralIds:Set<string>;
 
   setPhase:(p:GamePhase)=>void; setPlayerCount:(c:number)=>void; setRoomName:(n:string)=>void;
+  /** 房主定那一个询问倒计时秒数；钳制只过 `askClock.clampAskTimeoutSec` 这一道。 */
+  setAskTimeoutSec:(sec:number)=>void;
+  /**
+   * 问窗那把表的锚，**唯一的写入者**＝`components/AskClockDirector.tsx`（刀 1 拍 3 ㈁）。
+   * 这里不钳制、不判到点、也不算锚值——那三件都只许在 director 那一拍做（C1／C3）。
+   */
+  setAskDeadline:(deadline:AskDeadline|null)=>void;
   createRoom:()=>void; startGame:()=>void; rollDice:()=>void; assignFactions:()=>void;
   distributeDraftGenerals:()=>void; selectDraftGeneral:(g:General)=>void; confirmDraft:()=>void;
   setSeatMode:(index:number, patch:Partial<AiSeatMode>)=>void;
