@@ -3,7 +3,8 @@
  *
  * 业主 2026-11-06 裁的原话拆成三条：倒计时是一个**房间参数**（房主开局前定一次，
  * 全员同一个数，客人只读），它**只约束真人席**（AI 席不等，立刻自答），
- * 到点＝系统替那一席按下那条本来就合法的"都不发动"——同一份出路，不新增第三种结果。
+ * 到点＝系统替那一席按下那条本来就合法的默认选择（回合结束＝都不发动，响应＝跳过，
+ * "请选择其一"＝第一项——同一条出路，不新增第三种结果）。
  *
  * 为什么单独成文：三扇窗（抉择／响应链／回合结束）、算牌那臂、界面 tick 要共用一把尺。
  * 放 `gameStore.ts` ⇒ 进程侧用不了（`setup/tableCompute.ts` 文件头明禁 zustand／gameStore）；
@@ -13,13 +14,20 @@
  * 所以同一条窗、同一份读数重复算必然同结果——N3 授权"墙上钟进入判定链"仅限
  * **决定何时发出那条动作**，动作的内容与合法性与钟无关。
  */
+import type { PendingChoiceOption } from '../core/GameState';
 
 export const ASK_TIMEOUT_DEFAULT_SEC = 30;
 export const ASK_TIMEOUT_MIN_SEC = 15;
 export const ASK_TIMEOUT_MAX_SEC = 90;
 
 /**
- * 房主开局前那一格能挑的数（全在这把尺的范围内，界面因此不必自己抄边界）。
+ * 房主开局前那一格曾经能挑的五个数（`ASK_TIMEOUT_CHOICES_SEC`）。
+ *
+ * ⚠️ 实话：它**曾经是那五颗按钮的出处**，现在已被滑块取代（业主 2026-11-06 原话
+ * 「做一个像现在调整抽卡数量一样的滑动块」）⇒ 生产代码里没有任何一处再读它，
+ * 界面那枚滑块只认 `ASK_TIMEOUT_MIN_SEC`／`ASK_TIMEOUT_MAX_SEC` 这两个边界。
+ * 留着它是因为刀 1 拍 1 那本在册证人还在量这条尺（范围内、含默认值、升序）；
+ * 它不构成第二套账——**不许**被界面某处偷偷读回去。
  */
 export const ASK_TIMEOUT_CHOICES_SEC: number[] = [15, 30, 45, 60, 90];
 
@@ -79,32 +87,39 @@ export function isHotSeatTable(activeNetRoomPresent: boolean, humanSeatCount: nu
 /**
  * 「这一秒该为谁计时」＝**窗身份 + 该答那一席**（业主裁第 4 条「各席各算各的」的落点）。
  *
- * 两扇窗都只读现成的格，这里不扫队列、不重算时机：
+ * 三扇窗都只读现成的格，这里不扫队列、不重算时机：
+ *  - 抉择窗＝引擎那侧现成的 `pendingChoice.key` ＋`.playerId`（业主 2026-11-06 原话㈠：
+ *    "强制'请选择其一'那种窗也要算 30 秒，时间到了默认选第一项"⇒这一扇从此也进表）；
  *  - 响应链＝容器窗的 `id` ＋引擎那侧现算出来的此刻欠答者（调用方递 `liveReactionAsk` 的结果）；
  *  - 回合结束＝`turnEndAsk.windowId` ＋`turnEndAsk.playerId`（开窗那一刻算好的两格）。
  *
- * 两条都活着时**响应链排在前面**：不是随手挑一个，而是牌桌上就写着这条规矩
- * （`GameBoard.tsx` 那两扇 HUD 的门是 `reactionAsk && !pendingChoice` 与
- * `turnEndAsk && !pendingChoice && !reactionAsk`）——画面先问哪一扇，秒表就跟着哪一扇走。
- *
- * 抉择窗（`pendingChoice`）不在这张表里（C6）：它是"请选择其一"，没有"不发动"这个出口。
+ * 三扇同时活着时**按画面的门排死**（`GameBoard.tsx` 那三扇 HUD 的互斥条件＝
+ * `pendingChoice` ⇢ `reactionAsk && !pendingChoice` ⇢ `turnEndAsk && !pendingChoice && !reactionAsk`）
+ * ⇒ 抉择排最前，其次响应链，最后回合结束。理由与 v5 的 C3 同一条：画面先问哪一扇，
+ * 秒表跟着哪一扇走，不许出现"秒表跟着后一扇、钮按的是前一扇"。
  *
  * `null`＝此刻没有该答的人⇒不起表、锚也清掉。
  *
- * 顺带把**这一把锚属于哪扇窗**一起交回去（`channel`）：到点那一下要按的钮两扇不一样
- * （回合结束＝「都不发动」／响应链＝「跳过」），让调用方再判一次"是哪扇窗"就是第二份账。
+ * 顺带把**这一把锚属于哪扇窗**一起交回去（`channel`）：到点那一下要按的钮三扇不一样
+ * （回合结束＝「都不发动」／响应链＝「跳过」／抉择＝那一条 `CHOOSE_OPTION`），
+ * 让调用方再判一次"是哪扇窗"就是第二份账。
  */
 export interface AskAnchor {
   key: string;
-  channel: 'reaction' | 'turnEnd';
+  channel: 'reaction' | 'turnEnd' | 'choice';
 }
 
 export function askAnchorKey(input: {
+  choiceWindowKey: string | null;
+  choiceDebtorId: number | null;
   reactionWindowId: string | null;
   reactionDebtorId: number | null;
   turnEndWindowId: string | null;
   turnEndDebtorId: number | null;
 }): AskAnchor | null {
+  if (input.choiceWindowKey !== null && input.choiceDebtorId !== null) {
+    return { key: `${input.choiceWindowKey}|${input.choiceDebtorId}`, channel: 'choice' };
+  }
   if (input.reactionWindowId !== null && input.reactionDebtorId !== null) {
     return { key: `${input.reactionWindowId}|${input.reactionDebtorId}`, channel: 'reaction' };
   }
@@ -112,4 +127,20 @@ export function askAnchorKey(input: {
     return { key: `${input.turnEndWindowId}|${input.turnEndDebtorId}`, channel: 'turnEnd' };
   }
   return null;
+}
+
+/**
+ * 抉择窗到点选**哪一项**＝业主原话里那"第一项"，落点写死为「界面排第一、而且这一刻真能
+ * 执行的那一项」：`PendingChoiceOption.enabled === false` 那一族（v2.8.11 刀2 的逐项门槛）
+ * 会把排在最前的那一项真置灰，硬点它只会被解析器拒成 `CHOICE_OPTION_LOCKED`。
+ *
+ * 返回 `null`＝这一扇此刻**一项都不合法**（桥接层根本不造全灰窗，出现即状态异常）：
+ * 到点那一下**什么都不派**，也不为它另造一条"到点取消"的出路——那种东西今天不存在。
+ *
+ * 与界面同一份事实、同一个"排第一"的读法（下标＝按钮渲染顺序，见 `GameBoard.tsx` 抉择 HUD
+ * 那个 `options.map`）；这里不重算门槛，只认开窗那一刻冻结进状态的那一个 `enabled`。
+ */
+export function choiceAtDeadlineHit(options: readonly PendingChoiceOption[]): number | null {
+  const index = options.findIndex(option => option.enabled !== false);
+  return index < 0 ? null : index;
 }

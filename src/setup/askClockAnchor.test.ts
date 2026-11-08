@@ -9,7 +9,7 @@
  * 或整条反着写；键那一格换成只键窗不键人、或把 `channel` 写死成 `'turnEnd'`——都必须当场红。
  */
 import { describe, it, expect } from 'vitest';
-import { askAnchorKey, isHotSeatTable } from './askClock';
+import { askAnchorKey, choiceAtDeadlineHit, isHotSeatTable } from './askClock';
 
 describe('askClock · 热座判据四形 (拍 3 ㈁ · v5 C5)', () => {
   // 拆成四枚分开的 `it`：一枚 `it` 里循环多形＝第一形红就抛、其余不跑（v2.9.33 在册教训）。
@@ -37,9 +37,10 @@ describe('askClock · 热座判据四形 (拍 3 ㈁ · v5 C5)', () => {
   });
 });
 
-describe('askClock · 这一秒该为谁计时 (拍 3 ㈁ · v5 C3/C4)', () => {
-  const reaction = { reactionWindowId: 'rw:5:3:ev:x:1', reactionDebtorId: 2, turnEndWindowId: null, turnEndDebtorId: null };
-  const turnEnd = { reactionWindowId: null, reactionDebtorId: null, turnEndWindowId: 'turn-end-ask:5:1', turnEndDebtorId: 1 };
+describe('askClock · 这一秒该为谁计时 (拍 3 ㈁ · v5 C3/C4) (v6 追加㈠)', () => {
+  const reaction = { choiceWindowKey: null, choiceDebtorId: null, reactionWindowId: 'rw:5:3:ev:x:1', reactionDebtorId: 2, turnEndWindowId: null, turnEndDebtorId: null };
+  const turnEnd = { choiceWindowKey: null, choiceDebtorId: null, reactionWindowId: null, reactionDebtorId: null, turnEndWindowId: 'turn-end-ask:5:1', turnEndDebtorId: 1 };
+  const choice = { choiceWindowKey: 'ch:5:3:g_choice:择一', choiceDebtorId: 1, reactionWindowId: null, reactionDebtorId: null, turnEndWindowId: null, turnEndDebtorId: null };
 
   it('响应链那一形：键＝窗身份|该答那一席，且把出口那一扇一起交回去（到点按的是「跳过」）', () => {
     expect(askAnchorKey(reaction)).toEqual({ key: 'rw:5:3:ev:x:1|2', channel: 'reaction' });
@@ -49,40 +50,45 @@ describe('askClock · 这一秒该为谁计时 (拍 3 ㈁ · v5 C3/C4)', () => {
     expect(askAnchorKey(turnEnd)).toEqual({ key: 'turn-end-ask:5:1|1', channel: 'turnEnd' });
   });
 
-  it('两条都活着＝响应链排前面：不是随手挑，画面先问哪一扇秒表跟着哪一扇（HUD 那两扇门互斥）', () => {
+  it('抉择窗那一形：键＝`choiceKey|playerId`，出口＝那一条 `CHOOSE_OPTION`', () => {
+    expect(askAnchorKey(choice)).toEqual({ key: 'ch:5:3:g_choice:择一|1', channel: 'choice' });
+  });
+
+  it('三条都活着＝抉择排在最前（业主 11-06 原话㈠＝"那种窗也要算 30 秒"）', () => {
     const both = {
+      choiceWindowKey: 'ch:5:3:g_choice:择一', choiceDebtorId: 1,
       reactionWindowId: 'rw:5:3:ev:x:1', reactionDebtorId: 2,
       turnEndWindowId: 'turn-end-ask:5:1', turnEndDebtorId: 1,
     };
-    expect(askAnchorKey(both)).toEqual({ key: 'rw:5:3:ev:x:1|2', channel: 'reaction' });
-    // 假值自查：反过来写（回合结束优先）时，回合结束那扇在响应链活着时压根不渲染⇒
+    expect(askAnchorKey(both)).toEqual({ key: 'ch:5:3:g_choice:择一|1', channel: 'choice' });
+    // 假值自查：反过来写（回合结束优先）时，回合结束那扇在抉择活着时压根不渲染⇒
     // 秒表会给一扇看不见的窗计时，这一条必须红。
     expect(askAnchorKey(both)?.key).not.toBe('turn-end-ask:5:1|1');
   });
 
   it('同一把窗换了人答＝换了键（业主裁第 4 条"各席各算各的"的落点；键只窗不人会蒙绿）', () => {
-    const first = askAnchorKey(reaction)!;
-    const second = askAnchorKey({ ...reaction, reactionDebtorId: 1 })!;
+    const first = askAnchorKey(choice)!;
+    const second = askAnchorKey({ ...choice, choiceDebtorId: 2 })!;
     expect(first.key).not.toBe(second.key);
-    expect(second.key.endsWith('|1')).toBe(true);
+    expect(second.key.endsWith('|2')).toBe(true);
     // 反证：窗身份一个字没变，所以"键变了"只能来自该答那一席那一半。
     expect(first.key.split('|')[0]).toBe(second.key.split('|')[0]);
   });
 
   it('缺一半就不算：没窗、或窗在但此刻没有该答的人⇒`null`（不起表、锚也清掉）', () => {
-    expect(askAnchorKey({ reactionWindowId: null, reactionDebtorId: null, turnEndWindowId: null, turnEndDebtorId: null })).toBeNull();
+    expect(askAnchorKey({ choiceWindowKey: null, choiceDebtorId: null, reactionWindowId: null, reactionDebtorId: null, turnEndWindowId: null, turnEndDebtorId: null })).toBeNull();
     expect(askAnchorKey({ ...turnEnd, turnEndWindowId: null })).toBeNull();
     expect(askAnchorKey({ ...turnEnd, turnEndDebtorId: null })).toBeNull();
-    expect(askAnchorKey({ ...reaction, reactionDebtorId: null })).toBeNull();
+    expect(askAnchorKey({ ...choice, choiceDebtorId: null })).toBeNull();
+    expect(askAnchorKey({ ...choice, choiceWindowKey: null })).toBeNull();
     // 席位号 0 不是合法读数（`Player.id` 从 1 起），这里不替它兜底，但也不许把 `null` 读成一个键。
-    expect(askAnchorKey({ ...reaction, reactionDebtorId: null, reactionWindowId: null })).toBeNull();
+    expect(askAnchorKey({ ...choice, choiceDebtorId: null, choiceWindowKey: null })).toBeNull();
   });
 
-  it('抉择窗不在这张表里（C6）：这张表只有两扇"是否执行"的门，压根没有第三个 channel', () => {
-    const channels = new Set([
-      askAnchorKey(reaction)?.channel,
-      askAnchorKey(turnEnd)?.channel,
-    ]);
-    expect([...channels].sort()).toEqual(['reaction', 'turnEnd']);
+  it('choiceAtDeadlineHit：第一个 enabled !== false 的下标，全禁⇒null', () => {
+    expect(choiceAtDeadlineHit([{ label: 'A', events: [] }])).toBe(0);
+    expect(choiceAtDeadlineHit([{ label: 'A', enabled: false, events: [] }, { label: 'B', events: [] }])).toBe(1);
+    expect(choiceAtDeadlineHit([{ label: 'A', enabled: false, events: [] }, { label: 'B', enabled: false, events: [] }])).toBeNull();
+    expect(choiceAtDeadlineHit([])).toBeNull();
   });
 });

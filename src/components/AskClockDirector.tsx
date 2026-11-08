@@ -12,8 +12,10 @@
  *  ㈡ 起锚＝`askClock.askDeadlineAtMs(nowMs, askTimeoutSec)`，其中 `nowMs` **只在这一拍取一次**
  *     `Date.now()`（C3）；同一把窗换了人答就是换了键＝当场重新起锚（各席各算各的）。
  *  ㈢ 到点只做一件事＝按那颗本来就合法的钮（C4）：回合结束⇒既有的 `skipTurnEndAsk()`
- *     （「都不发动」），响应链⇒既有的 `skipReaction()`（「跳过」）。不新增提交路、
- *     不新增 canonical 动作、不新增第二种判据；录像上与人手点逐字同形。
+ *     （「都不发动」），响应链⇒既有的 `skipReaction()`（「跳过」），抉择⇒既有的
+ *     `chooseOption(第一枚合法下标)`（业主 11-06 原话㈠＝"时间到了默认选第一项"，落点见
+ *     `askClock.choiceAtDeadlineHit`）。不新增提交路、不新增 canonical 动作、不新增第二种
+ *     判据；录像上与人手点同一项逐字同形。
  *  ㈣ 每秒把锚原样再挂一次（内容一字不变、只换个引用）＝让 HUD 那一行的秒数跟着走。
  *     HUD 显示的数只由 `askClock.remainingAskSec` 算，界面不自己减、也不取 `Date.now()`（C7）。
  *
@@ -24,7 +26,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { useGameStore, type GameState } from '../store/gameStore';
 import { liveReactionAsk } from '../store/applyCanonicalAction';
 import { getActiveRoom, subscribeNetRoom } from '../network/netRoom';
-import { askAnchorKey, askDeadlineAtMs, isAskDeadlineReached, isHotSeatTable } from '../setup/askClock';
+import { askAnchorKey, askDeadlineAtMs, choiceAtDeadlineHit, isAskDeadlineReached, isHotSeatTable } from '../setup/askClock';
 
 /** 这一枚表的间隔＝业主裁的那"一次一跳"（秒数本身是房间参数 `askTimeoutSec`，不在这里定）。 */
 const ASK_TICK_MS = 1000;
@@ -43,6 +45,9 @@ const humanSeatCountOf = (state: Pick<GameState, 'players'>): number =>
 /** 此刻这一秒该为谁计时（键与出口都只由 `askAnchorKey` 那一处算，这里只搬现成的格）。 */
 const anchorOf = (state: Pick<GameState, 'turnEndAsk' | 'reactionWindow' | 'engineState'>) =>
   askAnchorKey({
+    // 抉择窗那一扇：窗身份与欠答那一席都是引擎那侧现成的两格，这里不另造 id。
+    choiceWindowKey: state.engineState.pendingChoice?.key ?? null,
+    choiceDebtorId: state.engineState.pendingChoice?.playerId ?? null,
     reactionWindowId: state.reactionWindow && !state.reactionWindow.closed ? state.reactionWindow.id : null,
     reactionDebtorId: liveReactionAsk({ engineState: state.engineState })?.playerId ?? null,
     turnEndWindowId: state.turnEndAsk?.windowId ?? null,
@@ -68,6 +73,14 @@ function askTick(): void {
     return;
   }
   if (isAskDeadlineReached(nowMs, state.askDeadline.deadlineAtMs)) {
+    if (anchor.channel === 'choice') {
+      // 到点＝替这一席选「界面排第一、而且这一刻真能执行」那一项，派的仍是既有那条
+      // `CHOOSE_OPTION`（走 `chooseOption`＝人手点同一项那一条路，逐字同形）。
+      const index = choiceAtDeadlineHit(state.engineState.pendingChoice?.options ?? []);
+      if (index === null) return; // 一项都不合法⇒什么都不派（那种"到点取消"的出路今天不存在）
+      state.chooseOption(index);
+      return;
+    }
     if (anchor.channel === 'reaction') state.skipReaction();
     else state.skipTurnEndAsk();
     return;

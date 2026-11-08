@@ -324,8 +324,8 @@ describe('㈁ 每一拍稳（W3）与到点只按那颗本来就合法的钮', (
   });
 });
 
-describe('㈁ 抉择窗那一扇不套表（v5 C6：它是「请选择其一」，没有「不发动」这个出口）', () => {
-  it('只开着抉择窗⇒压根不起锚；推进到远过秒数也一位不替玩家选（第一项照旧留给玩家自己点）', () => {
+describe('㈡ 抉择窗到点自动选第一项（业主 11-06 原话㈠）', () => {
+  it('抉择窗⇒起锚，键＝窗身份|该答那一席；热座⇒askDeadline === null', () => {
     installTable([]);
     act(() => {
       useGameStore.setState({
@@ -343,13 +343,152 @@ describe('㈁ 抉择窗那一扇不套表（v5 C6：它是「请选择其一」�
     });
     expect(get().engineState.pendingChoice?.options.map(o => o.label)).toEqual(['摸一张', '弃一张']);
     render(<AskClockDirector />);
-    expect(anchor(), '没有"是否执行"那一扇⇒这一秒不为任何人计时').toBeNull();
+    // 业主 11-06 第二轮把这一扇纳入秒表⇒必须起锚，且键认的是**抉择窗自己**那两格
+    // （若秒表仍跟着后一扇、或沿用 v5 那条"抉择不计"，这里当场红）。
+    expect(anchor()).toEqual({ key: 'ch:5:3:g_choice:择一|1', deadlineAtMs: T0 + 45_000 });
 
-    act(() => { vi.advanceTimersByTime(120_000); });
+    // 热座那一形（单机两位真人、无联机房间）⇒抉择窗也照旧不套表。
+    act(() => {
+      useGameStore.setState({
+        players: [get().players[0]!, seatPlayer(2, '乙', [], false)] as never,
+        engineState: {
+          ...get().engineState,
+          pendingChoice: {
+            key: 'ch:5:3:g_choice:择一', playerId: 1,
+            options: [
+              { label: '摸一张', events: [] },
+              { label: '弃一张', events: [] },
+            ],
+          },
+        },
+      } as never);
+    });
     expect(anchor()).toBeNull();
-    expect(get().engineState.pendingChoice?.options, '绝不自动替玩家选第一项').toHaveLength(2);
-    expect(get().engineState.turn, '抉择窗到点不许有任何自动动作').toBe(5);
+  });
+
+  it('到点⇒派出的那条录像条目与人手点同一项逐字相等，且它选的是第一个**合法**项', () => {
+    // 与上面回合结束那条同一套配方：甲案（到点自动按）与乙案（人手点）各跑一遍同一剧本，
+    // 比对最后一条录像条目本体。⚠️ 这里绝不 `render(<GameBoard />)`——那文件受击闪红那组
+    // 定时器故意不做 cleanup，挂进来本文件 `getTimerCount()` 那枚钉就量不干净（文件头那条）。
+    const CHOICE_KEY = 'ch:5:3:g_choice:择一';
+    const run = (byClock: boolean) => {
+      __resetResidentEngineContainer();
+      resetLiveReplay();
+      vi.setSystemTime(T0);
+      installTable([turnEndGeneral('g_blue', '守夜'), turnEndGeneral('g_yellow', '察更')]);
+      act(() => { get().endTurn(); });
+      // 先真发动一枚：这一次 dispatch 只开录像文档、不记步（重置后首笔＝建档）。
+      act(() => { expect(get().activateTurnEndSkill('g_yellow:察更:e1', 'g_yellow')).toBe(true); });
+      expect(getLiveReplayEntryCount()).toBe(0);
+      // 第一项真置灰、第二项可点⇒"第一项"必须落到下标 1（照 0 派会被解析器拒成
+      // `CHOICE_OPTION_LOCKED`，那样这一条会红在"条目数不涨"上）。
+      act(() => {
+        useGameStore.setState({
+          engineState: {
+            ...get().engineState,
+            pendingChoice: {
+              key: CHOICE_KEY, playerId: 1,
+              options: [
+                { label: '弃一张', enabled: false, gateText: '手牌不够', events: [] },
+                { label: '摸一张', events: [] },
+              ],
+            },
+          },
+        } as never);
+      });
+      const view = render(<AskClockDirector />);
+      expect(anchor()!.key, '前提自证：这一秒跟的是抉择那一扇，不是它后面的回合结束窗').toBe(`${CHOICE_KEY}|1`);
+      if (byClock) {
+        act(() => { vi.advanceTimersByTime(45_000); });
+      } else {
+        view.unmount(); // 表停掉：下面这一下完全由"人"来按
+        vi.setSystemTime(T0 + 45_000);
+        act(() => { expect(get().chooseOption(1)).toBe(true); });
+      }
+      expect(getLiveReplayEntryCount()).toBe(1);
+      return getLiveReplayDocument()!.entries.at(-1)!;
+    };
+
+    const byClockEntry = run(true);
+    const byHandEntry = run(false);
+    expect(byClockEntry.action.type).toBe('CHOOSE_OPTION');
+    expect((byClockEntry.action.payload as { optionIndex: number }).optionIndex, '第一项＝第一个合法项，不是下标 0').toBe(1);
+
+    // 逐字：整条条目本体（动作＋事件＋投影前后的引擎读数）对拷，不比条数也不比长度。
+    // 唯一抹掉的是 `id` 那一族＝动作号与事件 UUID（`createAction` 的模块计数器与随机数，
+    // 与"按的是哪一颗钮"无关）；除此之外一个字节都不许多。
+    const body = (entry: unknown) => JSON.stringify(entry, (key, value) => (key === 'id' ? undefined : value));
+    expect(body(byClockEntry)).toBe(body(byHandEntry));
+    // 尺自证 ①：条目本体确实带着 `id` 这一族（否则上面那句是抹了个空集，等于没比对）。
+    expect(JSON.stringify(byClockEntry)).toMatch(/"id":/);
+    // 尺自证 ②：不是"两条都是空壳"——这一扇真被结算掉了，且带着刚才真发动的那笔账。
+    expect((byClockEntry.afterState as unknown as { pendingChoice: unknown }).pendingChoice).toBeNull();
+    expect((byClockEntry.afterState as unknown as { consumedSkills: unknown[] }).consumedSkills).toHaveLength(1);
+    expect(byClockEntry.timestamp).toBe(T0 + 45_000);
+  });
+
+  it('一项都不合法⇒什么都不派（动作计数不涨、pendingChoice 原样）', () => {
+    installTable([]);
+    act(() => {
+      useGameStore.setState({
+        engineState: {
+          ...get().engineState,
+          pendingChoice: {
+            key: 'ch:5:3:g_choice:择一', playerId: 1,
+            options: [
+              { label: 'A', enabled: false, events: [] },
+              { label: 'B', enabled: false, events: [] },
+            ],
+          },
+        },
+      } as never);
+    });
+    expect(get().engineState.pendingChoice?.options.map(o => o.label)).toEqual(['A', 'B']);
+    render(<AskClockDirector />);
+    expect(anchor(), '前提自证：这一扇确实开窗了').not.toBeNull();
+    // 根上那一格只有 key/deadlineAtMs（`AskDeadline`）⇒"跟的是哪一扇"只能从键认，
+    // 键前半截＝抉择窗自己那个 key（`channel` 是判据函数的返回值，不落进状态）。
+    expect(anchor()?.key).toBe('ch:5:3:g_choice:择一|1');
+
+    const beforeTurn = get().engineState.turn;
+    const beforeChoices = get().engineState.pendingChoice?.options.map(o => o.label);
+
+    act(() => { vi.advanceTimersByTime(45_000); });
+    // 到点那一下没有发出任何动作，turn 与 pendingChoice 都没变。
+    expect(get().engineState.turn).toBe(beforeTurn);
+    expect(get().engineState.pendingChoice?.options.map(o => o.label)).toEqual(beforeChoices);
     expect(getLiveReplayEntryCount()).toBe(0);
+  });
+
+  it('同一把窗连续两拍：choice 键与到点逐字不动（不重复派、不两拍两种结果）', () => {
+    installTable([]);
+    act(() => {
+      useGameStore.setState({
+        engineState: {
+          ...get().engineState,
+          pendingChoice: {
+            key: 'ch:5:3:g_choice:择一', playerId: 1,
+            options: [
+              { label: 'A', enabled: false, events: [] },
+              { label: 'B', enabled: true, events: [] },
+            ],
+          },
+        },
+      } as never);
+    });
+    render(<AskClockDirector />);
+    // 根上那一格只有 key/deadlineAtMs（`AskDeadline`）⇒"跟的是哪一扇"只能从键认，
+    // 键前半截＝抉择窗自己那个 key（`channel` 是判据函数的返回值，不落进状态）。
+    expect(anchor()?.key).toBe('ch:5:3:g_choice:择一|1');
+    const first = anchor()!;
+    act(() => { vi.advanceTimersByTime(1_000); });
+    const second = anchor()!;
+    act(() => { vi.advanceTimersByTime(1_000); });
+    const third = anchor()!;
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+    expect(third.deadlineAtMs).toBe(T0 + 45_000);
+    expect(getLiveReplayEntryCount(), '还没到点⇒一位账都不许多动').toBe(0);
   });
 });
 
@@ -387,7 +526,7 @@ describe('㈁ 结构钉：表只有一枚、读表处只有一处、界面不许
     const files = productionFiles(srcRoot);
     expect(files.length, '尺自证：这一趟确实扫到了生产代码').toBeGreaterThan(100);
     const relativeOf = (file: string) => path.relative(srcRoot, file).replace(/\\/g, '/');
-    for (const symbol of ['askDeadlineAtMs', 'isAskDeadlineReached']) {
+    for (const symbol of ['askDeadlineAtMs', 'isAskDeadlineReached', 'choiceAtDeadlineHit']) {
       const callers = files
         .filter(file => !relativeOf(file).endsWith('setup/askClock.ts'))
         .filter(file => new RegExp(`${symbol}\\(`).test(strip(readFileSync(file, 'utf8'))))

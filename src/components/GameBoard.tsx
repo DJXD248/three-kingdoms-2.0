@@ -62,7 +62,7 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
   const askDeadline=useGameStore(s=>s.askDeadline);
   /** 还剩几秒＝`askClock.remainingAskSec` 现算的那一个数；两个进料都不是界面自己的：
    *  `nowMs` 读导演那一枚秒表**采样到的那**一刻（界面一处都不碰 `Date.now()`），
-   *  到点那一格读根上那唯一的锚。锚为 `null` ⇒ `null` ⇒ 下面两扇 HUD 整块秒数不渲染。 */
+   *  到点那一格读根上那唯一的锚。锚为 `null` ⇒ `null` ⇒ 下面三扇 HUD 整块秒数不渲染。 */
   const askSecsLeft=askDeadline===null?null:remainingAskSec(askClockNowMs(),askDeadline.deadlineAtMs);
   /** 「还差谁没答」＝`askClock.waitingSeatsOf` 算的（参加者减去已答，跟着参加者原序）。
    *  这两串在容器窗里存的是**席位号＝`Player.id`**（不是数组下标），所以名字从既有 `players` 里按 id 认。 */
@@ -616,6 +616,10 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
           <div className="rounded-xl border-2 border-violet-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(139,92,246,0.35)'}}>
             <p className="text-sm font-black text-violet-300">🔀 抉择 · {players.find(p=>p.id===pendingChoice.playerId)?.name ?? `玩家${pendingChoice.playerId}`}，请选择其一</p>
             <p className="mt-0.5 text-[10px] text-violet-200/60">{pendingChoice.key}</p>
+            {/* 刀 1 追加㈠（业主 2026-11-06 原话＝"那种窗也要算 30 秒，时间到了默认选第一项"）：
+                这一扇也进倒计时。读数仍只有导演那一个数；到点选的是下面**排第一而且此刻没被
+                置灰**的那一项（置灰＝不过逐项门槛，见 `askClock.choiceAtDeadlineHit`）。 */}
+            {askSecsLeft!==null&&<p className="mt-1 text-xs font-black tabular-nums text-violet-200">⏳ {askSecsLeft} 秒</p>}
             <div className="mt-2 flex flex-col gap-1.5">
               {pendingChoice.options.map((o,i)=>{
                 // 刀2 (v2.8.11)：不过逐项门槛的分支照旧列出、置灰、写明原因

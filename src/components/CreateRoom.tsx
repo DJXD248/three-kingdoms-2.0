@@ -1,6 +1,6 @@
 import { useGameStore } from '../store/gameStore';
 import { AI_TIER_KEYS, AI_TIER_LABELS, type AiSeatTier } from '../setup/runtimeSetup';
-import { ASK_TIMEOUT_CHOICES_SEC } from '../setup/askClock';
+import { ASK_TIMEOUT_MAX_SEC, ASK_TIMEOUT_MIN_SEC } from '../setup/askClock';
 
 const TIER_HINTS: Record<AiSeatTier, string> = {
   random: '闭眼乱抓牌，入门陪练',
@@ -134,25 +134,27 @@ export default function CreateRoom() {
         </div>
 
         {/* 询问等待时间＝房主开局前定一次的房间参数（乙 线末片第二刀 · 刀 1 拍 1）。
-            秒数范围、钳制与到点算法全在 `setup/askClock.ts`，这一格只挑数、不抄边界。 */}
+            秒数范围、钳制与到点算法全在 `setup/askClock.ts`，这一格只挑数、不抄边界。
+            刀 1 追加㈡（业主 2026-11-06 原话＝"做一个像现在调整抽卡数量一样的滑动块"）：
+            那五颗按钮换成一枚滑块，手感对齐 `UnifiedDraw.tsx` 那枚抽牌堆滑块；
+            `value` 的真值来源仍是**同一格房间参数**（不是本地草稿 state 与房间参数两份）。 */}
         <div className="mb-10">
           <label className="block text-amber-400 mb-1 font-bold">询问等待时间</label>
-          <p className="text-xs text-amber-400/50 mb-3">开局前定一次，全场席位共用这一个数。牌桌上问到某一位真人时，超过这个秒数没答，系统就替他按下那条本来就合法的「都不发动」，游戏继续往下走。AI 席位不等这一趟；同屏轮流操作的热座局不套这一格。</p>
-          <div className="grid grid-cols-5 gap-3">
-            {ASK_TIMEOUT_CHOICES_SEC.map(sec => (
-              <button
-                key={sec}
-                onClick={() => setAskTimeoutSec(sec)}
-                className={`py-3 rounded-lg border-2 font-bold text-sm transition-all ${
-                  askTimeoutSec === sec
-                    ? 'border-amber-500 bg-amber-900/40 text-amber-200 shadow-lg shadow-amber-900/30 scale-105'
-                    : 'border-amber-800/30 bg-black/30 text-amber-500/50 hover:border-amber-700/60 hover:text-amber-300'
-                }`}
-              >
-                {sec}秒
-              </button>
-            ))}
+          <p className="text-xs text-amber-400/50 mb-3">开局前定一次，全场席位共用这一个数。牌桌上问到某一位真人时，超过这个秒数没答，系统就替这一席做那一条本来就合法的默认选择（回合结束＝都不发动，响应＝跳过，"请选择其一"＝第一项）。AI 席位不等这一趟。同屏轮流操作的热座局不套这一格。</p>
+          <div className="flex items-baseline justify-between text-xs text-amber-500/50 mb-1">
+            <span>{ASK_TIMEOUT_MIN_SEC} 秒</span>
+            <span className="text-lg font-black text-amber-200 tabular-nums">{askTimeoutSec} 秒</span>
+            <span>{ASK_TIMEOUT_MAX_SEC} 秒</span>
           </div>
+          <input
+            type="range"
+            min={ASK_TIMEOUT_MIN_SEC}
+            max={ASK_TIMEOUT_MAX_SEC}
+            step={1}
+            value={askTimeoutSec}
+            onChange={e => setAskTimeoutSec(parseInt(e.target.value, 10))}
+            className="w-full accent-amber-500 cursor-pointer"
+          />
         </div>
 
         {/* Create Button */}
