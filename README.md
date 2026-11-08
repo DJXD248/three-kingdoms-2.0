@@ -1,6 +1,6 @@
-# 三国杀卡牌（Three Kingdoms Card Game）— Qoder 2.0
+# 三国卡牌（Three Kingdoms Card Game）— Qoder 2.0
 
-React + TypeScript 单页卡牌游戏。本仓库为主线开发仓库，与 `Qoder/1.29`（备份/发布线）相互独立、不共享提交历史。
+这是使用Qoder CN制作的纯AI生成的React + TypeScript 单页卡牌游戏。本仓库为主线开发仓库，与 `Qoder/1.29`（备份/发布线）相互独立、不共享提交历史。
 
 ## 快速开始
 
