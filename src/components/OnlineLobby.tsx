@@ -26,6 +26,7 @@ import {
   getStartGate,
   receiveDraftList,
   receiveDraftProgress,
+  receiveGuestAsk,
   receiveGuestSnapshot,
   receiveNetStatus,
   receiveReadyTable,
@@ -195,6 +196,12 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         rosterContent: localRosterContent,
         onSnapshot: (snapshot) => {
           if (receiveGuestSnapshot(snapshot)) bumpNetRoom();
+        },
+        // 切片⑥：房主发给欠答那一席的窄投影问窗题面——能走到这一行的已经是"房主发的、
+        // 收件人是我"的那一份（`netSession` 把关过 `to` 与 `fromHost`）；客端 HUD 读的是这份，
+        // 不是机器的 `turnEndAsk`（引擎只照发遮蔽面）。
+        onAsk: (ask) => {
+          if (receiveGuestAsk(ask)) bumpNetRoom();
         },
         // J3：这条连线用心跳那一套（房主探测＋15 秒判定；客人只回话、只照抄房主发来的表）。
         heartbeat: {},

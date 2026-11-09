@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useGameStore, FieldGeneral, Position, Player, type TurnEndAskCandidate } from '../store/gameStore';
 import {
   getValidTargets, getMoveTargets, canFieldGeneralMove,
@@ -18,6 +18,7 @@ import Rules from './Rules';
 import Settings from './Settings';
 import { SC, StatPill, Bar, Btn, Modal } from './gameBoard/uiPrimitives';
 import { placeSeats, resolveViewIndex } from './gameBoard/seatLayout';
+import { getActiveRoom, getGuestAsk, getSeatMoves, subscribeNetRoom } from '../network/netRoom';
 // 刀 1 拍 3 ㈁：HUD 那一行的两个数都只过 askClock 这一道；"现在"由那一枚秒表交出来。
 import { remainingAskSec, waitingSeatsOf } from '../setup/askClock';
 import { askClockNowMs } from './AskClockDirector';
@@ -55,6 +56,24 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
   const reactionWindow=useGameStore(s=>s.reactionWindow);
   const passReaction=useGameStore(s=>s.passReaction);
   const turnEndAsk=useGameStore(s=>s.turnEndAsk);
+  // 刀 2（窄投影）：客端的问窗题面不在机器的 `turnEndAsk` 里（引擎只照发遮蔽面），客人
+  // 读的是房主按席投下来的窄投影——欠答那一席拿走题面/候选/可否/原因，别席收到的是
+  // 还差谁没答；窗口没挂＝`null`（画面空出来，不加一句没影的话）。
+  const guestAsk=useSyncExternalStore(subscribeNetRoom, getGuestAsk, getGuestAsk);
+  const guestMoves=useSyncExternalStore(subscribeNetRoom, getSeatMoves, getSeatMoves);
+  /** 窗口那一份题面（窄投影）：窗口没挂＝`null`，本地角标钉死在一条控制流上才敢用。 */
+  const guestTurnEndAsk=guestAsk?.turnEndAsk ?? null;
+  /** 问窗的答案走的是席位号＋编号：从房主算给你这一席的清单里挑出对应的那一格（动作者留在
+   *  房主那台机器的清单上，线上只跑编号与这句话）——挑不到＝这一把编号还没排进清单，等下一份再寻。 */
+  const sendAskMove=(label: string): void => {
+    const item = guestMoves?.items.find(i => i.label === label) ?? null;
+    if (!item) return;
+    const room = getActiveRoom();
+    if (!room || room.connection.state.role !== 'guest') return;
+    const hostId = room.connection.state.peers.find(p => p.role === 'host')?.id;
+    if (!hostId) return;
+    room.connection.send({ t: 'act', from: room.connection.state.selfId, to: hostId, seat: guestMoves!.seat, key: item.key });
+  };
   // 刀 1 拍 3 ㈁（2026-11-06）：问窗那把表的锚——容器层唯一的一格时钟读数，由
   // `AskClockDirector` 那一枚秒表写。画面这里只做两件事：把剩余秒数交给 `remainingAskSec`
   // 算（不自己减、也不读 `Date.now()`），以及把"还差谁没答"交给 `waitingSeatsOf` 算。
@@ -677,6 +696,30 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
             </div>
             <div className="mt-2"><Btn onClick={skipTurnEndAsk}>🚫 都不发动</Btn></div>
             <p className="mt-1 text-[10px] text-amber-200/40">都不发动＝一个也不发动，直接结束本回合</p>
+          </div>
+        </div>}
+        {/* 刀 2（窄投影）：容器层的窗眼住在房主那台机器上，客人读的是房主按席投下来的窄
+           * 投影——欠答那一席拿走题面/候选/可否/原因，别席收到的那一帧只有 "还差谁没答"；
+           * 没挂窗（`null`）＝HUD 不出一格，连一句空话都不占。 */}
+        {!turnEndAsk && guestAsk !== null && !pendingChoice && !reactionAsk && <div className="absolute left-1/2 top-12 z-40 -translate-x-1/2">
+          <div className="rounded-xl border-2 border-amber-500 bg-black/90 px-6 py-3 text-center animate-fadeIn" style={{boxShadow:'0 0 24px rgba(245,158,11,0.35)'}}>
+            {guestTurnEndAsk ? (
+              <>
+                <p className="text-sm font-black text-amber-300">🌙 回合结束询问 · 是否发动将领技能？</p>
+                <p className="mt-0.5 text-[10px] text-amber-200/60">{guestTurnEndAsk.windowId}</p>
+                <p className="mt-1 text-[10px] font-bold text-amber-200/70">就等你一席：{players.find(p=>p.id===guestTurnEndAsk.playerId)?.name??`玩家${guestTurnEndAsk.playerId}`}</p>
+                {!guestTurnEndAsk.candidates.some(c=>c.activatable)&&<p className="mt-1 text-[10px] text-amber-200/60">本回合这些技能都不可发动</p>}
+                <div className="mt-2 flex flex-col gap-1.5">
+                  {guestTurnEndAsk.candidates.map(c=>c.activatable
+                    ? <button key={c.skillId} onClick={()=>sendAskMove(`⚡${c.generalName}【${c.skillName}】`)} title={c.description} className="rounded-lg border border-amber-600/60 bg-amber-900/50 px-3 py-1.5 text-left text-xs font-bold text-amber-100 hover:bg-amber-800/60">⚡ {c.generalName}【{c.skillName}】<span className="mt-0.5 block text-[10px] font-normal text-amber-200/60">{c.description}</span></button>
+                    : <div key={c.skillId} title={c.disabledReason ?? c.description} className="cursor-not-allowed rounded-lg border border-amber-800/40 bg-amber-950/40 px-3 py-1.5 text-left text-xs font-bold text-amber-100/30 grayscale">✕ {c.generalName}【{c.skillName}】{c.disabledReason&&<span className="ml-1 text-[10px] font-normal text-amber-300/70">（{c.disabledReason}）</span>}</div>)}
+                </div>
+                <div className="mt-2"><Btn onClick={sendAskMove.bind(null, '⏭️结束回合')}>🚫 都不发动</Btn></div>
+                <p className="mt-1 text-[10px] text-amber-200/40">都不发动＝一个也不发动，直接结束本回合</p>
+              </>
+            ) : guestAsk.waitingSeats.length > 0 ? (
+              <p className="mt-1 text-[10px] font-bold text-amber-200/70">还差谁没答：{guestAsk.waitingSeats.map(id => players.find(p => p.id === id)?.name ?? `玩家${id}`).join('、')}</p>
+            ) : null}
           </div>
         </div>}
         {depNotice&&<div className="pointer-events-none absolute left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2"><div className="rounded-xl border-2 border-amber-500 bg-black/90 px-8 py-4 text-center animate-fadeIn"><p className="text-xl font-black text-amber-400">⚔️ 将领登场</p><p className="text-lg text-amber-200">{depNotice}</p></div></div>}

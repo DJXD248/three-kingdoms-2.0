@@ -3,6 +3,7 @@ import { useGameStore } from '../store/gameStore';
 import { probeSeatActions } from '../store/engineExecutionBridge';
 import { applyCanonicalAction } from '../store/applyCanonicalAction';
 import { getActiveRoom, getNetStatus, getSeatMap, receiveSeatMap, receiveReadyTable, receiveDraftProgress, setHostActionSink, setHostDraftSink, setHostReadySink, subscribeNetRoom, type ActiveRoom } from '../network/netRoom';
+import type { NetSeatRow } from '../network/netProtocol';
 import type { General } from '../data/generals';
 import { startSnapshotBroadcaster, type SnapshotBroadcaster } from '../network/snapshotBroadcaster';
 import { startHostAuthority, type HostAuthority } from '../network/netHostAuthority';
@@ -11,6 +12,24 @@ import { startHostDraftProgress, type HostDraftProgress } from '../network/netHo
 import { startHostDraftList, type HostDraftList } from '../network/netHostDraftList';
 import { draftFactsOf } from '../network/netDraftProgress';
 import { draftListFactsOf } from '../network/netDraftList';
+import { seatOfPeer } from '../network/netSeat';
+import type { NarrowQuestionFace } from '../network/askFace';
+import { deriveNarrowQuestionFace } from '../network/askFace';
+import type { GameState } from '../store/gameStoreTypes';
+
+/**
+ * 切片⑥（窄投影）：容器层那一份问窗题面按座位发给每一席——题面（候选/可否/原因）只给
+ * `turnEndAsk.playerId` 坐得上的那一席，别席收到的那一帧只有 "还差谁没答"。
+ * 没排座（开局前/纯来看牌/刚连线）与没挂窗＝不发这一格（客端 `getGuestAsk()` 回到 `null`，
+ * 不用额外清窗），因为"这一席"是 `t:'snapshot'` 信封的 `to` 指向的座位号。
+ */
+export function askFrameOf(store: GameState, peerId: string, seatMap: NetSeatRow[] | null): NarrowQuestionFace | null {
+  const seat = seatOfPeer(seatMap, peerId);
+  const ask = store.turnEndAsk;
+  if (!ask || seat === null) return null;
+  const frame = deriveNarrowQuestionFace(ask, store.reactionWindow ?? undefined);
+  return frame.turnEndAsk && seat === frame.turnEndAsk.playerId ? frame : { turnEndAsk: undefined, waitingSeats: frame.waitingSeats };
+}
 
 /**
  * 房主侧的接线（J2 发快照 ＋ J4 席位表／清单／把关 ＋ ⑤a 准备表 ＋ ⑤b 征召进度表 ＋ ⑤c 逐席候选名单）。住在 App 上而不是大厅弹窗里——
@@ -101,11 +120,14 @@ export default function NetRoomBridge() {
             .filter((p) => p.role === 'guest')
             .map((p) => ({ peer: p.id, seat: rows?.find((r) => r.peer === p.id)?.seat ?? null }));
         },
+        // 切片⑥（窄投影）：窗口题面只有自己有资格看——坐在欠答那一席的客人才拿走
+        // 题面／候选／可否／原因，别席收到的那一帧只有 "还差谁没答"；没有挂窗＝这一格不发
+        // （`ask: null` 也发，客端 `readyGate` 内部的那条 null 不用等它就知道窗已经关了）。
         send: (view, to) => room.connection.send({
           t: 'snapshot',
           from: room.connection.state.selfId,
           to,
-          state: view as unknown as Record<string, unknown>,
+          state: { ...view, ask: askFrameOf(useGameStore.getState(), to, getSeatMap()) } as unknown as Record<string, unknown>,
         }),
       });
       auth = startHostAuthority({

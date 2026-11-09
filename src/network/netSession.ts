@@ -32,6 +32,7 @@ import {
 } from './netHeartbeat';
 import { openNetLink, type NetLink, type SocketFactory } from './wsTransport';
 import { randomPeerId } from './netRandom';
+import type { NarrowQuestionFace } from './askFace';
 
 export type NetRole = 'host' | 'guest';
 /** 界面措辞与这几个状态一一对应，别多写一层含义。 */
@@ -101,6 +102,13 @@ export type StepResult = {
    * （`netHostDraftList.handleIncoming`）。信封里那个他自报的席位号在这一格就已经不进来了。
    */
   draft?: IncomingDraft;
+  /**
+   * 切片⑥（房主侧）：房主算给**欠答那一席**的那一份问窗题面（窄投影：题面/候选/可否/原因
+   * ＋那一份"还差谁没答"），指名发给那个席位本人。到了这条信还带着两个门在：
+   * 收信者必须管《收信人！》（`to === state.selfId`）且信道必须正（`fromHost`），
+   * 另一格来源不采纳。
+   */
+  ask?: NarrowQuestionFace;
 };
 
 export function newPeerId(): string {
@@ -225,7 +233,18 @@ export function stepSession(
     // 其他人）⇒ 不是指名给我的那份就丢掉，绝不拿别人的私有视图画自己这一席。
     // 没带 `to` 的是全桌通用的观战那份 ⇒ 照旧采纳。
     if (envelope.to !== undefined && envelope.to !== state.selfId) return { state, sends: [], saw };
-    return { state, sends: [], snapshot: envelope.state, saw };
+    // 切片⑥（窄投影）：同一次来的那份里多挂的顶层小键 `ask`——题面/候选/可否/原因，
+    // 不对名就不采纳（`fromHost` 与 `to` 两扇门它只钻已开的那一扇）；
+    // 剩下的拍进 `StepResult.snapshot`，给别人照旧运作。
+    const payload = envelope.state as Record<string, unknown> | undefined;
+    const ask = payload?.ask as NarrowQuestionFace | undefined;
+    // `ask` 那格不住在引擎局面里：它被抽走，落进 `netRoom` 的那一格 `guestAsk`；
+    // 客人的镜像局面（通过 `restoreEngineState` 落到 store）过的是去掉了同一小格的原始快照，
+    // 别让通信口的副产物混进引擎状态。
+    const body = ask === undefined
+      ? payload
+      : (() => { const next = { ...payload }; delete next.ask; return next; })() as Record<string, unknown>;
+    return { state, sends: [], snapshot: body, ask, saw };
   }
   // ── J4：客人这边收到三样，全部只认房主那一份 ──
   if (envelope.t === 'seatmap') {
@@ -402,6 +421,12 @@ export function joinRoom(
     /** 客人端：每收到一份房主发来的局面快照回调一次（内容已由协议层认出是对象）。 */
     onSnapshot?: (snapshot: Record<string, unknown>) => void;
     /**
+     * 切片⑥（客人侧）：房主算给**欠答那一席**的那一份问窗题面（窄投影：题面/候选/可否/原因
+     * ＋"还差谁没答"）是一座一帧：只认订明给我的（`to === state.selfId`）且信道正确（来自房主），
+     * 别人的帧、或者是别的来源的帧都不喂这一格。不喂了 `ask`＝`undefined`，界面对照静默。
+     */
+    onAsk?: (ask: NarrowQuestionFace) => void;
+    /**
      * J3：给了这一格＝这条连线用心跳那一套（房主探测并按 15 秒判掉线；客人只回话与照抄表）。
      * 不给＝完全不发探测，J1/J2 的老调用方与老测试不必跟着改。
      */
@@ -522,6 +547,8 @@ export function joinRoom(
     heartbeatTick();
     publish();
     if (next.snapshot) args.onSnapshot?.(next.snapshot);
+    // 切片⑥：窄投影问窗题面——能走到这一行的已经是"房主发的、收件人是我"的那一份。
+    if (next.ask) args.onAsk?.(next.ask);
     if (next.table) args.onTable?.(next.table);
     // J4：席位表与清单都是房主算好发出来的，客人这边照抄进注册表；动手那一步交给接线重算。
     if (next.seatMap) args.onSeatMap?.(next.seatMap);

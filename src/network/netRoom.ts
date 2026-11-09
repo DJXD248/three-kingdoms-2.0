@@ -16,6 +16,7 @@
 import type { EngineState } from '../core/GameState';
 import type { NetDraftListFrame, NetDraftProgressRow, NetLinkRow, NetReadyRow, NetSeatRow } from './netProtocol';
 import type { NetRole, RoomConnection } from './netSession';
+import type { NarrowQuestionFace } from './askFace';
 import type { IncomingAction } from './netHostAuthority';
 import type { IncomingReady, ReadyGate } from './netReady';
 import { gateOfReadyRows, sameReadyRows } from './netReady';
@@ -88,6 +89,11 @@ let draftProgress: NetDraftProgressRow[] | null = null;
  * `null`＝还没收到属于我这一格的那一帧（没开联机房、这台机器是房主、刚连线、或刚退房）。
  */
 let draftList: NetDraftListFrame | null = null;
+/**
+ * 切片⑥（窄投影问窗题面）：房里那一份"谁欠谁答"按照座位明牌发过来的题面。
+ * 同前面几格同一纪律——内容没变就保留同一个引用，`null`＝没话可说（没挂窗、没收到帧、刚退房）。
+ */
+let guestAsk: NarrowQuestionFace | null = null;
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -127,6 +133,7 @@ export function attachRoom(room: ActiveRoom): void {
   if (active && active !== room) active.connection.leave();
   active = room;
   guestSnapshot = null;
+  guestAsk = null;
   netStatus = null;
   seatMap = null;
   seatMoves = null;
@@ -142,6 +149,7 @@ export function attachRoom(room: ActiveRoom): void {
 export function detachRoom(): void {
   active = null;
   guestSnapshot = null;
+  guestAsk = null;
   netStatus = null;
   seatMap = null;
   seatMoves = null;
@@ -280,6 +288,42 @@ export function receiveDraftList(frame: NetDraftListFrame): boolean {
   draftList = frame;
   notify();
   return true;
+}
+
+/**
+ * 切片⑥（窄投影问窗题面）：房里那一份"谁欠谁答"按照座位明牌发过来的题面——
+ * 题面/候选/可否/原因＋还差谁没答（每席看的信息相同：名字换成投保额）。
+ * 同前面几格火箭风件不要：内容没变就保留同一个引用并返回 false（单人每一秒都在重推
+ * 局：快照换钱比座位表还勤），`null`＝这一格没话可说了（房主没挂窗、还没收到帧、刚退房）。
+ */
+
+/** "这一帧跟上次那一帧是不是同一份题面"（空对空＝同一份、空对非空＝换过）。 */
+function sameNarrowQuestionFace(a: NarrowQuestionFace | null, b: NarrowQuestionFace | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.waitingSeats.length !== b.waitingSeats.length) return false;
+  if (a.turnEndAsk && b.turnEndAsk) {
+    if (a.turnEndAsk.playerId !== b.turnEndAsk.playerId || a.turnEndAsk.windowId !== b.turnEndAsk.windowId) return false;
+    const ca = a.turnEndAsk.candidates, cb = b.turnEndAsk.candidates;
+    if (ca.length !== cb.length) return false;
+    return ca.every((c, i) =>
+      c.skillId === cb[i].skillId && c.generalId === cb[i].generalId && c.generalName === cb[i].generalName
+      && c.skillName === cb[i].skillName && c.description === cb[i].description
+      && c.activatable === cb[i].activatable && c.disabledReason === cb[i].disabledReason,
+    );
+  } if (a.turnEndAsk || b.turnEndAsk) return false;
+  return true;
+}
+
+export function receiveGuestAsk(ask: NarrowQuestionFace | null): boolean {
+  if (sameNarrowQuestionFace(guestAsk, ask)) return false;
+  guestAsk = ask;
+  notify();
+  return true;
+}
+
+export function getGuestAsk(): NarrowQuestionFace | null {
+  return guestAsk;
 }
 
 export function getDraftList(): NetDraftListFrame | null {

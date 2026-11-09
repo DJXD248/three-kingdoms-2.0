@@ -8,6 +8,9 @@ import NetRoomBridge from './NetRoomBridge';
 import { attachRoom, bumpNetRoom, deliverHostAction, deliverHostDraft, deliverHostReady, detachRoom, getDraftList, getDraftProgress, getReadyTable, getSeatMap, getStartGate, type ActiveRoom } from '../network/netRoom';
 import type { RoomConnection } from '../network/netSession';
 import type { EngineState } from '../core/GameState';
+import type { TurnEndAsk } from '../store/gameStoreTypes';
+import type { ReactionWindowState } from '../triggers/types';
+import { MAX_WIRE_BYTES } from '../network/netProtocol';
 import { useGameStore, type Player } from '../store/gameStore';
 
 function engineState(marker: string): EngineState {
@@ -33,7 +36,11 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const wire = (sent: Record<string, unknown>[], type: string) => sent.filter((e) => e.t === type);
 const snapshots = (sent: Record<string, unknown>[]) => wire(sent, 'snapshot');
 
-function fakeRoom(withGuest: boolean): { room: ActiveRoom; sent: Record<string, unknown>[] } {
+/**
+ * 里屋一桌：`guests` 按顺序坐第 2 席起（与 `buildSeatMap` 同一条规）——
+ * 不是所有客人都排得上座，表里拖不出的那一行就是 `peer: null`。
+ * `withGuest` 保持 `fakeRoom(true)` 这口老调用方式不变（加出屋里多出的客位）。 */
+function fakeRoom(withGuest: boolean, guests: string[] = []): { room: ActiveRoom; sent: Record<string, unknown>[] } {
   const sent: Record<string, unknown>[] = [];
   const connection = {
     state: {
@@ -43,9 +50,11 @@ function fakeRoom(withGuest: boolean): { room: ActiveRoom; sent: Record<string, 
       roomCode: 'ROOMAA',
       phase: 'in-room' as const,
       note: '',
-      peers: withGuest
-        ? [{ id: 'host-1', name: '房主甲', role: 'host' as const }, { id: 'g-1', name: '客人甲', role: 'guest' as const }]
-        : [{ id: 'host-1', name: '房主甲', role: 'host' as const }],
+      peers: [
+        { id: 'host-1', name: '房主甲', role: 'host' as const },
+        ...(withGuest ? [{ id: 'g-1', name: '客人甲', role: 'guest' as const }] : []),
+        ...guests.map((gid) => ({ id: gid, name: `客人${gid}`, role: 'guest' as const })),
+      ],
     },
     leave: vi.fn(),
     send: (envelope: { t: string; from: string; state: Record<string, unknown> }) => {
@@ -886,5 +895,133 @@ describe('NetRoomBridge：客人交回来的点将／确认走的是房主自己
     expect(deliverHostDraft({ kind: 'pick', peer: 'g-1', key: 'm0' })).toBe(false);
     expect(useGameStore.getState().selectedDraftGenerals).toEqual([]);
     expect(draftLists(sent)).toHaveLength(1);
+  });
+});
+
+/**
+ * 切片⑥（窄投影）：房主把容器的问窗题面按席位计发——题面/候选/可否/原因只给欠答的那一席，
+ * 别席收到的帧里只有 "还差谁没答"；没排座的这一格不发（客端读 `netRoom` 的 `null`）。
+ * 这里量的是房主这一臂：`buildBroadcastView` 的遮蔽面上挂的正是那一份题面。
+ */
+function askTableEngine(): EngineState {
+  return {
+    version: 1,
+    phase: 'playing',
+    timelinePhase: 'ACTION',
+    players: [
+      { id: 1, name: '房主甲', faction: '蜀', hand: [], generalPool: [], fieldGenerals: [], graveyard: [], baseHp: 6, baseMaxHp: 6, isAlive: true, statuses: [] },
+      { id: 2, name: '客人甲', faction: '蜀', hand: [], generalPool: [], fieldGenerals: [], graveyard: [], baseHp: 6, baseMaxHp: 6, isAlive: true, statuses: [] },
+      { id: 3, name: '客人乙', faction: '吴', hand: [], generalPool: [], fieldGenerals: [], graveyard: [], baseHp: 6, baseMaxHp: 6, isAlive: true, statuses: [] },
+    ],
+    currentPlayerId: 2,
+    turn: 3,
+    round: 2,
+    deck: [],
+    discardPile: [],
+    drawState: null,
+    metadata: { roomId: 'ROOMAA' },
+  } as unknown as EngineState;
+}
+
+/** 一套货真价实的回合结束询问窗（刀 1 刀 2 那一份的完整形状），房间要把数填成同一行。 */
+const TURN_END_ASK: TurnEndAsk = {
+  playerId: 2,
+  windowId: 'rw-1',
+  candidates: [
+    { skillId: 'g_yue:虎啸:e1', generalId: 'g_yue', generalName: '月英', skillName: '虎啸', description: '摸一张牌', activatable: true, disabledReason: null },
+    { skillId: 'g_huang:气合:e2', generalId: 'g_huang', generalName: '黄', skillName: '气合', description: '体力回复 1 点', activatable: false, disabledReason: '体力≥99' },
+  ],
+};
+
+/** 窗口那一份答者账（已答/未答的席位节选，空账本时 `[]`） */
+const REACTION_WINDOW: ReactionWindowState = {
+  id: 'rw-1',
+  sourceEventId: 'e-1',
+  sourceEventType: 'onTurnEnd' as ReactionWindowState['sourceEventType'],
+  participants: [1, 2, 3],
+  passed: [],
+  openedAt: Date.now(),
+  closed: false,
+};
+
+/** 把房主那台机器摆成"第二席（客人甲）正卡在回合结束询问窗"、屋里还有客人们。 */
+function installAskTable() {
+  const engine = askTableEngine();
+  act(() => {
+    useGameStore.setState({
+      phase: 'playing', playerCount: 3, turnPhase: 'main', isTestMode: false,
+      engineState: engine,
+      players: engine.players as unknown as Player[],
+      currentPlayerIndex: 1, currentRound: 2,
+      turnEndAsk: TURN_END_ASK,
+      reactionWindow: REACTION_WINDOW,
+    } as Partial<ReturnType<typeof useGameStore.getState>>);
+  });
+  return engine;
+}
+
+describe('NetRoomBridge：切片⑥ 按席派发的问窗题面', () => {
+  it('题面/候选/可否/原因只给欠答那一席，别席收到还差谁没答，没排座这一格不发', async () => {
+    const { room, sent } = fakeRoom(true, ['g-2', 'g-3']);
+    installAskTable();
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+
+    const shots = snapshots(sent);
+    expect(shots).toHaveLength(3); // 屋里每位客人各司一份；席位表住在 auth，这里只 dealsnapshot
+    const byPeer = new Map<string, Record<string, unknown>>(shots.map(s => [s.to as string, s as unknown as Record<string, unknown>]));
+
+    expect(byPeer.get('g-1')).not.toBeUndefined();
+    // 欠答那一席拿走题面：候选、可否、原因一字不差。
+    const g1Frame = byPeer.get('g-1')!.state as Record<string, unknown>;
+    expect(g1Frame.ask).toEqual({ turnEndAsk: TURN_END_ASK, waitingSeats: [1, 2, 3] });
+    // 证物链：窗的题面里没有效果与牌面引用。
+    expect(JSON.stringify(g1Frame.ask)).not.toContain('cardKeys');
+    expect(JSON.stringify(g1Frame.ask)).not.toContain('events');
+    // 没有新信封：工号还在 snapshot 里，`to` 指的是客身份号。
+    expect(byPeer.get('g-1')!.t).toBe('snapshot');
+    expect(byPeer.get('g-1')!.from).toBe('host-1');
+    expect(new TextEncoder().encode(JSON.stringify(byPeer.get('g-1'))).length).toBeLessThanOrEqual(MAX_WIRE_BYTES);
+
+    // 别席的帧没有题面，只有门牌上的还差谁没答。
+    const g2Frame = byPeer.get('g-2')!.state as Record<string, unknown>;
+    expect(g2Frame.ask).toEqual({ turnEndAsk: undefined, waitingSeats: [1, 2, 3] });
+    expect(byPeer.get('g-2')!.t).toBe('snapshot');
+
+    // 没排座（表里只拖到第 3 条，g-3 坐的是 `peer: null`）＝不向这一席发问窗，客端读到 null。
+    const g3Frame = byPeer.get('g-3')!.state as Record<string, unknown>;
+    expect(g3Frame.ask).toBeNull();
+    expect(byPeer.get('g-3')!.t).toBe('snapshot');
+
+  });
+
+
+  it('关窗（题面空出来）⇒ 客端收到的帧从所有制变成 null（用生产那一条关窗路）', async () => {
+    const { room, sent } = fakeRoom(true, ['g-2']);
+    installAskTable();
+    attachRoom(room);
+    render(<NetRoomBridge />);
+    await wait(30);
+
+    const byPeer = (ls: Record<string, unknown>[]) =>
+      new Map<string, Record<string, unknown>>(ls.map(s => [s.to as string, s as unknown as Record<string, unknown>]));
+
+    const first = snapshots(sent);
+    expect(first).toHaveLength(2);
+    expect((byPeer(first).get('g-1')!.state as { ask?: unknown }).ask).not.toBeNull();
+
+    // 关窗：生产端到 `endTurn` 那颗钮的另一半是 `skipTurnEndAsk`（关窗 + 提交 END_TURN，不重新开窗）。
+    act(() => {
+      useGameStore.getState().skipTurnEndAsk();
+    });
+    await wait(300); // 满下一笔快照的间隔
+
+    const last = snapshots(sent);
+    expect(last).toHaveLength(4);
+    // 关掉的那一帧也指名发到每一席：客端不用重连，网室直接回到 `null`。
+    const byLast = byPeer(last);
+    expect((byLast.get('g-1')!.state as { ask?: unknown }).ask).toBeNull();
+    expect((byLast.get('g-2')!.state as { ask?: unknown }).ask).toBeNull();
   });
 });

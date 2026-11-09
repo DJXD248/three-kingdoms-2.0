@@ -19,6 +19,9 @@ import {
 } from './netProtocol';
 import { initialSessionState, joinRoom, newPeerId, stepSession, type SessionState } from './netSession';
 import type { IncomingDraft } from './netDraftList';
+import type { NarrowQuestionFace } from './askFace';
+import { buildBroadcastView } from './snapshotView';
+import type { EngineState } from '../core/GameState';
 
 /**
  * 本机戳＝握手比对的那一份；写死版本号会让这组测试在每次抬版本时假红。
@@ -1408,5 +1411,122 @@ describe('没有 crypto.randomUUID 的机器：拨号照样发得出去', () => 
     vi.stubGlobal('crypto', null);
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     expect(newPeerId()).not.toBe(newPeerId());
+  });
+});
+
+/** 一份加了一定游客视域的遮蔽面：房主发给客人正座的那一份快照（`t:'snapshot'` 的底床）。 */
+function makeBroadcastView(): Record<string, unknown> {
+  const state: EngineState = {
+    version: 1,
+    phase: 'playing',
+    timelinePhase: 'ACTION',
+    players: [
+      { id: 1, name: '房主甲', faction: '蜀', isAlive: true, baseHp: 6, baseMaxHp: 6, hand: [], generalPool: [], fieldGenerals: [], graveyard: [], statuses: [] },
+      { id: 2, name: '客人甲', faction: '蜀', isAlive: true, baseHp: 6, baseMaxHp: 6, hand: [{ id: 'c-1', name: '手牌甲' }], generalPool: [], fieldGenerals: [], graveyard: [], statuses: [] },
+    ],
+    currentPlayerId: 2,
+    turn: 3,
+    round: 2,
+    deck: [{ id: 'deck_1', name: '粮草', type: '粮草' }],
+    discardPile: [],
+    drawState: null,
+  };
+  return buildBroadcastView(state) as unknown as Record<string, unknown>;
+}
+
+/**
+ * 切片⑥（窄投影）：客端门样——快照信封里多挂的顶层小键 `ask`（题面/候选/可否/原因
+ * ＋"还差谁没答"），题面归 `netRoom` 那一格（客的 HUD 读它），不算进引擎局面；
+ * 不是指名给自己的帧、不是房主那台机器发来的帧都不喂这一格。
+ * 房主那侧的门样（按席派发、别席的帧）住 `src/components/NetRoomBridge.test.tsx`。
+ */
+describe('切片⑥ 客端：从快照信封里抽出 ask', () => {
+  const narrow = {
+    turnEndAsk: {
+      playerId: 2,
+      windowId: 'rw-1',
+      candidates: [
+        { skillId: 'g_yue:虎啸:e1', generalId: 'g_yue', generalName: '月英', skillName: '虎啸', description: '摸一张牌', activatable: true, disabledReason: null },
+        { skillId: 'g_huang:气合:e2', generalId: 'g_huang', generalName: '黄', skillName: '气合', description: '体力回复 1 点', activatable: false, disabledReason: '体力≥99' },
+      ],
+    },
+    waitingSeats: [1, 3],
+  } as NarrowQuestionFace;
+
+  /** 一份带窄投影的快照信封抗体：解码后 `ask` 还在 `state` 里。 */
+  function askPacket(to: string, state: Record<string, unknown> = {}) {
+    return text({ t: 'snapshot', from: HOST.id, to, state: { ...makeBroadcastView(), ask: narrow, ...state } });
+  }
+
+  const inRoom = guestState({ phase: 'in-room', peers: [HOST, GUEST] });
+
+  it('指名给自己的 `t: snapshot`（附窄投影）：`ask` 落进网室，`snapshot` 干净起账', () => {
+    const { state, snapshot, ask, sends } = stepSession(inRoom, askPacket(GUEST.id));
+    expect(state.phase).toBe('in-room');
+    // 编造的那一帧长什么样，落网室的那一份就长什么样。
+    expect(ask).toEqual(narrow);
+    expect(ask!.turnEndAsk!.windowId).toBe('rw-1');
+    expect(ask!.turnEndAsk!.candidates[0].activatable).toBe(true);
+    expect(ask!.turnEndAsk!.candidates[1].disabledReason).toBe('体力≥99');
+    // 题目挑出来过了：`snapshot` 里不应再挂着 `ask`（它不住在引擎局面里）。
+    expect(snapshot).not.toHaveProperty('ask');
+    expect(snapshot).toEqual(makeBroadcastView());
+    // 还没回话：客人自己不发任何信封。
+    expect(sends).toEqual([]);
+  });
+
+  it('没带 ask 的快照多吃水，长度与正片同源（`ask` 变成 `undefined`，界面对照静默）', () => {
+    const { snapshot, ask, sends } = stepSession(inRoom, text({
+      t: 'snapshot', from: HOST.id, to: GUEST.id, state: makeBroadcastView(),
+    }));
+    expect(ask).toBeUndefined();
+    expect(snapshot).toEqual(makeBroadcastView());
+    expect(sends).toEqual([]);
+  });
+
+  it('发给同屋另一个人：`ask` 不进我的网室（不把别人的私有题面画在我的窗口上），连局面也静默丢掉', () => {
+    const { snapshot, ask } = stepSession(inRoom, askPacket('g-2'));
+    expect(ask).toBeUndefined();
+    expect(snapshot).toBeUndefined();
+  });
+
+  it('不是房主发来的：`ask` 不采纳，房门同样退回一句人话（传话线屋子乱时尤为重要）', () => {
+    const { snapshot, ask, state } = stepSession(inRoom, text({ t: 'snapshot', from: 'g-2', to: GUEST.id, state: { ...makeBroadcastView(), ask: narrow } }));
+    expect(ask).toBeUndefined();
+    expect(snapshot).toBeUndefined();
+    // 静默丢掉判据：这句人话与 J2 那组里的门号一模一样。
+    expect(state.note).toContain('不是房主发来');
+  });
+
+  it('接上假传话线：房主发一份挂窄投影的快照 ⇒ 客人的 onAsk 收到同额（题面/候选/可否/原因 + 还差谁没答）', async () => {
+    const relay = new FakeRelay();
+    const received: NarrowQuestionFace[] = [];
+    const host = joinRoom(
+      { role: 'host', name: '房主', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA', selfId: HOST.id, socketFactory: relay.factory },
+      () => {},
+    );
+    const guest = joinRoom(
+      {
+        role: 'guest', name: '客人甲', url: 'ws://127.0.0.1:8787/ROOMAA', roomCode: 'ROOMAA',
+        selfId: GUEST.id, socketFactory: relay.factory, onAsk: (a) => received.push(a),
+      },
+      () => {},
+    );
+    await nextTick();
+
+    expect(host.send({ t: 'snapshot', from: HOST.id, to: GUEST.id, state: { ...makeBroadcastView(), ask: narrow } })).toBe(true);
+    await nextTick();
+
+    expect(received).toHaveLength(1);
+    // 门过完了：身份号一样、题面一样、候手段数与可否与原因逐字相同。
+    expect(received[0]).toEqual(narrow);
+
+    guest.leave();
+    host.leave();
+  });
+
+  it('顺手盖一下空对空闸（空接替 null：还有窗）', () => {
+    const { ask } = stepSession(inRoom, text({ t: 'snapshot', from: HOST.id, to: GUEST.id, state: { ...makeBroadcastView(), ask: null } }));
+    expect(ask).toBeNull();
   });
 });
