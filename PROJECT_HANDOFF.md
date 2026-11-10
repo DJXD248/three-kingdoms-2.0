@@ -413,7 +413,7 @@ Qoder 使用独立版本号（`1.x` / `2.x`），不等同于 GPT `5.35.x`。
 - 一个回合包含回合开始、回合内、回合结束三个阶段。
 - 回合开始先处理该回合固定抽卡及将领池为空导致的本营掉血；完成抽卡后进入行动阶段。
 - 回合内可以进行任意次合法行动；在没有伤害或技能正在执行/结算时，可以随时结束回合。
-- 回合结束如存在可发动的将领技能，应进入对应技能询问/结算窗口，确认不发动后再完成回合结束结算。（规则本身有效；实现为 PENDING——`ReactionWindow` 类已存在但回合结束流程尚未调用，见 §12 第 9 条 c。2.1.0 收敛时经用户主线授权明确暂缓，不得视为已履行。）
+- 回合结束如存在可发动的将领技能，应进入对应技能询问/结算窗口，确认不发动后再完成回合结束结算。（规则本身一字未动。**实现状态＝已在生产路径**，2026-11-10 现场对账更正，逐条凭据与旧读数出处＝**§12-173①**：开窗与销账＝`src/store/gameStore.ts` 的 `openReactionWindow`／`set({ turnEndAsk: … })`／`skipTurnEndAsk`；结束回合两拍＝`src/setup/tableCompute.ts` 的 `holdTurnEndForAnswer`／`settleTurnEndForSeat`；界面与客人窄投影＝`src/components/GameBoard.tsx`；秒表＝`src/setup/askClock.ts`＋`src/components/AskClockDirector.tsx`。证人测试＝`src/store/gameStore.turnEndAsk.test.ts`、`src/setup/tableCompute.test.ts`、`src/triggers/reactionWindowEntry.test.ts`、`src/skills/turnEndSkills.test.ts`。销案链条＝§12 第 9 条 c（入口 2.2.25）→ v2.3.1（`onTurnEnd` 候选）→ 乙 线各刀（两拍／秒表／窄投影）。**旧括注那句「实现为 PENDING……回合结束流程尚未调用……不得视为已履行」是 2.2.24 之前的读数，长期没随刀更新**；2026-11-10 用户口令「改那两处现状描述」才更正，本括注之外该条规则的语义未改一字。）
 - 检视手牌、墓地、场上将领不算行动，属于行动外查看。
 
 ### 消耗
@@ -541,7 +541,7 @@ Controllers 目标位置：
 - 代码行数最少不是重构目标；行为、规则权威和边界清晰优先。
 - 兼容 re-export 可以保留，但必须注明 canonical 实现位置。
 - 2.1.0 已完成这批清理：`src/skills/SkillEngine.ts`、`EffectResolver.ts`、`SkillRegistry.ts`、`types.ts`、`effectTypes.ts`、`src/card/*`、`src/actions/*`、`src/status/*`、`src/timeline/*`（仅保留 canonical 的 `PrioritySystem.ts`）、`src/rules/CardRule.ts`、`TurnRule.ts`、`src/data/skillEffects.ts` 经双轮 import/call-graph 复核零引用后删除；`USE_SKILL` 动作类型（无任何 resolver 处理）一并移除。
-- 技能执行权威唯一：`GameEngine + TriggerEngine + SkillTriggerBridge + skillCompiler`。2.1.0 起 `registerPlayerSkills` 已由 `syncPlayerSkills` 在每次 store dispatch 时实际调用并有端到端测试，此前"骨架已存在、运行时尚未闭环"的口径升级为：**核心链已闭环并有回归测试**；2.2.0 起内容入口同步打通——SkillEditor 多效果模式可录入结构化 runtime（类型/数值/目标）、Excel 效果列 6 列往返，DIY 技能已可产生可结算效果。技能系统整体仍未完成（HEAL/GAIN_ARMOR 与其余触发原语、回合结束询问窗口、技能致命伤 DEATH 事件未接入；实战表现待用户回归），对外表述仍须附此边界，不得宣称技能系统全部完成。
+- 技能执行权威唯一：`GameEngine + TriggerEngine + SkillTriggerBridge + skillCompiler`。2.1.0 起 `registerPlayerSkills` 已由 `syncPlayerSkills` 在每次 store dispatch 时实际调用并有端到端测试，此前"骨架已存在、运行时尚未闭环"的口径升级为：**核心链已闭环并有回归测试**；2.2.0 起内容入口同步打通——SkillEditor 多效果模式可录入结构化 runtime（类型/数值/目标）、Excel 效果列 6 列往返，DIY 技能已可产生可结算效果。技能系统整体仍未完成。**边界的唯一判据单点＝`src/skills/skillCompiler.ts` 里的 `SUPPORTED_TRIGGER_MAP`**：不在该表内的触发型在编译期判 `TRIGGER_UNSUPPORTED`、永不进结算（2026-11-10 现场对账＝触发词表 `src/data/generals.ts` 的 `triggerTypeLabels` 22 键中 15 键可编译，不可编译的七键＝`modifyAttack`／`modifyDefense`／`activeSelf`／`activeOther`／`untilExpire`／`onOtherDeploy`／`onTargetConfirmed`，属在册「按需池」）。**此前这一行把「HEAL/GAIN_ARMOR、回合结束询问窗口、技能致命伤 DEATH 事件」并列为"未接入"是旧读数漂移：三者现读均已接线且各有证人测试，逐条凭据与本轮更正的完整清单＝§12-173②**；其余仍未接入者（含上述七键、`onTurnEnd`／`passive` 刻意不走事件面那两型）与实战表现待用户回归，对外表述仍须附此边界，不得宣称技能系统全部完成。
 
 ## 8. 多模型协作规则
 
@@ -1872,6 +1872,26 @@ Controllers 目标位置：
 ⑦ **意见性质与显式偏离**＝七条全部 `PENDING`，是外部建议、**不是裁决、不是开工授权**；采纳与排期按 §8／§13 由用户逐条裁定。本轮未改 §4 语义、未改 `src/`、未改 `PLAYER_GLOSSARY.md`（故不触发 `npm run glossary-xlsx` 守卫）、未替用户裁决任何在册待裁口径（含 §12-171④ 那条新判据、联机云服务器那条路）。按 `ARCH_MAP` 2026-09-25「纯 docs 登记不占版本」先例**不同步双 History / CHANGELOG / README**（显式登记，非遗漏）；若日后任一条被采纳立刀，按 §10 补齐登记链。归档件在**仓库外** `G:\THREE_KINGDOMS\evidence\`（依 §12-169④ 归拢后路径），故本笔提交只含登记文档自身。
 
 ⑧ **归档指针（唯一详抄处）**＝`G:\THREE_KINGDOMS\evidence\EXTERNAL_REVIEW_2026-11-10_OPENAI_CHATGPT_WEB.md`（13,259 B；含登记性质与送达/取回凭据表、两个新坑、简报结构摘要、**回复原文逐字未删节**、溯源与不冒认）。并读：`evidence\EXTERNAL_REVIEW_2026-11-10_TENCENT_HUNYUAN_HY.md`（§12-170）、`evidence\SUPERVISOR_REVIEW_2026-11-10_QODER.md`（§12-171）、`evidence\GPT_BRIEF_2026-11-10_CURRENT_STATE_AND_HY4.md`（送出的简报）。
+
+173. （2026-11-10 入账 · **对账刀：§4 与 §7 两处「现状断言」按现场代码凭据更正；这两处改动的唯一详抄处＝本条** — 用户当轮口令「改那两处现状描述，然后按你的排期先做对账」；**纯 docs 登记·不占版本·不打标签·`src/` 与 `package.json` 零改动·五闸与两锚不重跑（本轮无任何生产改动，无重跑理由）**）：
+
+① **`PROJECT_HANDOFF.md:416`（§4 冻结规则·回合结束询问窗）改前逐字**＝「…（规则本身有效；实现为 PENDING——`ReactionWindow` 类已存在但回合结束流程尚未调用，见 §12 第 9 条 c。2.1.0 收敛时经用户主线授权明确暂缓，不得视为已履行。）」；**改后**＝规则那一句一字未动，括注换成「实现状态＝已在生产路径」＋四组代码凭据＋销案链条。凭据（HEAD `17c5a32` 现树现场 grep，2026-11-10）＝㈠开窗与销账 `src/store/gameStore.ts:734`（有账先销：`if(state.turnEndAsk){ get().skipTurnEndAsk(); return; }`）与 `:768`（`set({ turnEndAsk:{ playerId, windowId:win.id, candidates:… } })`）；㈡结束回合两拍 `src/setup/tableCompute.ts:215 holdTurnEndForAnswer`／`:254 settleTurnEndForSeat`；㈢界面与客人窄投影 `src/components/GameBoard.tsx:58`（机主）／`:65 guestTurnEndAsk`（客端）；㈣秒表 `src/setup/askClock.ts`（8,257 B）＋`src/components/AskClockDirector.tsx`（6,446 B）。证人测试＝`src/store/gameStore.turnEndAsk.test.ts`（`turnEndAsk` 命中 32 处）、`src/setup/tableCompute.test.ts`（7 处）、`src/triggers/reactionWindowEntry.test.ts`（v2.2.25 入口，3 处）、`src/skills/turnEndSkills.test.ts`（2.3.1 候选，3 处）。链条＝§12 第 9 条 c（入口 2.2.25）→ v2.3.1（`onTurnEnd`）→ 乙 线各刀（两拍／秒表／窄投影）。
+
+② **`PROJECT_HANDOFF.md:544`（§7 技能系统边界句）改前那半句逐字**＝「技能系统整体仍未完成（HEAL/GAIN_ARMOR 与其余触发原语、回合结束询问窗口、技能致命伤 DEATH 事件未接入；实战表现待用户回归），对外表述仍须附此边界，不得宣称技能系统全部完成。」；**改后**＝把「哪些没接入」交给一个可复跑的判据单点，原先并列的三件逐条已接线：㈠HEAL／GAIN_ARMOR＝`src/core/EventProcessor.ts:122`→`applyHealEvent`（`src/core/eventProcessors/generalEvents.ts:228`）、`:124`→`applyGainArmorEvent`（`:254`）；㈡技能致命伤→DEATH＝`src/core/eventProcessors/chainedConsequences.ts:169`（`damageType==='skill'` 且非营地且带 `targetId`）→`:174` `type:'DEATH'`→`:181 skillKill:true`，证人＝`src/skills/fatalBlowReaction.test.ts`（DEATH 命中 11 处）与 `src/core/EventProcessor.test.ts:926`（`skillKill` 载荷）；㈢回合结束询问窗口＝见 ①。⇒ 旧括号把三者并列为「未接入」与 ① 是同一类漂移，不是两条独立缺陷。
+
+③ **边界判据单点（新常设候选）＝`src/skills/skillCompiler.ts:85` 的 `SUPPORTED_TRIGGER_MAP`**：不在该表内的触发型在 `:310-311` 判 `'TRIGGER_UNSUPPORTED'`、永不进结算。四把尺各量一次（2026-11-10 现树）＝触发词表 **22 键**（`src/data/generals.ts:119 triggerTypeLabels`；`:147 allTriggerTypes` 就是它的 `Object.keys`）→ 可编译 **15 键**（`SUPPORTED_TRIGGER_MAP` 键数）→ 进事件面 **13 键**（`src/skills/reactionTriggers.ts:31 TRIGGER_EVENTS`；`onTurnEnd` 与 `passive` 是「能编译但不落事件面」那两型）→ **不可编译 7 键**＝`modifyAttack`／`modifyDefense`／`activeSelf`／`activeOther`／`untilExpire`／`onOtherDeploy`／`onTargetConfirmed`，全部在册「按需池」。⇒ 今后「未接入」以这七键为准，不再手写清单。
+
+④ **诚实缺口（不弱化）**＝七键里只有 **5 键**有测试钉住：`src/skills/skillCompiler.test.ts:80-91` 的循环只过 `['modifyAttack','modifyDefense','activeSelf','untilExpire']` 四键（`:90` 断言 reason＝`TRIGGER_UNSUPPORTED`），`src/data/listenerScopeSingleSource.test.ts:82` 钉住 `onOtherDeploy`；**`activeOther` 与 `onTargetConfirmed` 在全部 `src/**/*.test.ts` 里 0 命中**（现场计数 test_files＝0／hits＝0）⇒ 这两键的「不可编译」目前只有 ③ 那一个源码单点作证，没有第二证人。若采纳 §12-172③ Q4 的机器核验，守卫必须逐键覆盖七键，并按 §12-155③「弱断言不配当证人」先证空跑会红。
+
+⑤ **根因（本轮现场量，不是推论）＝没有任何测试或脚本读这份文档**＝全库 `PROJECT_HANDOFF` 命中 **8 个文件、全在 `src/` 下且全是注释行**（`generalTextParse.ts:3`、`generalTextParse.test.ts:4`、`contentPack.ts:4`、`attackBlow.ts:4`、`baseDamage.ts:2`、`baseDamageCap.test.ts:3`、`transitionEquivalence.test.ts:672`、`fatalBlowReaction.test.ts:2`），0 处按内容读取⇒**现状断言漂了不会变红**。⇒ §12-171④ 的「只读守卫」与 §12-172③ Q4 的「机器核验＋CI 阻断」是同一根线的两种力度，**仍待用户裁**；本轮不自立判据、不动 `package.json` 与 CI 配置。
+
+⑥ **范围收口（把「两处」量化成可验收）**＝**本笔登记落盘之前**现场量：`回合结束询问窗` 命中 **11 行**（131/133/173/198/544/634/938/1105/1844/1868/1878）、`尚未调用` 命中 **4 行**（416/1844/1846/1868）。⚠️ **本笔落盘后这两个数会变成 14 与 6**（多出的三行＝本条 ①②⑥ 自引，多出的两行同理），且 §13 那行会随之下移——⇒ **验收只认下面的「分类」，不认行号；行号是量取时点的读数**。分类＝**只有 544 是「现状断言」**（416 经本轮已改成引述旧读数，本身是对账产物），131/133/173/198 属 §3「上一轮」版本叙事、原 1878 属 §13 路线叙事、634／938／1105 属版本历史记录、1844/1846/1868 属 §12-171／§12-172 自己的引述——**历史记录与引述一字不改**。与 §12-172⑤ 那份 10 行清单的差额已算平＝多出 1868（⑤ 自己那一行，量取时尚未落盘）与原 1878（§13 那行，⑤ 未计入），且 ⑤ 量于 §8 新增 `[MODEL:OPENAI-CHATGPT-WEB]` 标记行（现 `:553`）落盘之前，其下各行行号统一下移 1（633→634／937→938／1104→1105／1843→1844）。另 `PROJECT_HISTORY_AI.md:497/524` 也写着「回合结束询问窗口未挂接」，那是 2.1／2.2 期的版本记录，按同一纪律保留、不改写。**同一把尺当场量出的第三处＝`PROJECT_HANDOFF.md:66`（§3 里那句「当前最新 Qoder 版本」）仍写 `2.9.24`，而 `package.json:4` 现读 `2.9.33`**（v2.9.33 之后还有两笔切片笔，版本未变）。该处**不在用户本轮裁的「那两处」范围内，故本轮一字未改**；但它是同一漂移类的第三个实例，且比 416/544 更容易被接手方当事实——§3 正是 §1 接手读取顺序的第一站。⇒ 列入 ⑨ 的待裁第一格。
+
+⑦ **新坑＝委派证据未复量不得入登记**：本轮先派一个 Explore 子代理去找判据单点，它返回的是**另一棵树**的路径（`D:/probe_knife5/oldtree`）、声称本工作区 `G:/THREE_KINGDOMS/Qoder/2.0` 不存在，符号行号也与现树不符。它的结论一字未用，①②③④ 每条凭据均由监督台在现树重新 grep。⇒ 常设判据候选：**委派件里的每个路径／行号／计数，写进登记前必须在当前树逐条重量**（与 §12-172②「长度对不等于内容对」同族：位置对不等于树对）。
+
+⑧ **溯源与边界**＝`author_model`＝`[MODEL:COPILOT-SDK-VSCODE]`（§8 既有四项之一，本轮未新增标记）／`review_model`＝无／`verification_actor`＝监督台现场（①–⑥ 每条均可按所引文件与行号复跑）／`verification_status`＝**静态对齐已核、玩法层未验证**：本轮核的是「代码里有没有接线」，按 §11 这不等于玩法已验证，且 `npm run check`／`test:coverage`／`lint`／`build` 与两锚本轮都没跑（无生产改动，无重跑理由），故不写任何「通过」。`baseline_from`＝`v2.9.33`（`package.json:4` 现场读取）＝HEAD `17c5a32`。按 `ARCH_MAP` 2026-09-25「纯 docs 登记不占版本」先例**不同步双 History／CHANGELOG／README**（显式登记，非遗漏）；§3 亦**不追加索引行**（同 §12-169～172 那四笔纯 docs 先例：本刀无 feat 提交、无标签，没有可索引的 sha）；`PLAYER_GLOSSARY.md` 未动，故不触发 `npm run glossary-xlsx` 守卫。
+
+⑨ **排期状态**＝本刀＝监督台 §12-171⑦ 提议排期的第 1 项「登记—生产对账」，已收口。**紧接着的三格归用户裁，本条不代裁**＝ⓐ ⑥ 量出的 `:66` 版本时点戳要不要同样按现场读更正（一行、零风险，但不在这轮口令范围内）；ⓑ ④/⑤ 两格合起来的守卫力度——§12-171④ 的「只读守卫」还是 §12-172③ Q4 的「机器核验＋CI 阻断」，若立须逐键覆盖七键；ⓒ 第 2 项排期是**联机跨机器冒烟**（要两台机器、不能自走；在册各条都写了跨机器那根线仍未接）还是 GPT §12-172④ Q6 主张的「内容铺量→裁决台账化→联机」。
 
 ## 13. 当前默认路线
 
