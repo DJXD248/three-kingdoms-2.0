@@ -37,6 +37,10 @@ export const TRIGGER_EVENTS: Partial<Record<DataSkillTrigger, readonly GameEvent
   // cell) BEFORE the blow's damage math is computed against the post-layer
   // state, so a counter hit from this trigger always lands first.
   onBecomingTarget: ['BEFORE_DAMAGE'],
+  // 触发时机接入线·第 1 刀：**同一条 `BEFORE_DAMAGE`、同一拍**（普攻 declare），与上一格
+  // 的分界不在"听哪一声"，只在"读载荷里哪一侧的键"（判据单点在 `skillEventMatch.ts`）。
+  // 这一格因此自动进 `ANY_TRIGGER_EVENT_TYPES` 那个派生集，问答路与自动路同读这一份。
+  onTargetConfirmed: ['BEFORE_DAMAGE'],
   // v2.9.19 营地两格刀：**同一条 `BEFORE_DAMAGE`**，分家靠载荷里的两格已有的一维
   // （`isBase`＝主语是营地不是将；`damageType`＝这一刀是普攻还是技能）。判据全部
   // 落在 `skillEventMatch.ts`，这里只回答"听得懂哪几声"。

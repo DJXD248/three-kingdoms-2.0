@@ -34,6 +34,10 @@ export const PRIORITY: Partial<Record<DataSkillTrigger, number>> = {
   onKill: 60,
   onDeath: 100,
   onBecomingTarget: 50,
+  // 触发时机接入线·第 1 刀：与「成为目标时」同一档——它们是同一次"伤害还没落"的那一层，
+  // 只是主语从被瞄上的那一席换成出手的那一席；两者同时在场时的先后仍由
+  // `triggers/reactionOrder.ts` 那一份比较器决定，这里不写第二套。
+  onTargetConfirmed: 50,
   // v2.9.19 营地两格刀：与「成为目标时」同一档——它们是同一个"伤害还没落"的那一层，
   // 只是主语从"哪一员将"换成"哪家营地"。档位只给先后，同档内顺序仍由
   // `triggers/reactionOrder.ts` 那一份比较器决定。

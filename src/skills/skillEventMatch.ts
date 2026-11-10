@@ -230,6 +230,26 @@ export function matchesSkillEvent(
       if (!generalMatches(data.targetId ?? data.target, data.targetPlayerId)) return false;
       return sourceMatches(data);
     }
+    case 'onTargetConfirmed': {
+      // 触发时机接入线·第 1 刀（用户 2026-11-10 裁的顺序，口径＝交接文档 §12-175③／§12-176）。
+      // 与上面「成为目标时」听**同一条** `BEFORE_DAMAGE` 的**同一拍**（普攻 declare，
+      // `core/attackBlow.ts`），分界只有一维：那一格读**被瞄上的**那一侧，这一格读**出手的**
+      // 那一侧。三句话，一句一条判据：
+      // ①**两个键都是发信侧已经写下的**：席位＝`action.playerId`（`GameAction` 自带的发起人，
+      //   与 `onDamageDealt` 读的是同一个键），将领＝`attackerId`（declare 载荷那一身）。
+      //   本函数不重新推断"这一刀是谁打的"，也不为这一格另写第三份"听谁"的名单。
+      // ②**打营地照样响**：用户同日那句词表口径＝「角色」只含场上将领、「目标」含场上将领
+      //   与营地，而这一格名号里写的是"目标"⇒不挡 `isBase`。出手的一方永远是一员将，`isBase`
+      //   那一格只说"瞄上了什么"、不说"谁瞄的"，所以它在这两格里的作用本来就相反（上一格拿
+      //   它挡主语，这一格用不上它）。
+      // ③**"这事是谁引起的"沿用同一根轴**，缺省＝只听普攻⇒决斗开局那一身（带
+      //   `damageType:'skill'`）与技能打营地补的那一声都不响这一格；读法仍是 `sourceMatches`
+      //   那一份，没有第二处。
+      const action = asRecord(data.action);
+      if (!playerMatches(action.playerId)) return false;
+      if (!generalMatches(data.attackerId, action.playerId)) return false;
+      return sourceMatches(data);
+    }
     case 'onCardLost':
     case 'onCardGained': {
       // Hands live on players, not general instances (same keying lesson

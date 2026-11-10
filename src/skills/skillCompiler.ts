@@ -90,6 +90,11 @@ const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>>
   onKill: 'onKill',
   onDeath: 'onDeath',
   onBecomingTarget: 'onBecomingTarget',
+  // 触发时机接入线·第 1 刀（用户 2026-11-10 裁的顺序）：与上一格**同一条** `BEFORE_DAMAGE`
+  // 的同一拍（普攻 declare，`core/attackBlow.ts`），换的只是问哪一侧——上一格读载荷里的
+  // 目标那一侧，这一格读发起方那一侧（`action.playerId` + `attackerId`，两个键发信侧本来
+  // 就写着）。⇒ 没有新事件类型、没有新发射点；分界判据单点在 `skillEventMatch.ts`。
+  onTargetConfirmed: 'onTargetConfirmed',
   // 2.5.3: card-loss/gain triggers ride on the CARD_LOST/CARD_GAINED
   // notification events derived by the GIVE settlement (first batch of
   // emission sources — see PROJECT_ARCH_MAP §F twelve-cell tables).

@@ -455,9 +455,11 @@ describe('接线、词源与档位', () => {
     expect(eventsHeardBy('onBaseTargetedAtk')).toEqual(['BEFORE_DAMAGE']);
     expect(eventsHeardBy('onBaseTargetedSkill')).toEqual(['BEFORE_DAMAGE']);
     expect(TRIGGER_EVENTS.onBaseTargetedAtk).toBe(eventsHeardBy('onBaseTargetedAtk'));
-    // 表里"打营地"这一族一共三格：两格听伤害前那一声，一格听伤害后那一声（INJURY）。
+    // 表里"伤害还没落"那一层一共四格：将领那格「成为目标时」、它的镜像「确定攻击目标时」
+    // （触发时机接入线·第 1 刀，同一条声、主语换边），再加营地那两格。
+    // 营地这一族本身仍是三格——两格听伤害前那一声，一格听伤害后那一声（INJURY）。
     expect(Object.keys(TRIGGER_EVENTS).filter(k => TRIGGER_EVENTS[k as keyof typeof TRIGGER_EVENTS]?.includes('BEFORE_DAMAGE')))
-      .toEqual(['onBecomingTarget', 'onBaseTargetedAtk', 'onBaseTargetedSkill']);
+      .toEqual(['onBecomingTarget', 'onTargetConfirmed', 'onBaseTargetedAtk', 'onBaseTargetedSkill']);
   });
 
   it('编译器不再点名"这一型没接线"，且「我听谁」真编进定义（不再悄悄当没填）', () => {

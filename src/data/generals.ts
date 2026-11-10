@@ -231,6 +231,7 @@ export function supportsListenerScope(type: SkillTriggerType): boolean {
     case 'onDamageTaken': case 'onDamageDealt': case 'onKill': case 'onDeath':
     case 'onCardLost': case 'onCardGained':
     case 'onBaseTargetedAtk': case 'onBaseTargetedSkill':
+    case 'onTargetConfirmed':
       return true;
     default: return false;
   }
