@@ -39,6 +39,18 @@ function markerLines(lines: string[], marker: string): number[] {
   return found;
 }
 
+/**
+ * 合成坏形状只许动那对标记**所在的整行**：登记叙事里会引用标记原文（行内），
+ * 用 `doc.replace(marker, …)` 会改到那一处引用而不是真标记⇒探针假绿（2026-11-11 实测）。
+ */
+function replaceMarkerLine(doc: string, marker: string, replacement: string): string {
+  const lines = doc.replace(/\r\n/g, '\n').split('\n');
+  const at = lines.findIndex(line => line.trim() === marker);
+  if (at < 0) throw new Error(`找不到标记所在的整行：${marker}`);
+  lines[at] = replacement;
+  return lines.join('\n');
+}
+
 /** 只取那对标记之间的表格行；任何形状不对一律抛（⇒ 这一趟非零退出）。 */
 function extractTable(doc: string): Row[] {
   // 换行符先归一：windows runner 检出会把 LF 换成 CRLF，判据不许认死某一种（§12-176 那族）。
@@ -192,7 +204,14 @@ describe('状态表读得出来（抽取失败必须红，不许静默空跑）'
   });
 
   it('缺 END 标记⇒抛（不是返回空表）', () => {
-    expect(() => extractTable(doc.replace(END, ''))).toThrow(/END 标记应恰好 1 枚/);
+    const bad = replaceMarkerLine(doc, END, '');
+    expect(bad).not.toBe(doc);
+    expect(() => extractTable(bad)).toThrow(/END 标记应恰好 1 枚/);
+  });
+
+  it('文档别处行内引用标记原文不影响读数（标记只认整行）', () => {
+    const quoted = `${doc}\n登记叙事里引用了 ${BEGIN} 与 ${END} 这两串原文，但它们不是标记行。\n`;
+    expect(extractTable(quoted)).toEqual(rows);
   });
 
   it('BEGIN 标记出现两次⇒抛', () => {
@@ -215,7 +234,8 @@ describe('状态表读得出来（抽取失败必须红，不许静默空跑）'
   });
 
   it('同一枚键写两行⇒抛', () => {
-    const bad = doc.replace(END, `| onDeploy | 已接线 | src/skills/skillCompiler.ts |\n${END}`);
+    const bad = replaceMarkerLine(doc, END, `| onDeploy | 已接线 | src/skills/skillCompiler.ts |\n${END}`);
+    expect(bad).not.toBe(doc);
     expect(() => extractTable(bad)).toThrow(/出现两次/);
   });
 });
