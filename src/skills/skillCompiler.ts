@@ -82,7 +82,9 @@ import { lookupSkillByName } from './skillNameIndex';
  * "no victim key" to "the victim is a camp". The two camp timings below are
  * exactly those `isBase` notifications, split by the pre-existing
  * attack/skill dimension (`damageType`). */
-const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>> = {
+// 导出只为让 §16 那张状态表的守卫读**同一个对象**（`triggerStatusGuard.test.ts`），
+// 不另抄一份名单；结算侧的判据单点仍是这里，别处不得据此另立第二套判断。
+export const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTrigger>> = {
   onDeploy: 'onDeploy',
   onTurnStart: 'onTurnStart',
   onDamageTaken: 'onDamageTaken',

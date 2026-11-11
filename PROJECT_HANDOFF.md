@@ -2011,3 +2011,44 @@ Controllers 目标位置：
 ## 15. 一句话原则
 
 **规则放 HandOff，历史放 History；HandOff 说明现在是什么，History 说明过去发生了什么。**
+
+## 16. 触发时机状态表（守卫唯一读点）
+
+**这一节干什么用**＝"什么时候问你要不要发动技能"一共有 **22** 种说法（编辑器下拉里那 22 项）。其中一部分引擎今天真能结算，一部分还只是能填、填了也不响。这张表把"哪一种今天到底算不算数"写死在一处，让自动检查每趟都拿它跟代码对一遍：**表说能响、代码里却没有 ⇒ 检查变红；代码里新接了一种、表里没登记 ⇒ 也变红。** 从此不靠人记得去读文档。立它的口令＝用户 2026-11-11「**先做守卫刀**」（排在第 2 刀 `untilExpire` 之前，解掉 §12-176⑭ 留给他的那次序问题）。
+
+**三权分立（用户 2026-11-10 原话「采纳GPT的方案」，判据＝§12-174⑤）**＝**人拥有定义权**（哪一格算"已接线"、哪一格"挂起"，由用户裁；监督台与模型都不许改这一栏）、**机器拥有核验权**（表与代码对不对得上由测试判，且测试要能证明"真改了会红"）、**CI 拥有阻断权**（对不上就让云端那趟检查变红）。硬约束一并采纳＝**检查通过绝不自动把"挂起／未接线"改成"已接线"**——"绿"不是定义权。⇒ 下面那对标记之间的行，守卫**只读不写**。
+
+**状态只有三档**＝`已接线`（编译器真认这一型、能进结算）／`未接线`（能填、但编译器退回，永不进结算）／`挂起`（用户明说先放着，**不是"不做"**）。
+
+**守卫读什么、在哪一步拦人＝监督台代裁的工程形状，不是用户原话，他随时可推翻**（他 2026-11-10 明说「检查读什么和哪一步栏人我不懂代码无法裁定」）＝① **只读**下面 `TRIGGER-STATUS:BEGIN`／`TRIGGER-STATUS:END` 两行标记之间的表格行，别处一律不读——§3 的版本叙事、§9 的验证读数、§12 的判据台账都带时点戳、本来就会过期，读它们等于第一刀红在自己人身上（§12-174⑤ 那条后果）；② 反查的**判据单点**＝`src/skills/skillCompiler.ts` 的 `SUPPORTED_TRIGGER_MAP`（本刀只给它加一个 `export`，让守卫读**同一个对象**，不另抄一份名单）；③ 另加一条完整性＝`src/data/generals.ts` 的 `triggerTypeLabels` 里每一枚都必须在表里有行，表里也不许出现词表里没有的键；④ **拦人的那一步**＝现有那趟全量测试 `npm run test:coverage`（它本来就在云端两个 Node 版本的矩阵里跑），**不新增独立 job、不动 `.github/workflows/ci.yml`**；⑤ 证人＝`src/skills/triggerStatusGuard.test.ts`；⑥ 凭据指针只验"真能 grep 到"（文件在、`#12-NNN` 那条判据在、写了行号的那一行在），**不逐字核指针那一行的语义**——行号会随着上方编辑漂移，认死它＝天天红。
+
+**两枚"已接线"要额外说明，免得读成"到点会自动响"**＝`onTurnEnd`（回合结束时）走的是**主动发动那条路**、刻意不在事件面上（否则同一回合会被响两次）；`passive`（在场即生效）编译成一条持续账，登场落笔、离场销笔，**结构上不可能"响一次"**。两枚都真在 `SUPPORTED_TRIGGER_MAP` 里，所以状态是"已接线"；至于"听得懂哪几声"由 `src/skills/reactionTriggers.ts` 的 `TRIGGER_EVENTS` 说了算（现读 **14** 枚，不含这两枚）。
+
+**现行总账（2026-11-11 现场重数，不是抄旧账）**＝词表 **22** 枚／编译器认 **16** 枚／事件面上 **14** 枚⇒下表 `已接线` **16** 行、`未接线` **5** 行、`挂起` **1** 行。⚠️ 这一行是**带时点戳的读数**、会随下一刀过期，**守卫不读它**（它只读下面那张表）；要现行数一律现场重数。
+
+<!-- TRIGGER-STATUS:BEGIN v1 -->
+| 键名 | 状态 | 凭据指针 |
+| --- | --- | --- |
+| onDeploy | 已接线 | src/skills/skillCompiler.ts |
+| onOtherDeploy | 挂起 | PROJECT_HANDOFF.md#12-175③＋src/data/listenerScopeSingleSource.test.ts:82 |
+| onTurnStart | 已接线 | src/skills/skillCompiler.ts |
+| onTurnEnd | 已接线 | src/skills/skillCompiler.ts |
+| onBecomingTarget | 已接线 | src/skills/skillCompiler.ts |
+| onDamageTaken | 已接线 | src/skills/skillCompiler.ts |
+| onTargetConfirmed | 已接线 | src/skills/skillCompiler.ts |
+| onDamageDealt | 已接线 | src/skills/skillCompiler.ts |
+| onKill | 已接线 | src/skills/skillCompiler.ts |
+| onDeath | 已接线 | src/skills/skillCompiler.ts |
+| onCardLost | 已接线 | src/skills/skillCompiler.ts |
+| onCardGained | 已接线 | src/skills/skillCompiler.ts |
+| modifyAttack | 未接线 | PROJECT_HANDOFF.md#12-175③ |
+| modifyDefense | 未接线 | PROJECT_HANDOFF.md#12-175③ |
+| onBaseTargetedAtk | 已接线 | src/skills/skillCompiler.ts |
+| onBaseTargetedSkill | 已接线 | src/skills/skillCompiler.ts |
+| onBaseDamaged | 已接线 | src/skills/skillCompiler.ts |
+| onOtherSkillActivated | 已接线 | src/skills/skillCompiler.ts |
+| activeSelf | 未接线 | PROJECT_HANDOFF.md#12-175③ |
+| activeOther | 未接线 | PROJECT_HANDOFF.md#12-175③ |
+| passive | 已接线 | src/skills/skillCompiler.ts |
+| untilExpire | 未接线 | PROJECT_HANDOFF.md#12-175③ |
+<!-- TRIGGER-STATUS:END -->
