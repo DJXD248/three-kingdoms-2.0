@@ -7,9 +7,7 @@ function isGen(c: General | GameCard): c is General {
   return !!c && typeof c === 'object' && 'skills' in c;
 }
 
-export default function UnifiedDraw({ seatLocked = false }: { seatLocked?: boolean } = {}) {
-  // seatLocked is reserved for future synchronization logic; currently a placeholder
-  if (seatLocked) {}
+export default function UnifiedDraw(_props: { seatLocked?: boolean } = {}) {
   const players = useGameStore(s => s.players);
   const drawContext = useGameStore(s => s.drawContext);
   const revealedDrawCards = useGameStore(s => s.revealedDrawCards);

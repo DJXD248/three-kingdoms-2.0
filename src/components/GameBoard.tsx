@@ -34,9 +34,7 @@ export type GameBoardProps = { viewSeat?: number | null; seatLocked?: boolean };
 interface InspectTarget { type:'general'|'card'|'fieldGeneral'; general?:General; card?:GameCard; fieldGeneral?:FieldGeneral; playerId?:number; }
 function isGen(c:General|GameCard):c is General{return 'skills' in c;}
 
-export default function GameBoard({ viewSeat = null, seatLocked = false }: GameBoardProps = {}){
-  // seatLocked is reserved for future synchronization logic; currently a placeholder
-  if (seatLocked) {}
+export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
   const players=useGameStore(s=>s.players);
   const cpi=useGameStore(s=>s.currentPlayerIndex);
   const round=useGameStore(s=>s.currentRound);
