@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useGameStore, FieldGeneral, Position, Player } from '../store/gameStore';
 import {
   getValidTargets, getMoveTargets, canFieldGeneralMove,
@@ -24,6 +24,29 @@ function isGen(c:General|GameCard):c is General{return 'skills' in c;}
  * 照旧生效（钉子＝`src/action/resolvers/sandboxArmingBypass.test.ts`）。
  */
 const SANDBOX_ALLOW_ARMING = true;
+
+type FgAtFn = (areaId:number, zone:'camp'|'front', slot:number)=>FieldGeneral|undefined;
+type SlotProps = { zone:'camp'|'front'; slot:number; areaOwner:Player; fg?:FieldGeneral };
+type TerritorySlot = (props:SlotProps)=>ReactElement;
+
+function TerritoryBottom({ p, fgAt, Slot }:{ p:Player; fgAt:FgAtFn; Slot:TerritorySlot }) {
+  return (<div className="flex flex-col items-center gap-1">
+    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
+    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
+  </div>);
+}
+function TerritoryTop({ p, fgAt, Slot }:{ p:Player; fgAt:FgAtFn; Slot:TerritorySlot }) {
+  return (<div className="flex flex-col items-center gap-1">
+    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
+    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
+  </div>);
+}
+function TerritorySide({ p, side, fgAt, Slot }:{ p:Player; side:'left'|'right'; fgAt:FgAtFn; Slot:TerritorySlot }) {
+  return (<div className={`flex ${side==='left'?'flex-row':'flex-row-reverse'} items-center gap-1`}>
+    <div className="flex flex-col gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
+    <div className="flex flex-col gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
+  </div>);
+}
 
 export default function TestArena(){
   const players=useGameStore(s=>s.players);
@@ -95,8 +118,7 @@ export default function TestArena(){
   // Track action counts locally
   const [actionCounts,setActionCounts]=useState<Record<string,{atk:number;mov:number;sup:number}>>({});
 
-  const cp=players[cpi]; if(!cp) return null;
-  const cpColor=factionColors[cp.faction!]||'#eab308';
+  const cp=players[cpi];
 
   const validTgts=useMemo(()=>atkGen?getValidTargets(atkGen,players,atkRanged,engineState.statModifiers):[],[atkGen,players,atkRanged,engineState.statModifiers]);
 
@@ -262,10 +284,6 @@ export default function TestArena(){
     </button>);
   };
 
-  const TerritoryBottom=({p}:{p:Player})=>(<div className="flex flex-col items-center gap-1"><div className="flex gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div><div className="flex gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div></div>);
-  const TerritoryTop=({p}:{p:Player})=>(<div className="flex flex-col items-center gap-1"><div className="flex gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div><div className="flex gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div></div>);
-  const TerritorySide=({p,side}:{p:Player;side:'left'|'right'})=>(<div className={`flex ${side==='left'?'flex-row':'flex-row-reverse'} items-center gap-1`}><div className="flex flex-col gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div><div className="flex flex-col gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div></div>);
-
   const canUse=(c:General|GameCard)=>!(vm==='deploy'&&depGen&&getRuntimeCardId(c)===getRuntimeCardId(depGen));
 
   // Pool search for dev panel
@@ -274,6 +292,9 @@ export default function TestArena(){
     const s=poolSearch.toLowerCase();
     return allGenerals.filter(g=>g.name.toLowerCase().includes(s)||g.faction.includes(s)||g.type.includes(s));
   },[poolSearch]);
+
+  if(!cp) return null;
+  const cpColor=factionColors[cp.faction!]||'#eab308';
 
   return(
     <div className={`relative flex h-screen flex-col overflow-hidden text-white ${screenShaking?'animate-screenShake':''}`} style={{background:'radial-gradient(ellipse at center,#1a1a2e 0%,#0d0d1a 60%,#000 100%)'}}>
@@ -301,13 +322,13 @@ export default function TestArena(){
         {/* Board area */}
         <div className="relative flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-1.5">
-            {top&&<div className="flex flex-col items-center"><span className="mb-0.5 text-[9px] font-bold" style={{color:factionColors[top.faction!]}}>{top.name}({top.faction})</span><TerritoryTop p={top}/></div>}
+            {top&&<div className="flex flex-col items-center"><span className="mb-0.5 text-[9px] font-bold" style={{color:factionColors[top.faction!]}}>{top.name}({top.faction})</span><TerritoryTop p={top} fgAt={fgAt} Slot={Slot}/></div>}
             <div className="flex items-center gap-3">
-              {lft&&<div className="flex flex-col items-center"><span className="mb-0.5 text-[9px] font-bold" style={{color:factionColors[lft.faction!]}}>{lft.name}</span><TerritorySide p={lft} side="left"/></div>}
+              {lft&&<div className="flex flex-col items-center"><span className="mb-0.5 text-[9px] font-bold" style={{color:factionColors[lft.faction!]}}>{lft.name}</span><TerritorySide p={lft} side="left" fgAt={fgAt} Slot={Slot}/></div>}
               <div className="relative mx-1"><div className="absolute -top-4 left-1/2 -translate-x-1/2 whitespace-nowrap text-[9px] font-bold tracking-[0.2em] text-amber-600/50">⚔ 战 场 ⚔</div><div className="rounded-xl border border-amber-800/20 bg-black/20 p-2"><div className="flex gap-1">{Array.from({length:players.length},(_,i)=><BSlot key={i} slot={i}/>)}</div></div></div>
-              {rgt&&<div className="flex flex-col items-center"><span className="mb-0.5 text-[9px] font-bold" style={{color:factionColors[rgt.faction!]}}>{rgt.name}</span><TerritorySide p={rgt} side="right"/></div>}
+              {rgt&&<div className="flex flex-col items-center"><span className="mb-0.5 text-[9px] font-bold" style={{color:factionColors[rgt.faction!]}}>{rgt.name}</span><TerritorySide p={rgt} side="right" fgAt={fgAt} Slot={Slot}/></div>}
             </div>
-            <div className="flex flex-col items-center"><TerritoryBottom p={bot}/><span className="mt-0.5 text-[9px] font-bold" style={{color:factionColors[bot.faction!]}}>{bot.name}({bot.faction})</span></div>
+            <div className="flex flex-col items-center"><TerritoryBottom p={bot} fgAt={fgAt} Slot={Slot}/><span className="mt-0.5 text-[9px] font-bold" style={{color:factionColors[bot.faction!]}}>{bot.name}({bot.faction})</span></div>
           </div>
           {/* skill activations */}
           {skillActivations.length>0&&<div className="pointer-events-none absolute left-2 top-2 z-40 flex flex-col gap-1.5 max-w-[200px]">{skillActivations.map(a=>(<div key={a.id} className="rounded-lg border-2 bg-black/90 px-3 py-2 animate-slideUp" style={{borderColor:a.color+'80',boxShadow:`0 0 12px ${a.color}30`}}><div className="flex items-center gap-1.5 mb-0.5"><span className="text-xs">⚡</span><span className="text-xs font-black" style={{color:a.color}}>{a.generalName}</span><span className="text-[8px] px-1 py-0.5 rounded-full font-bold" style={{color:a.color,backgroundColor:a.color+'15'}}>【{a.skillName}】</span></div><p className="text-[10px] text-amber-200/80">{a.message}</p></div>))}</div>}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { factionColors, General } from '../data/generals';
 import { GameCard } from '../data/cards';
@@ -24,8 +24,9 @@ export default function UnifiedDraw(_props: { seatLocked?: boolean } = {}) {
 
   // Hooks must always run in the same order. Reset draw UI state only when a
   // draw session actually changes; this keeps phase transitions from causing
-  // a conditional-hook runtime failure.
-  useEffect(() => {
+  // a conditional-hook runtime failure. The reset logic calls setState, so it
+  // lives inside an effect event (exempt from the set-state-in-effect rule).
+  const resetDrawUI = useEffectEvent(() => {
     if (!drawContext) {
       setFromPool(-1);
       setDrawn(false);
@@ -39,13 +40,18 @@ export default function UnifiedDraw(_props: { seatLocked?: boolean } = {}) {
     setFromPool(Math.min(total === 1 ? (maxFromPool > 0 ? 1 : 0) : Math.min(2, maxFromPool), maxFromPool));
     setDrawn(false);
     setAnimating(false);
+  });
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => resetDrawUI());
+    return () => cancelAnimationFrame(id);
   }, [drawContext?.playerId, drawContext?.reason, drawContext?.totalCards, drawContext?.baseLossPending]);
 
   useEffect(() => {
     if (!drawContext || drawContext.reason !== 'turnStart' || drawContext.totalCards !== 0 || drawContext.baseLossPending) return;
     const timer = window.setTimeout(() => confirmDraw(), 0);
     return () => window.clearTimeout(timer);
-  }, [drawContext?.playerId, drawContext?.reason, drawContext?.totalCards, drawContext?.baseLossPending, confirmDraw]);
+  }, [drawContext, confirmDraw]);
 
   if (!drawContext) return null;
 

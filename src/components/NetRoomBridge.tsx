@@ -23,7 +23,7 @@ import type { GameState } from '../store/gameStoreTypes';
  * 没排座（开局前/纯来看牌/刚连线）与没挂窗＝不发这一格（客端 `getGuestAsk()` 回到 `null`，
  * 不用额外清窗），因为"这一席"是 `t:'snapshot'` 信封的 `to` 指向的座位号。
  */
-export function askFrameOf(store: GameState, peerId: string, seatMap: NetSeatRow[] | null): NarrowQuestionFace | null {
+function askFrameOf(store: GameState, peerId: string, seatMap: NetSeatRow[] | null): NarrowQuestionFace | null {
   const seat = seatOfPeer(seatMap, peerId);
   const ask = store.turnEndAsk;
   if (!ask || seat === null) return null;

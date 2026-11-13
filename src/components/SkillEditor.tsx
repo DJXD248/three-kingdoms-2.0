@@ -242,7 +242,7 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
     }
 
     return list;
-  }, [search, factionFilter, sortBy, skillEdits, generalEdits, getEditedGeneral, authoredGenerals]);
+  }, [search, factionFilter, sortBy, getEditedGeneral, authoredGenerals, incompleteOnly, isSkillIncomplete]);
 
   // Count how many in the filtered list have edits
   const editedInList = useMemo(() =>

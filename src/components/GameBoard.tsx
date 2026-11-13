@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react';
 import { useGameStore, FieldGeneral, Position, Player, type TurnEndAskCandidate } from '../store/gameStore';
 import {
   getValidTargets, getMoveTargets, canFieldGeneralMove,
@@ -21,7 +21,7 @@ import { placeSeats, resolveViewIndex } from './gameBoard/seatLayout';
 import { getActiveRoom, getGuestAsk, getSeatMoves, subscribeNetRoom } from '../network/netRoom';
 // 刀 1 拍 3 ㈁：HUD 那一行的两个数都只过 askClock 这一道；"现在"由那一枚秒表交出来。
 import { remainingAskSec, waitingSeatsOf } from '../setup/askClock';
-import { askClockNowMs } from './AskClockDirector';
+import { askClockNowMs } from '../setup/askClockNow';
 
 type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'selectMoveCard'|'selectSupplyCards'|'selectArmorCards';
 
@@ -33,6 +33,36 @@ type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'se
 export type GameBoardProps = { viewSeat?: number | null; seatLocked?: boolean };
 interface InspectTarget { type:'general'|'card'|'fieldGeneral'; general?:General; card?:GameCard; fieldGeneral?:FieldGeneral; playerId?:number; }
 function isGen(c:General|GameCard):c is General{return 'skills' in c;}
+
+const cardTypeOrder: Record<GameCard['type'], number> = { '粮草': 0, '材料': 1, '军备': 2 };
+
+type SlotProps = { zone:'camp'|'front'; slot:number; areaOwner:Player; fg?:FieldGeneral };
+type FgAtFn = (areaId: number, zone: 'camp' | 'front', slot: number) => FieldGeneral | undefined;
+type TerritorySlot = (props: SlotProps) => ReactElement;
+
+/** Bottom player: front row on top (closer to battlefield), camp row on bottom */
+function TerritoryBottom({ p, fgAt, Slot }: { p: Player; fgAt: FgAtFn; Slot: TerritorySlot }) {
+  return (<div className="flex flex-col items-center gap-1">
+    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
+    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
+  </div>);
+}
+
+/** Top/opponent player: camp row on top (far from battlefield), front row on bottom (close to battlefield) */
+function TerritoryTop({ p, fgAt, Slot }: { p: Player; fgAt: FgAtFn; Slot: TerritorySlot }) {
+  return (<div className="flex flex-col items-center gap-1">
+    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
+    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
+  </div>);
+}
+
+/** Side player: camp column outer side, front column inner side (close to battlefield) */
+function TerritorySide({ p, side, fgAt, Slot }: { p: Player; side: 'left' | 'right'; fgAt: FgAtFn; Slot: TerritorySlot }) {
+  return (<div className={`flex ${side==='left'?'flex-row':'flex-row-reverse'} items-center gap-1`}>
+    <div className="flex flex-col gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
+    <div className="flex flex-col gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
+  </div>);
+}
 
 export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
   const players=useGameStore(s=>s.players);
@@ -187,12 +217,7 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
     setMovGen(null);setMovTgt(null);setMoveOptions([]);
   }
 
-  const cp=players[cpi] ?? players.find(p => p.isAlive !== false) ?? players[0]; if(!cp) return null;
-  const activeIndex=Math.max(0,players.findIndex(p=>p.id===cp.id));
-  // 视角轴与动手轴分家：`activeIndex` 管"谁在动手"（手牌、征召名单、登场合法性、高亮），
-  // `viewIndex` 只管"哪一席画在下面"。本地没人传 viewSeat ⇒ 两者恒等 ⇒ 画面一字不差。
-  const viewIndex=resolveViewIndex(players, activeIndex, viewSeat);
-  const cpColor=factionColors[cp.faction!]||'#eab308';
+  const cp=players[cpi] ?? players.find(p => p.isAlive !== false) ?? players[0];
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -207,7 +232,6 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
 
   const validTgts=useMemo(()=>atkGen?getValidTargets(atkGen,players,atkRanged,engineState.statModifiers):[],[atkGen,players,atkRanged,engineState.statModifiers]);
 
-  const cardTypeOrder: Record<GameCard['type'], number> = { '粮草': 0, '材料': 1, '军备': 2 };
   const deckPreview = useMemo(() => {
     if (!showDeck) return [] as GameCard[];
     return [...cardDeck].sort((a, b) => {
@@ -223,23 +247,27 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
   }), [cardDeck]);
 
   const generalPoolPreview = useMemo(() => {
+    if (!cp) return [] as General[];
     if (!showGeneralPool) return [] as General[];
     return [...cp.generalPool].sort((a, b) => {
       if (a.type !== b.type) return a.type === '武将' ? -1 : 1;
       if (a.faction !== b.faction) return a.faction.localeCompare(b.faction, 'zh-CN');
       return a.name.localeCompare(b.name, 'zh-CN');
     });
-  }, [showGeneralPool, cp.generalPool]);
+  }, [showGeneralPool, cp]);
 
-  const generalPoolCounts = useMemo(() => ({
-    武将: cp.generalPool.filter(g => g.type === '武将').length,
-    文将: cp.generalPool.filter(g => g.type === '文将').length,
-    魏: cp.generalPool.filter(g => g.faction === '魏').length,
-    蜀: cp.generalPool.filter(g => g.faction === '蜀').length,
-    吴: cp.generalPool.filter(g => g.faction === '吴').length,
-    群: cp.generalPool.filter(g => g.faction === '群').length,
-    晋: cp.generalPool.filter(g => g.faction === '晋').length,
-  }), [cp.generalPool]);
+  const generalPoolCounts = useMemo(() => {
+    if (!cp) return { 武将: 0, 文将: 0, 魏: 0, 蜀: 0, 吴: 0, 群: 0, 晋: 0 };
+    return ({
+      武将: cp.generalPool.filter(g => g.type === '武将').length,
+      文将: cp.generalPool.filter(g => g.type === '文将').length,
+      魏: cp.generalPool.filter(g => g.faction === '魏').length,
+      蜀: cp.generalPool.filter(g => g.faction === '蜀').length,
+      吴: cp.generalPool.filter(g => g.faction === '吴').length,
+      群: cp.generalPool.filter(g => g.faction === '群').length,
+      晋: cp.generalPool.filter(g => g.faction === '晋').length,
+    });
+  }, [cp]);
 
   useEffect(() => {
     const viewport = boardViewportRef.current;
@@ -320,6 +348,14 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
     const timers=skillActivations.map(a=>window.setTimeout(()=>clearSkillActivation(a.id),3000));
     return()=>{timers.forEach(t=>window.clearTimeout(t));};
   },[skillActivations,clearSkillActivation]);
+
+  if(!cp) return null;
+
+  const activeIndex=Math.max(0,players.findIndex(p=>p.id===cp.id));
+  // 视角轴与动手轴分家：`activeIndex` 管"谁在动手"（手牌、征召名单、登场合法性、高亮），
+  // `viewIndex` 只管"哪一席画在下面"。本地没人传 viewSeat ⇒ 两者恒等 ⇒ 画面一字不差。
+  const viewIndex=resolveViewIndex(players, activeIndex, viewSeat);
+  const cpColor=factionColors[cp.faction!]||'#eab308';
 
   // ── find generals at positions ──
   const allFg=players.flatMap(p=>p.fieldGenerals);
@@ -508,24 +544,6 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
     </button>);
   };
 
-  /** Bottom player: front row on top (closer to battlefield), camp row on bottom */
-  const TerritoryBottom=({p}:{p:Player})=>(<div className="flex flex-col items-center gap-1">
-    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
-    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
-  </div>);
-
-  /** Top/opponent player: camp row on top (far from battlefield), front row on bottom (close to battlefield) */
-  const TerritoryTop=({p}:{p:Player})=>(<div className="flex flex-col items-center gap-1">
-    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
-    <div className="flex gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
-  </div>);
-
-  /** Side player: camp column outer side, front column inner side (close to battlefield) */
-  const TerritorySide=({p,side}:{p:Player;side:'left'|'right'})=>(<div className={`flex ${side==='left'?'flex-row':'flex-row-reverse'} items-center gap-1`}>
-    <div className="flex flex-col gap-1">{[0,1,2].map(s=><Slot key={`c${s}`} zone="camp" slot={s} areaOwner={p} fg={s===1?undefined:fgAt(p.id,'camp',s===0?0:2)}/>)}</div>
-    <div className="flex flex-col gap-1">{[0,1,2].map(s=><Slot key={`f${s}`} zone="front" slot={s} areaOwner={p} fg={fgAt(p.id,'front',s)}/>)}</div>
-  </div>);
-
   const canUse=(c:General|GameCard)=>!(vm==='deploy'&&depGen&&c.id===depGen.id);
 
   const saveGameSnapshot = () => {
@@ -588,20 +606,20 @@ export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
       {/* board */}
       <div ref={boardViewportRef} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-2">
         <div ref={boardContentRef} className="flex flex-col items-center gap-2 board-scale" style={{transform:`scale(${boardScale})`,transformOrigin:'center center',willChange:'transform'}}>
-          {top&&<div className="flex flex-col items-center"><span className="mb-1 text-[10px] font-bold" style={{color:factionColors[top.faction!]}}>{top.name}({top.faction})</span><TerritoryTop p={top}/></div>}
+          {top&&<div className="flex flex-col items-center"><span className="mb-1 text-[10px] font-bold" style={{color:factionColors[top.faction!]}}>{top.name}({top.faction})</span><TerritoryTop p={top} fgAt={fgAt} Slot={Slot}/></div>}
           <div className="flex items-center gap-4">
-            {lft&&<div className="flex flex-col items-center"><span className="mb-1 text-[10px] font-bold" style={{color:factionColors[lft.faction!]}}>{lft.name}</span><TerritorySide p={lft} side="left"/></div>}
+            {lft&&<div className="flex flex-col items-center"><span className="mb-1 text-[10px] font-bold" style={{color:factionColors[lft.faction!]}}>{lft.name}</span><TerritorySide p={lft} side="left" fgAt={fgAt} Slot={Slot}/></div>}
             <div className="relative mx-2">
               <div className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] font-bold tracking-[0.2em] text-amber-600/50">⚔ 战 场 ⚔</div>
               <div className="rounded-xl border border-amber-800/20 bg-black/20 p-3"><div className="flex gap-1">{Array.from({length:players.length},(_,i)=><BSlot key={i} slot={i}/>)}</div></div>
             </div>
-            {rgt&&<div className="flex flex-col items-center"><span className="mb-1 text-[10px] font-bold" style={{color:factionColors[rgt.faction!]}}>{rgt.name}</span><TerritorySide p={rgt} side="right"/></div>}
+            {rgt&&<div className="flex flex-col items-center"><span className="mb-1 text-[10px] font-bold" style={{color:factionColors[rgt.faction!]}}>{rgt.name}</span><TerritorySide p={rgt} side="right" fgAt={fgAt} Slot={Slot}/></div>}
           </div>
           {/* 这一句原来是混的：前半跟着**视角**（`bot`），后半「你的回合／AI 出手中」说的却是
               **动手轴**。拆轴前两者恒等所以听不出来；现在后半跟着 `cp` 取，并且只在"下面这一格
               正是动手那一席"时才说出口——客人盯着自己的营地时，绝不会被一句「你的回合」骗。
               本地热座（`bot`＝`cp`）渲染出的字符与拆轴前逐字相同，没新增任何一句玩家看得见的词。 */}
-          <div className="flex flex-col items-center"><TerritoryBottom p={bot}/><span className="mt-1 text-[10px] font-bold" style={{color:factionColors[bot.faction!]}}>{bot.name}({bot.faction}){bot.id===cp.id&&<>{' — '}{cp.isAi?'AI 出手中…':'你的回合'}</>}</span></div>
+          <div className="flex flex-col items-center"><TerritoryBottom p={bot} fgAt={fgAt} Slot={Slot}/><span className="mt-1 text-[10px] font-bold" style={{color:factionColors[bot.faction!]}}>{bot.name}({bot.faction}){bot.id===cp.id&&<>{' — '}{cp.isAi?'AI 出手中…':'你的回合'}</>}</span></div>
         </div>
         {/* Skill activation notifications */}
         {skillActivations.length>0&&<div className="pointer-events-none absolute left-3 top-12 z-40 flex flex-col gap-2 max-w-xs">{skillActivations.map(a=>(

@@ -33,13 +33,10 @@ export default function DiceRoll() {
     };
   }, []);
 
-  const updatedPlayers = useGameStore(s => s.players);
-
-  useEffect(() => {
-    if (showResults) {
-      setDisplayValues(updatedPlayers.map(p => p.diceRoll));
-    }
-  }, [showResults, updatedPlayers]);
+  // When the results are shown, the displayed values are simply each player's
+  // final dice roll — derived during render instead of an effect (which would
+  // trip the set-state-in-effect rule).
+  const shownValues = showResults ? players.map(p => p.diceRoll) : displayValues;
 
   const handleConfirmSeats = () => {
     setPhase('factionAssign');
@@ -54,14 +51,14 @@ export default function DiceRoll() {
       <p className="text-amber-500/60 mb-10">12面骰子决定座次</p>
 
       <div className="flex gap-8 mb-10">
-        {(showResults ? updatedPlayers : players).map((player, i) => (
+        {players.map((player, i) => (
           <div key={player.id} className="flex flex-col items-center animate-fadeIn">
             <div className={`w-28 h-28 rounded-xl border-2 flex items-center justify-center mb-3 text-4xl font-black transition-all duration-300 ${
               rolling ? 'border-amber-400 bg-amber-900/30 animate-bounce shadow-lg shadow-amber-500/20' : 
               showResults ? 'border-amber-500 bg-amber-900/20' : 'border-amber-700/30 bg-black/40'
             }`}>
               <span className={showResults ? 'text-amber-200' : 'text-amber-400'}>
-                {displayValues[i] || '?'}
+                {shownValues[i] || '?'}
               </span>
             </div>
             <p className="text-amber-200 font-bold text-lg">{player.name}</p>

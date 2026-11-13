@@ -27,16 +27,10 @@ import { useGameStore, type GameState } from '../store/gameStore';
 import { liveReactionAsk } from '../store/applyCanonicalAction';
 import { getActiveRoom, subscribeNetRoom } from '../network/netRoom';
 import { askAnchorKey, askDeadlineAtMs, choiceAtDeadlineHit, isAskDeadlineReached, isHotSeatTable } from '../setup/askClock';
+import { setAskClockNowMs } from '../setup/askClockNow';
 
 /** 这一枚表的间隔＝业主裁的那"一次一跳"（秒数本身是房间参数 `askTimeoutSec`，不在这里定）。 */
 const ASK_TICK_MS = 1000;
-
-let lastSampleMs = 0;
-
-/** 画面那一行用的"现在"＝本文件上一拍取的那一个数（全树倒计时这条线唯一的读表处）。 */
-export function askClockNowMs(): number {
-  return lastSampleMs;
-}
 
 /** 真人席那一格与 `gameStore.endTurn` 那颗门用的是同一个 `isAi` 读数（C5：不另起一套）。 */
 const humanSeatCountOf = (state: Pick<GameState, 'players'>): number =>
@@ -59,7 +53,7 @@ const netRoomPresent = () => getActiveRoom() !== null;
 /** 到点／起锚／清锚全在这一拍里；不闭包任何渲染值，所以每拍读的都是**此刻**的状态。 */
 function askTick(): void {
   const nowMs = Date.now();
-  lastSampleMs = nowMs;
+  setAskClockNowMs(nowMs);
   const state = useGameStore.getState();
   const anchor = anchorOf(state);
 
