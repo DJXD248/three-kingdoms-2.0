@@ -79,8 +79,9 @@ describe('skillCompiler · compileSkill', () => {
 
   it('skips triggers that have no engine event backing', () => {
     // 「在场即生效」不在这个名单里：它是第二个"能编译、但不落事件面"的类型
-    // （第一个是 onTurnEnd），判据见下面的专用测试。
-    for (const type of ['modifyAttack', 'modifyDefense', 'activeSelf', 'untilExpire'] as const) {
+    // （第一个是 onTurnEnd）。第 2 刀的 `untilExpire` 是同族的第三个，也不在这个
+    // 名单里——它今天已接线，只是走在场账那条路，判据见 `untilExpireTrigger.test.ts`。
+    for (const type of ['modifyAttack', 'modifyDefense', 'activeSelf'] as const) {
       const { definitions, skipped } = compileSkill(
         general(),
         skill({ effects: [{ id: 'e1', trigger: { type }, runtime: { type: 'DRAW_CARD', value: 1 } }] }),

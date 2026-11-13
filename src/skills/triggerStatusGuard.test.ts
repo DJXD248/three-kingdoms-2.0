@@ -219,9 +219,12 @@ describe('状态表读得出来（抽取失败必须红，不许静默空跑）'
   });
 
   it('表区只剩表头⇒抛（空集比空集会蒙绿）', () => {
+    // 探针吃的是表的**首行＋表区末尾**原文：第 2 刀把 `untilExpire` 那一格从"未接线"
+    // 翻成"已接线"⇒尾行不再是它，改用紧跟在表尾之后的 END 标记做锚（翻错方向＝
+    // 整段删不干净，这一格自己也会红）。
     const gutted = doc.replace(
-      /\| onDeploy \| 已接线[\s\S]*?\| untilExpire \| 未接线 \| PROJECT_HANDOFF\.md#12-175③ \|/,
-      '',
+      new RegExp(`\\| onDeploy \\| 已接线[\\s\\S]*?\\n${END}`),
+      `${END}\n`,
     );
     expect(gutted).not.toBe(doc);
     expect(() => extractTable(gutted)).toThrow(/一行数据都没有/);
@@ -264,10 +267,21 @@ describe('双向反查：表 ↔ SUPPORTED_TRIGGER_MAP（判据单点，不另�
   });
 
   it('代码新接了一枚、表里忘了登记⇒红', () => {
-    const problems = crossCheck(rows, [...wired, 'untilExpire']);
-    expect(problems).toContain('SUPPORTED_TRIGGER_MAP 认「untilExpire」，表里却写「未接线」');
+    // 第 2 刀之前这一格用 `untilExpire` 演示"忘了登记"；它现在两侧都认了⇒换成
+    // 仍"未接线"的 `activeSelf`（同一条判据，只是换一枚还没接线的键来试）。
+    const problems = crossCheck(rows, [...wired, 'activeSelf']);
+    expect(problems).toContain('SUPPORTED_TRIGGER_MAP 认「activeSelf」，表里却写「未接线」');
     expect(crossCheck(rows.filter(r => r.key !== 'passive'), wired))
       .toContain('SUPPORTED_TRIGGER_MAP 认「passive」，表里却没有这一行');
+  });
+
+  it('第 2 刀那一格两侧都认：表里"已接线"、实现集里也在（翻错方向当场红）', () => {
+    const row = rows.find(r => r.key === 'untilExpire');
+    expect(row?.status).toBe('已接线');
+    expect(wired).toContain('untilExpire');
+    // 反方向的同一格：把它改回"未接线"⇒两句话各点一次（护栏不是只认"绿"的形状）。
+    const bad = rows.map(r => (r.key === 'untilExpire' ? { ...r, status: '未接线' as Status } : r));
+    expect(crossCheck(bad, wired)).toContain('表说「untilExpire」未接线，SUPPORTED_TRIGGER_MAP 里却已经认它');
   });
 
   it('表里删掉一行已接线的⇒红（不是"少一行也算对"）', () => {

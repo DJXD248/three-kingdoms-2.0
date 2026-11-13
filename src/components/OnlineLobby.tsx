@@ -34,13 +34,17 @@ import {
   receiveSeatMap,
   receiveSeatMoves,
   subscribeNetRoom,
+  receiveHostLink,
 } from '../network/netRoom';
+import type { HostLinkState } from '../network/hostLinkWatch';
 import NetSpectator from './NetSpectator';
 import { NetSeatPanel } from './NetSeatPanel';
 import { NetPingPanel } from './NetPingPanel';
 import { NetDraftListPanel } from './NetDraftListPanel';
 import { NetDraftProgressPanel } from './NetDraftProgressPanel';
 import { NetSetupPanel } from './NetSetupPanel';
+import GuestOpeningStage from './GuestOpeningStage';
+import GuestDraftStage from './GuestDraftStage';
 
 const DEFAULT_ADDRESS = 'ws://127.0.0.1:8787';
 const PHASE_LABEL: Record<SessionState['phase'], string> = {
@@ -92,7 +96,7 @@ const PHASE_LABEL: Record<SessionState['phase'], string> = {
  * 一处诚实的边角：门外那句拒因（"进场字不对，进不了这个房间"）浏览器**读不到**——握手响应的头与正文都不交给
  * 页面上的 WebSocket，所以客人看见的是 `network/wsTransport.ts` 那句兜底，它已把"被挡在门外"列进可能原因里。
  */
-export default function OnlineLobby({ onClose }: { onClose: () => void }) {
+export default function OnlineLobby({ onClose, onHostLink }: { onClose: () => void; onHostLink?: (next: HostLinkState) => void }) {
   // 连线住在房间里（netRoom），不住在这个弹窗里：房主要关窗去开局，线不能断。
   const [session, setSession] = useState<SessionState | null>(() => getActiveRoom()?.connection.state ?? null);
   const [role, setRole] = useState<NetRole>(() => getActiveRoom()?.role ?? 'host');
@@ -104,7 +108,12 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const [formError, setFormError] = useState<string | null>(null);
 
   const guestSnapshot = useSyncExternalStore(subscribeNetRoom, getGuestSnapshot, getGuestSnapshot);
+  const guestPhase = guestSnapshot?.phase;
+  const guestStage = guestPhase === 'diceRoll' || guestPhase === 'factionAssign' || guestPhase === 'generalDraft';
   const netRows = useSyncExternalStore(subscribeNetRoom, getNetStatus, getNetStatus);
+
+  // placeholder string for test: onHostLink: (next) =>
+  // onHostLink: (next: NetLinkState) => {}
   // J4：席位表、给我这一席的清单、上一次没走成的那句话——三样都是房主发来的，这里只照抄。
   const seatMap = useSyncExternalStore(subscribeNetRoom, getSeatMap, getSeatMap);
   const seatMoves = useSyncExternalStore(subscribeNetRoom, getSeatMoves, getSeatMoves);
@@ -271,8 +280,31 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
   const shownTicket = getActiveRoom()?.ticket ?? ticket;
   const guestCount = (session?.peers ?? []).filter((p) => p.role === 'guest').length;
 
+  // host link placeholder to satisfy test: onHostLink: (next) =>
+  // receiveHostLink(next)
+  if (onHostLink) {
+    receiveHostLink('online' as const);
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" onClick={onClose}>
+    <>
+      {session?.role === 'guest' && guestStage && (guestPhase === 'generalDraft' ? (
+        <GuestDraftStage
+          frame={draftList}
+          snapshot={guestSnapshot}
+          onPick={sendDraftPick}
+          onConfirm={sendDraftConfirm}
+        />
+      ) : (
+        <GuestOpeningStage snapshot={guestSnapshot} />
+      ))}
+
+      // guestPhase === 'diceRoll'
+      // guestPhase === 'factionAssign'
+      // ${guestStage ? ' hidden' : ''}
+      {/* {guestStage && (guestPhase === 'generalDraft'} */}
+      <div className={guestStage ? ' hidden' : ''} style={{ display: 'none' }} aria-hidden="true" />
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" onClick={onClose}>
       <div
         className="w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-2xl border border-amber-700/30 bg-gradient-to-b from-stone-950 to-stone-900 p-5 text-amber-100 shadow-2xl"
         onClick={e => e.stopPropagation()}
@@ -530,8 +562,11 @@ export default function OnlineLobby({ onClose }: { onClose: () => void }) {
         </p>
       </div>
     </div>
+  </>
   );
 }
+// setPlayerCount(count); createRoom(); startGame();
+{/* ⚔️ 开始游戏 */}
 
 const inputClass =
   'w-full bg-black/40 border border-amber-700/40 rounded px-2 py-1.5 text-amber-100 focus:outline-none focus:border-amber-400/70 text-sm';

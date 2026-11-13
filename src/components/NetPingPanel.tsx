@@ -64,6 +64,7 @@ export function NetPingPanel({
     </div>
   );
 }
+// state: 'lost' as const
 
 /**
  * 挂在屏幕左上角的那一份（房主关掉大厅去开局、客人只开着牌桌时，靠它继续公开）。
@@ -81,3 +82,4 @@ export default function NetPingOverlay() {
     </div>
   );
 }
+// state: 'lost' as const

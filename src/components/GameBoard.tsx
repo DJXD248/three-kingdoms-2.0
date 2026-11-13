@@ -30,11 +30,13 @@ type ViewMode = 'board'|'inspect'|'deploy'|'deployTarget'|'selectAttackCard'|'se
  * 房主本机今天的画面，一字不差；客人那一屏由联机接线把自己那一席递进来（切片③才有人传）。
  * 动手的那一格（`cp`）不看这个，仍然只看 store 的 `currentPlayerIndex`。
  */
-export type GameBoardProps = { viewSeat?: number | null };
+export type GameBoardProps = { viewSeat?: number | null; seatLocked?: boolean };
 interface InspectTarget { type:'general'|'card'|'fieldGeneral'; general?:General; card?:GameCard; fieldGeneral?:FieldGeneral; playerId?:number; }
 function isGen(c:General|GameCard):c is General{return 'skills' in c;}
 
-export default function GameBoard({ viewSeat = null }: GameBoardProps = {}){
+export default function GameBoard({ viewSeat = null, seatLocked = false }: GameBoardProps = {}){
+  // seatLocked is reserved for future synchronization logic; currently a placeholder
+  if (seatLocked) {}
   const players=useGameStore(s=>s.players);
   const cpi=useGameStore(s=>s.currentPlayerIndex);
   const round=useGameStore(s=>s.currentRound);

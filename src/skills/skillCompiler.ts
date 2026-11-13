@@ -8,7 +8,7 @@
  *     Built-in generals keep descriptive text only, so nothing fires until a
  *     designer attaches real numbers — the compiler never invents gameplay.
  *   - Only the event-backed triggers are supported; the remaining
- *     trigger kinds (modify*, active*, untilExpire, …) are
+ *     trigger kinds (modify*, active*, …) are
  *     skipped with an explicit reason. The onBase* family is event-backed
  *     in full now: onBaseDamaged (v2.9.14) hears the same INJURY event the
  *     general side hears, narrowed by the `isBase` fact already recorded on
@@ -124,6 +124,14 @@ export const SUPPORTED_TRIGGER_MAP: Partial<Record<SkillTriggerType, DataSkillTr
   // 离场销笔），触发链那一侧 `matchesSkillEvent` 对它 default=false ⇒ 结构上
   // 不可能"响一次"，也就永远不会被误当成一次发动。
   passive: 'passive',
+  // 触发时机接入线·第 2 刀（用户 2026-11-10 裁的顺序）：「直到X前生效」＝**带死线的
+  // 在场账**，与上一格是姊妹——同样**能编译、但不在事件面上**（`TRIGGER_EVENTS` 里没有
+  // 它，`matchesSkillEvent` 对它 default=false，这是继 onTurnEnd／passive 之后第三个
+  // "编译而不听"的例外）。唯一消费方＝skills/passiveModifiers.ts：登场落笔、按 X 销笔
+  // （四个回合词走账本里已有的 `TURN_EXPIRES` 总闸，「直到被击杀／离开场上」与离场
+  // 那道总闸同义），**没有"发动"这一刻**⇒不进问窗、不耗额度。只认「改数值」那一档
+  // 效果，其余组合由 `judgeSkillEffect` 点名跳过。
+  untilExpire: 'untilExpire',
 };
 
 /** Effect types EventProcessor can actually settle today. */
@@ -178,6 +186,24 @@ export interface SkillSkip {
     /** 「觉醒技」与「在场即生效」在结构上互斥（2.9.3 刀B）：觉醒按徽章定义要"停下来
      *  问一次"，而 passive 压根不进事件面⇒问窗永远开不到它，悄悄收下就是默认全时生效。 */
     | 'AWAKENING_PASSIVE_CONFLICT'
+    /** 第 2 刀「直到X前生效」没填 X：这笔账的**唯一**存在理由就是那条死线，
+     *  没有 X 它和"在场即生效"一字不差——悄悄收下＝两种写法一种读法，点名跳过。 */
+    | 'UNTIL_EXPIRE_WINDOW_MISSING'
+    /** 这一型的账只由在场账的读数点消费，而那套算术只认「改数值」。摸牌／伤害
+     *  那一类是一次性动作，没有"到 X 前一直生效"的形状⇒ 悄悄收下＝记录而未消费。 */
+    | 'UNTIL_EXPIRE_EFFECT_UNSUPPORTED'
+    /** 「直到X前」写在时机上、效果里又填了周期＝两条规则说相反的话（各有一把死线，
+     *  谁先到没人裁）。与 passive 又填周期同一族，点名跳过。 */
+    | 'UNTIL_EXPIRE_DURATION_CONFLICT'
+    /** 这笔账今天只在登场（与习得技能回填）那一刻落笔；门槛一变该改口没有任何重算
+     *  路径，悄悄收下＝§12-55 那种"记录而未消费"。与 PASSIVE_CONDITION_UNSUPPORTED 同一条。 */
+    | 'UNTIL_EXPIRE_CONDITION_UNSUPPORTED'
+    /** 「直到X前生效」与「选择其一」／链式若-则互斥：这一型不进问窗、也没有
+     *  "发动一次"的时刻，组不出一次可择/可链的发动。整组点名跳过（两档共用此码）。 */
+    | 'UNTIL_EXPIRE_GROUP_UNSUPPORTED'
+    /** 「觉醒技」说"到点问您点不点头"，这一型压根不进事件面⇒问窗永远开不到它。
+     *  与 AWAKENING_PASSIVE_CONFLICT 同一条纪律，点名跳过。 */
+    | 'AWAKENING_UNTIL_EXPIRE_CONFLICT'
     /** 「觉醒技」与「选择其一」也互斥（2.9.3 刀B）：择一走的是「要哪一枚」那扇窗，
      *  窗里没有"不觉醒"这个出口，也就没有"摇头不扣额度"那一条。 */
     | 'AWAKENING_CHOICE_UNSUPPORTED'
@@ -328,6 +354,22 @@ export function judgeSkillEffect(
     // 互斥，而问答路压根扫不到它（`eventsHeardBy('passive')` 是空）。
     if (usage.awakeningTag) return 'AWAKENING_PASSIVE_CONFLICT';
   }
+  // 触发时机接入线·第 2 刀「直到X前生效」＝带死线的在场账。它与 passive 共用同一套
+  // 纪律（都不进事件面、都没有"发动"那一刻、账都只在登场/回填时落笔），差别只有一处：
+  // 它多一条死线 X，而 X 恰好是账本里**已经有**的销账机制（四个回合词走 TURN_EXPIRES
+  // 总闸，「直到被击杀／离开场上」与离场总闸同义）⇒ 零新销账机制。判据逐条点名：
+  if (mapped === 'untilExpire') {
+    // 没填 X＝这笔账没有到期时刻，写它不如写"在场即生效"；两种写法一种读法即漂移。
+    if (!triggerConfig.expireCondition) return 'UNTIL_EXPIRE_WINDOW_MISSING';
+    // 只有「改数值」能被"到期为止一直生效"承载；一次性动作没有"一直生效"的形状。
+    if (converted.type !== 'MODIFY_STAT') return 'UNTIL_EXPIRE_EFFECT_UNSUPPORTED';
+    // 死线只许一个出处：时机那一格。效果里又填周期＝两条规则各说一把刀，没人裁谁先。
+    if (converted.duration !== undefined) return 'UNTIL_EXPIRE_DURATION_CONFLICT';
+    // 门槛要"中途重算"才谈得上（今天没有）；觉醒要"停下来问"而它不进事件面——两档
+    // 与 passive 那两条同一判据，各用各的点名码，界面才说得出是哪一型挡的路。
+    if (usage.skillConditions?.length || effect.conditions?.length) return 'UNTIL_EXPIRE_CONDITION_UNSUPPORTED';
+    if (usage.awakeningTag) return 'AWAKENING_UNTIL_EXPIRE_CONFLICT';
+  }
   // The ask window only ever belongs to the current turn's owner, so an
   // otherTurn onTurnEnd has no honest activation path (2.3.1, same
   // discipline as the pre-existing onTurnStart guard).
@@ -344,7 +386,11 @@ export function judgeSkillEffect(
   // 所以「我听谁」那一栏对它们不出现（`supportsListenerScope` 返回 false）。
   // 从 Excel／旧存档塞进来的一格不能悄悄当成"只听自家"、也不能悄悄覆盖名号里那句
   // "其他"——点名跳过，与上面那几档"写了但没有发射器"同一纪律（§12-55：记录而未消费＝假账）。
-  if ((mapped === 'onBaseDamaged' || mapped === 'onOtherSkillActivated') && triggerConfig.listenerScope) {
+  // 第 2 刀同一支：`untilExpire` 不走事件匹配（`skillEventMatch` 压根不读这一栏），
+  // 而 `supportsListenerScope` 对它返回 false（default 分支）⇒ 两侧同一条判据，这里补上
+  // 是为了 Excel／旧存档直塞那条无类型保护的路也不留下"填了却没人听"的一笔。
+  if ((mapped === 'onBaseDamaged' || mapped === 'onOtherSkillActivated' || mapped === 'untilExpire')
+    && triggerConfig.listenerScope) {
     return 'TRIGGER_SUBTYPE_UNSUPPORTED';
   }
   if (mapped === 'onCardGained') {
@@ -378,6 +424,10 @@ interface CompiledEffect {
   listenerScope?: DataSkillDefinition['listenerScope'];
   /** v2.8.3 门槛：录在**这条效果**上，编译后成为该定义的 conditions。 */
   conditions?: SkillCondition[];
+  /** 第 2 刀：`untilExpire` 的那条死线 X（其余时机恒为 undefined）。它属于**触发面**
+   *  不属于效果面，所以要进签名——同一枚时机配不同的 X 是两个不同的窗口，绝不能被
+   *  choice/chain 分组并成"同时响"的一组。 */
+  windowExpire?: DataSkillDefinition['expireCondition'];
   /** Trigger identity used by the choice grouping (2.6.3): effects compiled
    * under one signature fire together, so they are choosable together. */
   signature: string;
@@ -468,6 +518,10 @@ export function compileSkill(
       else if (triggerConfig.cardSubType === 'lastHandLost') cardFilter = 'lastHand';
       else if (triggerConfig.cardSubType === 'handLost') cardFilter = 'hand';
     }
+    // 第 2 刀：死线只在**这一型**被带上——`judgeSkillEffect` 已保证填了这一型必有 X、
+    // 别的时机带了 X 也不进这里（签名与定义都不落键＝既有编译产物逐字不变）。
+    let windowExpire: DataSkillDefinition['expireCondition'];
+    if (mapped === 'untilExpire') windowExpire = triggerConfig.expireCondition;
 
     const converted = toEffectData(effect);
     if (!converted) {
@@ -492,8 +546,9 @@ export function compileSkill(
       turnSubType,
       targetSource,
       listenerScope,
+      windowExpire,
       conditions: effect.conditions && effect.conditions.length > 0 ? effect.conditions : undefined,
-      signature: `${mapped}|${damageTypeFilter ?? ''}|${cardFilter ?? ''}|${turnSubType ?? ''}|${targetSource ?? ''}|${listenerScope ?? ''}`,
+      signature: `${mapped}|${damageTypeFilter ?? ''}|${cardFilter ?? ''}|${turnSubType ?? ''}|${targetSource ?? ''}|${listenerScope ?? ''}|${windowExpire ?? ''}`,
     };
   };
 
@@ -521,15 +576,20 @@ export function compileSkill(
     // v2.8 刀4（#25）在场即生效：passive 型编译成一条**不落事件面**的定义，
     // 由 skills/passiveModifiers.ts 单独消费。同样"只在真为 true 时落键"。
     ...(c.mapped === 'passive' ? { passive: true } : {}),
+    // 第 2 刀：死线只在**这一型**落键（同一支"只在真填了时才多这一个键"的纪律——
+    // 两锚比的是字节，一个 `expireCondition: undefined` 就是给逐字节比对埋雷）。
+    ...(c.windowExpire !== undefined ? { expireCondition: c.windowExpire } : {}),
     ...(lockedTag && c.data.type === 'MODIFY_STAT' ? { locked: true } : {}),
     // 「一局一次」额度按技能给键；passive 型不落键——持续生效没有"发动一次"的时刻，
     // 落键只会假装管住了它（如实账见 dataTypes 的 limitKey 注释）。
     // 2.9.3 刀B：限定技与觉醒技共用同一本账（quotaTag）；觉醒位只在编出定义时落，
     // passive 那一支在上面已经点名跳过，所以这一句永远走不到"落键却不问"的死角。
-    ...(quotaTag && c.mapped !== 'passive' ? { limitKey } : {}),
+    // 第 2 刀：untilExpire 与 passive 同一判据——它也没有"发动一次"的那一刻
+    // （AWAKENING_UNTIL_EXPIRE_CONFLICT／两档门槛先拦掉，这里的排除是结构保证不是兜底）。
+    ...(quotaTag && c.mapped !== 'passive' && c.mapped !== 'untilExpire' ? { limitKey } : {}),
     // 限次刀：同一支纪律——passive 那一型没有"发动一次"的时刻，额度无处可消，不落键。
-    ...(turnQuota && c.mapped !== 'passive' ? { turnQuota } : {}),
-    ...(awakeningTag && c.mapped !== 'passive' ? { awakening: true } : {}),
+    ...(turnQuota && c.mapped !== 'passive' && c.mapped !== 'untilExpire' ? { turnQuota } : {}),
+    ...(awakeningTag && c.mapped !== 'passive' && c.mapped !== 'untilExpire' ? { awakening: true } : {}),
   });
 
   const candidates: CompiledEffect[] = [];
@@ -565,6 +625,18 @@ export function compileSkill(
             skillName: skill.name,
             effectId: c.effect.id,
             reason: 'PASSIVE_CHOICE_UNSUPPORTED',
+          });
+        }
+        continue;
+      }
+      if (group[0].mapped === 'untilExpire') {
+        // 第 2 刀同一支：这一型同样不进问窗，而且它的死线按"这一笔账"计，不是按
+        // "择一之后落的那一笔"计——组不成一次可择的发动。整组点名跳过。
+        for (const c of group) {
+          skipped.push({
+            skillName: skill.name,
+            effectId: c.effect.id,
+            reason: 'UNTIL_EXPIRE_GROUP_UNSUPPORTED',
           });
         }
         continue;
@@ -634,6 +706,18 @@ export function compileSkill(
             skillName: skill.name,
             effectId: c.effect.id,
             reason: 'PASSIVE_CHAIN_UNSUPPORTED',
+          });
+        }
+        continue;
+      }
+      if (group[0].mapped === 'untilExpire') {
+        // 第 2 刀同一支：链式要"这一环响完才知道下一环要不要响"，而这一型没有
+        // "发动"这一说——一整组账在登场时一次落笔，成败判定找不到发射器。
+        for (const c of group) {
+          skipped.push({
+            skillName: skill.name,
+            effectId: c.effect.id,
+            reason: 'UNTIL_EXPIRE_GROUP_UNSUPPORTED',
           });
         }
         continue;

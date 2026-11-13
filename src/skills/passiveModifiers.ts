@@ -18,13 +18,26 @@
  * 编译器替这一档把过三道闸（`skillCompiler.consider`）：带门槛的、带周期的、
  * 和「选择其一」混在一起的 passive 一律点名跳过。所以本文件**不需要**求值门槛，
  * 也不需要处理多效果择一——它看到的就是"一员将 ＋ 一笔改数"。
+ *
+ * ── 触发时机接入线·第 2 刀（用户 2026-11-10 裁的顺序）：这一族多了一个姊妹。
+ * 「直到X前生效」(`untilExpire`) 走的正是上面这一条路，一个字都没另起炉灶：同样
+ * 不进事件面（`TRIGGER_EVENTS` 里没有它，这是继 onTurnEnd／passive 之后第三个
+ * "编译而不听"的例外）、同样不是一次发动、同样只在登场与「获得技能」两拍落笔。
+ * 唯一的差别＝它多带一条死线 X，落笔时写进账本已有的 `expire` 那一格：
+ *  · 四个回合词由 `chainedConsequences` 的回合边界总闸收账（`TURN_EXPIRES`），
+ *  · `untilDeath`／`untilLeaveField` 与离场／阵亡／席位覆灭那三道总闸同义（契约表
+ *    第 2 条），X 到没到都由**同一批已有的销账**收走。
+ * ⇒ 零新增销账机制、零新增事件类型。编译器同样把过闸：没有 X、效果不是「改数值」、
+ * 效果里又填周期、带门槛、觉醒技、混进「选择其一」／链式，一律点名跳过（六个
+ * `UNTIL_EXPIRE_*`／`AWAKENING_UNTIL_EXPIRE_CONFLICT` 码）——所以这里看到的仍只是
+ * "一员将 ＋ 一笔改数 ＋（可能）一条死线"。
  */
 import type { General, Skill } from '../data/generals';
 import type { GameEvent } from '../core/Event';
 import type { NewStatModifier } from '../core/eventProcessors/statModifierEvents';
 import { compileGeneralSkills } from './skillCompiler';
 
-/** 这一员将身上所有「在场即生效」技能各自要落的那一笔（顺序＝技能录入顺序）。 */
+/** 这一员将身上所有「在场账」（在场即生效 ＋ 直到X前生效）各自要落的那一笔（顺序＝技能录入顺序）。 */
 export function passiveEntriesOfGeneral(
   general: General,
   runtimeGeneralId: string,
@@ -33,7 +46,11 @@ export function passiveEntriesOfGeneral(
   const { definitions } = compileGeneralSkills(general, runtimeGeneralId);
   const entries: NewStatModifier[] = [];
   for (const definition of definitions) {
-    if (definition.passive !== true) continue;
+    // 两型姊妹共用这一支：`passive` 那型不带死线，`untilExpire` 那型必带（编译器拦的）。
+    // 除这两型以外的定义——包括一切"发动"型——在这里一律不被看见。
+    const onField = definition.passive === true;
+    const windowed = definition.trigger === 'untilExpire';
+    if (!onField && !windowed) continue;
     for (const effect of definition.effects) {
       if (effect.type !== 'MODIFY_STAT' || !effect.stat || !effect.modifyMode) continue;
       entries.push({
@@ -50,8 +67,17 @@ export function passiveEntriesOfGeneral(
         ownerSkillName: definition.name,
         // 锁定技徽章 ⇒ 这笔账别人移不走（skillCompiler 只在真有 MODIFY_STAT 时落键）。
         locked: definition.locked === true,
-        passive: true,
+        // 「在场持续」这一位在账本里说的是"这不是一次发动"。第 2 刀那一型同样不是
+        // 发动，但它**有**到期时刻，所以这位写 false——两位各说各话会让人把死线
+        // 读成"在场"（`isExpiredAtTurnBoundary` 只认 `expire`，不认这一位；这一位
+        // 现在的读数点是销账总闸与界面，语义必须逐字对得上）。
+        passive: onField,
         // 在场笔不填 `expire`：它的周期就是"在场"本身（填了会被编译器点名跳过）。
+        // 带死线那一型反之**必填**（缺 X 的定义编译器根本编不出来），X 到点由账本
+        // 已有的两把总闸收走：四个回合词走回合边界，「被击杀／离开场上」与离场同义。
+        ...(windowed && definition.expireCondition
+          ? { expire: definition.expireCondition }
+          : {}),
         // 「造成的伤害」那一把钥匙可以带场合（2.9.4＝怒斩的两条腿正是挂在在场笔上，
         // 用户裁决「允许」：在场即生效的被动读造方伤害点）。同样只在真填了时才出现这个键。
         ...(effect.occasion !== undefined ? { occasion: effect.occasion } : {}),
@@ -62,8 +88,9 @@ export function passiveEntriesOfGeneral(
 }
 
 /**
- * 登场事件的派生：把这一员将的在场笔译成 `STAT_MODIFY{op:'ADD'}`。
- * 没有在场技 ⇒ 返回空数组 ⇒ 事件流一字不多（两锚逐字的结构保证）。
+ * 登场事件的派生：把这一员将的在场笔（含第 2 刀那型带死线的）译成 `STAT_MODIFY{op:'ADD'}`。
+ * 两型都没有⇒返回空数组⇒事件流一字不多（两锚逐字的结构保证）。
+ * `cause` 只给人读（现读的落点＝测试与结算提示），两位各一枚：在场笔／带死线的在场笔。
  */
 export function passiveEventsForDeploy(
   general: General,
@@ -72,7 +99,11 @@ export function passiveEventsForDeploy(
 ): GameEvent[] {
   return passiveEntriesOfGeneral(general, runtimeGeneralId, playerId).map(modifier => ({
     type: 'STAT_MODIFY' as const,
-    data: { op: 'ADD' as const, modifier, cause: 'PASSIVE_ON_FIELD' },
+    data: {
+      op: 'ADD' as const,
+      modifier,
+      cause: modifier.passive ? 'PASSIVE_ON_FIELD' : 'UNTIL_EXPIRE_ON_FIELD',
+    },
   }));
 }
 

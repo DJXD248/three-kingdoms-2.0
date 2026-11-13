@@ -62,7 +62,19 @@ export type DataSkillTrigger =
    *  `skills/passiveModifiers.ts` 单点落笔、离场单点销笔（§H5-2 第 3 条）。
    *  刻意不进 `SkillTriggerBridge` 的事件面——`matchesSkillEvent` 对它
    *  `default: return false`，触发链结构上听不懂这一型。 */
-  | 'passive';
+  | 'passive'
+  /** 触发时机接入线·第 2 刀（用户 2026-11-10 裁的顺序，口径详见交接文档 §12-175③（3）／§12-177）：
+   *  「直到X前生效」＝**带死线的在场账**。它是 `passive` 的亲兄弟——同样"不是发动"：
+   *  不监听任何事件、不进问窗、不耗额度，所以它**也刻意不在 `TRIGGER_EVENTS` 里**
+   *  （编译器头注释"能编译但不落事件面"的第三个例外，前两个＝`onTurnEnd`／`passive`）。
+   *  区别只有一寸：`passive` 那笔的周期就是"在场"本身，这一型的周期是**时机那一格里
+   *  填的 X**（`DataSkillDefinition.expireCondition`）——登场落笔、到 X 那一刻由回合边界
+   *  总闸销账、人先离场则由离场总闸收走（哪个先到算哪个；`untilDeath`／`untilLeaveField`
+   *  两档按契约表第 2 条本就与"离场"同义，由同一把离场闸负责）。
+   *  落笔与销笔的唯一消费点仍是 `skills/passiveModifiers.ts`（获得技能那一次补落也走它）。
+   *  只有「改数值」那一档效果能挂它——瞬时动作（摸牌／伤害……）没有"持续到什么时候"
+   *  可言，编译器点名跳过。 */
+  | 'untilExpire';
 
 export type DataSkillEffectType =
   | 'DRAW_CARD'
@@ -207,6 +219,14 @@ export interface DataSkillDefinition {
    * 事件面上这一事实。
    */
   passive?: boolean;
+  /** 触发时机接入线·第 2 刀（用户 2026-11-10 裁的顺序）：「直到X前生效」那笔在场账的
+   *  **死线**，逐字搬自时机那一格的细分（`SkillTriggerConfig.expireCondition`——X 属于
+   *  触发面，不属于效果面；效果上另有一格「有效周期」，两处都填＝两句话打架，编译器
+   *  点名跳过，与 `passive`＋周期那一族同一纪律）。只在 `trigger==='untilExpire'` 时落键
+   *  （"只在真填了时才落"＝既有编译产物键集合逐字不变，与 `passive`／`forced` 同一手）。
+   *  唯一消费点＝`skills/passiveModifiers.ts`：它把这一位写进账本笔的 `expire`，
+   *  销账由既有的回合边界总闸与离场总闸负责（哪个先到算哪个），本刀零新销账机制。 */
+  expireCondition?: import('../data/generals').ExpireCondition;
   /**
    * v2.8 刀4（#25）**锁定技徽章第一次被结算读到**：编译器从 `tagsOf(skill)` 里
    * 认「锁定技」，且**只在这条定义真的会往账本上落笔时**（含 MODIFY_STAT 效果）
