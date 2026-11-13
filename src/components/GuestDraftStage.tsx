@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useState } from 'react';
 import type { EngineState } from '../core/GameState';
 import { factionColors, type General } from '../data/generals';
 import type { NetDraftItem, NetDraftListFrame } from '../network/netProtocol';
@@ -74,11 +74,16 @@ export default function GuestDraftStage({
   // 照那一帧画，卡片区、已选栏、计数会一起被清掉 —— 这就是 2026-11-13 真机上「页面变了」那一格。
   // 这里只记住**最后一次属于自己这一席的名单**，等待期间照原样画回去；本机一张牌也不生成，
   // 缓存里的每一张卡都是房主此前指名发给这一席本人的（不牵涉别席的私有信息）。
-  const lastListRef = useRef<NetDraftListFrame | null>(null);
+  const [lastList, setLastList] = useState<NetDraftListFrame | null>(null);
   const frameHasList = !!frame && (frame.main.length > 0 || frame.qun.length > 0);
-  if (frameHasList && frame) lastListRef.current = frame;
-  const waiting = isWaitingForOthers(lastListRef.current !== null, !!frame && !frameHasList);
-  const shown = waiting ? lastListRef.current : frame;
+  // 记忆「最后一次属于自己这一席的名单」必须在 effect 里写，不能在渲染阶段写 ref
+  // （react-hooks/refs 规则禁止在 render 期读写 ref）。本机一张牌也不生成。
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 缓存上一份名单必须在 effect 内写（render 期写 ref 会被 react-hooks/refs 禁止）；仅当 frame 有名单才 setState，不会级联
+    if (frameHasList && frame) setLastList(frame);
+  }, [frameHasList, frame]);
+  const waiting = isWaitingForOthers(lastList !== null, !!frame && !frameHasList);
+  const shown = waiting ? lastList : frame;
   const shownHasList = !!shown && (shown.main.length > 0 || shown.qun.length > 0);
 
   const total = shown?.total ?? 10;

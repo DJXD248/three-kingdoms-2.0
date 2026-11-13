@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { factionColors, General } from '../data/generals';
 import { identitiesOf, identityOf, lockKeyOf, QUN_FACTION } from '../domain/identity';
@@ -21,30 +21,36 @@ export default function GeneralDraft({ seatLocked = false }: { seatLocked?: bool
   // 『正在等待其他玩家完成征召』」。只在轮到自己这一席时记一份视图快照；被席位闸挡住时照这份快照画回去。
   // **本地热座 `seatLocked` 恒 false** ⇒ 每次重绘都刷新缓存、且永不进入等待态，行为与这一刀之前逐字一致。
   // 这里只是"记住自己刚才看见的那一屏"，不改 store、不改结算、不替别席算任何东西。
-  const lastOwnRef = useRef<{
+  const [lastOwn, setLastOwn] = useState<{
     main: typeof draftGenerals;
     qun: typeof draftQunGenerals;
     selected: typeof selectedDraftGenerals;
     player: NonNullable<typeof currentPlayer>;
     index: number;
   } | null>(null);
-  if (!seatLocked && currentPlayer) {
-    lastOwnRef.current = {
-      main: draftGenerals,
-      qun: draftQunGenerals,
-      selected: selectedDraftGenerals,
-      player: currentPlayer,
-      index: draftPlayerIndex,
-    };
-  }
+  // 记忆「自己这一席的视图快照」必须在 effect 里写，不能在渲染阶段写 ref
+  // （react-hooks/refs 规则禁止在 render 期读写 ref）。本地热座 seatLocked 恒 false，
+  // 永不进入等待态，行为与改造前逐字一致；联机被席位闸挡住时照这份快照画回去。
+  useEffect(() => {
+    if (!seatLocked && currentPlayer) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 缓存本席快照必须在 effect 内写（render 期写 ref 会被 react-hooks/refs 禁止）；此处 setState 仅当 store 变化才触发，不会级联
+      setLastOwn({
+        main: draftGenerals,
+        qun: draftQunGenerals,
+        selected: selectedDraftGenerals,
+        player: currentPlayer,
+        index: draftPlayerIndex,
+      });
+    }
+  }, [seatLocked, currentPlayer, draftGenerals, draftQunGenerals, selectedDraftGenerals, draftPlayerIndex]);
   if (!currentPlayer) return null;
 
-  const waiting = isWaitingForOthers(lastOwnRef.current !== null, seatLocked);
+  const waiting = isWaitingForOthers(lastOwn !== null, seatLocked);
   // 等待态把席位闸在"画不画"这一层收起来：卡片、已选栏、进度圆点都照自己那一席的原样画，
   // 但点选与交卷一律不发车（这一席的卷已经交了，再点只会换来房主一句拒话）。
   const locked = seatLocked && !waiting;
-  const shown = waiting && lastOwnRef.current
-    ? lastOwnRef.current
+  const shown = waiting && lastOwn
+    ? lastOwn
     : {
         main: draftGenerals,
         qun: draftQunGenerals,
