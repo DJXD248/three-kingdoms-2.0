@@ -24,6 +24,7 @@ import { sameDraftProgressRows } from './netDraftProgress';
 import { sameDraftListFrames, type IncomingDraft } from './netDraftList';
 import { isRestorableEngineState } from '../store/gameStateAdapter';
 import { sameRows } from './netHeartbeat';
+import type { HostLinkState } from './hostLinkWatch';
 import { seatOfPeer, sameMoveLists, sameSeatRows, type SeatMoveList } from './netSeat';
 
 export type ActiveRoom = {
@@ -49,6 +50,11 @@ let guestSnapshot: EngineState | null = null;
  * 房主那份是自己算的、客人那份是房主发来的——两边都只住这一格，界面照抄，不再各算一遍。
  */
 let netStatus: NetLinkRow[] | null = null;
+/**
+ * 客人这根线与房主的通断（2026-11-11）。只由客人的失联自查写，不参与房主那张连线表的判定。
+ * 初值与重置都取 'online'＝刚进房时线是通的，没收到第一封信之前不先判人家掉了。
+ */
+let hostLink: HostLinkState = 'online';
 /**
  * J4 那三格客人侧看得见的事实：谁坐哪一席、房主算给我这一席的清单、上一次被退回的那句话。
  * 三样都是**房主发来的**，客人这边一律不自算（座位绑定与合法性只有房主那台机器说得准）。
@@ -135,6 +141,7 @@ export function attachRoom(room: ActiveRoom): void {
   guestSnapshot = null;
   guestAsk = null;
   netStatus = null;
+  hostLink = 'online';
   seatMap = null;
   seatMoves = null;
   refusal = null;
@@ -151,6 +158,7 @@ export function detachRoom(): void {
   guestSnapshot = null;
   guestAsk = null;
   netStatus = null;
+  hostLink = 'online';
   seatMap = null;
   seatMoves = null;
   refusal = null;
@@ -171,6 +179,18 @@ export function getGuestSnapshot(): EngineState | null {
 
 export function getNetStatus(): NetLinkRow[] | null {
   return netStatus;
+}
+
+export function getHostLink(): HostLinkState {
+  return hostLink;
+}
+
+/** 返回是否真的翻了（没翻就不惊动界面，与 netStatus 同一纪律）。 */
+export function receiveHostLink(next: HostLinkState): boolean {
+  if (hostLink === next) return false;
+  hostLink = next;
+  notify();
+  return true;
 }
 
 export function getSeatMap(): NetSeatRow[] | null {

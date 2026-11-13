@@ -19,13 +19,31 @@ describe('App 的视角轴接线：牌桌拿到的那一格来自房间这一格
   const app = readSrc('src', 'App.tsx');
 
   it('牌桌拿到了 viewSeat，而且整个文件里没有任何一条裸的 <GameBoard />', () => {
-    expect(app).toMatch(/<GameBoard viewSeat=\{viewSeat\} \/>/);
+    // 2026-11-11 真机反馈后多递了「这一席是不是别人的」那一格，形状随之变长；
+    // 仍按整串钉死，不许退回只传视角那一版（那版＝房主还能替客人点）。
+    expect(app).toMatch(/<GameBoard viewSeat=\{viewSeat\} seatLocked=\{seatLocked\} \/>/);
     // 裸的 `<GameBoard />`（后面直接跟 `/>`）＝这一刀要拆掉的那一形态。
     expect(app).not.toMatch(/<GameBoard\s*\/>/);
   });
 
+  it('征召／抽卡／牌桌三处都拿到了同一道「不是我这席就不许点」的闸，且闸的算式没被简化掉', () => {
+    expect(app).toMatch(/<GeneralDraft seatLocked=\{seatLocked\} \/>/);
+    expect(app).toMatch(/<UnifiedDraw seatLocked=\{seatLocked\} \/>/);
+    expect(app).toMatch(/<GameBoard viewSeat=\{viewSeat\} seatLocked=\{seatLocked\} \/>/);
+    // 三个条件缺一不可：没连上房间不拦、当前席取不到不拦、只在这三个动手阶段拦。
+    expect(app).toMatch(/viewSeat !== null && activeSeat !== null && activeSeat !== viewSeat/);
+    expect(app).toMatch(/phase === 'generalDraft' \|\| phase === 'drawing' \|\| phase === 'playing'/);
+  });
+
   it('它的取数点是 netRoom 那一格（唯一持有者），并且跟着同一个订阅刷新', () => {
-    expect(app).toMatch(/import \{ getMyNetSeat, subscribeNetRoom \} from '\.\/network\/netRoom'/);
+    // 只钉「这些取数全部来自 netRoom 那一格」，不把整串 import 写死：
+    // 2026-11-11 起这一格还多取 activeRoom 与 hostLink（房主失联横幅），
+    // 写死整串会让每次多取一格都假红，但「唯一持有者」这条不能跟着松掉。
+    const roomImport = app.match(/import \{([^}]*)\} from '\.\/network\/netRoom';/);
+    expect(roomImport).not.toBeNull();
+    for (const name of ['getMyNetSeat', 'subscribeNetRoom', 'getActiveRoom', 'getHostLink']) {
+      expect(roomImport![1]).toContain(name);
+    }
     expect(app).toMatch(
       /useSyncExternalStore\(subscribeNetRoom, getMyNetSeat, getMyNetSeat\)/,
     );

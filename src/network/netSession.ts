@@ -30,6 +30,7 @@ import {
   syncTracks,
   type HeartbeatModel,
 } from './netHeartbeat';
+import { hostLinkOf, isHostAliveSignal, HOST_WATCH_TICK_MS, type HostLinkState } from './hostLinkWatch';
 import { openNetLink, type NetLink, type SocketFactory } from './wsTransport';
 import { randomPeerId } from './netRandom';
 import type { NarrowQuestionFace } from './askFace';
@@ -470,6 +471,12 @@ export function joinRoom(
      * 这一格是发给一个人的私有信息，那张表是全桌的进度，界面读的那一格换了内容不代表另一格也该重画。
      */
     onDraftList?: (frame: NetDraftListFrame) => void;
+    /**
+     * 客人这根线与房主失联／恢复（2026-11-11）。只在状态翻转时回调一次。
+     * 这不是「客人判定谁掉了」：判定权仍在房主那一格，这里只报自己这根线还收不收得到话。
+     * 不提供这一格 ⇒ 不启动自查定时器，老调用方与老测试零影响。
+     */
+    onHostLink?: (state: HostLinkState) => void;
   },
   onChange: (state: SessionState) => void,
 ): RoomConnection {
@@ -492,6 +499,28 @@ export function joinRoom(
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   let link: NetLink | null = null;
+
+  // 客人这根线的失联自查：房主关浏览器后没人再算连线表、也没人再发探测，
+  // 客人必须自己看得见「这根线已经静了」。时刻与定时器沿用同一组注入项（测试可喂假钟）。
+  let lastHostAt = hbNow();
+  let hostLink: HostLinkState = 'online';
+  let hostWatchTimer: ReturnType<typeof setTimeout> | null = null;
+  const setHostLink = (next: HostLinkState) => {
+    if (hostLink === next) return;
+    hostLink = next;
+    args.onHostLink?.(next);
+  };
+  const stopHostWatch = () => {
+    if (hostWatchTimer !== null) { hbCancel(hostWatchTimer); hostWatchTimer = null; }
+  };
+  const armHostWatch = () => {
+    if (state.role !== 'guest' || !args.onHostLink) return;
+    hostWatchTimer = hbSchedule(() => {
+      hostWatchTimer = null;
+      setHostLink(hostLinkOf(lastHostAt, hbNow(), thresholdMs));
+      armHostWatch();
+    }, HOST_WATCH_TICK_MS);
+  };
 
   /** 算表→比一下→才广播。客人那边不发（判定权不在它手里），只把表交给界面。 */
   const publishTable = () => {
@@ -535,7 +564,19 @@ export function joinRoom(
     const next = stepSession(state, event, readRosterContent);
     state = next.state;
     for (const envelope of next.sends) link?.send(encodeEnvelope(envelope));
-    if (event.type === 'close') stopHeartbeat();
+    // 客人这根线：凡是房主发来的信都算「他还活着」（名册没到时放宽为任意来信）。
+    if (state.role === 'guest' && next.saw) {
+      const hostId = state.peers.find(p => p.role === 'host')?.id ?? null;
+      if (isHostAliveSignal(next.saw.from, selfId, hostId)) {
+        lastHostAt = hbNow();
+        setHostLink('online');
+      }
+    }
+    if (event.type === 'close') {
+      stopHeartbeat();
+      stopHostWatch();
+      if (state.role === 'guest') setHostLink('lost');
+    }
     // 房主侧的记账：来信任意一条都刷新那个人的时钟（判据原文＝15 秒未收到该人**任何**消息）。
     // 这一步也顺带证明"那台机器还活着"——客人动手比心跳更硬，掉线判定因此只会更早露相。
     if (hb && state.role === 'host' && next.saw) {
@@ -576,6 +617,7 @@ export function joinRoom(
     heartbeatTick();
     armNextTick();
   }
+  armHostWatch();
 
   return {
     get state() {
@@ -584,6 +626,7 @@ export function joinRoom(
     send: (envelope) => link?.send(encodeEnvelope(envelope)) ?? false,
     leave: () => {
       stopHeartbeat();
+      stopHostWatch();
       link?.send(encodeEnvelope({ t: 'bye', from: selfId }));
       link?.close();
       state = { ...state, phase: 'left', note: '已离开房间' };

@@ -1,9 +1,11 @@
+import { useRef } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { factionColors, General } from '../data/generals';
 import { identitiesOf, identityOf, lockKeyOf, QUN_FACTION } from '../domain/identity';
 import { draftQuotaBlockFor } from '../domain/draftQuota';
+import { isWaitingForOthers, WAITING_FOR_OTHERS_TEXT } from './draftWaiting';
 
-export default function GeneralDraft() {
+export default function GeneralDraft({ seatLocked = false }: { seatLocked?: boolean } = {}) {
   const players = useGameStore(s => s.players);
   const draftGenerals = useGameStore(s => s.draftGenerals);
   const draftQunGenerals = useGameStore(s => s.draftQunGenerals);
@@ -13,13 +15,51 @@ export default function GeneralDraft() {
   const confirmDraft = useGameStore(s => s.confirmDraft);
 
   const currentPlayer = players[draftPlayerIndex];
+
+  // 联机里本席交卷之后 `draftPlayerIndex` 会挪到别席，store 里的候选／已选／席位名当场换成下一席的，
+  // 整屏因此突变 —— 2026-11-13 用户逐字要求「征召页面不要变化，只要下方的征召按钮换成一句
+  // 『正在等待其他玩家完成征召』」。只在轮到自己这一席时记一份视图快照；被席位闸挡住时照这份快照画回去。
+  // **本地热座 `seatLocked` 恒 false** ⇒ 每次重绘都刷新缓存、且永不进入等待态，行为与这一刀之前逐字一致。
+  // 这里只是"记住自己刚才看见的那一屏"，不改 store、不改结算、不替别席算任何东西。
+  const lastOwnRef = useRef<{
+    main: typeof draftGenerals;
+    qun: typeof draftQunGenerals;
+    selected: typeof selectedDraftGenerals;
+    player: NonNullable<typeof currentPlayer>;
+    index: number;
+  } | null>(null);
+  if (!seatLocked && currentPlayer) {
+    lastOwnRef.current = {
+      main: draftGenerals,
+      qun: draftQunGenerals,
+      selected: selectedDraftGenerals,
+      player: currentPlayer,
+      index: draftPlayerIndex,
+    };
+  }
   if (!currentPlayer) return null;
 
-  const qunCount = selectedDraftGenerals.filter(g => g.faction === '群').length;
-  const mainCount = selectedDraftGenerals.filter(g => g.faction !== '群').length;
-  const totalCount = selectedDraftGenerals.length;
+  const waiting = isWaitingForOthers(lastOwnRef.current !== null, seatLocked);
+  // 等待态把席位闸在"画不画"这一层收起来：卡片、已选栏、进度圆点都照自己那一席的原样画，
+  // 但点选与交卷一律不发车（这一席的卷已经交了，再点只会换来房主一句拒话）。
+  const locked = seatLocked && !waiting;
+  const shown = waiting && lastOwnRef.current
+    ? lastOwnRef.current
+    : {
+        main: draftGenerals,
+        qun: draftQunGenerals,
+        selected: selectedDraftGenerals,
+        player: currentPlayer,
+        index: draftPlayerIndex,
+      };
+  const { main, qun, selected, player, index } = shown;
+
+  const qunCount = selected.filter(g => g.faction === '群').length;
+  const mainCount = selected.filter(g => g.faction !== '群').length;
+  const totalCount = selected.length;
 
   const canConfirm = totalCount === 10 && qunCount >= 1 && qunCount <= 3;
+  const canPress = canConfirm && !locked && !waiting;
 
   // v2.8.0 identity lock, defensive display layer: distribution already
   // excludes locked cards, so a same-key or 主↔群 same-identity pair on one
@@ -27,11 +67,11 @@ export default function GeneralDraft() {
   // of it — never silently rewrite (契约表 格12).
   const lockConflicts = (() => {
     const keyCount = new Map<string, number>();
-    for (const g of [...draftGenerals, ...draftQunGenerals]) {
+    for (const g of [...main, ...qun]) {
       const k = lockKeyOf(g);
       if (k !== null) keyCount.set(k, (keyCount.get(k) ?? 0) + 1);
     }
-    const mainIdentities = identitiesOf(draftGenerals);
+    const mainIdentities = identitiesOf(main);
     return (g: General): boolean => {
       const k = lockKeyOf(g);
       if (k !== null && (keyCount.get(k) ?? 0) > 1) return true;
@@ -42,10 +82,11 @@ export default function GeneralDraft() {
       return false;
     };
   })();
-  const conflictCount = [...draftGenerals, ...draftQunGenerals].filter(g => lockConflicts(g)).length;
+  const conflictCount = [...main, ...qun].filter(g => lockConflicts(g)).length;
 
   const isSelectable = (g: General) => {
-    const isSelected = selectedDraftGenerals.some(sg => sg.id === g.id);
+    if (locked) return false;
+    const isSelected = selected.some(sg => sg.id === g.id);
     if (isSelected) return true; // always allow deselecting
     if (lockConflicts(g)) return false;
     // 数量那一档与联机客人那条路共用同一把尺（`domain/draftQuota`）：分支逐字未改，只是叫出了一个名字。
@@ -62,12 +103,12 @@ export default function GeneralDraft() {
         <h1 className="text-2xl font-black text-amber-200 tracking-wider mb-1">⚔️ 将领征召</h1>
         <div className="flex items-center justify-center gap-3">
           <span className="text-sm text-amber-400/60">征召将领：</span>
-          <span className="text-sm font-bold" style={{ color: factionColors[currentPlayer.faction!] }}>
-            {currentPlayer.name}
+          <span className="text-sm font-bold" style={{ color: factionColors[player.faction!] }}>
+            {player.name}
           </span>
           <span className="text-sm px-2 py-0.5 rounded-full font-bold"
-            style={{ backgroundColor: factionColors[currentPlayer.faction!] + '25', color: factionColors[currentPlayer.faction!] }}>
-            {currentPlayer.faction}
+            style={{ backgroundColor: factionColors[player.faction!] + '25', color: factionColors[player.faction!] }}>
+            {player.faction}
           </span>
         </div>
 
@@ -76,11 +117,11 @@ export default function GeneralDraft() {
           {players.map((p, i) => (
             <div key={p.id} className={`flex items-center gap-1`}>
               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border ${
-                i < draftPlayerIndex ? 'border-green-500 bg-green-900/30 text-green-400' :
-                i === draftPlayerIndex ? 'border-amber-500 bg-amber-900/30 text-amber-300' :
+                i < index ? 'border-green-500 bg-green-900/30 text-green-400' :
+                i === index ? 'border-amber-500 bg-amber-900/30 text-amber-300' :
                 'border-gray-700 bg-black/30 text-gray-600'
               }`}>
-                {i < draftPlayerIndex ? '✓' : i + 1}
+                {i < index ? '✓' : i + 1}
               </div>
               {i < players.length - 1 && <div className="w-4 h-px bg-gray-700" />}
             </div>
@@ -94,8 +135,8 @@ export default function GeneralDraft() {
           <span className="text-amber-400/80 text-sm">
             已选 <strong className="text-amber-200">{totalCount}</strong>/10
           </span>
-          <span className="text-sm" style={{ color: factionColors[currentPlayer.faction!] }}>
-            {currentPlayer.faction}: <strong>{mainCount}</strong>
+          <span className="text-sm" style={{ color: factionColors[player.faction!] }}>
+            {player.faction}: <strong>{mainCount}</strong>
           </span>
           <span className="text-sm" style={{ color: factionColors['群'] }}>
             群: <strong>{qunCount}</strong>/1-3
@@ -112,19 +153,19 @@ export default function GeneralDraft() {
       <div className="flex-1 overflow-auto px-6 py-4">
         {/* Main faction */}
         <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: factionColors[currentPlayer.faction!] }} />
-          <span style={{ color: factionColors[currentPlayer.faction!] }}>{currentPlayer.faction}</span>
-          <span className="text-amber-500/40">势力将领 ({draftGenerals.length})</span>
+          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: factionColors[player.faction!] }} />
+          <span style={{ color: factionColors[player.faction!] }}>{player.faction}</span>
+          <span className="text-amber-500/40">势力将领 ({main.length})</span>
         </h3>
         <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-7 gap-2 mb-6">
-          {draftGenerals.map(g => (
+          {main.map(g => (
             <DraftCard
               key={g.id}
               general={g}
-              isSelected={selectedDraftGenerals.some(sg => sg.id === g.id)}
+              isSelected={selected.some(sg => sg.id === g.id)}
               isSelectable={isSelectable(g)}
               conflict={lockConflicts(g)}
-              onSelect={() => selectDraftGeneral(g)}
+              onSelect={() => !waiting && selectDraftGeneral(g)}
             />
           ))}
         </div>
@@ -133,17 +174,17 @@ export default function GeneralDraft() {
         <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
           <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: factionColors['群'] }} />
           <span style={{ color: factionColors['群'] }}>群</span>
-          <span className="text-amber-500/40">势力将领 ({draftQunGenerals.length})</span>
+          <span className="text-amber-500/40">势力将领 ({qun.length})</span>
         </h3>
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-4">
-          {draftQunGenerals.map(g => (
+          {qun.map(g => (
             <DraftCard
               key={g.id}
               general={g}
-              isSelected={selectedDraftGenerals.some(sg => sg.id === g.id)}
+              isSelected={selected.some(sg => sg.id === g.id)}
               isSelectable={isSelectable(g)}
               conflict={lockConflicts(g)}
-              onSelect={() => selectDraftGeneral(g)}
+              onSelect={() => !waiting && selectDraftGeneral(g)}
             />
           ))}
         </div>
@@ -153,13 +194,14 @@ export default function GeneralDraft() {
       <div className="border-t border-amber-800/30 bg-black/40 px-6 py-3 flex-shrink-0">
         <div className="flex items-center gap-2 mb-2.5 overflow-x-auto">
           <span className="text-amber-400/60 text-xs font-bold flex-shrink-0">已选:</span>
-          {selectedDraftGenerals.length === 0 && (
+          {selected.length === 0 && (
             <span className="text-amber-500/30 text-xs">点击将领卡片进行选择</span>
           )}
-          {selectedDraftGenerals.map(g => (
+          {selected.map(g => (
             <button
               key={g.id}
-              onClick={() => selectDraftGeneral(g)}
+              onClick={() => !locked && !waiting && selectDraftGeneral(g)}
+              disabled={locked}
               className="flex-shrink-0 px-2 py-1 rounded-lg text-xs font-bold border transition-all hover:scale-105 hover:brightness-125"
               style={{
                 borderColor: factionColors[g.faction] + '50',
@@ -172,22 +214,22 @@ export default function GeneralDraft() {
           ))}
         </div>
         <button
-          onClick={confirmDraft}
-          disabled={!canConfirm}
+          onClick={() => !waiting && confirmDraft()}
+          disabled={!canPress}
           className={`w-full py-3 rounded-xl font-black text-base transition-all ${
-            canConfirm
+            canPress
               ? 'bg-gradient-to-r from-amber-600 to-red-700 text-white hover:from-amber-500 hover:to-red-600 shadow-lg shadow-amber-900/30 active:scale-95'
               : 'bg-gray-800/60 text-gray-600 cursor-not-allowed border border-gray-700/20'
           }`}
         >
-          {canConfirm ? '✓ 确认征召' : `选择10名将领（群势力1-3名，当前${qunCount}名）`}
+          {waiting ? WAITING_FOR_OTHERS_TEXT : locked ? '这一席是别人的，等他在自己电脑上选' : canConfirm ? '✓ 确认征召' : `选择10名将领（群势力1-3名，当前${qunCount}名）`}
         </button>
       </div>
     </div>
   );
 }
 
-function DraftCard({
+export function DraftCard({
   general,
   isSelected,
   isSelectable,

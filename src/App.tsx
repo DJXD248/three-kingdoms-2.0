@@ -18,7 +18,8 @@ import AiBattleDock from './components/AiBattleDock';
 import AiDirector from './components/AiDirector';
 import AskClockDirector from './components/AskClockDirector';
 import NetRoomBridge from './components/NetRoomBridge';
-import { getMyNetSeat, subscribeNetRoom } from './network/netRoom';
+import { getActiveRoom, getHostLink, getMyNetSeat, subscribeNetRoom } from './network/netRoom';
+import { activeSeatForStage } from './store/seatAxis';
 import NetPingOverlay from './components/NetPingPanel';
 import NetSeatOverlay from './components/NetSeatPanel';
 import { factionColors } from './data/generals';
@@ -35,6 +36,21 @@ export default function App() {
   // 动手那一格不看它，仍只看 `store.currentPlayerIndex`（用户 2026-10-30 裁第 3 条：
   // 能不能动手只由 `ActionValidator` 那一处说了算＝轮到谁 ＋ 有没有技能正等着响应）。
   const viewSeat = useSyncExternalStore(subscribeNetRoom, getMyNetSeat, getMyNetSeat);
+  // 客人这根线与房主失联时整屏给一句人话，不再停在「等房主动」上。
+  const activeRoom = useSyncExternalStore(subscribeNetRoom, getActiveRoom, getActiveRoom);
+  const hostLink = useSyncExternalStore(subscribeNetRoom, getHostLink, getHostLink);
+  const hostLost = activeRoom?.role === 'guest' && hostLink === 'lost';
+  // 联机时「现在轮到谁动手」与「我这台绑到哪一席」不是同一件事：本地热座两者恒等。
+  // 不等 ⇒ 这一屏不许有替别人点的入口（2026-11-11 真机反馈 §12-179⑨㈠）。
+  const netPlayers = useGameStore(s => s.players);
+  const netActiveIndex = useGameStore(s => s.currentPlayerIndex);
+  const draftIndex = useGameStore(s => s.draftPlayerIndex);
+  // 征召那一段「轮到谁」看的是挑将席，不是出牌席：confirmDraft 只在全部挑完、进抽卡
+  // 时才把出牌席归零，挑将期间它一直是 0。用错这把尺子会把房主自己那一席也锁成
+  // 「这一席是别人的」（2026-11-13 真机卡点）。抽卡／牌桌两段仍用出牌席。
+  const activeSeat = activeSeatForStage(phase, netPlayers, netActiveIndex, draftIndex);
+  const seatLocked = viewSeat !== null && activeSeat !== null && activeSeat !== viewSeat
+    && (phase === 'generalDraft' || phase === 'drawing' || phase === 'playing');
   if (IS_AI_BATTLE_WINDOW) return <AiBattleWindow />;
 
   let content: React.ReactNode;
@@ -64,13 +80,13 @@ export default function App() {
       content = <FactionAssign />;
       break;
     case 'generalDraft':
-      content = <GeneralDraft />;
+      content = <GeneralDraft seatLocked={seatLocked} />;
       break;
     case 'drawing':
-      content = <UnifiedDraw />;
+      content = <UnifiedDraw seatLocked={seatLocked} />;
       break;
     case 'playing':
-      content = <GameBoard viewSeat={viewSeat} />;
+      content = <GameBoard viewSeat={viewSeat} seatLocked={seatLocked} />;
       break;
     case 'gameOver':
       content = <GameOverScreen />;
@@ -84,6 +100,15 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {hostLost ? (
+        <div className="fixed top-0 inset-x-0 z-[70] px-4 py-2.5 text-center text-sm font-bold bg-red-950/95 text-red-100 border-b border-red-600/70">
+          ⚠️ 房主已经断线（15 秒没收到他的任何消息）—— 这一局暂时停在这里，等房主回来，或退出房间重开一局。
+        </div>
+      ) : seatLocked ? (
+        <div className="fixed top-0 inset-x-0 z-[60] px-4 py-2 text-center text-sm font-bold bg-amber-900/95 text-amber-100 border-b border-amber-600/60">
+          现在轮到别人那一席 —— 请等他在自己电脑上点；你这边只能看，不能替他出牌。
+        </div>
+      ) : null}
       {content}
       <AiDirector />
       {/* 乙 线末片第二刀 · 刀 1 拍 3 ㈁：问窗那把表全程序只此一枚，挂在这里（与 AI 司机同级、
