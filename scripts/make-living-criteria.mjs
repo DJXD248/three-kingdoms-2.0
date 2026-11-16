@@ -2,6 +2,7 @@
 // 现行判据账本生成器：从 PROJECT_HANDOFF.md 的 §12 逐字抽取每条原标题，分区排成一张表，
 // 写成仓库根的 PROJECT_LIVING_CRITERIA.md。产物是投影，不是抄本——手改会在守卫测试里变红。
 // 判据原文的唯一权威仍是 §12；本表只保证"逐字＋可定位＋不漏"。
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,6 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HANDOFF = 'PROJECT_HANDOFF.md';
 const OUT = 'PROJECT_LIVING_CRITERIA.md';
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'coverage', '.ai-battle', '.qoder']);
 const SKIP_FILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']);
 const CITE_RE = /[#§]\s?12-(\d{1,3})(?![0-9])/g;
 const FREEZE_FROM = '2026-11-15';
@@ -20,28 +20,48 @@ function readText(full) {
   return buf.toString('utf8').replace(/\r\n/g, '\n');
 }
 
-function walk(dir, acc) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      if (!SKIP_DIRS.has(e.name)) walk(full, acc);
-      continue;
-    }
-    if (SKIP_FILES.has(e.name)) continue;
-    // 产物本身不进输入面：账本里的编号列会被引用正则命中，
-    // 若把它算进来，第二次生成会读到第一次的产物＝不幂等，字节比对必然飘。
-    if (path.relative(ROOT, full).split(path.sep).join('/') === OUT) continue;
-    if (fs.statSync(full).size > 4 * 1024 * 1024) continue;
-    const text = readText(full);
-    if (text === null) continue;
-    acc.push({ rel: path.relative(ROOT, full).split(path.sep).join('/'), text });
+/**
+ * 输入面＝git 跟踪清单（内容仍从磁盘读，所以未提交的改动能被抓到）。
+ * 不按磁盘走：仓库里一份 gitignore 掉的临时日志就能让两处机器的产物字节不等，
+ * 而守卫比的是逐字节（2026-11-16 CI #415 实抓，细账 §12-195⑫）。
+ */
+function trackedFiles() {
+  let raw;
+  try {
+    raw = execFileSync('git', ['-C', ROOT, 'ls-files', '-z', '--full-name'],
+      { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  } catch (e) {
+    console.error('取不到 git 跟踪清单（' + String(e.message).split('\n')[0] + '）＝输入面未定，必须非零退出');
+    process.exit(1);
   }
-  return acc;
+  const list = raw.split('\0').filter(Boolean);
+  if (list.length === 0) {
+    console.error('git ls-files 返回空清单＝输入面未定，必须非零退出');
+    process.exit(1);
+  }
+  return list;
 }
 
-const files = walk(ROOT, []);
+if (!fs.existsSync(path.join(ROOT, HANDOFF))) {
+  console.error('找不到 ' + HANDOFF);
+  process.exit(1);
+}
+const files = trackedFiles()
+  // 产物本身不进输入面：账本里的编号列会被引用正则命中，算进来＝第二次生成读到第一次的产物，不幂等。
+  .filter((rel) => !SKIP_FILES.has(path.basename(rel)) && rel !== OUT)
+  .map((rel) => {
+    const full = path.join(ROOT, rel);
+    if (!fs.existsSync(full)) {
+      console.error(`跟踪清单里的 ${rel} 在磁盘上缺失＝输入面未定（先把它恢复，别按缺文件的树出账本）`);
+      process.exit(1);
+    }
+    if (fs.statSync(full).size > 4 * 1024 * 1024) return null;
+    const text = readText(full);
+    return text === null ? null : { rel, text };
+  })
+  .filter(Boolean);
 const hf = files.find((f) => f.rel === HANDOFF);
-if (!hf) { console.error('找不到 ' + HANDOFF); process.exit(1); }
+if (!hf) { console.error('找不到 ' + HANDOFF + '（git 跟踪清单里没有它）'); process.exit(1); }
 const lines = hf.text.split('\n');
 const start = lines.findIndex((l) => /^## 12\./.test(l));
 if (start < 0) { console.error('§12 标题找不到'); process.exit(1); }
@@ -142,7 +162,9 @@ push('- **段外零引用**：**', zero.length, ' 条**／', zero.reduce((s, e) 
   ' 字节。**零引用不等于死条目**：一条规矩太基础、人人默认，反而没人按编号提它（本表把它单列在末节）。');
 push('- 只写"挂起/未验/PENDING"而不带"今后/必须/待办"的＝**', pendOnly.length, ' 条**／',
   pendOnly.reduce((s, e) => s + e.bytes, 0).toLocaleString('en-US'), ' 字节。⇒ 拿祈使词当"活"标记会把最该留下的判成可搬，方向是反的。');
-push('- 扫盘范围＝仓库内非二进制文件 **', files.length, ' 个**（排 `.git`／`node_modules`／`dist`／`coverage`／`.ai-battle`／`.qoder` 与锁文件）；');
+push('- 输入面＝**git 跟踪清单**（`git ls-files`）里的非二进制文件 **', files.length, ' 个**（排产物本身与锁文件；');
+push('  内容按磁盘当前状态读，所以未提交的改动也算数）；');
+push('  不按"磁盘上有什么扫什么"：仓库里一份被 gitignore 掉的临时日志就能让两台机器产出不同字节，而守卫比的是逐字节。');
 push('  引用正则＝`[#§]\\s?12-(\\d{1,3})(?![0-9])`；条目识别＝§12 段内行首 `N. `。');
 push('- 分区＝按条目**原标题＋正文前 300 字**的第一个命中，优先级 F>E>D>C>B>A（见生成器 `ZONES`），**是机械归类、不是语义判读**；`Z 未归类` 的条数就是机械归类的边界。');
 push('');
