@@ -217,19 +217,24 @@ describe('产物与现场重跑内容相同（行尾归一后逐字节；登记�
     }
   });
 
-  it('合成探针⑧：入库产物摆成 CRLF（Windows 检出的形态）⇒仍算相等，不是假红', () => {
+  it('合成探针⑧：同一份内容的两种落地形态（LF／CRLF）判据都认相等，真漂移两种形态都照样红', () => {
+    // 机器无关＝CRLF 那一份自己造，绝不假设"磁盘上现在是 LF"——CI runner 是 windows-latest，
+    // 它的检出天然就是 CRLF（`.gitattributes` 头注释与 v2.9.28 的 CI #335 都是这条），拿形态当基线的探针会在别人家红。
     const clean = fs.readFileSync(LEDGER);
-    const crlf = Buffer.from(clean.toString('utf8').replace(/\r?\n/g, '\r\n'), 'utf8');
-    expect(crlf.equals(clean)).toBe(false);
-    expect(sameContent(crlf, clean)).toBe(true);
-    fs.writeFileSync(LEDGER, crlf);
+    const text = clean.toString('utf8');
+    const lf = Buffer.from(text.replace(/\r\n/g, '\n'), 'utf8');
+    const crlf = Buffer.from(text.replace(/\r?\n/g, '\r\n'), 'utf8');
+    expect(lf.equals(crlf)).toBe(false);
+    expect(sameContent(lf, crlf)).toBe(true);
+    const driftedLF = Buffer.from(lf.toString('utf8').replace('现行判据账本', '现行判据账本X'), 'utf8');
+    const driftedCRLF = Buffer.from(driftedLF.toString('utf8').replace(/\n/g, '\r\n'), 'utf8');
+    expect(sameContent(driftedLF, lf)).toBe(false);
+    expect(sameContent(driftedCRLF, crlf)).toBe(false);
+    // 把磁盘那份换成"另一台机器的形态"⇒现场重跑与它仍算相等（归一只吃行尾，不吃内容）。
+    fs.writeFileSync(LEDGER, lf.equals(clean) ? crlf : lf);
     try {
       execFileSync(process.execPath, [GENERATOR], { cwd: ROOT, encoding: 'utf8' });
-      const after = fs.readFileSync(LEDGER);
-      expect(sameContent(after, clean)).toBe(true);
-      // 反向钉：真漂移（改一个字）在归一口径下依然红，行尾归一不等于放宽判据。
-      const drifted = Buffer.from(after.toString('utf8').replace('现行判据账本', '现行判据账本X'), 'utf8');
-      expect(sameContent(drifted, clean)).toBe(false);
+      expect(sameContent(fs.readFileSync(LEDGER), clean)).toBe(true);
     } finally {
       fs.writeFileSync(LEDGER, clean);
     }
