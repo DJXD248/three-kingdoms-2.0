@@ -25,6 +25,13 @@ const FROZEN = `0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24
 
 const readText = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 const norm = (s) => s.replace(/\s+/g, ' ').trim();
+/**
+ * 产物相等判据：先把行尾归一再逐字节比。
+ * 生成器只写 LF，而 Windows 的检出（core.autocrlf=true）会把入库那份摆成 CRLF——
+ * 那是同一份内容的两种落地形态，不是账本漂移；不归一＝每台机器一个答案，证人当场失效。
+ * 内容本身仍逐字节（探针⑦改一个字照样红），探针⑧钉住"换行尾不换算"这一条。
+ */
+const sameContent = (a, b) => a.toString('utf8').replace(/\r\n/g, '\n') === b.toString('utf8').replace(/\r\n/g, '\n');
 
 /** §12 的起止行号；找不到标题＝抽取失败，必须抛（§12-166：抽取失败不许静默空跑）。 */
 function sectionRange(lines) {
@@ -174,7 +181,7 @@ describe('投影不是抄本：账本每行都能回 §12 逐字命中', () => {
   });
 });
 
-describe('产物与现场重跑逐字节相同（幂等，且登记提交必须带上产物）', () => {
+describe('产物与现场重跑内容相同（行尾归一后逐字节；登记提交必须带上产物）', () => {
   it('跑生成器覆盖前后，账本字节一模一样；跑完树也复原', () => {
     const before = fs.readFileSync(LEDGER);
     let stdout = '';
@@ -185,7 +192,7 @@ describe('产物与现场重跑逐字节相同（幂等，且登记提交必须�
     }
     const after = fs.readFileSync(LEDGER);
     try {
-      expect(after.equals(before)).toBe(true);
+      expect(sameContent(after, before)).toBe(true);
       expect(after.length).toBeGreaterThan(1000);
       expect(stdout).toContain('PROJECT_LIVING_CRITERIA.md');
     } finally {
@@ -202,9 +209,27 @@ describe('产物与现场重跑逐字节相同（幂等，且登记提交必须�
       execFileSync(process.execPath, [GENERATOR], { cwd: ROOT, encoding: 'utf8' });
       const after = fs.readFileSync(LEDGER);
       // 守卫断言的是"磁盘上那份 == 现场重跑那份"：手改过⇒两不相等⇒红。
-      expect(after.equals(drifted)).toBe(false);
+      expect(sameContent(after, drifted)).toBe(false);
       // 同一棵树重跑仍回到同一份产物＝幂等（不是把漂移当成新基线）。
-      expect(after.equals(clean)).toBe(true);
+      expect(sameContent(after, clean)).toBe(true);
+    } finally {
+      fs.writeFileSync(LEDGER, clean);
+    }
+  });
+
+  it('合成探针⑧：入库产物摆成 CRLF（Windows 检出的形态）⇒仍算相等，不是假红', () => {
+    const clean = fs.readFileSync(LEDGER);
+    const crlf = Buffer.from(clean.toString('utf8').replace(/\r?\n/g, '\r\n'), 'utf8');
+    expect(crlf.equals(clean)).toBe(false);
+    expect(sameContent(crlf, clean)).toBe(true);
+    fs.writeFileSync(LEDGER, crlf);
+    try {
+      execFileSync(process.execPath, [GENERATOR], { cwd: ROOT, encoding: 'utf8' });
+      const after = fs.readFileSync(LEDGER);
+      expect(sameContent(after, clean)).toBe(true);
+      // 反向钉：真漂移（改一个字）在归一口径下依然红，行尾归一不等于放宽判据。
+      const drifted = Buffer.from(after.toString('utf8').replace('现行判据账本', '现行判据账本X'), 'utf8');
+      expect(sameContent(drifted, clean)).toBe(false);
     } finally {
       fs.writeFileSync(LEDGER, clean);
     }
