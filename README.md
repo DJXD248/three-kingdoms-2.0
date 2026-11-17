@@ -54,6 +54,8 @@ curl -sI --max-time 10 -x http://127.0.0.1:10808 https://github.com -o /dev/null
 
 ## 项目文档
 
+- **`PROJECT_LIVING_CRITERIA.md` — 接手时的第一读（2026-11-17 起，用户当轮逐字「把接手时第一读从交接文档换成这张薄账本」）**：薄、可 grep、由 `node scripts/make-living-criteria.mjs` 从下面那份交接文档 §12 生成，第一节＝**挂账状态地图**（谁等谁 · 去哪儿读 · 下一步），往下＝现行判据的分区分表。**它是投影，不是抄本**：手改会让 `scripts/livingCriteriaGuard.test.mjs` 变红；权威条文只在 `PROJECT_HANDOFF.md` §12 原文。
+- **`PROJECT_TASK_BOARD.md` — 挂账任务板（唯一可以手改的那一份，§12-195⑱）**：每格一行，写「事／状态／等谁／落点／下一步」，落点必须能在那份文档里逐字命中，销账要写凭据。上面那张地图就是它的投影——**改挂账现状改这里，别在账本里改**。
 - `PROJECT_HANDOFF.md` — 当前状态快照（规则、架构、版本、验证状态）。**2026-11-13 起只留最近十个小版本（`2.9.26`～`2.9.35`）的版本流水**＋现行规则、挂起待办、未完成事项；更旧的版本记录已整行逐字搬进下面那份归档（规则＝该文件 §10 第 11 条）
 - `PROJECT_HANDOFF_ARCHIVE_2.0.0-2.9.25.md` / `CHANGELOG_ARCHIVE_2.0.0-2.9.25.md` — **上面两份同名文档被分割出去的旧半边**（2026-11-13 建，区间 `2.0.0`～`2.9.25`）：整行逐字搬、一个字未改，**不是当前状态**；现行规则与读数一律回 `PROJECT_HANDOFF.md`
 - `PROJECT_HISTORY_AI.md` / `PROJECT_HISTORY_HUMAN.md` — 历史迭代记录（AI 版 / 人读版）
