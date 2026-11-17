@@ -1,17 +1,25 @@
-// 冻结令＋投影账本的守卫（2026-11-15「接手时少读点」第一刀）。
-// 契约＝PROJECT_HANDOFF.md §12 冻结令第⑤条＋§12-195④⑤⑦。
+// 冻结令＋投影账本＋挂账状态地图的守卫（2026-11-15「接手时少读点」第一刀；2026-11-17 加地图）。
+// 契约＝PROJECT_HANDOFF.md §12 冻结令第⑤条＋§12-195④⑤⑦（投影）＋§12-195⑱（挂账地图）。
 // 为什么不数编号就完事：§12-195⑤ 记的是"编号留壳、正文搬空，行首 `N. ` 断言照样绿"＝弱断言
 // （§12-155③）。所以这里四条一起验，且每条正面断言配一枚"改坏必须响"的合成探针。
+// 地图那一段同理：判据只写在 scripts/livingCriteriaTasks.mjs 一份里，生成器与守卫共用＝
+// 验收脚本不另造一套解析（§12 常设口径"验收脚本的判据要向实现要"）。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import {
+  BOARD_FILE, OPEN_FIELDS, STATUSES, parseBoard, validateTaskRecords, openTasks, renderTaskMap,
+} from './livingCriteriaTasks.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HANDOFF = path.join(ROOT, 'PROJECT_HANDOFF.md');
 const LEDGER = path.join(ROOT, 'PROJECT_LIVING_CRITERIA.md');
 const GENERATOR = path.join(ROOT, 'scripts', 'make-living-criteria.mjs');
+const TASKS_MODULE = path.join(ROOT, 'scripts', 'livingCriteriaTasks.mjs');
+const BOARD = path.join(ROOT, BOARD_FILE);
 
 // 冻结线：§12 条目编号的**有序序列**（不是编号→条目的映射——71 有两份、还有编号 0，
 // 编号不是唯一键，按 §12-195④ 只能比序列）。2026-11-15 立线时逐字取自现场。
@@ -245,6 +253,9 @@ describe('产物与现场重跑内容相同（行尾归一后逐字节；登记�
     const probeScript = path.join(probeDir, 'scripts', 'make-living-criteria.mjs');
     fs.mkdirSync(path.dirname(probeScript), { recursive: true });
     fs.copyFileSync(GENERATOR, probeScript);
+    // 生成器现在 import 同目录的 livingCriteriaTasks.mjs＝探针要连它一起搬，
+    // 否则红的是"模块找不到"而不是本探针要证的"§12 读不到"。
+    fs.copyFileSync(TASKS_MODULE, path.join(path.dirname(probeScript), 'livingCriteriaTasks.mjs'));
     let code = 0;
     let stderr = '';
     try {
@@ -270,5 +281,116 @@ describe('守卫只读不写：绿了也不许动 §12 与生成器', () => {
     expect(readText(HANDOFF)).toBe(text);
     expect(after.size).toBe(before.size);
     expect(after.mtimeMs).toBe(before.mtimeMs);
+  });
+});
+
+// —— 挂账状态地图（PROJECT_TASK_BOARD.md 的投影）———————————————————————————————
+// 判据只住在 scripts/livingCriteriaTasks.mjs 一份：生成器与守卫都调它，坏形状在生成器那一侧就非零退出。
+// 这里的探针一律喂合成文本＋假 readFile＝绝不为取证去动仓库里那份真任务板（§12-195⑰）。
+describe('挂账状态地图：真任务板与账本里那张表', () => {
+  const stubRead = (rel) => (rel === 'A.md' ? '前缀 这一句逐字存在 后缀' : null);
+  const realRead = (rel) => {
+    const full = path.join(ROOT, rel);
+    return fs.existsSync(full) ? readText(full) : null;
+  };
+  const rec = (over = {}) => {
+    const f = (k, dft) => (Object.prototype.hasOwnProperty.call(over, k) ? over[k] : dft);
+    return [
+      '⧗挂账 K-90',
+      `事=${f('事', '一格测试挂账')}`,
+      `状态=${f('状态', '待开工')}`,
+      `等谁=${f('等谁', '没人')}`,
+      `落点=${f('落点', 'A.md::这一句逐字存在')}`,
+      `下一步=${f('下一步', '做 X')}`,
+    ].join('｜');
+  };
+  const probe = (line, read = stubRead) => {
+    const parsed = parseBoard(`${line}\n`);
+    return [...parsed.problems, ...validateTaskRecords(parsed, read)].join('；');
+  };
+
+  const board = parseBoard(readText(BOARD));
+
+  it('现树合格：解析＋校验问题清单为空，且抽到的记录 > 0（空清单＝抽取失败，不许当"没挂账"）', () => {
+    expect(board.problems).toEqual([]);
+    expect(board.opens.length).toBeGreaterThan(0);
+    expect(validateTaskRecords(board, realRead)).toEqual([]);
+  });
+
+  it('每格五个字段全在、状态全在枚举里；开放格＝总数减销账数（销账不会把挂账吞掉）', () => {
+    for (const o of board.opens) {
+      for (const f of OPEN_FIELDS) expect(o.fields[f], `${o.id} 缺字段 ${f}`).toBeTruthy();
+      expect(STATUSES, `${o.id} 的状态出枚举`).toContain(o.fields['状态']);
+    }
+    for (const c of board.closes) expect(c.fields['凭据'], `${c.id} 销账没凭据`).toBeTruthy();
+    expect(STATUSES).toHaveLength(7);
+    expect(openTasks(board)).toHaveLength(board.opens.length - board.closes.length);
+  });
+
+  it('账本里地图行数＝开放格＋已销账格（投影不漏格也不多格）', () => {
+    const ledger = readText(LEDGER);
+    const ids = [...ledger.matchAll(/^\| (K-\d{2,3}) \|/gm)].map((m) => m[1]);
+    expect(ids).toHaveLength(openTasks(board).length + board.closes.length);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ledger).toContain('## 挂账状态地图');
+    expect(ledger).toContain('PROJECT_TASK_BOARD.md');
+  });
+
+  it('合成探针⑨：状态自造一档（枚举外）⇒红', () => {
+    expect(probe(rec({ 状态: '明天再说' }))).toMatch(/不在枚举里/);
+    expect(probe(rec())).toBe('');
+  });
+
+  it('合成探针⑩：少写一个字段⇒红，缺哪个点哪个名', () => {
+    expect(probe(rec({ 下一步: '' }))).toMatch(/缺字段 下一步/);
+  });
+
+  it('合成探针⑪：落点文件读不到⇒红（地图不许指向接手人拿不到的东西）', () => {
+    expect(probe(rec({ 落点: 'NOPE.md::这一句逐字存在' }))).toMatch(/读不到/);
+    expect(probe(rec({ 落点: 'PROJECT_HANDOFF.md::这一句逐字存在' }), realRead)).toMatch(/找不到＝那句话被改了/);
+  });
+
+  it('合成探针⑫：落点句子在文件里逐字不命中＝文档漂了⇒红；锚太短也算漂', () => {
+    expect(probe(rec({ 落点: 'A.md::这句话早就被改掉了' }))).toMatch(/逐字锚.*找不到/);
+    expect(probe(rec({ 落点: 'A.md::短' }))).toMatch(/短于 6 字/);
+  });
+
+  it('合成探针⑬：同一编号写两遍⇒红（一行一格现状，重号就分不清哪条作数）', () => {
+    expect(probe(`${rec()}\n${rec({ 事: '另一件事' })}`)).toMatch(/重号/);
+  });
+
+  it('合成探针⑭：销账行找不到对应挂账⇒红（凭据不能凭空存在）', () => {
+    const parsed = parseBoard('⧗销账 K-77｜凭据＝没人挂过这格\n');
+    expect([...parsed.problems, ...validateTaskRecords(parsed, stubRead)].join('；')).toMatch(/找不到对应的挂账/);
+  });
+
+  it('合成探针⑮：编号写成纯数字⇒红，且证明纯数字行会被正文表当成 §12 条目行捞走', () => {
+    expect(probe(rec().replace('K-90', '190'))).toMatch(/不合法/);
+    // K- 前缀是硬约束而不是审美：纯数字首格的 6 格表正好落进 ledgerRows 的 §12 判据形状。
+    expect(ledgerRows('| 190 | 事 | 1 | 2 | 3 | 4 |\n').map((r) => r.num)).toEqual(['190']);
+    expect(() => ledgerRows('| K-190 | 事 | 1 | 2 | 3 | 4 |\n')).toThrow(/一行都没抽到/);
+  });
+
+  it('合成探针⑯：任务板一块记录都没有⇒红（渲染成"今天没有挂账"是最坏的一种假绿）', () => {
+    expect(parseBoard('# 标题\n\n什么都没有\n').problems.join('；')).toMatch(/一块挂账都没解析到/);
+    // 缩进行与代码围栏内的示例都不算记录——语法示例写在那里是安全的。
+    expect(parseBoard(`  ${rec()}\n`).problems.join('；')).toMatch(/一块挂账都没解析到/);
+  });
+
+  it('生成器真的接了这根线：任务板有问题就非零退出（源码结构钉，删连线即红）', () => {
+    const src = readText(GENERATOR);
+    expect(src).toContain('validateTaskRecords');
+    expect(src).toMatch(/if \(boardProblems\.length\) \{[\s\S]{0,240}?process\.exit\(1\);/);
+    expect(src).toMatch(/找不到 \$\{BOARD_FILE\}[^\n]*\n[^\n]*process\.exit\(1\);/);
+  });
+
+  it('守卫只读：跑完地图这一段，任务板字节与修改时刻逐字未动', () => {
+    const before = fs.statSync(BOARD);
+    const text = readText(BOARD);
+    const parsed = parseBoard(text);
+    validateTaskRecords(parsed, realRead);
+    renderTaskMap(parsed);
+    expect(readText(BOARD)).toBe(text);
+    expect(fs.statSync(BOARD).mtimeMs).toBe(before.mtimeMs);
   });
 });

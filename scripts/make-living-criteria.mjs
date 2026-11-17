@@ -2,10 +2,12 @@
 // 现行判据账本生成器：从 PROJECT_HANDOFF.md 的 §12 逐字抽取每条原标题，分区排成一张表，
 // 写成仓库根的 PROJECT_LIVING_CRITERIA.md。产物是投影，不是抄本——手改会在守卫测试里变红。
 // 判据原文的唯一权威仍是 §12；本表只保证"逐字＋可定位＋不漏"。
+// 挂账现状不在 §12：它住在 PROJECT_TASK_BOARD.md（唯一可手改的一页），由本生成器投影成「挂账状态地图」。
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BOARD_FILE, parseBoard, validateTaskRecords, renderTaskMap, openTasks } from './livingCriteriaTasks.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HANDOFF = 'PROJECT_HANDOFF.md';
@@ -129,6 +131,29 @@ const pendOnly = entries.filter((e) => e.pend && !/今后|必须|待办/.test(e.
 const zoneCount = {};
 for (const e of entries) zoneCount[e.zone] = (zoneCount[e.zone] || 0) + 1;
 
+// 挂账状态地图：任务板不合格（重号／缺字段／状态出枚举／落点指不到逐字原文／销账无主）＝非零退出。
+// 指错路的地图比没有地图更坏，所以这里没有"警告着继续"这一档。
+const boardPath = path.join(ROOT, BOARD_FILE);
+if (!fs.existsSync(boardPath)) {
+  console.error(`找不到 ${BOARD_FILE}＝挂账地图无源，必须非零退出（不许渲染成"今天没有挂账"）`);
+  process.exit(1);
+}
+const board = parseBoard(readText(boardPath));
+const boardProblems = [
+  ...board.problems,
+  ...validateTaskRecords(board, (rel) => {
+    const full = path.join(ROOT, rel);
+    return fs.existsSync(full) ? readText(full) : null;
+  }),
+];
+if (boardProblems.length) {
+  console.error(`${BOARD_FILE} 不合格（${boardProblems.length} 条）＝地图不投影，必须非零退出：`);
+  for (const p of boardProblems) console.error('  - ' + p);
+  process.exit(1);
+}
+const taskMapLines = renderTaskMap(board);
+const openCount = openTasks(board).length;
+
 const L = [];
 const push = (...s) => L.push(s.join(''));
 push('# PROJECT_LIVING_CRITERIA.md — 现行判据账本（§12 的投影）');
@@ -149,7 +174,10 @@ push('  ⇒ 在那之前，**判据原文的唯一权威仍是 §12 本体**；�
 push('- 新增判据的去处：写进**这一页的生成器选择清单**（下一刀建立）或直接改 §12 原文由生成器重投影；');
 push('  过渡期（选择清单建立之前）＝写进 §12-195 的**分项续号**（⑨⑩……，见 §12-195⑧），**新条目**才是禁止的。');
 push('  **不再往 §12 追加新条目**——那是 ' + FREEZE_FROM + ' 起的冻结令，有测试盯着。');
+push('- **还有什么没做完**看下一节「挂账状态地图」：它从 `' + BOARD_FILE + '`（唯一可手改的挂账登记面）投影而来，');
+push('  每格写清卡在谁手里、该去哪份文档读哪一句、第一个动作是什么；本轮挂账 **' + openCount + '** 格。');
 push('');
+for (const l of taskMapLines) push(l);
 push('## 读数口径（本页自证，免得再吵）');
 push('');
 push('- §12 现有 **'.concat(String(entries.length), ' 条**（去重后 **', String(distinct), ' 个编号**），正文合计 **', totalBytes.toLocaleString('en-US'), ' 字节**。'));
@@ -211,11 +239,13 @@ push('## 怎么重跑');
 push('');
 push('```');
 push('node scripts/make-living-criteria.mjs        # 重生成（会覆盖本文件）');
-push('git diff --stat PROJECT_LIVING_CRITERIA.md  # 改动面应当只来自 §12 或生成器本身');
+push('git diff --stat PROJECT_LIVING_CRITERIA.md  # 改动面应当只来自 §12、生成器或任务板');
 push('npx vitest run scripts/livingCriteriaGuard.test.mjs');
 push('```');
+push('');
+push('- 挂账现状变了＝改 `' + BOARD_FILE + '`（一行一格），**不要**改本文件里那张地图。');
 push('');
 
 const out = L.join('\n').replace(/ {2,}/g, ' ').replace(/\n{3,}/g, '\n\n');
 fs.writeFileSync(path.join(ROOT, OUT), out + '\n', 'utf8');
-console.log('生成 ' + OUT + ' =', Buffer.byteLength(out + '\n', 'utf8'), '字节 ·', out.split('\n').length, '行 · 条目', entries.length, '· 分区', JSON.stringify(zoneCount));
+console.log('生成 ' + OUT + ' =', Buffer.byteLength(out + '\n', 'utf8'), '字节 ·', out.split('\n').length, '行 · 条目', entries.length, '· 挂账开放', openCount, '· 分区', JSON.stringify(zoneCount));
