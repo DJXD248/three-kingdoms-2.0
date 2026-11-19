@@ -37,7 +37,7 @@
  * 它仍然必须留在这里：第一个撞车的人一出现，它就在，不用返工。
  */
 import type { SkillTableOwner, SkillTableRow } from '../data/skillTable';
-import { projectSkillTable } from '../data/skillTable';
+import { hasSettleableContent, projectSkillTable } from '../data/skillTable';
 import { allGenerals, type General, type GeneralSource, type Skill } from '../data/generals';
 
 export type SkillNameLookup =
@@ -64,17 +64,45 @@ let tableOverride: SkillTableRow[] | null = null;
 let snapshot: SkillTableRow[] | null = null;
 /** 用户 2026-10-21：「现在就按每次重算来做」。关掉它的开关也留在这里，等他哪天说要手动。 */
 let autoRecompute = true;
+let cachedRows: SkillTableRow[] | null = null;
+/** 上一次算表时用的进料签名；签变了才重新投影。 */
+let cachedRosterFingerprint = '';
 
 function currentRoster(): readonly General[] {
   return (rosterOverride ?? rosterSource)();
 }
 
+/**
+ * 进料的"指纹"＝把每个将的 `id` 加上卡上有真内容的技能名拼起来。
+ * 比 `JSON.stringify(currentRoster())` 便宜得多，且足够灵敏——
+ * 新增将、删掉将、改卡上某枚技能的 runtime 载荷，这三种都会变签名。
+ */
+function rosterFingerprint(generals: readonly General[]): string {
+  let out = '';
+  for (const g of generals) {
+    out += g.id ?? '';
+    for (const skill of g.skills ?? []) {
+      if (hasSettleableContent(skill)) out += '|' + (skill.name ?? '');
+    }
+    out += ';';
+  }
+  return out;
+}
+
 /** 唯一的算表处：谁问都走这里。门槛（有真内容才进表）写在 `data/skillTable.ts`，这里不重复。 */
 function rows(): SkillTableRow[] {
   if (tableOverride) return tableOverride;
-  if (autoRecompute) return projectSkillTable(currentRoster());
-  if (!snapshot) snapshot = projectSkillTable(currentRoster());
-  return snapshot;
+  if (!autoRecompute) {
+    if (!snapshot) snapshot = projectSkillTable(currentRoster());
+    return snapshot;
+  }
+
+  const finger = rosterFingerprint(currentRoster());
+  if (finger !== cachedRosterFingerprint) {
+    cachedRows = projectSkillTable(currentRoster());
+    cachedRosterFingerprint = finger;
+  }
+  return cachedRows!;
 }
 
 function buildIndex(): Map<string, SkillTableRow[]> {
@@ -135,6 +163,8 @@ export function lookupSkillByName(rawName: string): SkillNameLookup {
 export function setSkillBookRosterSource(source: () => readonly General[]): void {
   rosterSource = source;
   snapshot = null;
+  cachedRows = null;
+  cachedRosterFingerprint = '';
 }
 
 /** 今天永远是 true；这一格就是用户要的那个"关闭自动重算的接口"。 */
@@ -154,6 +184,8 @@ export function setSkillBookAutoRecompute(on: boolean): void {
  */
 export function refreshSkillBook(): void {
   snapshot = projectSkillTable(currentRoster());
+  cachedRows = null;
+  cachedRosterFingerprint = '';
 }
 
 /** 测试缝：复位＝撤掉测试装的进料与表，生产接线（`setSkillBookRosterSource` 那一路）不动。 */
@@ -162,12 +194,16 @@ export function __resetSkillNameIndexForTests(): void {
   tableOverride = null;
   snapshot = null;
   autoRecompute = true;
+  cachedRows = null;
+  cachedRosterFingerprint = '';
 }
 
 /** 测试缝：临时换一份将领名册⇒技能表跟着重投影（用来证明空壳不进表、真内容进表）。 */
 export function __setSkillNameRosterForTests(generals: readonly General[]): void {
   rosterOverride = () => generals;
   snapshot = null;
+  cachedRows = null;
+  cachedRosterFingerprint = '';
 }
 
 /** 测试缝：临时换一份技能表本身（同名不同内容那一支唯一能抵达的入口）。 */
