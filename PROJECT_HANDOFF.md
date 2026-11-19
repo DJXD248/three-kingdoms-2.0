@@ -466,6 +466,16 @@ Controllers 目标位置：
 
   ⑥ **推送与回填**＝直连自检 `curl -sI --max-time 10 https://github.com` **无回行**（直连直连不通）⇒按降级链第二级一次性 `git -c http.proxy=http://[IP_ADDRESS]:10808 push origin master` 推送成功（区间 `4a58fde..08cbb5c`），推完回查 `git config --local http.proxy`／`--global http.proxy` **均为空**（`http.proxy` 绝不落持久配置）。本轮 CI＝**#423**（run `44018699314`·head `08cbb5c`·`git push` 和 CI 触发双已核：head sha 有且只有一条 run） —— 三条一体核过：run 编号 ↔ run id ↔ head_sha 四岗全 completed/success。回填笔＝**纯数字与十六进制、不新增任何点名**，回填后再跑一遍生成器证明账本 md5 仍是 `5eb845dd5101f67a9c9c1b601fbc5770`＝⑰ 那格闭环次序的第二次正面执行。 ↔ head_sha）。铁规照守＝推完回查 `git config --local http.proxy`／`--global http.proxy` **必须仍为空**（`http.proxy` 绝不落持久配置）。回填笔＝**纯数字与十六进制、不新增任何点名**，回填后再跑一遍生成器证明账本 md5 仍是 `5eb845dd5101f67a9c9c1b601fbc5770`＝⑰ 那格闭环次序的第二次正面执行。
 
+- 工程刀＝技能册指纹缓存＋测试分组快捷命令（**零游戏规则变更·不占版本号·不打标签**；**本条＝本轮全部读数的单点落点**）：
+
+  ① **口令与类型**＝纯工程优化，零游戏规则变更；不占版本号、不打标签。改动面＝两处：`package.json` **+3/−0**（新增 `test:editor`／`test:net`／`test:game` 三档快捷命令，把闸二 2,902 条按编辑器／网络／结算分三组分别跑，便于定位慢用例）＋`src/skills/skillNameIndex.ts` **+40/−4**（技能册指纹缓存：首次构建时计算一次名册中全部技能名的指纹并缓存，后续每次查询直接命中，避免重复遍历生成器路径）。
+
+  ② **五闸读数**＝闸一 `npm run check` **exit 0**；闸二 在册形态 `npx eslint . --ignore-pattern .ai-battle` **exit 0／输出 0 字节**、裸 `npx eslint .` **exit 0／输出 0 字节**（两把尺同面、零新增警告）；闸三 `npm run test:coverage` **exit 0＝2,902 例全过**（静止树读数＝闸三总额减去满载超时的 2 枚，超时形状与判据同 §12-195⑪：重型 jsdom 用例在满载下单趟撞墙、断言失败 0 条、空闲即转绿）；闸四 `npm run build` **exit 0**＝`dist/index.html` **2,363,030 B**；闸五 真机 E2E＝**没跑**（本轮零玩法零交互、界面一字未动）。
+
+  ③ **两锚＝没跑**（判级 **B**：只动查询路径的缓存层与 `package.json` 脚本段，运行时两池输入面 `src/data/generals.ts` 零字节、结算代码零改动）。
+
+  ④ **CI（本条＝本版 CI 读数的唯一落点）＝已核，云端全绿**：**#425 ↔ run `44527032070` ↔ head_sha `9a32240`**（三条一体核）；`conclusion=success`＝**四岗全 success、失败步骤 0**：`lint`／`test (24)`／`test (22)`／`build`；feat 笔 `9a32240d` 无独立 CI 证据（同次推送只头部起 run）。
+
 - 2.9.35 触发时机接入线·第 2 刀＝`untilExpire`「直到X前生效」接进结算面（2026-11-13 监督台施工＋终树整套复量＋真机两腿＋收口；**本条＝本版全部读数的单点落点**，判据与新坑＝**§12-189**，索引行＝§3 本轮行，契约表＝**§16**那一格）：
 
 
