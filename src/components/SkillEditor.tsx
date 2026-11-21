@@ -180,6 +180,11 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   /** §H3: why a save/import/delete was refused. Persistent until the next try. */
   const [readOnlyNotice, setReadOnlyNotice] = useState('');
 
+  /** K-12：从已有技能库选一枚的搜索关键词 */
+  const [skillPickerQuery, setSkillPickerQuery] = useState('');
+  /** K-12：下拉面板是否展开 */
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+
   // Multi-select state
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -218,6 +223,132 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
       return sk.effects.some(eff => !eff.description || !eff.trigger || (eff.runtime != null && eff.runtime.value == null));
     });
   }, []);
+
+  // ── K-12：从已有技能库选一枚 ──
+  /** 编辑器里候选的一条形状＝一枚技能 + 它的来源将领。 */
+  interface SkillPickerRef {
+    skill: SkillEditEntry;
+    skillSignature: string; // 名字+描述+徽章+效果形状，用来判断"是不是同名同内容"
+    generalId: string;
+    generalName: string;
+    faction: Faction;
+    source: GeneralSource;
+    hasEffects: boolean;
+  }
+
+  /** 签名函数：同一枚技能（名字+描述+徽章+触发+效果形状）算同一个，名字相同但内容不同的签不同名。 */
+  const skillEditSignature = (sk: SkillEditEntry): string => {
+    const name = sk.name.trim();
+    const desc = (sk.description ?? '').trim();
+    const tags = [...tagsOf(sk)].sort().join(',');
+    const forced = sk.forced ? 'F' : '';
+    const trigger = sk.trigger ? sk.trigger.type : '';
+    const effCount = (sk.effects ?? []).length;
+    return `${name}|${desc}|${tags}|${forced}|${trigger}|${effCount}`;
+  };
+
+  /** 从"仓库名册 + 玩家自制卡"两份里把所有卡上写着名字的技能收进来（含空壳）。 */
+  const allRosterSkillRefs = useMemo<SkillPickerRef[]>(() => {
+    const refs: SkillPickerRef[] = [];
+    const pool = [...allGenerals, ...authoredGenerals];
+    for (const g of pool) {
+      for (const sk of (g.skills ?? [])) {
+        const name = sk.name?.trim();
+        if (!name) continue; // 卡上没写名字的空记录不收
+        const hasEffects = !!(sk.effects && sk.effects.length > 0);
+        const entry: SkillEditEntry = {
+          name,
+          description: sk.description,
+          tags: tagsOf(sk),
+          trigger: sk.trigger ? { ...sk.trigger } : undefined,
+          effects: sk.effects ? sk.effects.map(e => ({ ...e })) : undefined,
+          effectMode: sk.effectMode,
+          conditions: sk.conditions ? [...sk.conditions] : undefined,
+          forced: sk.forced,
+          turnLimit: sk.turnLimit,
+        };
+        refs.push({
+          skill: entry,
+          skillSignature: skillEditSignature(entry),
+          generalId: g.id,
+          generalName: g.name,
+          faction: g.faction,
+          source: sourceOf(g),
+          hasEffects,
+        });
+      }
+    }
+    return refs;
+  }, [authoredGenerals]);
+
+  /** 按搜索词过滤后的候选列表——按"名字匹配优先"排序，最多 50 条防止卡顿。 */
+  const skillPickerResults = useMemo(() => {
+    const q = skillPickerQuery.trim().toLowerCase();
+    if (!q) return [];
+    const scored = allRosterSkillRefs
+      .map(ref => {
+        const n = ref.skill.name.toLowerCase();
+        const gn = ref.generalName.toLowerCase();
+        const f = ref.faction.toLowerCase();
+        let score = 0;
+        if (n === q) score += 100;       // 名字全匹配最前
+        if (n.startsWith(q)) score += 50;
+        if (n.includes(q)) score += 20;
+        if (gn.includes(q)) score += 5;
+        if (f.includes(q)) score += 3;
+        return { ref, score };
+      })
+      .filter(r => r.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 50)
+      .map(r => r.ref);
+    return scored;
+  }, [skillPickerQuery, allRosterSkillRefs]);
+
+  /** 把同名同内容的候选合并（显示多来源），同名不同内容的保持独立让玩家辨认。 */
+  interface SkillPickerGroup {
+    skill: SkillEditEntry;
+    signature: string;
+    /** 同一签名下所有来源的集合（显示"赵云·蜀 / 马超·群"） */
+    origins: { generalName: string; faction: Faction; source: GeneralSource }[];
+    hasEffects: boolean;
+  }
+  const skillPickerGroups = useMemo<SkillPickerGroup[]>(() => {
+    const seen = new Map<string, SkillPickerGroup>();
+    const order: string[] = [];
+    for (const ref of skillPickerResults) {
+      let group = seen.get(ref.skillSignature);
+      if (!group) {
+        group = {
+          skill: ref.skill,
+          signature: ref.skillSignature,
+          origins: [{ generalName: ref.generalName, faction: ref.faction, source: ref.source }],
+          hasEffects: ref.hasEffects,
+        };
+        seen.set(ref.skillSignature, group);
+        order.push(ref.skillSignature);
+      } else {
+        // 不重复加同一个来源
+        if (!group.origins.some(o => o.generalName === ref.generalName && o.faction === ref.faction)) {
+          group.origins.push({ generalName: ref.generalName, faction: ref.faction, source: ref.source });
+        }
+      }
+    }
+    return order.map(sig => seen.get(sig)!);
+  }, [skillPickerResults]);
+
+  /** 选中某枚技能 → 深拷贝进 editingSkills。 */
+  const handlePickSkill = (group: SkillPickerGroup) => {
+    const copy: SkillEditEntry = {
+      ...group.skill,
+      effects: group.skill.effects ? group.skill.effects.map(e => ({ ...e })) : undefined,
+      conditions: group.skill.conditions ? group.skill.conditions.map(c => ({ ...c })) : undefined,
+      trigger: group.skill.trigger ? { ...group.skill.trigger } : undefined,
+    };
+    setEditingSkills(prev => [...prev, copy]);
+    setSkillPickerQuery('');
+    setSkillPickerOpen(false);
+  };
 
   const filtered = useMemo(() => {
     let list = [...allGenerals, ...authoredGenerals].map(g => ({ original: g, edited: getEditedGeneral(g) })).filter(({ edited }) => {
@@ -1818,9 +1949,91 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                     );
                   })}
 
+                  {/* ── K-12：从已有技能库选一枚 ── */}
+                  <div className="relative">
+                    <div className="flex gap-2 items-center">
+                      <div className="flex-1 relative">
+                        <input
+                          type="text"
+                          value={skillPickerQuery}
+                          onChange={e => { setSkillPickerQuery(e.target.value); setSkillPickerOpen(true); }}
+                          onFocus={() => setSkillPickerOpen(true)}
+                          onBlur={() => setTimeout(() => setSkillPickerOpen(false), 150)}
+                          placeholder="🔍 搜一个已有技能（名字/将领/势力）…"
+                          className="w-full px-3 py-2 rounded-lg bg-black/50 border border-purple-700/30 text-purple-100 text-sm focus:outline-none focus:border-purple-500 placeholder:text-purple-400/40"
+                        />
+                        {skillPickerQuery && (
+                          <button
+                            type="button"
+                            onMouseDown={e => { e.preventDefault(); setSkillPickerQuery(''); setSkillPickerOpen(false); }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-purple-400/60 hover:text-purple-200 text-xs">
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 下拉候选列表 */}
+                    {skillPickerOpen && skillPickerQuery && (
+                      <div className="absolute z-50 left-0 right-0 mt-1 rounded-lg border border-purple-700/40 bg-slate-900/95 backdrop-blur-sm shadow-2xl max-h-80 overflow-y-auto">
+                        {skillPickerGroups.length === 0 ? (
+                          <div className="px-3 py-3 text-[11px] text-purple-400/60">
+                            没搜到匹配的技能
+                          </div>
+                        ) : skillPickerGroups.length === 1 ? (
+                          <button
+                            type="button"
+                            onMouseDown={e => { e.preventDefault(); handlePickSkill(skillPickerGroups[0]); }}
+                            className="w-full text-left px-3 py-2.5 hover:bg-purple-900/40 transition-colors">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <span className="text-sm font-bold text-purple-200">{skillPickerGroups[0].skill.name}</span>
+                              {skillPickerGroups[0].hasEffects && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-900/40 text-cyan-300 border border-cyan-700/30">有积木</span>
+                              )}
+                              {!skillPickerGroups[0].hasEffects && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800/50 text-gray-400 border border-gray-700/30">只有卡面</span>
+                              )}
+                            </div>
+                            {skillPickerGroups[0].skill.description && (
+                              <div className="text-[11px] text-purple-300/60 truncate">{skillPickerGroups[0].skill.description}</div>
+                            )}
+                            <div className="text-[10px] text-purple-400/50 mt-1">
+                              来源：{skillPickerGroups[0].origins.map(o => `${o.generalName}·${o.faction}`).join(' / ')}
+                            </div>
+                          </button>
+                        ) : (
+                          skillPickerGroups.map((g, gi) => (
+                            <button
+                              key={g.signature + gi}
+                              type="button"
+                              onMouseDown={e => { e.preventDefault(); handlePickSkill(g); }}
+                              className="w-full text-left px-3 py-2 hover:bg-purple-900/40 transition-colors border-b border-purple-800/20 last:border-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-sm font-bold text-purple-200">{g.skill.name}</span>
+                                {g.hasEffects && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-900/40 text-cyan-300 border border-cyan-700/30">有积木</span>
+                                )}
+                                {!g.hasEffects && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-800/50 text-gray-400 border border-gray-700/30">只有卡面</span>
+                                )}
+                              </div>
+                              {g.skill.description && (
+                                <div className="text-[11px] text-purple-300/60 truncate">{g.skill.description}</div>
+                              )}
+                              <div className="text-[10px] text-purple-400/50 mt-1">
+                                来源：{g.origins.map(o => `${o.generalName}·${o.faction}`).join(' / ')}
+                                {g.origins.length > 2 && `（${g.origins.length} 个来源）`}
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <button onClick={handleAddSkill}
-                    className="w-full py-3 rounded-xl border-2 border-dashed border-purple-700/30 text-purple-400 text-sm font-bold hover:bg-purple-900/20 hover:border-purple-600/40 transition-all">
-                    + 添加技能
+                    className="w-full py-3 rounded-xl border-2 border-dashed border-purple-700/30 text-purple-400 text-sm font-bold hover:bg-purple-900/20 hover:border-purple-600/40 transition-all mt-2">
+                    + 从零新建一个空技能
                   </button>
                 </div>
                 )}
