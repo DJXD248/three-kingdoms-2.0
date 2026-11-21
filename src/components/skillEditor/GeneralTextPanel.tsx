@@ -13,18 +13,24 @@
 import { useState } from 'react';
 import type { GeneralTextDraft } from './generalTextParse';
 import { canAdoptGeneral, describeGeneralDraft, hasUnlandedSegment, missingRequiredFields, parseGeneralText } from './generalTextParse';
+import { callLlmRewrite } from './llmClient';
+import type { LlmConfig } from './llmClient';
 
 const hintCls = 'text-[9px] leading-tight';
 
-export function GeneralTextPanel({ mode, onAdopt }: {
+export function GeneralTextPanel({ mode, onAdopt, llm }: {
   mode: 'create' | 'edit';
   onAdopt: (draft: GeneralTextDraft) => void;
+  /** 可选：如果传了 config + hasAll=true，就出现「🤖 用大模型改写」按钮 */
+  llm?: { cfg: LlmConfig; hasAll: boolean };
 }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [draft, setDraft] = useState<GeneralTextDraft | null>(null);
+  const [rewriting, setRewriting] = useState(false);
+  const [rewriteMsg, setRewriteMsg] = useState<string>('');
 
-  const close = () => { setOpen(false); setDraft(null); };
+  const close = () => { setOpen(false); setDraft(null); setRewriteMsg(''); };
 
   if (!open) {
     return (
@@ -49,13 +55,48 @@ export function GeneralTextPanel({ mode, onAdopt }: {
         aria-label="一句话生成将领"
         placeholder={'一句一格；将名请写上「名：」（没写＝不替您按位置猜）。例：\n名：张辽，势力魏，体力4，技能：突袭、骁果\n名：赵云，蜀，4点体力，远程2\n读不懂的那一段会单独点名，没落进这张卡的段落一句都不放过去。'}
         className="w-full px-2 py-1.5 rounded bg-black/50 border border-violet-800/30 text-violet-100 text-[11px] h-16 resize-none focus:outline-none focus:border-violet-500" />
-      <div className="flex items-center gap-2">
-        <button type="button" onClick={() => setDraft(parseGeneralText(text))}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={() => { setRewriteMsg(''); setDraft(parseGeneralText(text)); }}
           className="text-[10px] px-2 py-1 rounded border border-violet-700/50 text-violet-200 hover:bg-violet-900/30">
           按这句生成
         </button>
+        {llm?.hasAll && (
+          <button
+            type="button"
+            disabled={rewriting || !text.trim()}
+            onClick={async () => {
+              setRewriting(true);
+              setRewriteMsg('');
+              try {
+                const result = await callLlmRewrite(llm!.cfg, text, { context: 'general', attemptPayload: true });
+                if (result.ok) {
+                  setText(result.data.rewrittenText);
+                  setRewriteMsg(result.data.payloadDraft
+                    ? `🤖 改写完成（${result.data.rewrittenText.length}字）+ 积木草稿一起写了——先按这句生成，草稿会自动被离线反解吃进去`
+                    : `🤖 改写完成（${result.data.rewrittenText.length}字），按这句生成看看系统怎么读`);
+                  // 改写后立刻让用户看见新的解析结果
+                  setDraft(parseGeneralText(result.data.rewrittenText));
+                } else {
+                  setRewriteMsg(`❌ ${result.error.message}`);
+                }
+              } finally {
+                setRewriting(false);
+              }
+            }}
+            className={`text-[10px] px-2 py-1 rounded border transition-colors ${
+              rewriting || !text.trim()
+                ? 'border-gray-600/40 text-gray-500 cursor-not-allowed'
+                : 'border-amber-700/50 text-amber-200 hover:bg-amber-900/30'
+            }`}
+          >
+            {rewriting ? '🤖 改写中…' : '🤖 用大模型改写'}
+          </button>
+        )}
         {draft && <span className={`${hintCls} text-violet-300/70`}>下面是系统准备替您落的字段，看着不对就别采用。</span>}
       </div>
+      {rewriteMsg && (
+        <p className={`${hintCls} ${rewriteMsg.startsWith('❌') ? 'text-rose-300' : 'text-amber-300'}`}>{rewriteMsg}</p>
+      )}
 
       {draft && (
         <div className="space-y-1">

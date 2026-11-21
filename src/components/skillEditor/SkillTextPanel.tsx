@@ -11,18 +11,24 @@ import type { SkillTextDraft } from '../../skills/skillTextParse';
 import { parseSkillText } from '../../skills/skillTextParse';
 import { effectSentence } from '../../skills/skillSentence';
 import { gateConditionsToText } from '../../skills/skillGateText';
+import { callLlmRewrite } from './llmClient';
+import type { LlmConfig } from './llmClient';
 
 const hintCls = 'text-[9px] leading-tight';
 
-export function SkillTextPanel({ onAdopt }: {
+export function SkillTextPanel({ onAdopt, llm }: {
   /** 采用＝把这些积木并进技能，随后界面上就是拼积木那套格子，玩家可以逐格改。 */
   onAdopt: (draft: SkillTextDraft) => void;
+  /** 可选：如果传了 config + hasAll=true，就出现「🤖 用大模型改写」按钮 */
+  llm?: { cfg: LlmConfig; hasAll: boolean };
 }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [draft, setDraft] = useState<SkillTextDraft | null>(null);
+  const [rewriting, setRewriting] = useState(false);
+  const [rewriteMsg, setRewriteMsg] = useState<string>('');
 
-  const close = () => { setOpen(false); setDraft(null); };
+  const close = () => { setOpen(false); setDraft(null); setRewriteMsg(''); };
 
   if (!open) {
     return (
@@ -43,13 +49,47 @@ export function SkillTextPanel({ onAdopt }: {
         aria-label="自己写效果"
         placeholder={'一行一段，句号分开。例：\n受到伤害后，对伤害来源，回复 1 点体力。\n以下依次生效，回合开始时，摸 2 张牌；造成伤害后，造成 1 点技能伤害。'}
         className="w-full px-2 py-1.5 rounded bg-black/50 border border-emerald-800/30 text-emerald-100 text-[11px] h-20 resize-none focus:outline-none focus:border-emerald-500" />
-      <div className="flex items-center gap-2">
-        <button type="button" onClick={() => setDraft(parseSkillText(text))}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={() => { setRewriteMsg(''); setDraft(parseSkillText(text)); }}
           className="text-[10px] px-2 py-1 rounded border border-emerald-700/50 text-emerald-200 hover:bg-emerald-900/30">
           按这句生成
         </button>
+        {llm?.hasAll && (
+          <button
+            type="button"
+            disabled={rewriting || !text.trim()}
+            onClick={async () => {
+              setRewriting(true);
+              setRewriteMsg('');
+              try {
+                const result = await callLlmRewrite(llm!.cfg, text, { context: 'skill', attemptPayload: true });
+                if (result.ok) {
+                  setText(result.data.rewrittenText);
+                  setRewriteMsg(result.data.payloadDraft
+                    ? `🤖 改写完成（${result.data.rewrittenText.length}字）+ 积木草稿一起写了——按这句生成看看离线反解能吃进去多少`
+                    : `🤖 改写完成（${result.data.rewrittenText.length}字），按这句生成看看系统怎么读`);
+                  setDraft(parseSkillText(result.data.rewrittenText));
+                } else {
+                  setRewriteMsg(`❌ ${result.error.message}`);
+                }
+              } finally {
+                setRewriting(false);
+              }
+            }}
+            className={`text-[10px] px-2 py-1 rounded border transition-colors ${
+              rewriting || !text.trim()
+                ? 'border-gray-600/40 text-gray-500 cursor-not-allowed'
+                : 'border-amber-700/50 text-amber-200 hover:bg-amber-900/30'
+            }`}
+          >
+            {rewriting ? '🤖 改写中…' : '🤖 用大模型改写'}
+          </button>
+        )}
         {draft && <span className={`${hintCls} text-emerald-300/70`}>下面是系统准备替您写进卡面的话，看着不对就别采用。</span>}
       </div>
+      {rewriteMsg && (
+        <p className={`${hintCls} ${rewriteMsg.startsWith('❌') ? 'text-rose-300' : 'text-amber-300'}`}>{rewriteMsg}</p>
+      )}
 
       {draft && (
         <div className="space-y-1">

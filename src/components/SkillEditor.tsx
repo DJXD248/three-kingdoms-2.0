@@ -60,6 +60,8 @@ import {
 } from '../skills/skillSentence';
 import { SkillTextPanel } from './skillEditor/SkillTextPanel';
 import { GeneralTextPanel } from './skillEditor/GeneralTextPanel';
+import { useLlmConfig } from './skillEditor/useLlmConfig';
+import { LlmSettings } from './skillEditor/LlmSettings';
 import type { GeneralTextDraft } from './skillEditor/generalTextParse';
 import { canAdoptGeneral, hpWasDefaulted, unsettledSegments } from './skillEditor/generalTextParse';
 import type { SkillTextDraft } from '../skills/skillTextParse';
@@ -184,6 +186,11 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
   const [skillPickerQuery, setSkillPickerQuery] = useState('');
   /** K-12：下拉面板是否展开 */
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+
+  // ── K-13：大模型档（只在开发者模式里启用）──
+  const llm = useLlmConfig();
+  const [llmSettingsOpen, setLlmSettingsOpen] = useState(false);
+  const llmEnabled = !!developerMode;
 
   // Multi-select state
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -1171,6 +1178,20 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
               className={`px-3 py-1.5 rounded-lg border text-sm font-bold transition-all ${multiSelectMode ? 'bg-red-700/60 border-red-500/40 text-red-100' : 'bg-purple-800/40 border-purple-700/30 text-purple-200 hover:bg-purple-700/40'}`}>
               {multiSelectMode ? '✕ 退出多选' : '🗑️ 批量删除'}
             </button>
+            {llmEnabled && (
+              <div className="relative">
+                <LlmSettings
+                  open={llmSettingsOpen}
+                  onToggle={() => setLlmSettingsOpen(o => !o)}
+                  cfg={llm.cfg}
+                  hasAll={llm.hasAll}
+                  maskedEndpoint={llm.maskedEndpoint}
+                  maskedApiKey={llm.maskedApiKey}
+                  update={llm.update}
+                  clear={llm.clear}
+                />
+              </div>
+            )}
             <button onClick={onClose}
               className="px-4 py-1.5 rounded-lg bg-gray-700 text-white text-sm font-bold hover:bg-gray-600">
               关闭
@@ -1236,7 +1257,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
             </div>
             {/* v2.9.24 刀2：同一排的另一条入口——说一句话，读到的字段照样只走上面那颗「创建」
                 所走的那一条建卡路；身份与归属仍由上面那两个下拉定（一句话不替玩家定这两格）。 */}
-            <GeneralTextPanel mode="create" onAdopt={handleAdoptCreateDraft} />
+            <GeneralTextPanel mode="create" onAdopt={handleAdoptCreateDraft}
+              llm={llmEnabled ? { cfg: llm.cfg, hasAll: llm.hasAll } : undefined} />
             <p className="text-[11px] text-emerald-200/70">
               创建即定死：编号与归属之后不可改（改名/改血量/导出再导入都不重新发号）。身份可以之后在编辑面板里改。
               新建的将进入本地征召池；AI 标准自动对局仍只用仓库官方池，要成为仓库官方须人工合进 generals.ts。
@@ -1691,7 +1713,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
                   {/* v2.9.24 刀2㈡：这一腿采用＝只往上面那六格里填字（见 `handleAdoptIdentityDraft`），
                       不新建第二条写库路——落档仍然只有第②步那颗「💾 保存修改」。 */}
                   <div className="mt-3">
-                    <GeneralTextPanel mode="edit" onAdopt={handleAdoptIdentityDraft} />
+                    <GeneralTextPanel mode="edit" onAdopt={handleAdoptIdentityDraft}
+                      llm={llmEnabled ? { cfg: llm.cfg, hasAll: llm.hasAll } : undefined} />
                   </div>
                   {identityGenNote && (
                     <p className="mt-2 text-[11px] leading-tight text-violet-200">{identityGenNote}</p>
@@ -1806,7 +1829,8 @@ export default function SkillEditor({ onClose }: { onClose: () => void }) {
 
                         {/* v2.9.9：单效果档也开这一格——玩家先写一句话、由它生成积木，
                             正是给"还没有积木"的人准备的第一条路。 */}
-                        <SkillTextPanel onAdopt={adoptDraft} />
+                        <SkillTextPanel onAdopt={adoptDraft}
+                          llm={llmEnabled ? { cfg: llm.cfg, hasAll: llm.hasAll } : undefined} />
 
                         {/* Single-effect mode (no sub-effects) */}
                         {!hasEffects && (
