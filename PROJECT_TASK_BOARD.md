@@ -69,6 +69,8 @@
 
 ⧗挂账 K-13｜事=编辑器刀4 大模型档（界面填 API 地址＋密钥）未开工｜状态=待开工｜等谁=没人（三问已于 2026-10-27 答完）｜落点=PROJECT_HANDOFF.md::大模型档（决策一未决口径答复后才开工｜下一步=施工时守住密钥只存内存、绝不落盘（不进代码／不进产物／不写浏览器本地存储）
 
+⧗销账 K-13｜凭据=commit fab7f5a feat(editor) K-13 大模型档；6 files +473/-11（3 新建：llmClient.ts/useLlmConfig.ts/LlmSettings.tsx，3 改：SkillEditor/GeneralTextPanel/SkillTextPanel）；五闸读数 闸一exit0 闸二exit0零error 闸三17文件/278绿 闸四exit0成品2379KB 闸五AI演练exit0；密钥只活 React state 零持久化；开发者模式 gate 住；覆盖 GeneralTextPanel + SkillTextPanel 两边；边界用户放宽＝改写+尝试生成载荷草稿（仍离线反解过滤后才进）
+
 ⧗挂账 K-14｜事=锁定技的不能被无效、不能被改变仍只是分类，引擎里没有无效技能这套机制｜状态=挂起｜等谁=业主裁要不要先造一套无效技能机制｜落点=PLAYER_GLOSSARY.md::锁定技的"不能被无效"仍只是分类｜下一步=机制不存在⇒这一半不做，口径已写在词汇表 §八 第 9 条那一格
 
 ⧗挂账 K-15｜事=哪些官方卡是强制发动由业主自己在表格里填，官方卡到今天一枚都没勾｜状态=等业主｜等谁=业主本人（原话＝这部分由我自己来填写）｜落点=PLAYER_GLOSSARY.md::这部分由我自己来填写｜下一步=业主填完表格后按词汇表纪律先备份工作簿、逐字抄回 md、再重跑投影并读回核对
