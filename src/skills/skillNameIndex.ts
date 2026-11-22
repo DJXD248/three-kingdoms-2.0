@@ -198,9 +198,15 @@ export function __resetSkillNameIndexForTests(): void {
   cachedRosterFingerprint = '';
 }
 
-/** 测试缝：临时换一份将领名册⇒技能表跟着重投影（用来证明空壳不进表、真内容进表）。 */
-export function __setSkillNameRosterForTests(generals: readonly General[]): void {
-  rosterOverride = () => generals;
+/** 测试缝：临时换一份将领名册⇒技能表跟着重投影（用来证明空壳不进表、真内容进表）。
+ * K-01（2026-11-22）：也接受函数形式，让测试能动态根据 store 状态生成 roster，
+ * 而不是一份静态快照——这样 addAuthoredGeneral 加的卡能实时进册子。 */
+export function __setSkillNameRosterForTests(
+  generalsOrFn: readonly General[] | (() => readonly General[])
+): void {
+  rosterOverride = typeof generalsOrFn === 'function'
+    ? generalsOrFn
+    : () => generalsOrFn;
   snapshot = null;
   cachedRows = null;
   cachedRosterFingerprint = '';

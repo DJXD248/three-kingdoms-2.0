@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "test": "vitest run",
+    "test:fast": "vitest run --exclude 'src/components/SkillEditor.*.test.tsx' --exclude 'scripts/livingCriteriaGuard.test.mjs'",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:editor": "vitest run SkillEditor",

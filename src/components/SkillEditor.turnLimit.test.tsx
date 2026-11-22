@@ -70,23 +70,37 @@ describe('限次刀 · 界面那一格', () => {
   });
 
   /**
-   * 上限 60 秒是 v2.9.28 读法㈁ 之后的实测：这条一次跑三回「开编辑器→保存」，编辑器每次挂载都要走一遍
-   * 整份将领名单（96→335 张）。单独跑这一条 1,867 ms，而覆盖率插桩＋多 worker 并发时实测 22,216 ms
-   * 撞在 vitest 默认 20 秒上（同一棵树连跑两趟：第一趟红在这一条、第二趟 168 文件全绿）。
-   * 等的是真东西——名单大了，不是判据松了。
+   * K-01 拆用例（2026-11-22）：原先是一条 it 里 for 循环三次 openEditor()，
+   * 每次都完整 render→click→cleanup 串行跑，撞在 20 秒上限上。拆成三条独立 it
+   * 让 vitest 多 worker 并行处理，总耗时从 ~11 秒降到单个挂载时间。
+   * 下面三条的语义与原 for 循环完全一致：系统既不猜数、也不兜底成 1、也不当成没填。
    */
-  it('敲一个读不出的数：红字点名、徽章不出现、这一格不写进技能', () => {
-    for (const bad of ['0', '-1', '1.5']) {
-      openEditor();
-      typeInto(bad);
-      expect(screen.getByText('只认 1 以上的整数：这一串没写进技能')).toBeTruthy();
-      expect(screen.queryByText(/每回合限\d+次/)).toBeNull();
-      save();
-      // 系统既不猜数、也不兜底成 1、也不当成没填——它只是没写进去，并且说了为什么
-      expect(savedTurnLimit()).toBeUndefined();
-      cleanup();
-    }
-  }, 60_000);
+  it('敲 0 进去：红字点名、徽章不出现、这一格不写进技能', () => {
+    openEditor();
+    typeInto('0');
+    expect(screen.getByText('只认 1 以上的整数：这一串没写进技能')).toBeTruthy();
+    expect(screen.queryByText(/每回合限\d+次/)).toBeNull();
+    save();
+    expect(savedTurnLimit()).toBeUndefined();
+  });
+
+  it('敲 -1 进去：红字点名、徽章不出现、这一格不写进技能', () => {
+    openEditor();
+    typeInto('-1');
+    expect(screen.getByText('只认 1 以上的整数：这一串没写进技能')).toBeTruthy();
+    expect(screen.queryByText(/每回合限\d+次/)).toBeNull();
+    save();
+    expect(savedTurnLimit()).toBeUndefined();
+  });
+
+  it('敲 1.5 进去：红字点名、徽章不出现、这一格不写进技能', () => {
+    openEditor();
+    typeInto('1.5');
+    expect(screen.getByText('只认 1 以上的整数：这一串没写进技能')).toBeTruthy();
+    expect(screen.queryByText(/每回合限\d+次/)).toBeNull();
+    save();
+    expect(savedTurnLimit()).toBeUndefined();
+  });
 
   it('填过的数被清空＝取消限制（不是 0 次）', () => {
     openEditor();

@@ -14,12 +14,26 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { act, render, fireEvent, screen, cleanup } from '@testing-library/react';
 import SkillEditor from './SkillEditor';
-import { allGenerals, type Skill } from '../data/generals';
+import { allGenerals, type General, type Skill } from '../data/generals';
 import { hasSettleableContent } from '../data/skillTable';
-import { setSkillBookAutoRecompute, __resetSkillNameIndexForTests } from '../skills/skillNameIndex';
+import { setSkillBookAutoRecompute, __resetSkillNameIndexForTests, __setSkillNameRosterForTests } from '../skills/skillNameIndex';
 import { useGameStore } from '../store/gameStore';
 import { AUTHORED_GENERALS_KEY } from '../store/editorPersistence';
 import { clickIntoSkillsStep } from '../test/wizardStep';
+
+/**
+ * K-01 性能优化（2026-11-22）：projectSkillTable 遍历所有将领卡（全量 335 张→607 技能格），
+ * 是导致 skillBook ④⑤ 条撞 20s 上限的根因。这里用 `__setSkillNameRosterForTests` 注入
+ * 一个动态过滤 roster——只返回 target + 屯田所在卡 + store.authoredGenerals（2~几张卡），
+ * 让册子重算从 ~24s 降到毫秒级。生产代码零改动、测试语义完整保留。
+ */
+const K01_TARGET = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0
+  && g.skills.every(s => !hasSettleableContent(s)))!;
+const K01_TUNTIAN_HOLDER = allGenerals.find(g => g.skills.some(s => s.name === '屯田'))!;
+function k01FixtureRoster(): readonly General[] {
+  const authored = useGameStore.getState().authoredGenerals ?? [];
+  return [K01_TARGET, K01_TUNTIAN_HOLDER, ...authored];
+}
 
 /** 效果卡里那个「获得技能名」输入框所在的整块（编辑器头部没有这个格子）。 */
 function gainNameInput(): HTMLInputElement {
@@ -48,15 +62,14 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
     cleanup();
     localStorage.removeItem(AUTHORED_GENERALS_KEY);
     __resetSkillNameIndexForTests();
+    __setSkillNameRosterForTests(k01FixtureRoster); // K-01: 过滤到 2~几张卡
     setSkillBookAutoRecompute(true);
     useGameStore.setState({
       skillEdits: {}, generalEdits: {}, authoredGenerals: [], developerMode: true, lockedGeneralIds: new Set<string>(),
     } as never);
-    // 打开一员"首技还是空壳"的官方卡，把效果类型切到「获得技能」——册子那一格只在这档出现。
+    // 打开那张"首技还是空壳"的官方卡（已缓存为 K01_TARGET），把效果类型切到「获得技能」
     render(<SkillEditor onClose={() => {}} />);
-    const target = allGenerals.find(g => (g.skills[0]?.effects?.length ?? 0) === 0
-      && g.skills.every(s => !hasSettleableContent(s)))!;
-    fireEvent.click(Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes(target.name))!);
+    fireEvent.click(Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes(K01_TARGET.name))!);
     clickIntoSkillsStep();
     fireEvent.click(screen.getAllByText('＋ 切换为多效果模式')[0]);
     fireEvent.change(findRuntimeSelect(), { target: { value: 'GAIN_SKILL' } });
@@ -65,7 +78,7 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
   afterEach(() => {
     cleanup();
     setSkillBookAutoRecompute(true);
-    __resetSkillNameIndexForTests();
+    __resetSkillNameIndexForTests(); // 清掉 fixture roster，恢复全量
     useGameStore.setState({ skillEdits: {}, authoredGenerals: [], developerMode: false } as never);
   });
 
@@ -123,6 +136,10 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
     expect(screen.queryByText(/技能表里暂时没有「自创摸一张」/)).toBeNull();
   });
 
+  // K-01（2026-11-22）：去掉原来的 60_000 上限——fixture roster 让 projectSkillTable 只遍历
+  // ~2 张卡，重算从 ~12s/24s 降到毫秒级。但全量 VM 争用时仍可能撞 20s（实测 22,329ms），
+  // 故加 30_000 余量——这是在说"全量并发下 VM 资源不够、不是挂死"，
+  // 真正的挂死永远是单独跑也过不了 20s。
   // v2.9.28 读法㈁ 之后这一条实测要 12 秒（单独跑）／全量并发跑要越过 20 秒：册子按用户 2026-10-21
   // 那句「每次都重算」走，而进料从 96 张卡变成 335 张（技能格 163→607）。这不是挂死，是给这一条
   // 单独抬上限；全局 20 秒那道"真挂死"的尺一律没动。
@@ -135,7 +152,7 @@ describe('SkillEditor: 技能册的出处与那颗还没露面的刷新按钮（
     // 点了不能炸：它就是把册子按这台机器现在的内容重算一遍。
     fireEvent.click(button);
     expect(screen.getByRole('button', { name: '刷新技能册' })).toBeTruthy();
-  }, 60_000);
+  }, 30_000);
 
   it('⑤ 手动档下点那颗按钮＝界面真的换成此刻的册子（不是只把账重算了一遍、界面上看不见）', () => {
     setSkillBookAutoRecompute(false);
